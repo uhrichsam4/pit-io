@@ -1,13 +1,27 @@
 /**
- * The swallow system: suction, capture, the tumble down the pit, and hole-vs-hole.
+ * The swallow system — how the city physically goes down the hole.
  *
- * Feel notes (these are the numbers that make or break the game):
- *  - Objects lean toward the lip BEFORE they fall. Anticipation is what makes
- *    the hole feel like it has gravity rather than being a delete volume.
- *  - Capture triggers slightly inside the visual lip, so the object is already
- *    overlapping the void when it commits — never popping out of solid ground.
- *  - Falling objects spiral. A straight drop looks like an object being deleted;
- *    a spiral looks like a drain.
+ * An object is never deleted where it stands. It goes through a sequence:
+ *
+ *   1. ATTRACT  once it fits, it is genuinely accelerated toward the centre.
+ *               This is integrated velocity, not a pose offset — a bin visibly
+ *               skids, a car rolls on its wheels, a palm leans further the
+ *               closer it gets. The object's registry position moves with it,
+ *               so the capture test and the spatial hash stay honest.
+ *   2. TIP      when its centre reaches the lip it pivots about the contact
+ *               edge, exactly like something overbalancing off a kerb. Tall
+ *               things go over much further than squat ones.
+ *   3. PLUNGE   contact is broken and real gravity takes it, spiralling in.
+ *               Nothing shrinks until it is well inside the throat, so the
+ *               fall is always clearly visible above ground first.
+ *
+ * THE FIT RULE
+ * ------------
+ * An object is only ever pulled if the opening is genuinely wider than the
+ * object's own footprint (plus the tier gate that paces progression). Anything
+ * too big is not tugged, not tilted, not nudged — it sits solidly on the
+ * ground, which is what makes the hole read as a real physical opening rather
+ * than a scripted delete volume.
  */
 
 import * as THREE from 'three';
@@ -17,26 +31,55 @@ import { STATE, BACKING } from './entities.js';
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
+const _qRoll = new THREE.Quaternion();
 const _e = new THREE.Euler();
 const _s = new THREE.Vector3();
-const _axis = new THREE.Vector3();
 const _pivot = new THREE.Vector3();
 const _rel = new THREE.Vector3();
+const _axis = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 
 /**
- * How an object goes down the hole. Chosen per object at capture time, because
- * "everything spirals and shrinks" reads as a delete effect rather than physics.
+ * How a given object behaves on its way in. Chosen from what the object
+ * actually is — "everything spirals and shrinks" is what makes a swallow read
+ * as a delete effect instead of as physics.
  *
- *  SLIDE   small litter — skids over the lip and drops almost immediately
- *  TIP     mid-size furniture — leans in, overbalances, then falls
- *  TOPPLE  tall and thin (palms, streetlights, signs) — a full dramatic fall
- *          rotating about its base before the trunk clears the rim
- *  CRUMBLE buildings — shudder, shed debris, then sink and tilt as a mass
+ *  SLIDE   flat litter — skids over the lip and drops almost at once
+ *  ROLL    anything on wheels — rolls as it is drawn in, then noses over
+ *  TOPPLE  tall and thin (signs, lamp posts, hydrants, bollards) — goes over
+ *          about its base like a felled post
+ *  LEAN    trees and palms — lean further and further, then rotate and fall
+ *  SINK    buildings and large structures — shudder, shed debris, then settle
+ *          and tilt into the opening under their own weight
  */
-export const FALL = { SLIDE: 0, TIP: 1, TOPPLE: 2, CRUMBLE: 3 };
+export const FALL = { SLIDE: 0, ROLL: 1, TOPPLE: 2, LEAN: 3, SINK: 4 };
 
-/** Gravity used by the plunge phase. Exaggerated: real g feels floaty here. */
+/** Gravity for the plunge. Exaggerated: real g feels floaty at this scale. */
 const G = 26.0;
+
+/**
+ * The hole must be this multiple of an object's own footprint radius before it
+ * can be taken. Slightly under 1 because a footprint radius is a bounding
+ * circle and most props do not fill theirs.
+ */
+const FIT = 0.92;
+
+/** Peak inward acceleration at the lip, m/s^2. */
+const SUCK_ACCEL = 26.0;
+
+const ROLLING = /car|sedan|suv|taxi|van|truck|bus|pickup|hatch|sport|convert|police|ambul|shuttle|mixer|excav|loader|dumper|flatbed|garbage|cart|stand|scooter|bike|bicycle|barrel|drum|trolley|wheelie/i;
+const TREES = /palm|tree|royal|sabal|coconut|banyan|canopy|frond|bougain|tabebuia/i;
+
+function profileFor(c) {
+  if (c.crumbles || c.tier.id >= 6) return FALL.SINK;
+  const k = c.kind || '';
+  if (TREES.test(k)) return FALL.LEAN;
+  if (ROLLING.test(k)) return FALL.ROLL;
+  // Slenderness decides the rest: a 2.5 m sign post topples, a bench slides.
+  const slender = c.height / Math.max(0.25, c.radius * 2);
+  if (slender > 1.9 && c.height > 1.2) return FALL.TOPPLE;
+  return FALL.SLIDE;
+}
 
 export class ConsumeSystem {
   /**
@@ -50,21 +93,34 @@ export class ConsumeSystem {
     this.effects = effects;
     /** @type {import('./entities.js').Consumable[]} */
     this.falling = [];
+    /** Objects currently being dragged toward a lip. */
+    /** @type {Set<import('./entities.js').Consumable>} */
+    this.attracted = new Set();
     this._query = [];
-    this._wobbled = new Set();
-    this._wobbledPrev = new Set();
-    /** Eat-size multiplier, dropped during end-of-match frenzy. */
+    /** Eat-size multiplier, dropped during the end-of-match frenzy. */
     this.eatScale = 1.0;
-    /** Consumers subscribe for kill-feed / audio. */
+    /** Set true in networked matches: the server owns kills and scores. */
+    this.networked = false;
+    /** Consumers subscribe for kill-feed / audio / netcode. */
     this.onSwallow = null;
     this.onHoleEaten = null;
+    this.onClaimKill = null;
   }
 
   setFrenzy(on) {
     this.eatScale = on ? MATCH.FRENZY_EAT_SCALE : 1.0;
   }
 
+  /**
+   * Can this hole take this object *at all*?
+   * Two gates, both of which must pass:
+   *   - the tier gate, which paces progression, and
+   *   - the FIT gate: the opening must actually be wider than the object.
+   * The fit gate is what guarantees a bus never vanishes into a hole it plainly
+   * would not go through.
+   */
   canEat(hole, c) {
+    if (hole.radius < c.radius * FIT) return false;
     return hole.radius >= c.eatRadius * this.eatScale;
   }
 
@@ -74,26 +130,34 @@ export class ConsumeSystem {
    * @param {number} t
    */
   update(dt, holes, t) {
-    // swap wobble sets
-    const tmp = this._wobbledPrev;
-    this._wobbledPrev = this._wobbled;
-    this._wobbled = tmp;
-    this._wobbled.clear();
-
     for (const hole of holes) {
       if (!hole.alive) continue;
       this._processHole(hole, dt, t);
     }
-
-    // restore anything that stopped being tugged
-    for (const c of this._wobbledPrev) {
-      if (this._wobbled.has(c) || c.state === STATE.FALLING) continue;
-      this._restore(c);
-      c.state = STATE.IDLE;
-    }
-
+    this._updateAttracted(dt, t);
     this._updateFalling(dt, t);
     this._resolvePvP(holes);
+  }
+
+  /* ------------------------------------------------------------ attract --- */
+
+  /** Lazily-created per-object motion state. Reused, never allocated per frame. */
+  _dyn(c) {
+    let d = c._dyn;
+    if (!d) {
+      d = c._dyn = {
+        // world offset from the object's authored resting place
+        ox: 0, oy: 0, oz: 0,
+        vx: 0, vz: 0,
+        roll: 0,     // wheel rotation, radians
+        lean: 0,     // lean toward the hole, radians
+        hole: null,
+        baseX: c.position.x,
+        baseZ: c.position.z,
+        baseY: c.object ? c.object.position.y : 0,
+      };
+    }
+    return d;
   }
 
   _processHole(hole, dt, t) {
@@ -101,89 +165,163 @@ export class ConsumeSystem {
     const list = this.registry.query(hole.position.x, hole.position.z, R, this._query);
     if (list.length === 0) return;
 
-    const capture = hole.radius * HOLE.CAPTURE_F;
-    const cap2 = capture * capture;
-
     for (let i = 0; i < list.length; i++) {
       const c = list[i];
-      if (c.state === STATE.FALLING) continue;
-      if (!this.canEat(hole, c)) {
-        // Too big to swallow. It stays put — but if the hole is actually
-        // underneath it, tremble it so the player reads "not yet" rather than
-        // "this object is scenery". Only for things that are close to edible,
-        // otherwise the whole skyline would buzz.
-        if (!hole.isPlayer) continue;
-        if (c.eatRadius > hole.radius * 2.2) continue;
-        const ddx = hole.position.x - c.position.x;
-        const ddz = hole.position.z - c.position.z;
-        if (ddx * ddx + ddz * ddz > (hole.radius + c.radius) ** 2) continue;
+      if (c.state === STATE.FALLING || c.state === STATE.GONE) continue;
+      // Too big: it stays solidly put. No tug, no tilt, no nudge.
+      if (!this.canEat(hole, c)) continue;
 
-        this._wobbled.add(c);
-        const shake = 0.035 * Math.min(1, hole.radius / Math.max(0.1, c.eatRadius));
-        const ox = Math.sin(t * 31 + c.id) * shake;
-        const oz = Math.cos(t * 27 + c.id * 1.7) * shake;
-        if (c.backing === BACKING.INSTANCE) {
-          const p = c.pool;
-          _v.copy(p.slotPos[c.slot]); _v.x += ox; _v.z += oz;
-          p.setTransform(c.slot, _v, p.slotRot[c.slot], p.slotScale[c.slot]);
-        } else if (c.object) {
-          if (!c._baseP) {
-            c._baseP = c.object.position.clone();
-            c._baseQ = c.object.quaternion.clone();
-          }
-          c.object.position.copy(c._baseP);
-          c.object.position.x += ox;
-          c.object.position.z += oz;
-        }
-        continue;
-      }
       const dx = hole.position.x - c.position.x;
       const dz = hole.position.z - c.position.z;
-      const d2 = dx * dx + dz * dz;
+      const d = Math.hypot(dx, dz);
 
-      // Capture when the object's near edge crosses the lip.
-      const reach = capture + c.radius * 0.55;
-      if (d2 < reach * reach && d2 < Math.max(cap2, reach * reach)) {
+      // Its centre has reached the lip — hand it to the fall sequence.
+      if (d <= hole.radius * 0.90) {
         this._capture(hole, c, t);
         continue;
       }
-      if (d2 > R * R) continue;
+      if (d > R) continue;
 
-      // --- suction lean -------------------------------------------------
-      const d = Math.sqrt(d2) || 0.0001;
-      const falloff = 1 - (d - capture) / Math.max(0.001, R - capture);
-      const pull = Math.max(0, Math.min(1, falloff));
-      if (pull <= 0.02) continue;
-
-      this._wobbled.add(c);
+      const dyn = this._dyn(c);
+      dyn.hole = hole;
       c.state = STATE.WOBBLE;
+      this.attracted.add(c);
+    }
+  }
+
+  /**
+   * Integrate everything currently being dragged in. Separated from the query
+   * loop so an object caught between two holes is only stepped once.
+   */
+  _updateAttracted(dt, t) {
+    if (this.attracted.size === 0) return;
+    for (const c of [...this.attracted]) {
+      if (c.state === STATE.FALLING || c.state === STATE.GONE) {
+        this.attracted.delete(c);
+        continue;
+      }
+      const dyn = c._dyn;
+      const hole = dyn && dyn.hole;
+      if (!hole || !hole.alive) { this._release(c, dt); continue; }
+
+      const dx = hole.position.x - c.position.x;
+      const dz = hole.position.z - c.position.z;
+      const d = Math.hypot(dx, dz) || 1e-4;
+      const R = hole.radius * HOLE.INFLUENCE_F;
+
+      if (d > R * 1.05 || !this.canEat(hole, c)) { this._release(c, dt); continue; }
 
       const nx = dx / d, nz = dz / d;
-      const lean = pull * pull * 0.30;
-      const slide = pull * pull * Math.min(1.4, hole.radius * 0.10);
-      const jit = Math.sin(t * 24 + c.id * 1.7) * pull * 0.035;
+      // Pull strengthens sharply near the lip, so an object is nudged at the
+      // edge of the field and yanked once it is committed.
+      const pull = Math.max(0, Math.min(1, 1 - (d - hole.radius) / Math.max(0.001, R - hole.radius)));
+      const accel = SUCK_ACCEL * (0.18 + 0.82 * pull * pull);
 
-      if (c.backing === BACKING.INSTANCE) {
-        const p = c.pool;
-        _v.copy(p.slotPos[c.slot]);
-        _v.x += nx * slide; _v.z += nz * slide;
-        _v.y -= pull * 0.12 * c.height;
-        _e.set(nz * lean + jit, 0, -nx * lean + jit);
-        _q.setFromEuler(_e).multiply(p.slotRot[c.slot]);
-        p.setTransform(c.slot, _v, _q, p.slotScale[c.slot]);
-      } else if (c.object) {
-        if (!c._baseP) {
-          c._baseP = c.object.position.clone();
-          c._baseQ = c.object.quaternion.clone();
-        }
-        c.object.position.copy(c._baseP);
-        c.object.position.x += nx * slide * 0.5;
-        c.object.position.z += nz * slide * 0.5;
-        c.object.position.y -= pull * 0.06 * c.height;
-        _e.set(nz * lean * 0.5 + jit * 0.4, 0, -nx * lean * 0.5 + jit * 0.4);
-        _q.setFromEuler(_e);
-        c.object.quaternion.copy(c._baseQ).premultiply(_q);
+      dyn.vx += nx * accel * dt;
+      dyn.vz += nz * accel * dt;
+      // Ground friction, so light things skitter and heavy things resist.
+      const drag = Math.exp(-(2.6 + 6.0 / Math.max(1, c.radius * 2)) * dt);
+      dyn.vx *= drag; dyn.vz *= drag;
+
+      const stepX = dyn.vx * dt, stepZ = dyn.vz * dt;
+      dyn.ox += stepX; dyn.oz += stepZ;
+      c.position.x = dyn.baseX + dyn.ox;
+      c.position.z = dyn.baseZ + dyn.oz;
+      this.registry.rehash(c);
+
+      const travelled = Math.hypot(stepX, stepZ);
+      const profile = c._profile ?? (c._profile = profileFor(c));
+
+      // Ground gives way under the leading edge as it nears the lip.
+      dyn.oy = -pull * pull * Math.min(0.35, c.height * 0.12);
+
+      switch (profile) {
+        case FALL.ROLL:
+          // Roll about the axis perpendicular to travel. Wheel radius is
+          // approximated from the object's height, which is close enough that
+          // the wheels never visibly skid.
+          dyn.roll += travelled / Math.max(0.25, c.height * 0.22);
+          dyn.lean = pull * 0.10;
+          break;
+        case FALL.LEAN:
+          // A tree does not slide much; it leans, and it leans a long way.
+          dyn.lean = pull * pull * 0.42;
+          dyn.vx *= 0.90; dyn.vz *= 0.90;
+          break;
+        case FALL.TOPPLE:
+          dyn.lean = pull * pull * 0.30;
+          break;
+        case FALL.SINK:
+          dyn.lean = pull * 0.06;
+          dyn.vx *= 0.55; dyn.vz *= 0.55;
+          break;
+        default:
+          dyn.lean = pull * 0.16;
+          break;
       }
+      // A little jitter as it drags over the ground.
+      const jit = pull * 0.03 * Math.sin(t * 26 + c.id * 1.7);
+
+      this._writeAttractedTransform(c, dyn, nx, nz, jit);
+    }
+  }
+
+  /** Compose and apply the current attracted pose. */
+  _writeAttractedTransform(c, dyn, nx, nz, jit) {
+    const profile = c._profile;
+    // Lean axis: horizontal, perpendicular to the direction of the hole, so
+    // the object tips *toward* the opening.
+    _axis.set(nz, 0, -nx).normalize();
+    _q.setFromAxisAngle(_axis, dyn.lean + jit);
+
+    if (profile === FALL.ROLL && dyn.roll !== 0) {
+      // Rolling is about the same horizontal axis, and composes on top.
+      _qRoll.setFromAxisAngle(_axis, dyn.roll);
+      _q.multiply(_qRoll);
+    }
+
+    if (c.backing === BACKING.INSTANCE) {
+      const p = c.pool;
+      _v.set(
+        p.slotPos[c.slot].x + dyn.ox,
+        p.slotPos[c.slot].y + dyn.oy,
+        p.slotPos[c.slot].z + dyn.oz
+      );
+      _q2.copy(_q).multiply(p.slotRot[c.slot]);
+      p.setTransform(c.slot, _v, _q2, p.slotScale[c.slot]);
+    } else if (c.object) {
+      if (!c._baseP) {
+        c._baseP = c.object.position.clone();
+        c._baseQ = c.object.quaternion.clone();
+      }
+      c.object.position.set(
+        c._baseP.x + dyn.ox, c._baseP.y + dyn.oy, c._baseP.z + dyn.oz
+      );
+      c.object.quaternion.copy(c._baseQ).premultiply(_q);
+    }
+  }
+
+  /** The hole moved away before it could take this — ease it back home. */
+  _release(c, dt) {
+    const dyn = c._dyn;
+    if (!dyn) { this.attracted.delete(c); c.state = STATE.IDLE; return; }
+    const k = 1 - Math.exp(-6.0 * dt);
+    dyn.ox += (0 - dyn.ox) * k;
+    dyn.oz += (0 - dyn.oz) * k;
+    dyn.oy += (0 - dyn.oy) * k;
+    dyn.lean += (0 - dyn.lean) * k;
+    dyn.vx *= 0.82; dyn.vz *= 0.82;
+    c.position.x = dyn.baseX + dyn.ox;
+    c.position.z = dyn.baseZ + dyn.oz;
+    this.registry.rehash(c);
+    this._writeAttractedTransform(c, dyn, 0, 1, 0);
+
+    if (Math.abs(dyn.ox) < 0.01 && Math.abs(dyn.oz) < 0.01 && Math.abs(dyn.lean) < 0.01) {
+      dyn.ox = dyn.oz = dyn.oy = dyn.lean = 0;
+      dyn.vx = dyn.vz = 0;
+      this._restore(c);
+      this.attracted.delete(c);
+      c.state = STATE.IDLE;
     }
   }
 
@@ -197,9 +335,11 @@ export class ConsumeSystem {
     }
   }
 
+  /* ------------------------------------------------------------ capture --- */
+
   /**
-   * Play the full swallow animation for an object a REMOTE player ate.
-   * No score, no screen shake, no popup — their meal, our pixels.
+   * Play the full swallow for an object a REMOTE player ate: same animation,
+   * no score, no shake, no popup.
    */
   captureRemote(hole, c, t) {
     if (!c || c.state === STATE.FALLING || c.state === STATE.GONE) return;
@@ -208,15 +348,28 @@ export class ConsumeSystem {
 
   _capture(hole, c, t, remote = false) {
     this.registry.remove(c);
+    this.attracted.delete(c);
     c.state = STATE.FALLING;
     c.fallT = 0;
     c.eatenBy = hole;
 
+    const dyn = c._dyn;
     if (c.backing === BACKING.INSTANCE) {
       const proxy = c.pool.leaseProxy(c.slot);
+      // leaseProxy restores the authored slot transform, but the object has
+      // been sliding for the last second — inherit where it ACTUALLY is, or it
+      // snaps back to its parking spot for one frame before falling.
+      if (dyn) {
+        proxy.position.set(
+          c.pool.slotPos[c.slot].x + dyn.ox,
+          c.pool.slotPos[c.slot].y + dyn.oy,
+          c.pool.slotPos[c.slot].z + dyn.oz
+        );
+      }
       this.scene.add(proxy);
       c.object = proxy;
     }
+
     if (c.object) {
       c._startPos.copy(c.object.position);
       c._startQuat = c.object.quaternion.clone();
@@ -227,56 +380,51 @@ export class ConsumeSystem {
       c._startPos.copy(c.position);
     }
 
-    // --- choose how this thing goes down -------------------------------
-    const slender = c.height / Math.max(0.2, c.radius * 2);
-    if (c.crumbles || c.tier.id >= 6) c._style = FALL.CRUMBLE;
-    else if (slender > 2.2 && c.height > 1.8) c._style = FALL.TOPPLE;
-    else if (c.tier.id >= 1) c._style = FALL.TIP;
-    else c._style = FALL.SLIDE;
+    const profile = c._profile ?? (c._profile = profileFor(c));
+    c._style = profile;
 
-    // Geometry of the fall: n points from the object toward the hole centre.
     const dx = hole.position.x - c.position.x;
     const dz = hole.position.z - c.position.z;
     const dlen = Math.hypot(dx, dz) || 1;
     c._nx = dx / dlen;
     c._nz = dz / dlen;
-
-    // Entry angle for the spiral once it is airborne.
     c._angle = Math.atan2(c.position.z - hole.position.z, c.position.x - hole.position.x);
     c._entryR = dlen;
 
-    // Tip pivot: the object's base edge nearest the hole. Rotating about the
-    // horizontal axis perpendicular to n makes the top lean into the void,
-    // which is exactly how a bollard or a palm actually goes over.
+    // Tip pivot: the contact edge nearest the void.
     c._pivot = new THREE.Vector3(
-      c._startPos.x + c._nx * c.radius * 0.85,
+      c._startPos.x + c._nx * c.radius * 0.9,
       c._startPos.y,
-      c._startPos.z + c._nz * c.radius * 0.85
+      c._startPos.z + c._nz * c.radius * 0.9
     );
     c._tipAxis = new THREE.Vector3(c._nz, 0, -c._nx).normalize();
     c._tipTarget =
-      c._style === FALL.TOPPLE ? Math.PI * (0.62 + Math.random() * 0.16)
-      : c._style === FALL.TIP ? Math.PI * (0.34 + Math.random() * 0.18)
-      : Math.PI * 0.12;
+      profile === FALL.LEAN ? Math.PI * (0.55 + Math.random() * 0.20)
+      : profile === FALL.TOPPLE ? Math.PI * (0.48 + Math.random() * 0.18)
+      : profile === FALL.ROLL ? Math.PI * (0.30 + Math.random() * 0.14)
+      : profile === FALL.SINK ? Math.PI * (0.10 + Math.random() * 0.08)
+      : Math.PI * (0.22 + Math.random() * 0.14);
 
-    // Free tumble once airborne.
     c._spinAxis = new THREE.Vector3(
       Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
     ).normalize();
-    c._spinRate = 2.5 + Math.random() * 4 + Math.min(5, c.radius * 0.5);
+    c._spinRate = 2.2 + Math.random() * 3.6 + Math.min(4, c.radius * 0.4);
+    // Carry the roll it built up while being dragged in.
+    c._roll = dyn ? dyn.roll : 0;
 
-    // Phase durations. Heavier things linger on the lip before they commit.
+    // Heavier things hang on the lip longer before they commit.
     const heft = Math.min(1, c.radius / 6);
-    c._tSlide = c._style === FALL.CRUMBLE ? 0 : 0.055 + heft * 0.07;
-    c._tTip = c._style === FALL.SLIDE ? 0.10
-      : c._style === FALL.TIP ? 0.20 + heft * 0.14
-      : c._style === FALL.TOPPLE ? 0.34 + heft * 0.22
-      : 0;
-    c._tShake = c._style === FALL.CRUMBLE ? 0.26 + heft * 0.12 : 0;
-    c._tPlunge = 0.42 + Math.min(0.7, c.radius * 0.05) + (c._style === FALL.CRUMBLE ? 0.35 : 0);
-    c._fallDur = c._tSlide + c._tTip + c._tShake + c._tPlunge;
+    c._tShake = profile === FALL.SINK ? 0.30 + heft * 0.16 : 0;
+    c._tTip = profile === FALL.SINK ? 0.55 + heft * 0.35
+      : profile === FALL.LEAN ? 0.42 + heft * 0.20
+      : profile === FALL.TOPPLE ? 0.34 + heft * 0.18
+      : profile === FALL.ROLL ? 0.24 + heft * 0.16
+      : 0.16 + heft * 0.12;
+    c._tPlunge = 0.45 + Math.min(0.8, c.radius * 0.055) + (profile === FALL.SINK ? 0.4 : 0);
+    c._fallDur = c._tShake + c._tTip + c._tPlunge;
     c._plungeVY = 0;
     c._plungeY = 0;
+    c._tipQuat = null;
 
     this.falling.push(c);
 
@@ -284,34 +432,33 @@ export class ConsumeSystem {
     // locally would double-count the moment the next snapshot lands.
     const gained = remote ? 0 : hole.addScore(c.score, c.label);
 
-    // --- feedback --------------------------------------------------------
+    this._captureFx(hole, c, remote);
+    if (this.onSwallow) this.onSwallow(hole, c, gained, remote);
+  }
+
+  _captureFx(hole, c, remote) {
     const fx = this.effects;
     const big = c.tier.id >= 5;
     _v.set(c.position.x, Math.max(0.1, c.height * 0.35), c.position.z);
-    if (c.crumbles || big) {
+    if (c._style === FALL.SINK || big) {
       fx.puff(_v, 0xf3ead8, 26, Math.max(1.5, c.radius * 0.9), 6.5, 1.5 + c.radius * 0.12, 1.3);
       fx.chunks(_v, c.debrisColor, 14, Math.max(0.35, c.radius * 0.16), 8, c.radius * 0.7);
       fx.shockwave(hole.position, hole.radius * 0.9, hole.radius * 2.4, 0xffffff, 0.55);
-      fx.addShake(Math.min(0.9, 0.18 + c.radius * 0.03));
+      if (!remote) fx.addShake(Math.min(0.9, 0.18 + c.radius * 0.03));
     } else {
       fx.puff(_v, 0xe8e2d2, 7, Math.max(0.35, c.radius * 0.7), 2.6, 0.42 + c.radius * 0.1, 0.55);
       if (c.tier.id >= 3) {
         fx.chunks(_v, c.debrisColor, 5, Math.max(0.16, c.radius * 0.14), 4.5, c.radius * 0.5);
-        fx.addShake(0.05 + c.radius * 0.012);
+        if (!remote) fx.addShake(0.05 + c.radius * 0.012);
       }
     }
     if (hole.isPlayer && !remote) {
       fx.popup(_v, `+${c.score}`, big ? 0xffc93c : 0xffffff, big);
     }
-    if (remote) fx.shake = Math.min(fx.shake, 0.05);
-    if (this.onSwallow) this.onSwallow(hole, c, gained, remote);
   }
 
-  /**
-   * The fall is a small state machine rather than one lerp, because the thing
-   * that sells it is the *order*: it slides, it tips, it commits, then gravity
-   * takes it. Objects never simply fade or shrink away on the ground.
-   */
+  /* --------------------------------------------------------------- fall --- */
+
   _updateFalling(dt, t) {
     for (let i = this.falling.length - 1; i >= 0; i--) {
       const c = this.falling[i];
@@ -323,17 +470,16 @@ export class ConsumeSystem {
       let tt = c.fallT;
       const pitDepth = Math.max(6, hole.radius * HOLE.PIT_DEPTH_F);
 
-      /* ---- 0. shudder (buildings only) --------------------------------- */
+      /* ---- 0. structural failure (buildings only) ---------------------- */
       if (c._tShake > 0) {
         if (tt < c._tShake) {
           const k = 1 - tt / c._tShake;
           const a = k * 0.16 * Math.min(3, 0.6 + c.radius * 0.06);
           obj.position.set(
             c._startPos.x + (Math.random() - 0.5) * a * 3,
-            c._startPos.y - (1 - k) * 0.4,
+            c._startPos.y - (1 - k) * 0.5,
             c._startPos.z + (Math.random() - 0.5) * a * 3
           );
-          // Shed masonry the whole time it is failing.
           if (Math.random() < dt * 22) {
             _v.set(
               c.position.x + (Math.random() - 0.5) * c.radius * 1.6,
@@ -347,23 +493,7 @@ export class ConsumeSystem {
         tt -= c._tShake;
       }
 
-      /* ---- 1. slide toward the lip ------------------------------------- */
-      if (tt < c._tSlide) {
-        const k = tt / c._tSlide;
-        const slide = k * k * Math.min(1.2, c.radius * 0.55 + 0.25);
-        obj.position.set(
-          c._startPos.x + c._nx * slide,
-          c._startPos.y - k * 0.10 * c.height,
-          c._startPos.z + c._nz * slide
-        );
-        // A touch of lean already building, so the tip does not start abruptly.
-        _q.setFromAxisAngle(c._tipAxis, c._tipTarget * 0.12 * k);
-        obj.quaternion.copy(c._startQuat).premultiply(_q);
-        continue;
-      }
-      tt -= c._tSlide;
-
-      /* ---- 2. tip over the edge ---------------------------------------- */
+      /* ---- 1. overbalance about the contact edge ----------------------- */
       if (tt < c._tTip) {
         const k = tt / c._tTip;
         // Ease in: it resists, then goes. That hesitation is the whole point.
@@ -371,31 +501,35 @@ export class ConsumeSystem {
         const ang = c._tipTarget * e;
 
         _q.setFromAxisAngle(c._tipAxis, ang);
-        // Rotate the body about the contact edge, and let the edge itself sink
-        // as the ground under it gives way.
         _pivot.copy(c._pivot);
-        _pivot.x += c._nx * e * c.radius * 0.5;
-        _pivot.z += c._nz * e * c.radius * 0.5;
-        _pivot.y -= e * e * Math.min(3.5, 0.4 + c.radius * 0.5);
+        _pivot.x += c._nx * e * c.radius * 0.55;
+        _pivot.z += c._nz * e * c.radius * 0.55;
+        // The lip itself gives way as the weight comes onto it.
+        _pivot.y -= e * e * Math.min(4.0, 0.4 + c.radius * 0.55);
 
         _rel.copy(c._startPos).sub(c._pivot).applyQuaternion(_q);
         obj.position.copy(_pivot).add(_rel);
-        obj.quaternion.copy(c._startQuat).premultiply(_q);
 
-        // Hand the plunge a sensible initial velocity so there is no snap.
+        // Keep any rolling it arrived with, underneath the tip rotation.
+        _q2.copy(_q);
+        if (c._roll) {
+          _qRoll.setFromAxisAngle(c._tipAxis, c._roll);
+          _q2.multiply(_qRoll);
+        }
+        obj.quaternion.copy(c._startQuat).premultiply(_q2);
+
         c._plungeY = obj.position.y;
-        c._plungeVY = -e * 5.0;
-        c._tipQuat = _q.clone();
+        c._plungeVY = -e * 5.5;
+        c._tipQuat = _q2.clone();
         continue;
       }
       tt -= c._tTip;
 
-      /* ---- 3. plunge ---------------------------------------------------- */
+      /* ---- 2. plunge --------------------------------------------------- */
       const k = Math.min(1, tt / c._tPlunge);
       c._plungeVY -= G * dt;
       c._plungeY += c._plungeVY * dt;
 
-      // Spiral inward. Tighter holes swirl faster; huge holes are near-vertical.
       const swirlRate = 2.0 + Math.min(5.0, 14 / Math.max(1.2, hole.radius));
       const swirl = c._angle - k * swirlRate;
       const rr = c._entryR * (1 - k) * (1 - k * 0.35);
@@ -411,9 +545,9 @@ export class ConsumeSystem {
       obj.quaternion.copy(c._startQuat).premultiply(_q2);
 
       // Shrink only once it is genuinely inside the throat, so nothing is ever
-      // seen deflating while still on the street.
+      // seen deflating while still above ground.
       const depth = (c._startPos.y - obj.position.y) / Math.max(1, pitDepth);
-      const shrink = 1 - Math.max(0, depth - 0.28) * 0.95;
+      const shrink = 1 - Math.max(0, depth - 0.35) * 0.95;
       _s.copy(c._startScale).multiplyScalar(Math.max(0.08, shrink));
       obj.scale.copy(_s);
 
@@ -429,9 +563,7 @@ export class ConsumeSystem {
       } else {
         if (obj.parent) obj.parent.remove(obj);
         obj.traverse((n) => {
-          if (n.isMesh) {
-            if (n.geometry && !n.geometry.__shared) n.geometry.dispose();
-          }
+          if (n.isMesh && n.geometry && !n.geometry.__shared) n.geometry.dispose();
         });
       }
     }
@@ -439,6 +571,8 @@ export class ConsumeSystem {
     c.state = STATE.GONE;
     this.falling.splice(index, 1);
   }
+
+  /* ---------------------------------------------------------------- pvp --- */
 
   /** Bigger holes eat smaller holes. */
   _resolvePvP(holes) {
@@ -462,7 +596,6 @@ export class ConsumeSystem {
           continue;
         }
 
-        // a swallows b
         b.alive = false;
         b.killedBy = a;
         b.respawnAt = HOLE.RESPAWN_TIME;

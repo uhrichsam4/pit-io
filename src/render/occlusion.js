@@ -17,14 +17,15 @@
  * texture-free instruction.
  *
  * Two things keep it from reading as "broken render":
- *   - a Fresnel rim is held near-solid as the object fades, so the silhouette
- *     and edges of the building stay legible — you always know what you are
- *     underneath;
- *   - the dissolve is TWO-LEVEL. The body only goes to ~40% translucent, while
- *     a soft disc centred on the hole's screen position opens all the way. A
- *     close tower can cover half the frame, and dissolving all of it uniformly
- *     turns the whole screen to speckle; opening a window exactly where the
- *     player is looking reads as a deliberate x-ray instead.
+ *   - the dissolve is confined to a PORTHOLE — a soft screen-space disc centred
+ *     on the hole. Beyond it the object is untouched. A registered root is a
+ *     whole building, so dissolving the root uniformly turned a 200 m tower
+ *     into a column of static in every wide shot; opening a window exactly
+ *     where the player is looking reads as a deliberate x-ray instead;
+ *   - a Fresnel rim is held near-solid at the porthole's edge, so the
+ *     silhouette of the building stays legible — you always know what you are
+ *     underneath. It is released toward the centre, or a glass tower's mullions
+ *     re-close the opening as a wire mesh.
  *
  * PER-OBJECT FADE WITH SHARED MATERIALS
  * -------------------------------------
@@ -86,35 +87,51 @@ const VERT_BODY = /* glsl */ `
  */
 const FRAG_BODY = /* glsl */ `
   if (uOccFade < 0.999) {
-    vec3 V = normalize(-vOccViewPos);
-    float fres = 1.0 - abs(dot(normalize(vOccViewNormal), V));
-    float rim = smoothstep(0.34, 0.95, fres);
-
-    // Two levels of transparency, which is what stops a close tower turning the
-    // whole screen into speckle:
-    //   body   the object as a whole goes translucent, so you can still read
-    //          that you are underneath it and what shape it is
-    //   window a soft disc centred on the hole opens much further, so the thing
-    //          the player actually needs to see is unambiguous
+    // The x-ray is a PORTHOLE, not a whole-object dissolve.
+    //
+    // An earlier version also took the whole body down to ~40% opacity and only
+    // opened further near the hole. That is fine for a 12 m awning and
+    // catastrophic for a 200 m tower: the fading object is a single registered
+    // root, so a tower that happens to sit on the camera->hole ray dissolved
+    // from its crown to its podium, and 60% stochastic discard across that much
+    // screen reads as television static, not as glass. It wrecked every wide
+    // shot in the review set. Outside the porthole the object now stays exactly
+    // as solid as it ever was, so the skyline is never touched.
     float d = distance(gl_FragCoord.xy, uOccCenter);
-    float window = 1.0 - smoothstep(uOccRadius * 0.85, uOccRadius * 2.3, d);
+    // Floors keep a small hole from opening a porthole too tight to see
+    // through; the ceiling stops a late-game hole from opening the whole frame.
+    float rPx = clamp(uOccRadius, 26.0, 160.0);
+    float inner = max(rPx * 1.7, 64.0);   // fully x-rayed
+    float outer = max(rPx * 3.6, 168.0);  // fully solid again
+    float window = 1.0 - smoothstep(inner, outer, d);
 
-    float bodyKeep = mix(1.0, max(uOccFade, 0.40), 1.0);
-    float holeKeep = uOccFade;
-    float keep = mix(bodyKeep, holeKeep, window);
+    // Guarded rather than early-returned: this block is spliced into the middle
+    // of three's main(), so an early return would skip every later chunk
+    // (lighting, fog, tone mapping) and emit an undefined colour.
+    if (window > 0.001) {
+      vec3 V = normalize(-vOccViewPos);
+      float fres = 1.0 - abs(dot(normalize(vOccViewNormal), V));
+      float rim = smoothstep(0.34, 0.95, fres);
 
-    // Edges stay solid at any fade level — that is what preserves the outline.
-    keep = mix(keep, 1.0, rim * 0.82);
+      float keep = mix(1.0, uOccFade, window);
 
-    if (ocDither(gl_FragCoord.xy) > keep) discard;
+      // Edges stay solid, which is what preserves the outline — but only at the
+      // porthole's soft edge. Held everywhere, the retained fresnel on a glass
+      // tower's mullions filled the opening with a wire mesh and the hole
+      // stayed hidden, which defeats the entire feature.
+      keep = mix(keep, 1.0, rim * 0.82 * (1.0 - window * 0.78));
 
-    // Cool the surviving fragments and lift the rim so a faded tower reads as
-    // deliberately x-rayed rather than as a rendering fault.
-    float ghost = (1.0 - uOccFade) * mix(0.45, 1.0, window);
-    diffuseColor.rgb = mix(diffuseColor.rgb,
-                           diffuseColor.rgb * 1.30 + vec3(0.08, 0.14, 0.20),
-                           ghost * 0.5);
-    diffuseColor.rgb += vec3(0.30, 0.55, 0.85) * rim * ghost * 0.55;
+      if (ocDither(gl_FragCoord.xy) > keep) discard;
+
+      // Cool the surviving fragments and lift the rim so the opening reads as a
+      // deliberate x-ray. Gated by the window for the same reason as the discard:
+      // tinting the solid part of the tower blue announced the bug from 400 m.
+      float ghost = (1.0 - uOccFade) * window;
+      diffuseColor.rgb = mix(diffuseColor.rgb,
+                             diffuseColor.rgb * 1.30 + vec3(0.08, 0.14, 0.20),
+                             ghost * 0.5);
+      diffuseColor.rgb += vec3(0.30, 0.55, 0.85) * rim * ghost * 0.55;
+    }
   }
 `;
 
@@ -168,7 +185,7 @@ export function applyOcclusionFade(material) {
 
   const prevKey = material.customProgramCacheKey;
   material.customProgramCacheKey = () =>
-    `${prevKey ? prevKey.call(material) : ''}|occfade-v3`;
+    `${prevKey ? prevKey.call(material) : ''}|occfade-v4`;
   material.needsUpdate = true;
   return material;
 }
