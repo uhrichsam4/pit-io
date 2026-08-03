@@ -36,13 +36,18 @@ import { buildBuildings } from './buildings.js';
 import { buildNature } from './nature.js';
 import { buildProps } from './props.js';
 import { buildVehicles } from './vehicles.js';
+import { buildPedestrians } from './pedestrians.js';
 
+// Order matters: pedestrians read the occupancy grid to keep crowds off props
+// and they share the road network's signal phases with traffic, so they run
+// last — after every module that claims ground has claimed it.
 const MODULES = [
   ['water', buildWater],
   ['buildings', buildBuildings],
   ['nature', buildNature],
   ['props', buildProps],
   ['vehicles', buildVehicles],
+  ['pedestrians', buildPedestrians],
 ];
 
 /** Coarse occupancy grid so modules don't stack props on top of each other. */
