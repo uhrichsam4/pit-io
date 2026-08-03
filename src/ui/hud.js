@@ -17,7 +17,7 @@
  */
 
 import * as THREE from 'three';
-import { TIER_LIST, MATCH } from '../config.js';
+import { TIER_LIST, MATCH, HOLE } from '../config.js';
 import { Minimap } from './minimap.js';
 
 /** Tier accent ramp — mirrors --t0..--t7 in styles.css. */
@@ -93,10 +93,12 @@ export class HUD {
       </div>
 
       <div id="hud-dead">
-        <div class="k">Devoured by</div>
-        <div class="v">&nbsp;</div>
-        <div class="ring"></div>
-        <div class="rs">Respawning in 0.0s</div>
+        <div class="card">
+          <div class="k">Devoured by</div>
+          <div class="v">&nbsp;</div>
+          <div class="bar"><i></i></div>
+          <div class="rs">Respawning in 0.0s</div>
+        </div>
       </div>
 
       <div id="hud-toast"></div>
@@ -128,6 +130,7 @@ export class HUD {
     this.deadEl = $('#hud-dead');
     this.deadName = $('#hud-dead .v');
     this.deadTime = $('#hud-dead .rs');
+    this.deadBar = $('#hud-dead .bar > i');
     this.toastEl = $('#hud-toast');
     this.popupEl = $('#hud-popups');
     this.stickEl = $('#hud-stick');
@@ -156,6 +159,7 @@ export class HUD {
     this._lastPct = -1;
     this._lastScore = 0;
     this._lastEat = 0;
+    this._lastReorder = 0;
     this._grace = false;
     this._frenzy = false;
     this._dead = false;
@@ -274,10 +278,28 @@ export class HUD {
       this._rebuildRows(shown, me);
     }
 
+    // Reorder on a cooldown, and stamp the rank numbers in the SAME step.
+    // During the frenzy every hole's score moves on every frame; unthrottled,
+    // the board is permanently mid-transition and reads as a smear of
+    // overlapping rows. One move per 0.35 s lets each 0.26 s slide land. The
+    // rank digits ride along so a row's number always matches its slot.
     const order = shown.map((h) => h.id).join(',');
-    if (order !== this._order) {
+    if (order !== this._order && this._now - this._lastReorder > 0.35) {
       this._flipReorder(shown);
       this._order = order;
+      this._lastReorder = this._now;
+      for (let i = 0; i < shown.length; i++) {
+        const row = this._rows.get(shown[i].id);
+        if (!row) continue;
+        const rank = i + 1;
+        if (rank === row.rank) continue;
+        row.rank = rank;
+        row.rk.textContent = String(rank);
+        // classList, not className: FLIP's `slide` class must survive this.
+        row.el.classList.toggle('p1', rank === 1);
+        row.el.classList.toggle('p2', rank === 2);
+        row.el.classList.toggle('p3', rank === 3);
+      }
     }
 
     /* --- per-row values: only written when the rendered text changes ---- */
@@ -294,19 +316,15 @@ export class HUD {
         row.text = txt;
         row.sc.textContent = txt;
       }
-      // A meal worth noticing gets the score a punch of its own.
-      if (h.score - row.prev >= 50) restart(row.sc, 'bump');
+      // A meal worth noticing gets the score a punch of its own — throttled,
+      // because restart() forces a reflow and a late-game hole clears 50
+      // points every single frame, which would be eight sync layouts a frame.
+      if (h.score - row.prev >= 50 && this._now - row.bumpAt > 0.4) {
+        row.bumpAt = this._now;
+        restart(row.sc, 'bump');
+      }
       row.prev = h.score;
 
-      const rank = h === me ? myRank : sorted.indexOf(h) + 1;
-      if (rank !== row.rank) {
-        row.rank = rank;
-        row.rk.textContent = String(rank);
-        // classList, not className: FLIP's `slide` class must survive this.
-        row.el.classList.toggle('p1', rank === 1);
-        row.el.classList.toggle('p2', rank === 2);
-        row.el.classList.toggle('p3', rank === 3);
-      }
       if (row.alive !== h.alive) {
         row.alive = h.alive;
         row.el.classList.toggle('dead', !h.alive);
@@ -346,7 +364,7 @@ export class HUD {
           dot: el.querySelector('.dot'),
           nm: el.querySelector('.nm'),
           sc: el.querySelector('.sc'),
-          disp: h.score, prev: h.score, text: '', rank: -1, alive: true,
+          disp: h.score, prev: h.score, text: '', rank: -1, alive: true, bumpAt: 0,
         };
         this._rows.set(h.id, row);
       }
@@ -362,7 +380,11 @@ export class HUD {
       this.listEl.appendChild(row.el);
     }
     for (const id of [...this._rows.keys()]) if (!keep.has(id)) this._rows.delete(id);
+    // A rebuild reorders the DOM immediately, so the rank digits must be
+    // re-stamped on the very next tick — clearing the cooldown stops them
+    // lagging a third of a second behind the slots they label.
     this._order = '';
+    this._lastReorder = 0;
   }
 
   /**
@@ -413,7 +435,10 @@ export class HUD {
         this.deadEl.classList.add('on');
         this.deadName.textContent = hole.killedBy ? hole.killedBy.name : 'the city';
       }
-      this.deadTime.textContent = `Respawning in ${Math.max(0, hole.respawnAt).toFixed(1)}s`;
+      const left = Math.max(0, hole.respawnAt);
+      this.deadTime.textContent = `Respawning in ${left.toFixed(1)}s`;
+      // A draining bar beats a spinner: it says how long, not just "waiting".
+      this.deadBar.style.width = `${(1 - Math.min(1, left / HOLE.RESPAWN_TIME)) * 100}%`;
       return;
     }
     if (this._dead) {
@@ -571,7 +596,9 @@ export class HUD {
       p.__tier = tier;
       // Deterministic per-popup fan-out, seeded off the spawn position so two
       // popups from the same object never take the same path.
-      const seed = (Math.abs(p.pos.x * 7.13 + p.pos.z * 3.71) % 1);
+      // Position alone is not enough: everything inside one tower footprint
+      // shares a seed, and the whole shower would take the same path.
+      const seed = Math.abs(p.pos.x * 7.13 + p.pos.z * 3.71 + (this._popSeq = (this._popSeq || 0) + 0.618)) % 1;
       p.__dx = (seed - 0.5) * 2;
       p.__dy = 0.6 + seed * 0.8;
       this._popups.push(p);

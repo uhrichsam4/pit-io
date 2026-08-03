@@ -83,6 +83,13 @@ html, body {
 #hud-layer { font-size: calc(16px * var(--s)); z-index: 1; }
 #screens { z-index: 5; }
 
+/* Stacking WITHIN the HUD. Panels sit at auto; anything that interrupts the
+   player has to beat the score popups, which otherwise scribble over it
+   (they are appended last and there are dozens of them late in a match). */
+#hud-popups { z-index: 2; }
+#hud-toast, #hud-tierup, #hud-rank { z-index: 3; }
+#hud-dead { z-index: 4; }
+
 /* ======================================================================== */
 /* PANEL SYSTEM                                                             */
 /* ======================================================================== */
@@ -283,7 +290,7 @@ html, body {
    rows swapping past each other with transparent backgrounds interleave their
    glyphs and the board reads as corrupted for the length of the transition. */
 .row.slide { transition: transform 0.26s var(--ease); }
-.row.moving { background-color: rgba(9, 16, 28, 0.82); z-index: 2; }
+.row.moving { background-color: rgba(9, 16, 28, 0.96); z-index: 2; }
 .row.gain { animation: rowGain 0.7s ease-out; }
 @keyframes rowGain {
   0%   { background-color: rgba(255, 201, 60, 0.55); }
@@ -559,25 +566,38 @@ html, body {
 }
 #hud-dead.on { display: flex; animation: deadIn 0.3s ease-out; }
 @keyframes deadIn { from { opacity: 0; } to { opacity: 1; } }
+/* The killer's name lands on whatever happens to be under the camera — a
+   glass tower, a lawn, a white plaza. It needs its own plate, not a shadow. */
+#hud-dead .card {
+  padding: 1.1em 2.2em 1.2em; border-radius: 1em; text-align: center;
+  background: linear-gradient(170deg, rgba(46, 14, 32, 0.88), rgba(9, 12, 22, 0.92));
+  border: 1px solid rgba(255, 61, 139, 0.45);
+  box-shadow: 0 1.4em 3.4em rgba(2, 5, 12, 0.6), 0 0 2.4em rgba(255, 61, 139, 0.25),
+              inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  animation: deadCard 0.35s var(--ease-back);
+}
+@keyframes deadCard { from { transform: scale(0.9); } to { transform: none; } }
 #hud-dead .k {
   font-size: 0.66em; font-weight: 900; letter-spacing: 0.34em; color: var(--hot);
-  text-shadow: 0 0.15em 0.6em rgba(0, 0, 0, 0.8);
+  text-transform: uppercase;
 }
 #hud-dead .v {
-  font-size: 2.6em; font-weight: 900; letter-spacing: -0.02em; line-height: 1.05;
-  text-shadow: 0 0.06em 0.02em rgba(0, 0, 0, 0.6), 0 0.14em 0.7em rgba(0, 0, 0, 0.7);
+  font-size: 2.4em; font-weight: 900; letter-spacing: -0.02em; line-height: 1.1;
+  text-shadow: 0 0.06em 0.02em rgba(0, 0, 0, 0.6);
+}
+#hud-dead .bar {
+  height: 0.3em; margin: 0.8em auto 0.55em; width: 11em; border-radius: 0.2em;
+  background: rgba(255, 255, 255, 0.14); overflow: hidden;
+}
+#hud-dead .bar > i {
+  display: block; height: 100%; width: 0%; border-radius: 0.2em;
+  background: linear-gradient(90deg, var(--hot), var(--sun));
+  box-shadow: 0 0 0.6em rgba(255, 61, 139, 0.7);
 }
 #hud-dead .rs {
-  margin-top: 0.7em; font-size: 0.7em; font-weight: 800; letter-spacing: 0.2em;
-  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.66em; font-weight: 800; letter-spacing: 0.18em;
+  color: rgba(255, 255, 255, 0.72);
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 0.1em 0.5em rgba(0, 0, 0, 0.8);
-}
-#hud-dead .ring {
-  width: 3.4em; height: 3.4em; margin-top: 0.6em; border-radius: 50%;
-  border: 0.22em solid rgba(255, 255, 255, 0.16);
-  border-top-color: var(--hot);
-  animation: spin 0.9s linear infinite;
 }
 
 /* ======================================================================== */
@@ -804,13 +824,6 @@ html, body {
 .btn:active { transform: translateY(0.12em);
   box-shadow: 0 0.1em 0 rgba(150, 20, 78, 0.9), 0 0.4em 1.2em rgba(255, 61, 139, 0.45),
               inset 0 0.08em 0 rgba(255, 255, 255, 0.6); }
-.btn.ghost {
-  background: rgba(255, 255, 255, 0.1); color: var(--txt);
-  box-shadow: inset 0 0 0 1px var(--edge);
-  font-size: 0.82em; padding: 0.6em 1.6em;
-}
-.btn.ghost::after { display: none; }
-.btn.ghost:hover { background: rgba(255, 255, 255, 0.18); transform: translateY(-0.1em); }
 
 .key-hint {
   font-size: 0.72em; font-weight: 700; letter-spacing: 0.14em; color: var(--dim);
@@ -993,8 +1006,6 @@ html, body {
   color: var(--dim);
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-.hidden { display: none !important; }
 
 /* ======================================================================== */
 /* RESPONSIVE — short viewports (phone in landscape, small laptops)         */

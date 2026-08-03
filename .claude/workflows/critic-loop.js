@@ -26,6 +26,11 @@ const OWNERS = {
   materials: 'src/core/materials.js + src/render/palette.js',
   hole: 'src/gameplay/hole.js + src/render/groundShader.js + src/render/effects.js',
   ui: 'src/ui/hud.js + src/ui/screens.js + src/ui/styles.css',
+  consume: 'src/gameplay/consume.js + src/core/pools.js + src/gameplay/entities.js',
+  gameplay: 'src/gameplay/ai.js + src/gameplay/match.js + src/gameplay/input.js + src/config.js',
+  net: 'src/net/client.js + src/net/protocol.js + server/server.js',
+  engine: 'src/game.js + src/dev/devtools.js',
+  audio: 'src/core/audio.js',
 };
 
 const FINDINGS_SCHEMA = {
@@ -162,6 +167,75 @@ buildings while preserving their silhouette; is the camera framing right at each
 size; is anything camouflaged against anything else.`,
     },
     {
+      key: 'runtime-and-perf',
+      presets: 'n/a — you RUN the game rather than look at it',
+      functional: true,
+      brief: `You are the RUNTIME + PERFORMANCE tester. You do not review looks.
+Actually exercise the game and report what breaks:
+  · node tools/shot.mjs --all --out shots/qa-r${round} --w 1600 --h 900
+    -> every runtime error in report.json is a finding. Quote it verbatim.
+  · Boot the game repeatedly and time it. Report boot time and world-build time
+    (the [worldBuild] console line).
+  · Run a FULL 150-second match headlessly with bots and watch for: exceptions,
+    NaN positions, objects stuck mid-air, the score going backwards, memory
+    growth (compare renderer.info.memory geometries/textures at 10s vs 140s),
+    and the frame budget (DEV.stats()).
+  · Check draw calls and triangles per preset against the budget
+    (<=1,500 calls, <=1.8M tris). Anything over is a finding against the module
+    that owns the geometry.
+  · Resize the viewport mid-match (720p, 1080p, 1440p, phone landscape) and
+    confirm nothing throws and nothing is clipped.
+Route each finding to the module that owns it.`,
+    },
+    {
+      key: 'gameplay-logic',
+      presets: 'n/a — you PLAY the game',
+      functional: true,
+      brief: `You are the GAMEPLAY tester. Play the game properly, headlessly,
+and find what is broken or unfair. Use window.DEV (see src/dev/devtools.js):
+DEV.play(), DEV.setSize(r), DEV.teleport(x,z), DEV.devour(r), DEV.stats(),
+game.stepSimulation(dt) for fast headless simulation.
+Check, with measurements, not impressions:
+  · The growth curve over a full match: time to each tier unlock, and whether
+    any tier is a dead zone where nothing is edible.
+  · Bots: do they get stuck, drive into the bay or the river, pile onto one
+    spot, oscillate, or never threaten the player? Run several matches and
+    report the final score spread.
+  · Match flow: countdown, the last-30s frenzy actually changing what is
+    edible, respawn after being eaten, and the final ranking being correct.
+  · Hole-vs-hole: does the size rule work both ways, does the reward make
+    sense, does a swallowed player recover?
+  · Prop respawn: consumed props must come back after 30 s and be edible again.
+  · Movement: does the hole get stuck on anything, leave the map, or cross
+    water it should not?
+Anything you can state as a number, state as a number.`,
+    },
+    {
+      key: 'physics-and-net',
+      presets: 'n/a — you RUN the test suites',
+      functional: true,
+      brief: `You are the PHYSICS + MULTIPLAYER tester.
+  · Run: node tools/consume-test.mjs
+    All four properties must hold: bridging (a too-small hole cannot move a
+    prop at all), progressive support loss with continuous tilt, the falling
+    object being the placed instance itself (slot scale 0 after removal, and
+    NOTHING left drawn on the ground), and respawn.
+  · Run: node tools/seq.mjs --size 7 --frames 6 --step 0.13 --w 720 --h 440
+      --out shots/qa-seq-r${round}
+    Then READ the frames and confirm props visibly slide, tip and fall rather
+    than vanishing. A prop that disappears at ground level is a blocker.
+  · Hunt for duplicates specifically: after consuming, is there ever a prop
+    left standing where one was eaten? Check several prop types and both
+    backings (instanced props and mesh-backed buildings).
+  · Run: npm run server & then node tools/net-test.mjs
+    Seed agreement, transform replication and consumption replication must all
+    pass. Try two clients eating the same object at once.
+  · Edge cases: a prop consumed while a hole passes over it at speed; a prop
+    half-eaten when the hole moves away (it must settle back, not float); a
+    building consumed while the player stands under it.
+Route findings to consume / net / gameplay as appropriate.`,
+    },
+    {
       key: 'polish',
       presets: 'all of them — sweep every png in the directory',
       brief: `You are the POLISH and DEFECT sweep. Open EVERY png in the round
@@ -177,15 +251,19 @@ broken. Be forensic. Name the exact preset and the exact place in the frame.`,
 
 ROUND ${round} REVIEW — lens: ${lens.key.toUpperCase()}
 
-Screenshots for this round are already rendered in: ${dir}
+${lens.functional
+  ? `This is a FUNCTIONAL lens. You run and play the game rather than review
+screenshots. A Vite dev server is already up on http://localhost:5173.`
+  : `Screenshots for this round are already rendered in: ${dir}
 Look at these presets in particular: ${lens.presets}
-(the full set is in that directory; open any others you need)
+(the full set is in that directory; open any others you need)`}
 
 ${lens.brief}
 
 METHOD — follow it exactly:
-1. Open the PNGs with the Read tool. Actually look at them. You may not report
-   anything you have not seen.
+1. ${lens.functional
+     ? 'Actually run the thing. You may not report anything you have not observed in real output — paste the output.'
+     : 'Open the PNGs with the Read tool. Actually look at them. You may not report anything you have not seen.'}
 2. Apply docs/REVIEW_RUBRIC.md. Run the blind test described at the top of it.
 3. Be HARSH. Your job is to find the reason a player would call this a hobby
    project. "Looks good" is a failed review. If you cannot find at least three

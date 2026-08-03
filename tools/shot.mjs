@@ -102,6 +102,17 @@ const report = { url, viewport: { w: W, h: H }, shots: [], errors: [] };
 const DEV_RETRIES = 8;
 
 /**
+ * A stall is retried too, but on a much shorter leash than a reload.
+ *
+ * With several agents each driving their own headless city, this machine runs
+ * at a load average north of 150 and a single 1600x900 SwiftShader frame can
+ * pass the 180 s screenshot timeout. That killed a 16-preset sweep on its third
+ * shot and threw away the twelve minutes already spent. A transient stall is
+ * worth replaying; a genuinely wedged page is not, hence two attempts.
+ */
+const SLOW_RETRIES = 2;
+
+/**
  * Run something against window.DEV, surviving a page reload.
  *
  * Several agents work this tree at once and every file they save makes Vite
@@ -113,16 +124,19 @@ const DEV_RETRIES = 8;
  * preset, not resumed; that is why the caller passes the whole shot sequence.
  */
 async function withDev(fn, what) {
+  let slow = 0;
   for (let attempt = 0; attempt < DEV_RETRIES; attempt++) {
     try {
       await page.waitForFunction('!!window.DEV', null, { timeout: 180000 });
       return await fn();
     } catch (e) {
-      const gone = /window\.DEV|Cannot read properties of undefined|Execution context was destroyed|Target closed/.test(
-        String(e && e.message)
-      );
-      if (!gone || attempt === DEV_RETRIES - 1) throw e;
-      log(`  … page reloaded during ${what}; retrying (${attempt + 1}/${DEV_RETRIES - 1})`);
+      const msg = String(e && e.message);
+      const gone = /window\.DEV|Cannot read properties of undefined|Execution context was destroyed|Target closed/.test(msg);
+      const slowed = !gone && /Timeout .* exceeded/.test(msg) && ++slow <= SLOW_RETRIES;
+      if ((!gone && !slowed) || attempt === DEV_RETRIES - 1) throw e;
+      log(slowed
+        ? `  … ${what} timed out under load; retrying (${slow}/${SLOW_RETRIES})`
+        : `  … page reloaded during ${what}; retrying (${attempt + 1}/${DEV_RETRIES - 1})`);
       // Back off: during a save storm several reloads land in a row, and
       // retrying instantly just races the next one.
       await page.waitForTimeout(700 + attempt * 600);

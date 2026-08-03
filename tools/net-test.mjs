@@ -28,7 +28,12 @@ const mk = async (name) => {
 };
 const A = await mk('Alpha');
 const B = await mk('Bravo');
-const pump = async (n=12) => { for (let i=0;i<n;i++){ await A.evaluate(()=>DEV.render(2)); await B.evaluate(()=>DEV.render(2)); await A.waitForTimeout(90);} };
+// The braces are load-bearing, exactly as in tools/shot.mjs: every DEV method
+// returns `this` for chaining, and playwright serialises whatever an evaluate
+// resolves to. Returning DEV drags the entire game object graph across the
+// bridge and throws "object reference chain is too long" once the scene is deep
+// enough — which the city now is, so this test aborted before its first assert.
+const pump = async (n=12) => { for (let i=0;i<n;i++){ await A.evaluate(()=>{DEV.render(2);}); await B.evaluate(()=>{DEV.render(2);}); await A.waitForTimeout(90);} };
 await pump(8);
 // A moves and grows
 await A.evaluate(() => { const g=window.__GAME__; g.player.position.set(150,0,200); DEV.setSize(7); });

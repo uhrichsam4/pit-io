@@ -139,9 +139,24 @@ export function installDevTools(game) {
 
     freeCam(on = false) { if (!on) game.devCam = null; return this; },
 
-    /** Move bots out of frame so shots are deterministic. */
+    /**
+     * Remove the bots so review shots are deterministic.
+     *
+     * Killing them is not enough: Match.update walks its hole list every tick
+     * and respawns anything dead, so they were back within a frame and every
+     * screenshot quietly contained stray rival holes. They have to leave the
+     * list the match is iterating.
+     */
     clearBots() {
-      for (const b of game.bots) { b.hole.alive = false; b.hole.group.visible = false; }
+      for (const b of game.bots) {
+        b.hole.alive = false;
+        b.hole.group.visible = false;
+        game.engine.scene.remove(b.hole.group);
+      }
+      const botHoles = new Set(game.bots.map((b) => b.hole));
+      game.holes = game.holes.filter((h) => !botHoles.has(h));
+      game.bots.length = 0;
+      game.match.holes = game.holes;
       return this;
     },
 
