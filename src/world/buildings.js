@@ -634,7 +634,10 @@ function roofScape(B, plan, y, r, o = {}) {
     const roll = r();
     if (roll < 0.46) acUnit(B, s[0], y + 0.05, s[1], 0.9 + r() * 0.8, r);
     else if (roll < 0.62) ventStack(B, s[0], y + 0.05, s[1], 0.8 + r() * 0.6);
-    else if (roll < 0.74) ductRun(B, s[0], y + 0.05, s[1], 2.5 + r() * 3, r() < 0.5 ? 0 : Math.PI / 2, 1);
+    // Spots are only guaranteed 2.2 m inside the parapet, and a duct is drawn
+    // about its centre — an unclamped 5.5 m run reached past the roof edge and
+    // out over the lot line, which on a split block is the neighbour's air.
+    else if (roll < 0.74) ductRun(B, s[0], y + 0.05, s[1], 2.5 + r() * 1.5, r() < 0.5 ? 0 : Math.PI / 2, 1);
     else if (roll < 0.82) dish(B, s[0], y + 0.05, s[1], 0.7 + r() * 0.5);
     else if (roll < 0.9) B.trim(box(1.6 + r(), 0.5, 1.2 + r(), s[0], y + 0.05, s[1], 3), P.ROOF_MEMBRANE);
     else B.trim(cyl(0.5, 0.7, 8, s[0], y + 0.05, s[1]), P.VENT_METAL);
@@ -919,8 +922,20 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
 /** 6-16 storey Deco / stucco block: banded floors, stepping, loggias. */
 function midrise(ctx, B, r, w, d, h, o = {}) {
   const deco = o.deco ?? r.chance(0.4);
-  const cham = Math.min(w, d) * (deco ? 0.10 : 0.16);
-  let plan = rectPlan(w, d, cham);
+  /*
+   * `w`/`d` are the ground this building may OCCUPY, not the size of its
+   * structural plan. Balconies, cornices and the base band all hang outside
+   * the plan, so the plan has to be drawn in by that much or the silhouette —
+   * which is what the eye sees and what the consumption footprint measures —
+   * overruns the strip of lot the block split handed us. A 1.15 m balcony
+   * against a 1.0 m party gap is how 7 midrise pairs came to overlap by up to
+   * 0.9 m of thin air. Everything hung off `plan` below is capped at `reach`,
+   * so the assembled width is exactly `w`.
+   */
+  const reach = Math.min(deco ? 0.6 : 1.15, Math.min(w, d) * 0.06);
+  const pw = Math.max(5, w - 2 * reach), pd = Math.max(5, d - 2 * reach);
+  const cham = Math.min(pw, pd) * (deco ? 0.10 : 0.16);
+  let plan = rectPlan(pw, pd, cham);
   const uS = B.sk.uScale, vS = B.sk.vScale;
 
   const steps = h > 26 ? (deco ? 3 : 2) : 1;
@@ -935,14 +950,14 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
     // String courses every floor read as the Deco banding from the air.
     if (deco) {
       for (let yy = y + STOREY; yy < top - 1; yy += STOREY) {
-        B.trim(slabGeo(plan, yy - 0.16, 0.3, 0.26), P.STUCCO_WHITE);
+        B.trim(slabGeo(plan, yy - 0.16, 0.3, Math.min(0.26, reach)), P.STUCCO_WHITE);
       }
     } else {
       balconyStack(B, plan, Math.max(y, STOREY), top - 1, STOREY * (r.chance(0.6) ? 1 : 2),
-        1.15, P.STUCCO_WHITE, r.chance(0.5) ? P.ALUMINIUM : P.GLASS_SKY);
+        reach, P.STUCCO_WHITE, r.chance(0.5) ? P.ALUMINIUM : P.GLASS_SKY);
     }
 
-    B.trim(slabGeo(plan, top, 0.45, 0.55), P.CONCRETE_WARM);   // cornice
+    B.trim(slabGeo(plan, top, 0.45, Math.min(0.55, reach)), P.CONCRETE_WARM);   // cornice
     if (i < steps - 1) {
       const nextPlan = insetPlan(plan, 1.8 + r() * 2.6);
       roofScape(B, offsetPlan(plan, 0.2), top + 0.45, r, {
@@ -962,14 +977,17 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
   // Ground-floor retail: a recessed dark shopfront band with piers in front,
   // which is what gives a midrise any scale at eye level.
   if (o.retailBase !== false) {
-    const base = rectPlan(w, d, cham);
+    const base = rectPlan(pw, pd, cham);
     const bb2 = planBounds(base);
     B.trim(loft([{ p: offsetPlan(base, -0.45), y: 0.45 }, { p: offsetPlan(base, -0.45), y: 4.3 }], { uScale: 4, vScale: 4 }), P.SPANDREL);
     B.trim(loft([{ p: base, y: 0 }, { p: base, y: 0.45 }], { uScale: 4, vScale: 4 }), P.CONCRETE_DARK);
-    fins(B, base, 0.45, 4.6, Math.max(6, Math.round((w + d) / 6)), 0.7, P.STUCCO_WHITE);
-    B.trim(slabGeo(base, 4.3, 0.55, 0.5), P.STUCCO_WHITE);
-    if (r.chance(0.72)) awning(B, Math.min(w * 0.62, 14), 4.2, bb2.z1 + 0.05, 1.9, 0.5, r.pick(FABRIC_COLORS));
-    else canopy(B, Math.min(w * 0.6, 14), 4.2, bb2.z1, 2.0, r.pick(FABRIC_COLORS));
+    // A fin sits proud of the face by 0.85x its depth, so it is the deepest
+    // thing on the flank of a low midrise unless it is capped too.
+    fins(B, base, 0.45, 4.6, Math.max(6, Math.round((pw + pd) / 6)),
+      Math.min(0.7, reach / 0.85), P.STUCCO_WHITE);
+    B.trim(slabGeo(base, 4.3, 0.55, Math.min(0.5, reach)), P.STUCCO_WHITE);
+    if (r.chance(0.72)) awning(B, Math.min(pw * 0.62, 14), 4.2, bb2.z1 + 0.05, 1.9, 0.5, r.pick(FABRIC_COLORS));
+    else canopy(B, Math.min(pw * 0.6, 14), 4.2, bb2.z1, 2.0, r.pick(FABRIC_COLORS));
   }
   return roofTop;
 }
@@ -1064,7 +1082,16 @@ function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
 
   /* --- cornice + parapet. Vary the profile per unit. --------------------- */
   const cor = r.weighted([['flat', 40], ['step', 30], ['curve', 30]]);
-  B.trim(slabGeo(plan, h, 0.42, 0.42), P.STUCCO_WHITE);
+  // The cornice projects 0.42 m, and on the flanks that is the PARTY WALL. A
+  // terrace's cornice returns on its own frontage; it does not grow into the
+  // shop next door. Hung off the full plan it made every unit 0.84 m wider
+  // than the strip of frontage it was allotted, against a 0.35 m gap — which
+  // is all 157 storefront/storefront pairs in the audit's overlap list, each
+  // one a cornice buried inside its neighbour's wall and 0.42 m of the
+  // neighbour's ground claimed by the wrong building's footprint.
+  const COR = 0.42;
+  B.trim(slabGeo(rectPlan(Math.max(2, lw - 2 * COR), ld, cham), h, 0.42, COR),
+    P.STUCCO_WHITE);
   if (cor === 'step') {
     B.trim(parapetGeo(plan, h + 0.42, 0.7, 0.4), P.CONCRETE_WARM);
     const cw = lw * 0.42;
@@ -1525,7 +1552,7 @@ function auditFootprint(ctx, kind, root, world, fit) {
     if (!lo) { lo = bb.min.clone(); hi = bb.max.clone(); } else { lo.min(bb.min); hi.max(bb.max); }
   }
   if (!lo) return;
-  const e = _footprint.get(kind) || { n: 0, road: 0, offGround: 0, over: 0 };
+  const e = _footprint.get(kind) || { n: 0, road: 0, offGround: 0, over: 0, wet: 0 };
   e.n++;
   if (Math.abs(lo.y) > 0.2) e.offGround++;
   // Overhang past the lot line is expected — that is what an awning, a canopy
@@ -1534,11 +1561,15 @@ function auditFootprint(ctx, kind, root, world, fit) {
   // NOT layout.isRoad: that also counts the service alleys, and a rear awning
   // reaching a metre over the back lane it faces is the design, not a fault.
   const c = Math.cos(world.rot), s = Math.sin(world.rot);
+  let onRoad = false, onWater = false;
   for (let i = 0; i < 4; i++) {
     const lx = i & 1 ? hi.x : lo.x, lz = i & 2 ? hi.z : lo.z;
     const wx = world.x + lx * c + lz * s, wz = world.z - lx * s + lz * c;
-    if (onCarriageway(ctx.layout, wx, wz)) { e.road++; break; }
+    if (onCarriageway(ctx.layout, wx, wz)) onRoad = true;
+    if (ctx.layout.isWater(wx, wz)) onWater = true;
   }
+  if (onRoad) e.road++;
+  if (onWater) e.wet++;
   if (fit) {
     e.over = Math.max(e.over,
       +Math.max(Math.max(-lo.x, hi.x) - fit.lw / 2, Math.max(-lo.z, hi.z) - fit.ld / 2).toFixed(1));
@@ -1565,24 +1596,67 @@ function register(ctx, group, B, world, radius, height, tier, kind, label, hex, 
   return root;
 }
 
+/**
+ * Dry ground beyond a block edge, in metres, capped at `cap`.
+ *
+ * Sampled rather than derived from bayfront/riverwalk flags: those say the
+ * BLOCK is near water, not which of its four lot lines the water is actually
+ * on, and the seawall, the marina basins, the Key cut and the river bend all
+ * meet the grid at different angles.
+ */
+function dryRun(layout, b, side, cap) {
+  const alongX = side === 'n' || side === 's';
+  const out = side === 'e' || side === 's' ? 1 : -1;
+  let worst = cap;
+  for (let i = 0; i <= 4; i++) {
+    const t = (-0.5 + i / 4) * 0.98;
+    for (let o = 0.5; o <= cap; o += 0.5) {
+      const x = alongX ? b.x + t * b.w : b.x + out * (b.w / 2 + o);
+      const z = alongX ? b.z + out * (b.d / 2 + o) : b.z + t * b.d;
+      if (layout.isWater(x, z)) { worst = Math.min(worst, o - 0.5); break; }
+    }
+  }
+  return worst;
+}
+
+/**
+ * Dry promenade kept between the building line and open water. A lot line on
+ * the seawall is a FRONTAGE, not a party wall — but `b.edges` only knows about
+ * roads, so the bay side of a bayfront block read as "no neighbour here" and
+ * got the 0.5-2 m party-wall gap. That is how Icon Brickell and the Bayfront
+ * Amphitheatre ended up with their podium slabs out over Biscayne Bay.
+ */
+const SEAWALL = 4.0;
+
 /** Buildable rectangle: generous pavement on street frontages, party walls
  *  (0.5-2 m) on the sides that only face an alley or a neighbour. */
-function lotOf(b, r) {
+function lotOf(ctx, b, r) {
   const sw = b.sidewalk || 5;
   const want = (side) => (b.edges && b.edges[side]
     ? Math.max(2.8, sw * (0.62 + r() * 0.36))
     : 0.5 + r() * 1.6);
-  let n = want('n'), s = want('s'), w = want('w'), e = want('e');
+  // The promenade a water-facing side has to keep, whatever else happens.
+  const keep = (side) => {
+    const dry = dryRun(ctx.layout, b, side, SEAWALL);
+    return dry >= SEAWALL ? 0 : SEAWALL - dry;
+  };
+  const kn = keep('n'), ks = keep('s'), kw = keep('w'), ke = keep('e');
+  let n = Math.max(want('n'), kn), s = Math.max(want('s'), ks);
+  let w = Math.max(want('w'), kw), e = Math.max(want('e'), ke);
   // Brickell parcels are only 18-43 m deep. An unclamped 6 m setback on both
   // frontages leaves nothing to build on, which is how whole blocks ended up
-  // as bare pavement. Cap the pair at a third of the parcel.
-  const fit = (a, c, dim) => {
-    const max = dim * 0.34;
+  // as bare pavement. Cap the pair at a third of the parcel — but never below
+  // the seawall promenade: on a spit too thin to hold both, the right answer is
+  // an unbuildable lot (buildBuildings drops it), not a tower in the bay.
+  const fit = (a, c, ma, mc, dim) => {
+    const max = Math.max(ma + mc, dim * 0.34);
     const t = a + c;
-    return t > max ? [a * (max / t), c * (max / t)] : [a, c];
+    if (t <= max) return [a, c];
+    const k = (max - ma - mc) / Math.max(1e-6, t - ma - mc);
+    return [ma + (a - ma) * k, mc + (c - mc) * k];
   };
-  [n, s] = fit(n, s, b.d);
-  [w, e] = fit(w, e, b.w);
+  [n, s] = fit(n, s, kn, ks, b.d);
+  [w, e] = fit(w, e, kw, ke, b.w);
   return {
     x: b.x + (w - e) / 2,
     z: b.z + (n - s) / 2,
@@ -1650,11 +1724,16 @@ export function buildBuildings(ctx) {
   for (const b of layout.blocks) {
     const r = makeRNG(b.seed ^ 0x9e37);
     const side = b.frontage || 's';
-    const lot = lotOf(b, r);
+    const lot = lotOf(ctx, b, r);
     if (lot.w < 7 || lot.d < 7) continue;
 
+    // STUCCO belongs on this list: the Riverwalk Market is the one hero the
+    // zoner leaves as ZONE.RETAIL, so without it the block fell through to the
+    // ordinary shop row, the market hall never rendered anywhere in the city,
+    // and landmarkBlock's STUCCO branch was unreachable code.
     if (b.landmark && heroes.has(b.landmark)
-        && (b.style === STYLE.ARENA || b.style === STYLE.CIVIC || b.style === STYLE.DECO)) {
+        && (b.style === STYLE.ARENA || b.style === STYLE.CIVIC
+            || b.style === STYLE.DECO || b.style === STYLE.STUCCO)) {
       count += landmarkBlock(ctx, group, b, r, lot, side);
       continue;
     }
@@ -1685,13 +1764,18 @@ export function buildBuildings(ctx) {
   }
 
   const rows = [..._footprint.entries()];
-  const bad = rows.filter(([, e]) => e.road || e.offGround)
+  const bad = rows.filter(([, e]) => e.road || e.offGround || e.wet)
     .map(([k, e]) => `${k}: ${e.road}/${e.n} over the carriageway`
-      + (e.offGround ? `, ${e.offGround} not flush to the pavement` : ''));
+      + (e.offGround ? `, ${e.offGround} not flush to the pavement` : '')
+      + (e.wet ? `, ${e.wet} over water` : ''));
+  // Per kind, not a single global maximum: one 4 m arena canopy used to hide
+  // every other kind's reach behind it, which is exactly the number you need
+  // when you are trying to work out WHICH builder is crossing its lot line.
+  const reach = rows.map(([k, e]) => `${k} ${e.over}`).join(' ');
   console.info(`[buildings] ${count} buildings | `
     + (bad.length ? `FOOTPRINT: ${bad.join('; ')}`
-      : 'all on the pavement, none over the carriageway')
-    + ` | widest reach past a lot line ${Math.max(0, ...rows.map(([, e]) => e.over))}m (awnings, canopies)`);
+      : 'all on the pavement, none over the carriageway, none over water')
+    + ` | reach past the lot line, m: ${reach}`);
 }
 
 /* ------------------------------------------------------------ towers --- */
@@ -1794,7 +1878,7 @@ function annex(ctx, group, r, lot, side) {
   const hex = r.pick(STUCCO_SET);
   const AB = new Build(stuccoSkin(hex));
   const ah = 9 + r() * 16;
-  const top = midrise(ctx, AB, r, ap.lw * 0.93, ap.ld * 0.93, ah, { deco: r.chance(0.45) });
+  const top = midrise(ctx, AB, r, ap.lw, ap.ld, ah, { deco: r.chance(0.45) });
   register(ctx, group, AB, ap.world, Math.max(ap.lw, ap.ld) * 0.5, top,
     TIER.MASSIVE, 'midrise', 'Podium Annex', hex, { lw: ap.lw, ld: ap.ld });
   return 1;
@@ -1825,7 +1909,14 @@ function midriseBlock(ctx, group, b, r, lot, side) {
   // Several buildings per block. One slab per parcel is the loudest possible
   // "generated city" tell, and it flattens the skyline into a comb.
   const n = long > 54 ? 3 : long > 26 ? 2 : 1;
-  const parts = splitLot(lot, short < 15 ? Math.min(n, 2) : n, 1.0 + r() * 1.8);
+  // splitLot cuts the long axis, which on a parcel that is long across its own
+  // frontage stacks the units FRONT TO BACK — and every one of them still draws
+  // its ground-floor awning on its own front face. That canopy projects ~2 m,
+  // far more than the balcony allowance midrise() reserves, so the rear unit's
+  // awning was ending up inside the building in front of it. Give it room.
+  const stacked = (lot.w >= lot.d) === (side === 'e' || side === 'w');
+  const parts = splitLot(lot, short < 15 ? Math.min(n, 2) : n,
+    Math.max(stacked ? 2.4 : 1.0, 1.0 + r() * 1.8));
   let made = 0;
   for (const part of parts) {
     if (part.w < 7.5 || part.d < 7.5) continue;
@@ -1833,7 +1924,10 @@ function midriseBlock(ctx, group, b, r, lot, side) {
     const hex = r.pick(STUCCO_SET);
     const B = new Build(stuccoSkin(hex));
     const h = Math.max(11, (b.floors + r.int(-2, 3)) * STOREY * (0.85 + r() * 0.3));
-    const top = midrise(ctx, B, r, pl.lw * 0.95, pl.ld * 0.95, h, {
+    // Full strip, no safety fudge: midrise() now draws its structural plan
+    // inside the width it is handed, so the 5% haircut that used to absorb the
+    // balcony overhang only shrank the block's built frontage for nothing.
+    const top = midrise(ctx, B, r, pl.lw, pl.ld, h, {
       deco: b.style === STYLE.DECO || r.chance(0.35),
     });
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, top,

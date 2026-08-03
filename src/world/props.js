@@ -36,15 +36,23 @@
  *    sets, scooter rows, barrier lines, lounger rows) are placed as clusters,
  *    never as independent dice rolls.
  *
- * 6. NOTHING SHARES GROUND WITH ANYTHING. Three separate tests, because they
+ * 6. THE GROUND IS MEASURED, NOT ASSUMED. `Ground` samples the surface that
+ *    streets.js, water.js and nature.js have already built and puts each prop
+ *    exactly on it — there are eight different heights out there and planting
+ *    everything at Y_WALK left 402 props hovering or buried. The same sample
+ *    decides whether the site is legal at all: below GROUND_MIN it is the
+ *    carriageway, the gutter or a crossing ramp, and nothing stands there.
+ *
+ * 7. NOTHING SHARES GROUND WITH ANYTHING. Three separate tests, because they
  *    answer three different questions and none of them can answer another's:
  *
  *    prop vs prop     the placer's own fine (1.6 m) grid, claiming the MEASURED
  *                     contact footprint of each prop — see `contactRadius`.
- *    prop vs scenery  `Placer.sceneryClear`, which asks the registry. nature.js
- *                     and buildings.js have already run, so their hedges, beds
- *                     and street trees are in it with real measured radii. This
- *                     is what stopped 600 audit pairs of bollards-inside-hedges.
+ *    prop vs scenery  `Placer.sceneryClear`, which asks the registry for every
+ *                     INSTANCED entity — that is exactly everything nature.js
+ *                     plants, at its real measured radius. This is what stopped
+ *                     600 audit pairs of bollards-inside-hedges, and what now
+ *                     also stops loungers inside sea grapes.
  *    prop vs building the block's own setback data, NOT the shared grid:
  *                     buildings.js claims `max(w,d)*0.5` around a block centre,
  *                     which on the coarse 3 m occupancy grid covers the whole
@@ -53,7 +61,7 @@
  *                     this module exists to fix, so `ctx.isFree` is only ever a
  *                     soft hint here (retry a few jittered candidates).
  *
- * 7. A REFUSED SITE IS NOT A LOST PROP. Every one of those tests can say no, and
+ * 8. A REFUSED SITE IS NOT A LOST PROP. Every one of those tests can say no, and
  *    saying no three times per placement cost a fifth of the city's furniture
  *    the first time it was tried. So the callers slide the prop a metre or two
  *    along the line it belongs to (`putAlong`) instead of dropping it: the kerb
@@ -1300,17 +1308,155 @@ function deckHeight(bridges, x, z) {
 }
 
 /**
- * Radius above which a registered entity is a BUILDING, not scenery.
+ * THE SURFACE THE CITY ACTUALLY BUILT.
  *
- * nature.js and buildings.js both run before this module, so everything they
- * placed is already in the registry with a footprint measured from its own
- * geometry — far better information than the shared 3 m occupancy grid. But a
- * storefront's bounding circle is 13 m and a tower's is over 20, which covers
- * the entire pavement this module has to work on. So the registry is consulted
- * only for things small enough to be furniture, planting or street trees; the
- * building keep-out keeps coming from the block's own setback data.
+ * Every prop in this module used to be planted at exactly `Y_WALK`, on the
+ * theory that street furniture stands on the sidewalk. The sidewalk is only one
+ * of eight surfaces it stands on, and an audit against the built geometry found
+ * 402 props off their own ground:
+ *
+ *    0.000  carriageway, and every prop whose run overshot a block corner
+ *    0.064  the flush part of a KERB RAMP — streets.js drops the whole kerb
+ *           profile at every crossing, so the 5 m either side of a corner is
+ *           not at Y_WALK at all
+ *    0.142  the planted median island
+ *    0.155  Y_WALK, the sidewalk
+ *    0.170  a park lawn (nature.js lays turf 15 mm proud of the paving)
+ *    0.225  a feature apron, sports court, sandpit, plaza inlay or raised bed
+ *
+ * Those numbers belong to streets.js and nature.js and will move when either is
+ * edited, so hard-coding a table of them would have been wrong within a week.
+ * Both modules have already RUN by the time this one does — their geometry is
+ * in the scene — so this measures the ground instead of predicting it, exactly
+ * as worldBuild now measures prop size instead of trusting a declaration.
+ *
+ * Only near-horizontal faces below CEIL count. That threshold is what separates
+ * "ground" from "a thing standing on the ground": every paved, planted and
+ * decked surface in the city tops out at 0.23, and the next thing up is a pond
+ * rim at 0.34. Above CEIL a prop would be standing on the furniture.
  */
-const SCENERY_MAX_R = 3.2;
+const GROUND_CEIL = 0.30;
+
+/**
+ * Below this, the sampled surface is not a place to put furniture.
+ *
+ * It catches the carriageway (0.0), the gutter pan, the kerb face — and, the
+ * reason it is 40 mm under Y_WALK rather than at zero, the crossing ramps. A
+ * ramp runs from 0.064 at the kerb to Y_WALK 1.9 m back, so this refuses the
+ * dropped part and accepts the level part behind it. That is the right rule
+ * twice over: it stops the float, and it keeps bins and bike racks out of the
+ * wheelchair crossing, which is where a city puts nothing at all.
+ */
+const GROUND_MIN = 0.115;
+
+const _box = new THREE.Box3();
+
+class Ground {
+  constructor(scene) {
+    this.cell = 6;
+    this.grid = new Map();
+    this.t = [];
+    scene.traverse((n) => {
+      if (!n.isMesh || n.isInstancedMesh) return;
+      // Buildings are the one group with no walkable surface of its own and by
+      // far the most triangles; skipping it halves the build cost.
+      for (let p = n; p; p = p.parent) if (p.name === 'buildings') return;
+      this._add(n);
+    });
+  }
+
+  _add(n) {
+    const geo = n.geometry;
+    const pos = geo.attributes.position;
+    if (!pos) return;
+    // Cheap reject: a mesh entirely above the ceiling cannot contribute.
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    n.updateWorldMatrix(true, false);
+    _box.copy(geo.boundingBox).applyMatrix4(n.matrixWorld);
+    if (_box.min.y > GROUND_CEIL) return;
+    const m = n.matrixWorld.elements;
+    const idx = geo.index;
+    const cnt = idx ? idx.count : pos.count;
+    const t = this.t, c = this.cell;
+    const ax = [0, 0, 0], ay = [0, 0, 0], az = [0, 0, 0];
+    for (let i = 0; i < cnt; i += 3) {
+      let hi = -Infinity;
+      for (let k = 0; k < 3; k++) {
+        const j = idx ? idx.getX(i + k) : i + k;
+        const px = pos.getX(j), py = pos.getY(j), pz = pos.getZ(j);
+        ax[k] = m[0] * px + m[4] * py + m[8] * pz + m[12];
+        ay[k] = m[1] * px + m[5] * py + m[9] * pz + m[13];
+        az[k] = m[2] * px + m[6] * py + m[10] * pz + m[14];
+        if (ay[k] > hi) hi = ay[k];
+      }
+      if (hi > GROUND_CEIL) continue;
+      // Upward-facing only: the underside of a slab is not somewhere to stand.
+      const ny = (az[1] - az[0]) * (ax[2] - ax[0]) - (ax[1] - ax[0]) * (az[2] - az[0]);
+      if (ny <= 0) continue;
+      const base = t.length;
+      t.push(ax[0], az[0], ay[0], ax[1], az[1], ay[1], ax[2], az[2], ay[2]);
+      const i0 = Math.floor(Math.min(ax[0], ax[1], ax[2]) / c);
+      const i1 = Math.floor(Math.max(ax[0], ax[1], ax[2]) / c);
+      const j0 = Math.floor(Math.min(az[0], az[1], az[2]) / c);
+      const j1 = Math.floor(Math.max(az[0], az[1], az[2]) / c);
+      // The base plane is emitted as a few enormous quads; bucketing those into
+      // every cell they touch would put the whole city in one bucket. They are
+      // below GROUND_MIN anyway, so nothing is lost by leaving them out.
+      if (i1 - i0 > 24 || j1 - j0 > 24) continue;
+      for (let i2 = i0; i2 <= i1; i2++) {
+        for (let j2 = j0; j2 <= j1; j2++) {
+          const k = (i2 + 4096) * 16384 + (j2 + 4096);
+          let b = this.grid.get(k);
+          if (!b) { b = []; this.grid.set(k, b); }
+          b.push(base);
+        }
+      }
+    }
+  }
+
+  /** Height of the highest ground under (x,z), or null where there is none. */
+  at(x, z) {
+    const c = this.cell;
+    const b = this.grid.get((Math.floor(x / c) + 4096) * 16384 + (Math.floor(z / c) + 4096));
+    if (!b) return null;
+    const t = this.t;
+    let best = null;
+    for (let n = 0; n < b.length; n++) {
+      const i = b[n];
+      const ax = t[i], az = t[i + 1], bx = t[i + 3], bz = t[i + 4], cx = t[i + 6], cz = t[i + 7];
+      const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+      if (d > -1e-9 && d < 1e-9) continue;
+      const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+      if (l1 < 0 || l1 > 1) continue;
+      const l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+      if (l2 < 0 || l2 > 1) continue;
+      const l3 = 1 - l1 - l2;
+      if (l3 < 0) continue;
+      const y = l1 * t[i + 2] + l2 * t[i + 5] + l3 * t[i + 8];
+      if (best === null || y > best) best = y;
+    }
+    return best;
+  }
+}
+
+/**
+ * Which registered entities this module treats as scenery it must not sit in.
+ *
+ * nature.js and buildings.js both run before this one, so everything they
+ * placed is in the registry with a footprint measured from its own geometry —
+ * far better information than the shared 3 m occupancy grid. But buildings are
+ * one-off MESHES whose bounding circle is 7 m for a storefront and 28 for a
+ * tower, which covers the entire pavement this module has to work on; gating
+ * placement on those leaves the city bare. Everything nature.js plants is
+ * INSTANCED, so backing is the honest discriminator, and it is a better one
+ * than the radius cut it replaces: that cut was 3.2 m, and the four things it
+ * silently let props stand inside — sea grape (5.4 m), playground (4.3),
+ * pergola (3.7) and the park fountains (5.8 and 9.4) — are all bigger.
+ */
+const isScenery = (c) => !!c.pool;
+
+/** How far the registry has to be asked around a site. The largest scenery. */
+const SCENERY_MAX_R = 9.5;
 
 /**
  * How much of two footprints may overlap before it reads as a defect. Matched
@@ -1347,7 +1493,8 @@ class Placer {
     this.grid = new Map();
     this.bridges = ctx.layout.bridges || [];
     this._near = [];
-    this.rejected = { water: 0, bridge: 0, scenery: 0, occupied: 0 };
+    this.ground = new Ground(ctx.scene);
+    this.rejected = { water: 0, bridge: 0, scenery: 0, occupied: 0, road: 0, void: 0 };
   }
 
   /**
@@ -1358,7 +1505,7 @@ class Placer {
     const near = this.ctx.registry.query(x, z, r + SCENERY_MAX_R, this._near);
     for (let i = 0; i < near.length; i++) {
       const c = near[i];
-      if (c.radius > SCENERY_MAX_R) continue;
+      if (!isScenery(c)) continue;
       const reach = (r + c.radius) * SCENERY_FIT;
       const dx = c.position.x - x, dz = c.position.z - z;
       if (dx * dx + dz * dz < reach * reach) return false;
@@ -1406,9 +1553,11 @@ class Placer {
    *   share a footprint with something already placed (a basket hanging off a
    *   lamp bracket), or an explicit value where the mesh understates what the
    *   object needs (a parasol stands on a 12 cm pole but shades 2.8 m).
+   * @param {boolean} [onRoad] this site IS the carriageway on purpose — a cone
+   *   taper closing a lane. Everything else is refused there.
    * @returns {boolean} placed
    */
-  put(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
+  put(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, onRoad = false) {
     const d = DEFS[key];
     if (!d) return false;
     this.tried++;
@@ -1416,13 +1565,18 @@ class Placer {
     // is spaced, so the site is disqualified before anything else is tested.
     if (this.ctx.layout.isWater(x, z)) { this.rejected.water++; return false; }
     if (deckHeight(this.bridges, x, z) > 0.02) { this.rejected.bridge++; return false; }
+    // Whatever surface is really here is where this prop stands — and if that
+    // surface is the road, the gutter or a crossing ramp, it does not stand.
+    const gy = this.ground.at(x, z);
+    if (gy === null) { this.rejected.void++; return false; }
+    if (!onRoad && gy < GROUND_MIN) { this.rejected.road++; return false; }
     if (claimR !== 0) {
       const foot = claimR < 0 ? Math.max(0.25, contactRadius(key) * scale) : claimR;
       if (!this.free(x, z, foot + 0.10)) { this.rejected.occupied++; return false; }
       if (!this.sceneryClear(x, z, foot)) { this.rejected.scenery++; return false; }
       this.claim(x, z, foot + 0.10);
     }
-    this.items.push({ key, x, z, rot, scale, hex, dy });
+    this.items.push({ key, x, z, rot, scale, hex, y: gy });
     return true;
   }
 
@@ -1434,10 +1588,10 @@ class Placer {
    * outright cost the city a fifth of its street furniture — where sliding the
    * bin a metre down the same kerb keeps the rhythm, the density AND the fix.
    */
-  putAlong(key, x, z, ux, uz, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
+  putAlong(key, x, z, ux, uz, rot = 0, scale = 1, hex = null, claimR = -1, onRoad = false) {
     for (let i = 0; i < SLIDE.length; i++) {
       const t = SLIDE[i];
-      if (this.put(key, x + ux * t, z + uz * t, rot, scale, hex, claimR, dy)) return t;
+      if (this.put(key, x + ux * t, z + uz * t, rot, scale, hex, claimR, onRoad)) return t;
     }
     return null;
   }
@@ -1454,7 +1608,7 @@ class Placer {
    * there the only thing objecting is nature.js's pond, bandshell or fountain
    * apron, and a picnic table in the pond is not a trade worth making.
    */
-  putSoft(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0, strict = false) {
+  putSoft(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, onRoad = false, strict = false) {
     const r = this.rng;
     // Strict callers get more candidates because they have no fallback: the
     // shared grid over-claims badly (a bandshell's `occupy(r=17)` marks a 35 m
@@ -1465,10 +1619,10 @@ class Placer {
       const jx = t === 0 ? 0 : (r() - 0.5) * 5.0;
       const jz = t === 0 ? 0 : (r() - 0.5) * 5.0;
       if (!this.ctx.isFree(x + jx, z + jz, 0)) continue;
-      if (this.put(key, x + jx, z + jz, rot, scale, hex, claimR, dy)) return true;
+      if (this.put(key, x + jx, z + jz, rot, scale, hex, claimR, onRoad)) return true;
     }
     if (strict) { this.rejected.occupied++; return false; }
-    return this.put(key, x, z, rot, scale, hex, claimR, dy);
+    return this.put(key, x, z, rot, scale, hex, claimR, onRoad);
   }
 
   /**
@@ -1480,8 +1634,8 @@ class Placer {
    * parcel — which carpets the whole block on the shared grid. Using this there
    * does not tidy the yard, it empties it.
    */
-  putOpen(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
-    return this.putSoft(key, x, z, rot, scale, hex, claimR, dy, true);
+  putOpen(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1) {
+    return this.putSoft(key, x, z, rot, scale, hex, claimR, false, true);
   }
 
   emit() {
@@ -1495,7 +1649,7 @@ class Placer {
       const d = DEFS[it.key];
       const hex = d.tint ? (it.hex ?? d.tint[Math.floor(r() * d.tint.length)]) : null;
       ctx.addInstanced(it.key, factoryFor(it.key), {
-        position: new THREE.Vector3(it.x, ctx.Y_WALK + (d.y || 0) + (it.dy || 0), it.z),
+        position: new THREE.Vector3(it.x, it.y + (d.y || 0), it.z),
         rotationY: it.rot,
         scale: it.scale,
         hex,
@@ -1525,7 +1679,8 @@ class Placer {
       `${(tris / 1000).toFixed(0)}k tris / ` +
       `${((this.items.length / this.tried) * 100).toFixed(0)}% of ${this.tried} attempts placed ` +
       `| refused: ${rj.occupied} occupied, ${rj.scenery} into scenery, ` +
-      `${rj.bridge} on a bridge, ${rj.water} in water`
+      `${rj.bridge} on a bridge, ${rj.water} in water, ` +
+      `${rj.road} on the carriageway or a crossing ramp, ${rj.void} over nothing`
     );
     return { pools: counts.size, instances: this.items.length, tris };
   }
@@ -1554,10 +1709,13 @@ export function buildProps(ctx) {
  * fixes a gameplay problem: the starting camera frames a junction, and without
  * this the whole middle of the frame is bare asphalt with nothing to eat.
  *
- * The island surface streets.js builds sits at y = 0.142, 13 mm below Y_WALK.
+ * The island is not continuous, and predicting where it stops is a losing game:
+ * streets.js drops it across junctions, across the bridges, wherever the road
+ * runs dry-to-wet, and wherever what is left would be under 18 m long. So this
+ * places on the island's own vocabulary and lets the surface sample decide —
+ * the six props that used to end up marooned on bare asphalt where a short run
+ * had been dropped are now simply refused.
  */
-const MEDIAN_DY = -0.013;
-
 function dressMedians(pl, layout, rng) {
   const S = WORLD.SIZE;
   for (const road of layout.medians) {
@@ -1593,7 +1751,7 @@ function dressMedians(pl, layout, rng) {
       sinceLamp += 4.0;
       const rotAlong = alongX ? Math.PI / 2 : 0;
       if (sinceLamp > 25) {
-        if (pl.putSoft('lampDeco', x, z, rotAlong, 1, null, -1, MEDIAN_DY)) sinceLamp = 0;
+        if (pl.putSoft('lampDeco', x, z, rotAlong)) sinceLamp = 0;
         continue;
       }
       const key = rng.weighted([
@@ -1614,7 +1772,7 @@ function dressMedians(pl, layout, rng) {
       const rot = key === 'uplighter'
         ? rotAlong + (off > 0 ? -Math.PI / 2 : Math.PI / 2)
         : rotAlong;
-      pl.put(key, px, pz, rot, 1, null, -1, MEDIAN_DY);
+      pl.put(key, px, pz, rot);
     }
   }
 }
@@ -1720,9 +1878,15 @@ function kerbRun(pl, b, s, r, band, life) {
   const rot = SIDE_ROT[s];
   /* Two distinct lines — a kerb line and a facade line (see facadeRun) with
      clear walking room between — is what makes a pavement read as a pavement
-     from above. Scattering across the full band just looks like litter. */
-  const inMin = 0.85;
-  const inMax = Math.min(2.5, Math.max(1.15, band - 0.5));
+     from above. Scattering across the full band just looks like litter.
+
+     The SETBACK IS DRAWN ONCE PER FRONTAGE, not once per prop. Re-rolling it
+     per item over the 0.85-2.5 m the band allows made every kerb line zig-zag
+     by up to 1.65 m, which is the single loudest scatter tell in the module:
+     real street furniture is set out off one building line and lines up. What
+     is left is a 12 cm jitter, which is about how accurately a crew working off
+     a string line actually lands a bin. */
+  const setback = 0.85 + r() * Math.max(0.25, Math.min(2.5, Math.max(1.15, band - 0.5)) - 0.85);
 
   /* Lamp posts on an even cadence. An irregular lamp rhythm is one of the
      loudest "procedural city" tells, so this one is deliberately metronomic. */
@@ -1772,7 +1936,7 @@ function kerbRun(pl, b, s, r, band, life) {
   const base = (8.2 - 4.2 * life) / DENSITY;
   const table = kerbTable(b);
   for (let u = 2.4 + r() * 2.0; u < len - 2.4; u += base * (0.72 + r() * 0.7)) {
-    const inset = inMin + r() * Math.max(0.25, inMax - inMin);
+    const inset = setback + (r() - 0.5) * 0.24;
     const p = edgePt(b, s, u, inset);
     const key = r.weighted(table);
     const jitter = (r() - 0.5) * 0.3;
@@ -1781,9 +1945,10 @@ function kerbRun(pl, b, s, r, band, life) {
     const slid = pl.putAlong(key, p.x, p.z, ux, uz, rot + jitter);
     if (slid === null) continue;
     // Companions: real street furniture arrives in pairs — a bin beside the
-    // bench, a second planter beside the first, litter beside the cart.
+    // bench, a second planter beside the first, litter beside the cart. A
+    // companion stands ON THE SAME LINE as its principal, not offset off it.
     if (COMPANION[key] && r.chance(0.36)) {
-      const q = edgePt(b, s, u + slid + 1.5 + r() * 0.9, inset + (r() - 0.5) * 0.5);
+      const q = edgePt(b, s, u + slid + 1.5 + r() * 0.9, inset + (r() - 0.5) * 0.2);
       pl.putAlong(r.pick(COMPANION[key]), q.x, q.z, ux, uz, rot + (r() - 0.5) * 0.4);
     }
   }
@@ -1794,7 +1959,7 @@ function kerbRun(pl, b, s, r, band, life) {
   if (band > 3.6) {
     const midIn = band * 0.55;
     for (let u = 5 + r() * 4; u < len - 4; u += ((15.5 - 6.5 * life) / DENSITY) * (0.7 + r() * 0.8)) {
-      const p = edgePt(b, s, u, midIn + (r() - 0.5) * 0.7);
+      const p = edgePt(b, s, u, midIn + (r() - 0.5) * 0.24);
       const key = r.weighted([
         ['benchSlat', 8], ['planterSquare', 7], ['planterTrough', 5], ['binMuni', 4],
         ['pottedPalm', 2], ['bollardStone', 4], ['cafeTable', life > 0.5 ? 6 : 1],
@@ -1857,13 +2022,16 @@ function facadeRun(pl, b, s, r, band, life) {
       ['bollardStone', 4], ['utilityBox', 2], ['sandwichBoard', 2]];
 
   const [ux, uz] = EDGE_DIR[s];
+  // Shop clutter stands AGAINST the glass, so this line is tighter than the
+  // kerb line is: a sandwich board a metre out into the walking zone reads as
+  // dropped, not as put out.
   for (let u = 3 + r() * 3; u < len - 3; u += step * (0.72 + r() * 0.8)) {
-    const p = edgePt(b, s, u, inset + (r() - 0.5) * 0.5);
+    const p = edgePt(b, s, u, inset + (r() - 0.5) * 0.22);
     const key = r.weighted(table);
     const slid = pl.putAlong(key, p.x, p.z, ux, uz, rot + (r() - 0.5) * 0.4);
     if (slid === null) continue;
     if (COMPANION[key] && r.chance(0.32)) {
-      const q = edgePt(b, s, u + slid + 1.3 + r() * 0.8, inset - 0.3 - r() * 0.6);
+      const q = edgePt(b, s, u + slid + 1.3 + r() * 0.8, inset - 0.2 - r() * 0.35);
       pl.putAlong(r.pick(COMPANION[key]), q.x, q.z, ux, uz, rot + (r() - 0.5) * 0.5);
     }
   }
@@ -2136,19 +2304,36 @@ function beachFront(pl, b, r) {
   }
 }
 
+/**
+ * A garage forecourt: kerb protection, cabinets and a few cones.
+ *
+ * Everything here is protection for a vehicle entrance, and protection comes in
+ * RUNS: a line of bollards guarding the ramp mouth, a row of cones closing a
+ * bay, a pair of cabinets against the wall. Rolling a fresh side, offset and
+ * setback for each of ~20 items — which is what this did — produced a garage
+ * ringed in evenly-spread confetti, the one shape a real forecourt never has.
+ */
 function lotFurniture(pl, b, r, band) {
-  // A garage forecourt: kerb protection, cabinets and a few cones.
-  const n = Math.round((b.w + b.d) / 8 * DENSITY);
-  for (let i = 0; i < n; i++) {
+  const runs = Math.max(2, Math.round((b.w + b.d) / 34 * DENSITY));
+  for (let i = 0; i < runs; i++) {
     const s = r.pick(['n', 's', 'w', 'e']);
-    const u = 3 + r() * Math.max(1, edgeLen(b, s) - 6);
-    const p = edgePt(b, s, u, 0.9 + r() * Math.max(0.3, band - 1.2));
+    const len = edgeLen(b, s);
     const [ux, uz] = EDGE_DIR[s];
-    // A garage IS a building, so the shared grid is unusable here (see putOpen).
-    pl.putAlong(r.weighted([
+    const rot = SIDE_ROT[s];
+    const key = r.weighted([
       ['bollard', 9], ['cone', 6], ['utilityBox', 4], ['barrel', 3],
       ['signParking', 5], ['binWheelie', 3], ['aframe', 2],
-    ]), p.x, p.z, ux, uz, SIDE_ROT[s]);
+    ]);
+    // One setback for the whole run, and a pitch that just clears the prop.
+    const inset = 0.9 + r() * Math.max(0.3, band - 1.2);
+    const pitch = Math.max(1.25, contactRadius(key) * 2 + 0.45);
+    const n = key === 'utilityBox' ? 1 + r.int(0, 1) : 3 + r.int(0, 4);
+    const u0 = 2.5 + r() * Math.max(1, len - 5 - n * pitch);
+    for (let k = 0; k < n; k++) {
+      const p = edgePt(b, s, u0 + k * pitch, inset);
+      // A garage IS a building, so the shared grid is unusable here (see putOpen).
+      pl.putAlong(key, p.x, p.z, ux, uz, rot);
+    }
   }
 }
 
@@ -2174,7 +2359,10 @@ function constructionYard(pl, b, r, band) {
 
   /* Lane closure. A site with no works in the road in front of it is the
      giveaway that the hoarding is scenery; it is also the only thing that puts
-     anything edible in the middle of a 34 m boulevard. */
+     anything edible in the middle of a 34 m boulevard. This is the one place in
+     the module that WANTS the carriageway, hence the onRoad flag: the cones
+     stand on the asphalt, and now at whatever height the asphalt turns out to
+     be rather than at a hand-subtracted kerb height. */
   const fr = b.frontageStreets && b.frontageStreets[0];
   if (fr && r.chance(0.8)) {
     const road = fr.road;
@@ -2192,11 +2380,11 @@ function constructionYard(pl, b, r, band) {
       const depth = 0.9 + Math.min(3.6, k * 0.62);
       const cx = alongX ? t : kerb + outward * depth;
       const cz = alongX ? kerb + outward * depth : t;
-      pl.put(k % 5 === 4 ? 'barrel' : 'cone', cx, cz, 0, 1, null, -1, -0.155);
+      pl.put(k % 5 === 4 ? 'barrel' : 'cone', cx, cz, 0, 1, null, -1, true);
     }
     const ex = alongX ? u0 - 1.6 : kerb + outward * 1.2;
     const ez = alongX ? kerb + outward * 1.2 : u0 - 1.6;
-    pl.put('aframe', ex, ez, alongX ? 0 : Math.PI / 2, 1, null, -1, -0.155);
+    pl.put('aframe', ex, ez, alongX ? 0 : Math.PI / 2, 1, null, -1, true);
   }
 
   /* Site yard: material stacks, welfare units, scaffolding. Everything on a

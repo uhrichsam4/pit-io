@@ -1543,7 +1543,7 @@ class Traffic {
         sg.edgeLo = sg.lo <= s0 + 8;
         sg.edgeHi = sg.hi >= s1 - 8;
       }
-      const info = { lane, segs, list: [], opposing: null, sMin: s0, sMax: s1 };
+      const info = { lane, segs, list: [], claims: [], opposing: null, sMin: s0, sMax: s1 };
       this.lanes.push(info);
       this.byLaneId.set(lane.id, info);
       for (let i = 0; i < segs.length; i++) {
@@ -1578,14 +1578,52 @@ class Traffic {
     this._insert(info, v);
   }
 
-  /** Is there room at `s` on this lane for a vehicle of length `len`? */
+  /**
+   * Is there room at `s` on this lane for a vehicle of length `len`?
+   *
+   * The lane list alone is not the answer. Lane changes are applied AFTER the
+   * per-lane sweep, so a slot claimed earlier in the same frame is still
+   * invisible to it: two cars leaving the map on the same tick both drew the
+   * same boundary segment, both found it empty and both re-entered at the same
+   * `s`. That is exactly where the pairs of cars sitting inside each other at
+   * the map edge came from, and the same race let two cars turn into one gap.
+   */
   hasRoom(info, s, len) {
     const L = info.list;
     for (let i = 0; i < L.length; i++) {
       if (Math.abs(L[i].s - s) < (L[i].len + len) * 0.5 + 4) return false;
       if (L[i].s > s + 40) break;
     }
+    const P = this.pending;
+    for (let i = 0; i < P.length; i++) {
+      if (P[i].to !== info) continue;
+      if (Math.abs(P[i].s - s) < (P[i].v.len + len) * 0.5 + 4) return false;
+    }
+    // Slots held by cars already committed to an arc onto this lane. A turn is
+    // decided up to 45 m out and re-checked once more before the arc, but the
+    // car then spends 6-11 m of arc in the junction with nothing holding its
+    // landing spot — so a second car turning in from another approach found the
+    // lane empty and both arrived in the same 3 m of tarmac. Holding the slot
+    // from the moment of commitment is what stops that, and it costs a refused
+    // turn rather than a visible correction after the fact.
+    const C = info.claims;
+    for (let i = 0; i < C.length; i++) {
+      if (Math.abs(C[i].s - s) < (C[i].len + len) * 0.5 + 4) return false;
+    }
     return true;
+  }
+
+  /** Abandon a turn, releasing whatever slot it was holding. */
+  _dropTurn(v) {
+    const t = v.turn;
+    if (!t) return;
+    if (t.claim) {
+      const C = t.dstInfo.claims;
+      const i = C.indexOf(t.claim);
+      if (i >= 0) C.splice(i, 1);
+      t.claim = null;
+    }
+    v.turn = null;
   }
 
   step(dt, time) {
@@ -1601,7 +1639,7 @@ class Traffic {
         const v = L[i];
         const c = v.c;
         // Swallowed mid-drive: drop out of the queue without stalling it.
-        if (!c || c.state >= 2) { L.splice(i, 1); v.dead = true; continue; }
+        if (!c || c.state >= 2) { this._dropTurn(v); L.splice(i, 1); v.dead = true; continue; }
         // Losing support: the consume system owns its transform now, so it is
         // no longer a car in a queue. Leave it in the lane list (it may regain
         // support if the hole moves on) but stop driving it.
@@ -1653,7 +1691,7 @@ class Traffic {
             if (!mustStop && v.turn && !v.turn.done && v.turn.left) {
               if (this._oncoming(v, lane, j.ix)) { mustStop = true; v.waitT += dt; }
               // Give up rather than deadlock the whole approach.
-              if (v.waitT > 7) { v.turn = null; mustStop = false; }
+              if (v.waitT > 7) { this._dropTurn(v); mustStop = false; }
             }
             if (mustStop) acc = Math.min(acc, this._interact(v, Math.max(0.05, dStop), 0));
           }
@@ -1670,7 +1708,10 @@ class Traffic {
         // here costs nothing visually, abandoning mid-arc would snap the car.
         if (T && !T.done && !T.checked && v.s >= T.sSrc - T.arc - 2) {
           T.checked = true;
-          if (!this.hasRoom(T.dstInfo, T.sDst, v.len + 6)) { v.turn = null; continue; }
+          if (!this.hasRoom(T.dstInfo, T.sDst, v.len + 6)) { this._dropTurn(v); continue; }
+          // Committed: hold the landing slot until the car is physically in it.
+          T.claim = { s: T.sDst, len: v.len + 6 };
+          T.dstInfo.claims.push(T.claim);
         }
         if (T && !T.done && v.s >= T.sSrc) {
           T.done = true;
@@ -1708,8 +1749,17 @@ class Traffic {
       } else if (ev.si !== undefined) {
         ev.v.seg = ev.si;
       }
-      if (ev.reset) { ev.v.turn = null; ev.v.decided = -1; }
+      if (ev.reset) { this._dropTurn(ev.v); ev.v.decided = -1; }
       this._insert(ev.to, ev.v);
+      // In the list now, so the reservation has done its job. Released after
+      // the insert, never before, or the slot is briefly unheld and unfilled.
+      const T2 = ev.v.turn;
+      if (T2 && T2.done && T2.claim) {
+        const C = T2.dstInfo.claims;
+        const ci = C.indexOf(T2.claim);
+        if (ci >= 0) C.splice(ci, 1);
+        T2.claim = null;
+      }
     }
   }
 
@@ -1811,7 +1861,7 @@ class Traffic {
         ? 0.5 + 0.5 * ((v.s - t.sDst) / t.arc)
         : 0.5 * (1 - (t.sSrc - v.s) / t.arc);
       if (k >= 1) {
-        v.turn = null;
+        this._dropTurn(v);
       } else if (k > 0) {
         const m = 1 - k;
         out.x = m * m * t.p0x + 2 * m * k * t.p1x + k * k * t.p2x;
@@ -1868,6 +1918,65 @@ const BIG = new Set(['cityBus', 'articBus', 'boxTruck', 'garbageTruck',
 
 function pickVariant(rng, type) {
   return rng.int(0, FLEET[type].paints.length - 1);
+}
+
+/**
+ * Separating-axis test between two contact rectangles on the ground plane.
+ *
+ * The circle test the audit uses is wrong for a vehicle in both directions: an
+ * excavator's contact patch is 2.9 m across and 8.2 m long, so its circumradius
+ * demands 4.4 m of clearance abeam — which it does not need — while allowing
+ * two of them to park nose to tail inside each other. Rectangles either touch
+ * or they do not.
+ */
+function boxesClash(ax, az, aYaw, aw, ad, bx, bz, bYaw, bw, bd) {
+  const ac = Math.cos(aYaw), as = Math.sin(aYaw);
+  const bc = Math.cos(bYaw), bs = Math.sin(bYaw);
+  // Rotation about +y: local +x -> (cos, -sin), local +z -> (sin, cos).
+  const A = [[ac, -as], [as, ac]], B = [[bc, -bs], [bs, bc]];
+  const dx = bx - ax, dz = bz - az;
+  for (const n of [A[0], A[1], B[0], B[1]]) {
+    const t = Math.abs(dx * n[0] + dz * n[1]);
+    const ra = Math.abs(A[0][0] * n[0] + A[0][1] * n[1]) * aw * 0.5
+             + Math.abs(A[1][0] * n[0] + A[1][1] * n[1]) * ad * 0.5;
+    const rb = Math.abs(B[0][0] * n[0] + B[0][1] * n[1]) * bw * 0.5
+             + Math.abs(B[1][0] * n[0] + B[1][1] * n[1]) * bd * 0.5;
+    if (t > ra + rb) return false;
+  }
+  return true;
+}
+
+/**
+ * Would a footprint standing here sit inside something already placed?
+ *
+ * This module runs after every other content placer, so the registry — not the
+ * occupancy grid — is the honest record of what is on the ground. The grid
+ * quantises to 3 m cells and inflates any non-zero radius to a whole ring of
+ * them, which is why a test for a 1.8 m bicycle was really a test of a 9 m
+ * square and failed on every furnished sidewalk in the city.
+ *
+ * `vehiclesOnly` is the difference between the two callers. Plant belongs among
+ * the barriers and spoil heaps of a construction site, so machinery only has to
+ * miss other vehicles; a bicycle has to miss the bench as well. Nothing bigger
+ * than a delivery van is considered either way — a tower's circumradius covers
+ * half its own parcel, and keeping off buildings is the grid's job.
+ */
+function clearOfPlaced(ctx, x, z, yaw, w, d, out, vehiclesOnly) {
+  const list = ctx.registry.query(x, z, Math.hypot(w, d) * 0.5 + 7, out);
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i];
+    const om = FLEET[o.kind] ? shapeMetrics(o.kind) : null;
+    if (!om && vehiclesOnly) continue;
+    if (o.radius > 6.5) continue;
+    // A prop that is not one of ours has no authored contact box; its measured
+    // radius is honest for something compact, so stand a square in its place.
+    const ow = om ? om.contactW : o.radius * 1.41;
+    const od = om ? om.contactD : o.radius * 1.41;
+    if (boxesClash(x, z, yaw, w, d, o.position.x, o.position.z, o.rotationY || 0, ow, od)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Fill every driveable lane stretch with moving traffic. */
@@ -2113,38 +2222,72 @@ function placeBoats(ctx, state, rng) {
   return boats;
 }
 
-/** Plant machinery around the edge of every construction parcel. */
+/** How far inside the parcel line a machine's contact patch has to finish. */
+const SITE_MARGIN = 0.4;
+
+const MACHINE_MIX = [['excavator', 26], ['wheelLoader', 20], ['siteDumper', 18],
+  ['cementMixer', 12], ['scissorLift', 14], ['roadRoller', 10]];
+
+/**
+ * Plant machinery around the edge of every construction parcel.
+ *
+ * The perimeter offset has to come from the MACHINE, not from a fraction of the
+ * block. At the old 0.42 * width a cement mixer — 8.9 m of contact patch, most
+ * of it drum — hung 2.5 m over the parcel line, across the sidewalk and into
+ * the kerbside parking that placeParked had already filled. So the type is
+ * drawn first and the machine is then stood its own half-extent inside the
+ * boundary, on both axes, at the heading it will actually sit at.
+ */
 function placeMachinery(ctx, state, rng) {
+  const near = [];
   let cranes = 0;
   for (const b of ctx.layout.blocks) {
     if (b.zone !== ZONE.CONSTRUCTION) continue;
     const r = makeRNG(b.seed ^ 0x51a7);
-    // buildings.js fills the middle; the perimeter strip is what is left.
-    const hw = b.w * 0.42, hd = b.d * 0.42;
     const n = 3 + r.int(0, 3);
-    // Machines are 3-8 m long, so a purely random perimeter position parks two
-    // of them inside each other. Keep a local list and reject close pairs —
-    // the shared occupancy grid is no help here, buildings.js has already
+    // Machines are 3-9 m long, so a purely random perimeter position parks two
+    // of them inside each other. Keep a local list and reject overlapping pairs
+    // — the shared occupancy grid is no help here, buildings.js has already
     // claimed the whole parcel for the tower core.
     const placed = [];
     for (let i = 0; i < n; i++) {
+      const type = r.weighted(MACHINE_MIX);
+      const m = shapeMetrics(type);
       let x = 0, z = 0, rot = 0, ok = false;
       for (let a = 0; a < 8 && !ok; a++) {
         const edge = r.int(0, 3);
         const u = (r() - 0.5) * 0.78;
-        if (edge === 0) { x = b.x + u * b.w; z = b.z - hd; rot = 0; }
-        else if (edge === 1) { x = b.x + u * b.w; z = b.z + hd; rot = Math.PI; }
-        else if (edge === 2) { x = b.x - hw; z = b.z + u * b.d; rot = Math.PI / 2; }
-        else { x = b.x + hw; z = b.z + u * b.d; rot = -Math.PI / 2; }
+        rot = (edge === 0 ? 0 : edge === 1 ? Math.PI : edge === 2 ? Math.PI / 2 : -Math.PI / 2)
+          + (r() - 0.5) * 0.5;
+        const ca = Math.abs(Math.cos(rot)), sa = Math.abs(Math.sin(rot));
+        const spanX = b.w * 0.5 - (m.contactW * ca + m.contactD * sa) * 0.5 - SITE_MARGIN;
+        const spanZ = b.d * 0.5 - (m.contactW * sa + m.contactD * ca) * 0.5 - SITE_MARGIN;
+        if (spanX <= 0 || spanZ <= 0) break;   // parcel too small for this machine
+        if (edge === 0) { x = b.x + u * b.w; z = b.z - spanZ; }
+        else if (edge === 1) { x = b.x + u * b.w; z = b.z + spanZ; }
+        else if (edge === 2) { x = b.x - spanX; z = b.z + u * b.d; }
+        else { x = b.x + spanX; z = b.z + u * b.d; }
+        // The along-edge coordinate has to stay on the parcel too, or a machine
+        // backed onto the north edge juts out of the west one.
+        x = Math.min(b.x + spanX, Math.max(b.x - spanX, x));
+        z = Math.min(b.z + spanZ, Math.max(b.z - spanZ, z));
         ok = true;
-        for (const q of placed) if (Math.hypot(q[0] - x, q[1] - z) < 9) { ok = false; break; }
+        for (const q of placed) {
+          if (boxesClash(x, z, rot, m.contactW + 0.6, m.contactD + 0.6,
+            q[0], q[1], q[2], q[3], q[4])) { ok = false; break; }
+        }
+        // Even inside the line a machine on a narrow parcel can reach a car
+        // parked at the kerb, so ask the registry — placeParked ran first.
+        // Vehicles only, deliberately: making plant dodge the site's own
+        // barriers, spoil and portaloos too starves the sites, 41 machines
+        // down to 9, and plant standing among site clutter is the point.
+        if (ok && !clearOfPlaced(ctx, x, z, rot, m.contactW + 0.6, m.contactD + 0.6, near, true)) {
+          ok = false;
+        }
       }
       if (!ok) continue;
-      placed.push([x, z]);
-      const type = r.weighted([['excavator', 26], ['wheelLoader', 20],
-        ['siteDumper', 18], ['cementMixer', 12], ['scissorLift', 14],
-        ['roadRoller', 10]]);
-      const c = spawn(ctx, state, type, 0, x, ctx.Y_WALK, z, rot + (r() - 0.5) * 0.5, false);
+      placed.push([x, z, rot, m.contactW, m.contactD]);
+      const c = spawn(ctx, state, type, 0, x, ctx.Y_WALK, z, rot, false);
       // Claim what the machine actually covers, not a flat 2.4 m. An excavator
       // is 4.4 m across the tracks and a site dumper 3.8 m, and pedestrians.js
       // reads this grid AFTER us — under-claiming is why the crowd walked
@@ -2152,37 +2295,62 @@ function placeMachinery(ctx, state, rng) {
       if (c) ctx.occupy(x, z, c.radius * 0.85);
     }
     if (cranes < 7 && r.chance(0.6) && Math.min(b.w, b.d) > 34) {
+      const cm = shapeMetrics('craneBase');
+      const rot = r() * 1.5;
       const x = b.x + (r() - 0.5) * b.w * 0.5;
       const z = b.z + (r() - 0.5) * b.d * 0.5;
       let clear = true;
-      for (const q of placed) if (Math.hypot(q[0] - x, q[1] - z) < 11) { clear = false; break; }
+      for (const q of placed) {
+        if (boxesClash(x, z, rot, cm.contactW + 1.0, cm.contactD + 1.0,
+          q[0], q[1], q[2], q[3], q[4])) { clear = false; break; }
+      }
       if (!clear) continue;
-      const c = spawn(ctx, state, 'craneBase', 0, x, ctx.Y_WALK, z, r() * 1.5, false);
+      const c = spawn(ctx, state, 'craneBase', 0, x, ctx.Y_WALK, z, rot, false);
       if (c) ctx.occupy(x, z, c.radius * 0.85);
       cranes++;
     }
   }
 }
 
-/** Bikes leaning at the kerb on lively blocks — cheap, and the street reads. */
+/**
+ * Bikes leaning at the kerb on lively blocks — cheap, and the street reads.
+ *
+ * This placed exactly ZERO bicycles before, and the reason was the clearance
+ * test, not the city. `isFree(x, z, 1.1)` rounds any non-zero radius up to a
+ * whole ring of 3 m cells, so a 1.8 m bicycle was asking whether a 9 m square
+ * of sidewalk was empty — and props.js has furnished every metre of kerb by the
+ * time this runs. Test the one cell the bike stands in, then ask the registry
+ * about the bench that is actually next to it.
+ */
 function placeBikes(ctx, state, rng) {
+  const near = [];
+  const bm = shapeMetrics('bicycle');
   for (const b of ctx.layout.blocks) {
     if (b.streetLife < 0.55) continue;
     const r = makeRNG(b.seed ^ 0x2b19);
     const n = r.int(0, 2);
     for (let i = 0; i < n; i++) {
-      const side = r.int(0, 3);
-      const hw = b.w / 2 - 1.6, hd = b.d / 2 - 1.6;
-      const u = (r() - 0.5) * 0.8;
-      let x, z, rot;
-      if (side === 0) { x = b.x + u * b.w; z = b.z - hd; rot = 0; }
-      else if (side === 1) { x = b.x + u * b.w; z = b.z + hd; rot = Math.PI; }
-      else if (side === 2) { x = b.x - hw; z = b.z + u * b.d; rot = Math.PI / 2; }
-      else { x = b.x + hw; z = b.z + u * b.d; rot = -Math.PI / 2; }
-      if (!ctx.isFree(x, z, 1.1)) continue;
-      ctx.occupy(x, z, 1.0);
-      spawn(ctx, state, 'bicycle', pickVariant(r, 'bicycle'), x, ctx.Y_WALK, z,
-        rot + Math.PI / 2, false);
+      // A furnished kerb is mostly taken, so slide along the edge rather than
+      // giving up on the first bench: one draw per bike found gaps for six
+      // bicycles in the whole city, which is the same as none.
+      for (let a = 0; a < 10; a++) {
+        const side = r.int(0, 3);
+        const hw = b.w / 2 - 1.6, hd = b.d / 2 - 1.6;
+        const u = (r() - 0.5) * 0.8;
+        let x, z, rot;
+        if (side === 0) { x = b.x + u * b.w; z = b.z - hd; rot = 0; }
+        else if (side === 1) { x = b.x + u * b.w; z = b.z + hd; rot = Math.PI; }
+        else if (side === 2) { x = b.x - hw; z = b.z + u * b.d; rot = Math.PI / 2; }
+        else { x = b.x + hw; z = b.z + u * b.d; rot = -Math.PI / 2; }
+        if (!ctx.isFree(x, z, 0)) continue;
+        const yaw = rot + Math.PI / 2;
+        if (!clearOfPlaced(ctx, x, z, yaw, bm.contactW + 0.5, bm.contactD + 0.5, near, false)) {
+          continue;
+        }
+        ctx.occupy(x, z, 1.0);
+        spawn(ctx, state, 'bicycle', pickVariant(r, 'bicycle'), x, ctx.Y_WALK, z, yaw, false);
+        break;
+      }
     }
   }
 }

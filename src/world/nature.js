@@ -1158,19 +1158,39 @@ function makeTree(spec) {
   return geo;
 }
 
-/** Low mass: hedge units, shrubs, flower beds, ornamental grass. */
+/**
+ * Low mass: hedge units, shrubs, flower beds, ornamental grass.
+ *
+ * `depth` makes the mass LINEAR instead of round. A shrub is a blob and its
+ * crossed cards are right, but a hedge is a line, and building one out of the
+ * same crossed cards gave every hedge unit a 3.3 x 3.3 m ground footprint — as
+ * deep as it was long. Since worldBuild measures that footprint for the
+ * physics, all 2,400 hedges in the city were claiming 1.65 m of the pavement in
+ * front of them and 1.65 m of the setback behind, which is most of a Miami
+ * sidewalk — and hedge-against-pedestrian was far and away the commonest
+ * overlapping pair on the map. Two parallel faces plus a cap is the same three
+ * cards, the same six triangles, and an object the shape of the thing it draws.
+ */
 function makeBush(spec) {
   const rng = makeRNG(spec.seed);
   const parts = [];
   const n = spec.cards || 3;
+  const dep = spec.depth || 0;
   for (let i = 0; i < n; i++) {
     const g = cardGeo(spec.w, spec.h, spec.cell);
-    g.rotateY((i / n) * Math.PI + rng() * 0.3);
+    if (dep) {
+      // Faces of a slab: both broadside to the run, offset either side of it.
+      g.translate(0, 0, (i / Math.max(1, n - 1) - 0.5) * dep);
+      g.rotateY((rng() - 0.5) * 0.12);
+    } else {
+      g.rotateY((i / n) * Math.PI + rng() * 0.3);
+    }
     parts.push(g);
   }
   if (spec.top !== false) {
-    const t = cardGeo(spec.w * 0.94, spec.w * 0.94, spec.cell);
-    t.translate(0, -spec.w * 0.47, 0);
+    const td = dep ? dep * 1.15 : spec.w * 0.94;
+    const t = cardGeo(spec.w * 0.94, td, spec.cell);
+    t.translate(0, -td * 0.5, 0);
     _m4.makeRotationX(-Math.PI / 2);
     t.applyMatrix4(_m4);
     t.translate(0, spec.h * 0.86, 0);
@@ -1506,20 +1526,25 @@ const SPECIES = {
   hedge: {
     label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 3600, clear: 0.0, sep: 1.05,
     debris: PALETTE.HEDGE, noShadow: false,
-    geo: () => makeBush({ seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2 }),
+    // 1.1 m deep: a clipped municipal hedge, not a topiary cube. See makeBush.
+    geo: () => makeBush({ seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2, depth: 1.1 }),
   },
   shrub: {
     label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2600, clear: 0.7, sep: 0.6,
     debris: PALETTE.HEDGE,
     geo: () => makeBush({ seed: 137, w: 1.9, h: 1.5, cell: 'shrubA', cards: 3 }),
   },
+  // sep 0.8, not 0.45: a bloom clump is a 2.2 m card, so anything closer than
+  // ~1.6 m is one clump standing inside another. That was the map's single
+  // biggest cluster of overlapping props before the bed grid was widened, and
+  // the spacing set is what keeps it fixed when a new planting pattern lands.
   flowerPink: {
-    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.45,
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.8,
     debris: PALETTE.FLOWER_PINK,
     geo: () => makeBush({ seed: 149, w: 2.2, h: 0.95, cell: 'canopyPink', cards: 2 }),
   },
   flowerYellow: {
-    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.45,
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.8,
     debris: PALETTE.FLOWER_YELLOW,
     geo: () => makeBush({ seed: 151, w: 2.2, h: 0.95, cell: 'canopyYel', cards: 2 }),
   },
@@ -1839,7 +1864,7 @@ function factoryFor(key, tintHex) {
   return _factories[fk];
 }
 
-const stats = { trees: 0, palms: 0, bushes: 0, features: 0, instances: 0, capped: 0 };
+const stats = { trees: 0, palms: 0, bushes: 0, features: 0, beds: 0, instances: 0, capped: 0 };
 /**
  * Why sites were refused. Reported every boot, because the failure mode of a
  * placement rule is silence: a bad `sep` or an over-wide footprint just thins
@@ -2023,9 +2048,23 @@ function buildMedians(ctx) {
       const z0 = run.z0 + MEDIAN_TAPER, z1 = run.z1 - MEDIAN_TAPER;
       if (z1 - z0 < STEP * 0.5) continue;
 
+      /* FORCED, like the street-tree line and for exactly the same reason.
+         A raised island is nature's ground by construction — streets.js builds
+         the kerb ring and the soil and nothing else places anything on it — but
+         the occupancy grid does not know that: buildings claim a SQUARE sized to
+         their circumradius, and a tower set back from Biscayne Blvd blankets the
+         middle of the road. Reading that grid cost the underplanting almost
+         entirely: 4 clumps of colour across all three boulevards, against 130
+         once the read is skipped. The palms mostly survived it (their step is
+         wider, so more of them fall in a gap between claims) but the ribbon at
+         their feet — the thing that makes an avenue read as planted rather than
+         as a hedge in a gutter — did not exist. The invariants that matter (the
+         bay, the carriageway proper, a building's measured footprint, our own
+         spacing) are all still enforced inside plant(); `force` only ever
+         overrules the over-claim. */
       for (let z = Math.ceil(z0 / STEP) * STEP; z <= z1; z += STEP) {
         plant(ctx, key, road.pos + (rng() - 0.5) * 0.4, z, rng() * 6.283,
-          0.92 + rng() * 0.26, { y: -0.012, clear: 2.0, island: true });
+          0.92 + rng() * 0.26, { y: -0.012, clear: 2.0, island: true, force: true });
         // Colour at their feet, on the half-step, so the underplanting reads as
         // a continuous ribbon rather than a ring around each trunk.
         const mid = z + STEP * 0.5;
@@ -2034,10 +2073,10 @@ function buildMedians(ctx) {
           if (rng.chance(0.72)) {
             plant(ctx, rng.chance(0.5) ? 'flowerPink' : 'flowerYellow',
               lane(s), mid, rng() * 6.283, 0.8 + rng() * 0.35,
-              { y: -0.012, clear: 0.5, island: true });
+              { y: -0.012, clear: 0.5, island: true, force: true });
           } else {
             plant(ctx, 'ornGrass', lane(s), mid, rng() * 6.283, 0.75 + rng() * 0.45,
-              { y: -0.012, clear: 0.4, island: true });
+              { y: -0.012, clear: 0.4, island: true, force: true });
           }
         }
       }
@@ -2190,7 +2229,8 @@ function parkBlock(ctx, B, b, rng) {
   const pin = Math.min(4.5, Math.min(hw, hd) * 0.42);
   const py = y + 0.03;
   const pw = b.streetLife > 0.55 ? 2.8 : 2.2;
-  if (Math.min(b.w, b.d) > 20) {
+  const hasLoop = Math.min(b.w, b.d) > 20;
+  if (hasLoop) {
     const px0 = x0 + pin, px1 = x1 - pin, pz0 = z0 + pin, pz1 = z1 - pin;
     // A slightly bowed loop reads as a designed park, an exact rectangle reads
     // as a spreadsheet.
@@ -2280,13 +2320,35 @@ function parkBlock(ctx, B, b, rng) {
   }
 
   /* --- flower beds ------------------------------------------------------ */
+  /*
+   * ONE random shot per bed used to decide it, tested against
+   * isFree(centre, max(bw,bd)/2). The occupancy grid is 3 m coarse and rounds
+   * that test up to "nothing claimed within 6 m", so a 7 x 5 m bed demanded a
+   * clear 12 m square in a park whose middle is already a pond or a court and
+   * whose edges are a tree line. Almost every site was refused and the parks
+   * had next to no colour in them — 111 blooms in beds across the whole city.
+   * Try a handful of sites instead of one, keep them off the path loop by
+   * construction, and test the bed's own narrow half-width.
+   */
   const beds = 2 + rng.int(0, 2);
+  // Beds go inside the walk, never across it. A park with a loop is bounded by
+  // the ring; a park too small for one carries a single straight path through
+  // the middle, so there the rule is "off the centre line" instead.
+  const keepIn = hasLoop ? pin + pw * 0.5 + 1.0 : 0;
   for (let i = 0; i < beds; i++) {
     const bw = 3.4 + rng() * 4.0, bd = 2.4 + rng() * 3.0;
-    const bx = b.x + (rng() - 0.5) * Math.max(0, b.w - bw - 8);
-    const bz = b.z + (rng() - 0.5) * Math.max(0, b.d - bd - 8);
-    if (!ctx.isFree(bx, bz, Math.max(bw, bd) * 0.5)) continue;
-    if (ctx.layout.isWater(bx, bz) || inBuilding(bx, bz)) continue;
+    const rx = Math.max(0, hw - keepIn - bw * 0.5);
+    const rz = Math.max(0, hd - keepIn - bd * 0.5);
+    let bx = 0, bz = 0, ok = false;
+    for (let t = 0; t < 10 && !ok; t++) {
+      bx = b.x + (rng() * 2 - 1) * rx;
+      bz = b.z + (rng() * 2 - 1) * rz;
+      if (!hasLoop && Math.abs(bz - b.z) < pw * 0.5 + 0.8 + bd * 0.5) continue;
+      ok = ctx.isFree(bx, bz, Math.min(bw, bd) * 0.5)
+        && !ctx.layout.isWater(bx, bz) && !inBuilding(bx, bz);
+    }
+    if (!ok) continue;
+    stats.beds++;
     // Claim it, or props.js drops a traffic cone in the middle of the petunias.
     ctx.occupy(bx, bz, Math.max(bw, bd) * 0.45);
     // A RAISED bed: soil 15 cm up inside a 22 cm edging. The soil used to sit
@@ -2300,7 +2362,11 @@ function parkBlock(ctx, B, b, rng) {
     B.add('kerb', box(0.22, 0.22, bd, bx - bw / 2, y + 0.11, bz, 1));
     B.add('kerb', box(0.22, 0.22, bd, bx + bw / 2, y + 0.11, bz, 1));
     const key = rng.chance(0.5) ? 'flowerPink' : 'flowerYellow';
-    const cols = Math.max(2, Math.round(bw / 1.4)), rows = Math.max(1, Math.round(bd / 1.4));
+    // A bloom clump is a 2.2 m card. Gridding them at 1.4 m centres stacked
+    // every clump halfway through its neighbour — 117 overlapping pairs, more
+    // than a seventh of the whole map's total, for a mass of colour that a
+    // 1.9 m grid draws just as solidly with two thirds of the instances.
+    const cols = Math.max(2, Math.round(bw / 1.9)), rows = Math.max(1, Math.round(bd / 1.9));
     for (let cx = 0; cx < cols; cx++) {
       for (let cz = 0; cz < rows; cz++) {
         plant(ctx, key,
@@ -2308,6 +2374,45 @@ function parkBlock(ctx, B, b, rng) {
           bz - bd / 2 + (cz + 0.5) * (bd / rows),
           rng() * 6.283, 0.75 + rng() * 0.35, { clear: 0, y: 0.015 + soil });
       }
+    }
+  }
+
+  /* --- drifts of colour ------------------------------------------------- */
+  /*
+   * A kerbed bed needs a clear 7 x 5 m rectangle and a 24 m deep park has not
+   * got one: hedge frontage, path ring, the walk's tree line and the hero
+   * feature between them account for every square metre. Seventeen beds in the
+   * whole city was the result, so most of Miami's parks had no colour in them.
+   *
+   * A drift needs no rectangle. Half a dozen clumps of ONE colour in a loose
+   * ellipse is how bedding is actually planted, and it survives anywhere a
+   * single clump fits.
+   *
+   * Test each CLUMP against a single occupancy cell rather than the drift
+   * against `isFree(centre, r)`. `isFree` rounds any non-zero radius up to a
+   * whole 3 m cell in every direction, so it answers "is this 9 m square
+   * empty?" no matter how small the thing asking is — which for a 1 m bloom
+   * clump in a planted park is almost always no. Per-clump, the drift simply
+   * frays around whatever is already there, which is what a drift does.
+   * `clear: 0` for the mirror-image reason: a clump that CLAIMED ground would
+   * blanket that same 9 m square and refuse the other five clumps of its own
+   * drift. Spacing inside the drift is the private `sep` set's job.
+   */
+  const driftN = Math.max(2, Math.round(b.area / 620));
+  for (let i = 0; i < driftN; i++) {
+    const key = rng.chance(0.5) ? 'flowerPink' : 'flowerYellow';
+    const dx = b.x + (rng() - 0.5) * b.w * 0.80;
+    const dz = b.z + (rng() - 0.5) * b.d * 0.80;
+    const a = rng() * 3.14, ra = 2.8 + rng() * 2.6, rb = 1.9 + rng() * 1.0;
+    for (let k = 0; k < 6; k++) {
+      // Even angular spread, jittered radius: a clump ring, not a solid blob.
+      const t = (k / 6) * 6.283 + rng() * 0.5;
+      const u = Math.cos(t) * ra * (0.6 + rng() * 0.4);
+      const v = Math.sin(t) * rb * (0.6 + rng() * 0.4);
+      const px = dx + u * Math.cos(a) - v * Math.sin(a);
+      const pz = dz + u * Math.sin(a) + v * Math.cos(a);
+      if (!ctx.isFree(px, pz, 0)) continue;
+      plant(ctx, key, px, pz, rng() * 6.283, 0.72 + rng() * 0.3, { clear: 0 });
     }
   }
 
@@ -2359,6 +2464,8 @@ function parkBlock(ctx, B, b, rng) {
       b.x + (rng() - 0.5) * b.w * 0.88, b.z + (rng() - 0.5) * b.d * 0.88,
       rng() * 6.283, 0.8 + rng() * 0.45, { tintIndex: i });
   }
+
+  blockShoreline(ctx, b, rng);
 }
 
 /**
@@ -2670,6 +2777,8 @@ function plazaBlock(ctx, B, b, rng) {
         b.x + i * 3.2, b.z - hd * 0.72, 0, 1, { clear: 1.0, force: true });
     }
   }
+
+  blockShoreline(ctx, b, rng);
 }
 
 function placeSculpture(ctx, x, z, rng, force = false, dy = 0) {
@@ -2706,6 +2815,75 @@ function placeSculpture(ctx, x, z, rng, force = false, dy = 0) {
 }
 
 /* ---------------------------------------------------- water's edge etc. --- */
+
+/**
+ * Mangroves standing in the shallows at the foot of a seawall.
+ *
+ * THE ONE SANCTIONED EXCEPTION to "nothing in the water". A mangrove in 30 cm
+ * of water at the foot of the wall is what makes a coast read as a coast
+ * instead of as the place the ground texture stops, and it is the only thing
+ * in this file allowed to pass `shoreline`.
+ *
+ * `(nx, nz)` points at the water and `t` runs along the edge. March out to find
+ * where the land ACTUALLY stops rather than trusting the parcel line — a
+ * bayfront parcel can end 14 m short of the bay — and refuse anything more than
+ * a couple of metres past it, because further out is not a mangrove, it is a
+ * tree in the sea. A bridge deck sits 1.2 m over the water, so keep clear of
+ * those too or the fringe grows up through the carriageway.
+ */
+function mangroveFringe(ctx, rng, ax, az, nx, nz, len, spacing, reach) {
+  let placed = 0;
+  const steps = Math.max(1, Math.round(len / spacing));
+  for (let i = 0; i <= steps; i++) {
+    const t = -len / 2 + (len / steps) * i + (rng() - 0.5) * spacing * 0.3;
+    const px = ax - nz * t, pz = az + nx * t;
+    let wet = -1;
+    for (let d = 0; d <= reach; d += 0.5) {
+      if (ctx.layout.isWater(px + nx * d, pz + nz * d)) { wet = d; break; }
+    }
+    if (wet < 0) continue;
+    // One offset for both axes — two draws would put a diagonal fringe on a
+    // different point in x than in z the day one of these edges is not axial.
+    const off = wet + 0.7 + rng() * 1.5;
+    const ox = px + nx * off, oz = pz + nz * off;
+    let underBridge = false;
+    for (const br of ctx.layout.bridges) {
+      if (Math.abs(ox - br.x) < br.width / 2 + 5 && Math.abs(oz - br.z) < br.length / 2 + 5) {
+        underBridge = true; break;
+      }
+    }
+    if (underBridge) continue;
+    if (plant(ctx, 'mangrove', ox, oz, rng() * 6.283, 0.8 + rng() * 0.4,
+      { shoreline: true, clear: 0, force: true, y: -0.55 })) placed++;
+  }
+  return placed;
+}
+
+/**
+ * Fringe whichever side of a block faces open water.
+ *
+ * Called from every block type, because the coast does not care about zoning:
+ * the bay runs past parks, plazas and towers, and only the six promenade
+ * parcels used to get a shoreline at all. Blocks that turn out not to reach the
+ * water simply plant nothing — `bayfront` is true up to 58 m inland, so most of
+ * them are in that position and the march is what settles it.
+ */
+function blockShoreline(ctx, b, rng) {
+  if (!b.bayfront && !b.riverwalk) return;
+  const seaward = b.bayfront ? 'e' : (b.z > 0 ? 'n' : 's');
+  const along = seaward === 'n' || seaward === 's';
+  const runL = (along ? b.w : b.d) - 4;
+  if (runL < 8) return;
+  const nx = along ? 0 : (seaward === 'e' ? 1 : -1);
+  const nz = along ? (seaward === 's' ? 1 : -1) : 0;
+  // 22 m of reach: on this coast a parcel is usually separated from the water
+  // by the seawall road and its apron, and a short march stops on the tarmac
+  // and gives up. Over-reaching costs nothing — the fringe is planted at
+  // whatever waterline it finds — and where two blocks find the same stretch of
+  // wall the spacing set dedupes them.
+  mangroveFringe(ctx, rng, b.x + nx * (b.w / 2), b.z + nz * (b.d / 2),
+    nx, nz, runL, 11, 22);
+}
 
 /**
  * Promenade / dock apron / riverwalk planting.
@@ -2759,28 +2937,9 @@ function waterfrontBlock(ctx, B, b, rng) {
       { tintIndex: i, force: true });
   }
 
-  /* MANGROVES ON THE WATER — the one sanctioned exception to "nothing in the
-     bay". A mangrove standing in 30 cm of water at the foot of the seawall is
-     what the real shoreline looks like and what makes the edge read as a coast
-     rather than as a cut. Nothing else in this file may pass `shoreline`, and
-     it is limited to the first couple of metres past the wall: any further out
-     and it is a tree in the sea. */
-  if (!dock) {
-    const mn = Math.max(2, Math.round((hd * 2) / 9));
-    for (let i = 0; i < mn; i++) {
-      const pz = b.z - hd + (hd * 2 / mn) * (i + 0.5) + (rng() - 0.5) * 2.2;
-      // March east to find where the land actually stops. A promenade parcel
-      // may end up to 14 m short of the bay edge, so planting a fixed offset
-      // from the parcel would put mangroves on the seawall road half the time.
-      let wet = -1;
-      for (let d = 0; d <= 18; d += 0.5) {
-        if (ctx.layout.isWater(b.x + hw + d, pz)) { wet = b.x + hw + d; break; }
-      }
-      if (wet < 0) continue;
-      plant(ctx, 'mangrove', wet + 0.7 + rng() * 1.5, pz, rng() * 6.283, 0.8 + rng() * 0.4,
-        { shoreline: true, clear: 0, force: true, y: -0.55 });
-    }
-  }
+  // Mangroves in the shallows off the seaward (+x) edge. A dock apron gets none
+  // — a mangrove between the finger piers is a boat hazard, not a shoreline.
+  if (!dock) mangroveFringe(ctx, rng, b.x + hw, b.z, 1, 0, hd * 2, 9, 18);
   // Planted terraces stepping down to the water.
   if (b.w > 26 && rng.chance(0.7)) {
     for (let i = 0; i < 2; i++) {
@@ -2816,10 +2975,12 @@ function builtBlock(ctx, B, b, rng) {
      planted south side and a bare east side reads as an unfinished model, and
      the frontage is exactly the strip the player's camera spends the game
      looking at. */
-  if (b.streetLife < 0.22) return;
   const inset = Math.max(2.3, Math.min(b.sidewalk * 0.8, Math.min(b.w, b.d) * 0.5 * 0.15));
   let fi = 0;
-  for (const fr of b.frontageStreets) {
+  // A dead-quiet lot gets no hedge line, but it still gets its shoreline: this
+  // used to `return` here, which meant the calmest bayfront lots — exactly the
+  // ones with nothing else happening on them — were the bare stretches of wall.
+  for (const fr of (b.streetLife < 0.22 ? [] : b.frontageStreets)) {
     const horiz = fr.side === 'n' || fr.side === 's';
     const len = (horiz ? b.w : b.d) - 6;
     if (len < 8) continue;
@@ -2848,6 +3009,10 @@ function builtBlock(ctx, B, b, rng) {
       }
     }
   }
+
+  // Runs first, and on its own guards, so a lot too narrow for the sea-grape
+  // row below still gets its waterline planted.
+  blockShoreline(ctx, b, rng);
 
   /* COASTAL EDGE ON A BUILT LOT.
      The bay and the river run past far more towers than promenades — only six
@@ -2882,7 +3047,7 @@ export function buildNature(ctx) {
   const B = new Buckets();
 
   stats.trees = 0; stats.palms = 0; stats.bushes = 0;
-  stats.features = 0; stats.instances = 0; stats.capped = 0;
+  stats.features = 0; stats.beds = 0; stats.instances = 0; stats.capped = 0;
   rej.water = 0; rej.road = 0; rej.building = 0; rej.spacing = 0; rej.occupied = 0;
 
   // Buildings run before us, so their assembled geometry is on the scene and
@@ -2923,7 +3088,7 @@ export function buildNature(ctx) {
 
   console.info(
     `[nature] ${stats.palms} palms + ${stats.trees} trees + ${stats.bushes} shrubs/beds, `
-    + `${stats.features} park features | ${stats.instances} instances in `
+    + `${stats.features} park features, ${stats.beds} flower beds | ${stats.instances} instances in `
     + `${Object.keys(_factories).length + 1} pools + ${merged.calls} merged meshes `
     + `(${Math.round(merged.tris / 1000)}k static tris) | `
     + `${nFoot} building footprints avoided | refused `

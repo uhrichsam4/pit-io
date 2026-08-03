@@ -116,6 +116,46 @@ const G_TORQUE = 15.0;
 /** Angle past which a body that fits is committed and gravity simply takes it. */
 const PASS_ANGLE = 0.95;   // ~54 degrees
 
+/**
+ * 0 for a traffic cone, 1 for a skyscraper. Mass proxy is footprint area times
+ * height; the curve is logarithmic because the range spans a 0.7 m cone to a
+ * 190 m tower — six orders of magnitude.
+ */
+function heaviness(c) {
+  const mass = c.radius * c.radius * Math.max(0.4, c.height);
+  return Math.min(1, Math.log10(1 + mass) / 5.2);
+}
+
+/**
+ * How big the opening must be, relative to what it would need to SWALLOW this
+ * body, before it can move it AT ALL.
+ *
+ * This is the rule that stops a small hole dragging a tower around. It is
+ * expressed as hole-size-versus-object rather than as an absolute mass
+ * threshold, because that is the thing a player can actually see: a hole half
+ * the size of a bench tips the bench; a hole half the size of a tower is a
+ * pothole in its car park.
+ *
+ *   light props   0.50  — a hole half of what it needs already unbalances them
+ *   a bus         ~0.62
+ *   a storefront  ~0.75
+ *   a tower       0.85  — near enough to swallow it, or it does not budge
+ */
+function minMoveRatio(c) {
+  return 0.5 + heaviness(c) * 0.35;
+}
+
+/**
+ * Once the ratio gate above is satisfied, how much of its base must be gone
+ * before it starts to go over. Deliberately LOW and nearly uniform: past the
+ * gate, behaviour should be governed by the gravity model rather than by
+ * another arbitrary cutoff. An earlier version scaled this with mass too, and
+ * double-gating made cars barely react at all.
+ */
+function stabilityThreshold(c) {
+  return TILT_START_LOSS + heaviness(c) * 0.06;
+}
+
 /** Seconds before a consumed prop returns to the world. */
 export const RESPAWN_DELAY = 30;
 
@@ -246,6 +286,7 @@ export class ConsumeSystem {
         settled: false,           // wedged in an opening too small to pass
         nx: 0, nz: 1,             // unit direction toward the opening
         hole: null,
+        stuck: 0,                 // seconds spent destabilised without resolving
       };
     }
     return d;
@@ -272,9 +313,13 @@ export class ConsumeSystem {
       const dx = hole.position.x - c.position.x;
       const dz = hole.position.z - c.position.z;
       const d = Math.hypot(dx, dz);
+      // An opening far too small for this body cannot move it, however much
+      // ground it technically removes.
+      if (hole.radius < c.passRadius * minMoveRatio(c)) continue;
+
       const loss = overlapFraction(d, Math.max(0.12, c.radius), hole.radius);
-      // No ground taken from under it: nothing happens. This is the only test.
-      if (loss < TILT_START_LOSS) continue;
+      // Heavier bodies need more of their base gone before they react at all.
+      if (loss < stabilityThreshold(c)) continue;
 
       const dyn = this._dyn(c);
       // If two openings are under it, the one taking more of its footprint wins.
@@ -316,7 +361,10 @@ export class ConsumeSystem {
       const dz = hole.position.z - c.position.z;
       const d = Math.hypot(dx, dz);
       const loss = overlapFraction(d, Math.max(0.12, c.radius), hole.radius);
-      if (loss < TILT_START_LOSS) { this._regainSupport(c, dt); continue; }
+      if (loss < stabilityThreshold(c) || hole.radius < c.passRadius * minMoveRatio(c)) {
+        this._regainSupport(c, dt);
+        continue;
+      }
 
       dyn.loss = loss;
       const inv = 1 / (d || 1e-4);
@@ -346,7 +394,10 @@ export class ConsumeSystem {
       const lever = Math.cos(phi) * L;      // horizontal arm, signed
 
       // Only the unsupported share of the body is actually cantilevered.
-      const cantilever = Math.min(1, loss / 0.55);
+      // Share of the body actually hanging over nothing, measured from the
+      // point at which THIS body starts to care.
+      const thr = stabilityThreshold(c);
+      const cantilever = Math.min(1, Math.max(0, (loss - thr) / Math.max(0.12, 0.55 - thr)));
       let alpha = (G_TORQUE * lever * cantilever) / (L * L);
 
       // Friction and the remaining contact resist the very start of a topple,
@@ -363,8 +414,17 @@ export class ConsumeSystem {
       dyn.tilt += dyn.tiltVel * dt;
       if (dyn.tilt < 0) { dyn.tilt = 0; dyn.tiltVel = Math.max(0, dyn.tiltVel); }
 
+      /* ---- anti-lodge -----------------------------------------------------
+       * A body that has been hanging over the rim for a while without either
+       * going in or settling is the "car stuck across the hole" case. If it
+       * can fit, stop negotiating and let gravity have it; if it cannot, pin it
+       * at its rest angle so it reads as resting rather than trembling.
+       */
+      dyn.stuck += dt;
+
       /* ---- can it actually go through? ---------------------------------- */
       const fits = this.canPassThrough(hole, c);
+      if (fits && dyn.stuck > 1.6) { this._capture(hole, c, t); continue; }
       if (!fits) {
         // Wedged: it tips as far as the opening allows and rests there,
         // nose-down in a hole too small to swallow it, until the hole grows.
@@ -417,6 +477,7 @@ export class ConsumeSystem {
     dyn.tilt += -dyn.tilt * k;
     dyn.tiltVel *= 0.6;
     dyn.settled = false;
+    dyn.stuck = 0;
     dyn.vx *= 0.82; dyn.vz *= 0.82;
     dyn.loss = 0;
 
@@ -589,10 +650,14 @@ export class ConsumeSystem {
       : profile === FALL.SINK ? Math.PI * (0.10 + Math.random() * 0.08)
       : Math.PI * (0.22 + Math.random() * 0.14);
 
+    // Spin about a MOSTLY VERTICAL axis, and only a little. A random 3D axis
+    // with a large rate reads as a chaotic tumble, not as something heavy
+    // dropping down a shaft.
     c._spinAxis = new THREE.Vector3(
-      Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+      (Math.random() - 0.5) * 0.35, 1, (Math.random() - 0.5) * 0.35
     ).normalize();
-    c._spinRate = 2.2 + Math.random() * 3.6 + Math.min(4, c.radius * 0.4);
+    // Total rotation over the whole plunge, radians. Heavier things turn less.
+    c._spinTotal = (0.5 + Math.random() * 0.45) / (1 + c.radius * 0.10);
     c._roll = dyn.roll;
 
     const heft = Math.min(1, c.radius / 6);
@@ -710,9 +775,13 @@ export class ConsumeSystem {
       c._plungeVY -= G * dt;
       c._plungeY += c._plungeVY * dt;
 
-      const swirlRate = 2.0 + Math.min(5.0, 14 / Math.max(1.2, hole.radius));
-      const swirl = c._angle - k * swirlRate;
-      const rr = c._entryR * (1 - k) * (1 - k * 0.35);
+      // Drift toward the centre, NOT an orbit. The old code swung through more
+      // than a full revolution on the way down, which read as the object flying
+      // around the rim. A fraction of a turn is enough to suggest a drain.
+      const swirl = c._angle - k * 0.45;
+      // Collapse to the centre quickly and monotonically, so nothing can appear
+      // to circle or drift back outward.
+      const rr = c._entryR * (1 - k) * (1 - k) * (1 - k * 0.4);
       const floor = c._startPos.y - pitDepth * 1.1;
 
       pose.pos.set(
@@ -721,7 +790,8 @@ export class ConsumeSystem {
         hole.position.z + Math.sin(swirl) * rr
       );
 
-      _q2.setFromAxisAngle(c._spinAxis, c._spinRate * k);
+      // Eased, bounded rotation that settles rather than accelerating.
+      _q2.setFromAxisAngle(c._spinAxis, c._spinTotal * (1 - (1 - k) * (1 - k)));
       if (c._tipQuat) _q2.multiply(c._tipQuat);
       pose.quat.copy(c._startQuat).premultiply(_q2);
 
@@ -732,9 +802,17 @@ export class ConsumeSystem {
       pose.scale.copy(c._startScale).multiplyScalar(Math.max(0.08, shrink));
       this._writePose(c);
 
-      // Removed only once it is genuinely below ground.
-      const below = pose.pos.y < -Math.max(1.5, c.height * 0.6);
-      if (below || k >= 1) this._finishFall(c, i);
+      // Removed ONLY once the whole body is under the ground plane. The old
+      // condition also fired on a timer, which could delete something still
+      // visibly above the street. If the timer expires first, keep driving it
+      // down rather than popping it out of existence.
+      const clearance = Math.max(1.5, c.height * 0.75);
+      if (pose.pos.y < -clearance) { this._finishFall(c, i); continue; }
+      if (k >= 1) {
+        // Safety net: force it down at a constant rate instead of vanishing.
+        c._plungeVY = Math.min(c._plungeVY, -12);
+        if (c.fallT > c._fallDur * 3) this._finishFall(c, i);
+      }
     }
   }
 
@@ -745,7 +823,21 @@ export class ConsumeSystem {
       // Kept, not disposed: it has to be able to come back.
       c.object.visible = false;
     }
+    // Make it completely inert: out of the world, out of the physics, and
+    // holding no state that could drive another frame of motion. It cannot be
+    // seen, queried, hit or eaten again until the respawner brings it back.
     c.state = STATE.GONE;
+    c.eatenBy = null;
+    c._tipQuat = null;
+    c._plungeVY = 0;
+    if (c._dyn) {
+      const d = c._dyn;
+      d.ox = d.oy = d.oz = 0; d.vx = d.vz = 0;
+      d.tilt = 0; d.tiltVel = 0; d.roll = 0; d.loss = 0;
+      d.hole = null; d.settled = false; d.stuck = 0;
+    }
+    c.position.y = -9999;      // nothing can overlap it while it is away
+    this.attracted.delete(c);
     this.falling.splice(index, 1);
 
     if (this.respawnEnabled) {
@@ -788,13 +880,15 @@ export class ConsumeSystem {
       dyn.ox = dyn.oy = dyn.oz = 0;
       dyn.vx = dyn.vz = 0;
       dyn.roll = 0; dyn.tilt = 0; dyn.tiltVel = 0; dyn.loss = 0;
-      dyn.hole = null; dyn.settled = false;
+      dyn.hole = null; dyn.settled = false; dyn.stuck = 0;
     }
     c.state = STATE.IDLE;
     c.fallT = 0;
     c.eatenBy = null;
     c._tipQuat = null;
-    c.position.set(at.x, c.position.y, at.z);
+    // y was parked far below the world while it was gone, so restore it from
+    // the authored resting place rather than carrying -9999 back up.
+    c.position.set(at.x, this._restY(c), at.z);
 
     if (c.backing === BACKING.INSTANCE && c.pool && c.slot >= 0) {
       c.pool.restore(c.slot);
