@@ -21,6 +21,7 @@ import { Match, PHASE } from './gameplay/match.js';
 import { buildWorld } from './world/worldBuild.js';
 import { HUD } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
+import { NetClient, readNetConfig } from './net/client.js';
 
 export class Game {
   constructor(canvas, uiRoot) {
@@ -52,7 +53,30 @@ export class Game {
     // and boot would hang, which breaks automated screenshotting.
     await new Promise((r) => setTimeout(r, 40));
 
-    const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer);
+    /* --- multiplayer: connect BEFORE building, we need the room's seed ---- */
+    // World generation is fully deterministic from a seed, so every client in
+    // a room builds a byte-identical city with identical Consumable ids. That
+    // is what lets us replicate events ("object 8241 was eaten") instead of
+    // replicating the world.
+    this.netCfg = readNetConfig();
+    this.net = null;
+    let worldSeed = 20260803;
+    if (this.netCfg.enabled) {
+      this.screens.showLoading(`Joining “${this.netCfg.room}”…`);
+      const net = new NetClient(this.netCfg);
+      const ok = await net.connect();
+      if (ok) {
+        this.net = net;
+        worldSeed = net.seed;
+        this.consume.networked = true;
+        console.info(`[net] joined room "${this.netCfg.room}" as #${net.id}, seed ${worldSeed}`);
+      } else {
+        console.warn(`[net] could not join (${net.error}); falling back to offline`);
+      }
+      this.screens.showLoading('Building Miami…');
+    }
+
+    const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer, worldSeed);
     this.layout = layout;
     this.worldCtx = ctx;
     this.trafficUpdate = eng.scene.userData.trafficUpdate || null;
@@ -75,8 +99,11 @@ export class Game {
 
     this.hud = new HUD(this.uiRoot, eng.camera);
 
+    this._wireNet();
+
     this._tierReached = 0;
-    this.consume.onSwallow = (hole, c) => {
+    this.consume.onSwallow = (hole, c, gained, remote) => {
+      if (this.net && !remote && hole.isPlayer) this.net.reportAte(c.id);
       if (c.tier.id >= 5 && this.hud) {
         this.hud.pushFeed(
           `<b>${hole.name}</b> devoured a ${c.label}`,
@@ -142,6 +169,89 @@ export class Game {
     requestAnimationFrame(this.loop);
   }
 
+  /** Bind the network client to the local simulation. Safe to call offline. */
+  _wireNet() {
+    const net = this.net;
+    if (!net) return;
+
+    // A remote player ate something: play the full swallow animation locally so
+    // the world stays visually consistent, but credit nobody.
+    net.onConsumed = (ids) => {
+      for (const id of ids) {
+        const c = this.registry.byId.get(id);
+        if (!c) continue;
+        const eater = this._nearestHoleTo(c) || this.player;
+        this.consume.captureRemote(eater, c, this.clock.elapsedTime);
+      }
+    };
+
+    net.onKill = (killerId, victimId, reward) => {
+      const killer = this._holeForNet(killerId);
+      const victim = this._holeForNet(victimId);
+      if (!victim) return;
+      victim.alive = false;
+      victim.killedBy = killer || null;
+      victim.respawnAt = HOLE.RESPAWN_TIME;
+      if (killer) {
+        this.effects.shockwave(killer.position, killer.radius, killer.radius * 3.6,
+          victim.color.getHexString ? victim.color.getHex() : 0xffffff, 0.8);
+      }
+      if (this.hud && killer) {
+        this.hud.pushFeed(`<b>${killer.name}</b> swallowed <b>${victim.name}</b>`,
+          `#${killer.color.getHexString()}`);
+      }
+      if (victim.isPlayer) { this.engine.flash(0.45, 0xff3d8b); audio.death(); }
+      else if (killer && killer.isPlayer) { this.engine.flash(0.30, 0xffffff); audio.devourPlayer(); }
+    };
+
+    net.onRoster = () => this._syncPeerHoles();
+
+    this.consume.onClaimKill = (victim) => {
+      if (victim.netId != null) net.claimKill(victim.netId);
+    };
+  }
+
+  /** Create/destroy Hole avatars so they match the server roster. */
+  _syncPeerHoles() {
+    const net = this.net;
+    if (!net) return;
+    for (const p of net.peers.values()) {
+      if (p.hole) continue;
+      const h = new Hole({ type: 'remote', name: p.name, color: p.color, x: 0, z: 0 });
+      h.netId = p.id;
+      p.hole = h;
+      this.engine.scene.add(h.group);
+      this.holes.push(h);
+    }
+    // Drop avatars whose peer has gone.
+    for (let i = this.holes.length - 1; i >= 0; i--) {
+      const h = this.holes[i];
+      if (h.type !== 'remote') continue;
+      if (net.peers.has(h.netId)) continue;
+      this.engine.scene.remove(h.group);
+      h.dispose();
+      this.holes.splice(i, 1);
+    }
+    this.match.holes = this.holes;
+  }
+
+  _holeForNet(id) {
+    if (this.net && id === this.net.id) return this.player;
+    for (const h of this.holes) if (h.netId === id) return h;
+    return null;
+  }
+
+  /** Best guess at which hole ate an object, for the remote-swallow animation. */
+  _nearestHoleTo(c) {
+    let best = null, bd = Infinity;
+    for (const h of this.holes) {
+      if (!h.alive) continue;
+      const d = Math.hypot(h.position.x - c.position.x, h.position.z - c.position.z);
+      if (d < bd) { bd = d; best = h; }
+    }
+    return best;
+  }
+
   _spawnPoint(i = 0, n = 1) {
     // Spread spawns across both districts, never on water or inside a tower.
     for (let tries = 0; tries < 60; tries++) {
@@ -166,14 +276,26 @@ export class Game {
     this.bots.length = 0;
 
     const p = this._spawnPoint();
-    this.player = new Hole({ type: 'player', name: 'You', color: PALETTE.ACCENT_HOT, x: p.x, z: p.z });
+    this.player = new Hole({
+      type: 'player',
+      name: this.net ? this.netCfg.name : 'You',
+      color: PALETTE.ACCENT_HOT,
+      x: p.x, z: p.z,
+    });
+    if (this.net) this.player.netId = this.net.id;
     this.engine.scene.add(this.player.group);
     this.holes.push(this.player);
 
-    this.bots = spawnBots(MATCH.BOT_COUNT, this.registry, this.rng, () => this._spawnPoint());
-    for (const b of this.bots) {
-      this.engine.scene.add(b.hole.group);
-      this.holes.push(b.hole);
+    if (this.net) {
+      // Online it is real players only: bots are simulated per-client and would
+      // desync instantly, so a room of humans is exactly what everyone sees.
+      this._syncPeerHoles();
+    } else {
+      this.bots = spawnBots(MATCH.BOT_COUNT, this.registry, this.rng, () => this._spawnPoint());
+      for (const b of this.bots) {
+        this.engine.scene.add(b.hole.group);
+        this.holes.push(b.hole);
+      }
     }
 
     this.consume.setFrenzy(false);
@@ -208,6 +330,12 @@ export class Game {
       }
       for (const h of this.holes) h.update(dt, t);
       this.consume.update(dt, this.holes, t);
+    }
+    // Push our state up and advance the interpolated remote holes. Done after
+    // the local sim so peers receive the position they will actually see us at.
+    if (this.net && this.player) {
+      this.net.update(this.player, t);
+      if (this.net.serverTimeLeft != null) this.match.timeLeft = this.net.serverTimeLeft;
     }
     this.effects.update(dt);
   }

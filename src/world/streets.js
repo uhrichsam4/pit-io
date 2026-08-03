@@ -33,6 +33,76 @@ function tiledPlane(w, d, x, z, y, unitsPerTile) {
   return g;
 }
 
+/**
+ * A quad strip running along +x whose z limits vary per column.
+ *
+ * The river centreline bends, so the land either side of it cannot be a
+ * rectangle. Emitting one rectangle per column would step the bank line by up
+ * to a metre every column; a strip shares the vertices between columns, so the
+ * bank follows the bend exactly. UVs are world-space, which also means two
+ * strips butted together tile continuously with no seam.
+ *
+ * @param {number[]} xs        ascending column positions
+ * @param {(x:number)=>number} loAt  z of the -z edge at that column
+ * @param {(x:number)=>number} hiAt  z of the +z edge at that column
+ */
+function xStrip(xs, loAt, hiAt, y, unitsPerTile) {
+  const pos = [];
+  const uv = [];
+  const idx = [];
+  const k = 1 / unitsPerTile;
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i];
+    const lo = loAt(x);
+    const hi = hiAt(x);
+    pos.push(x, y, lo, x, y, hi);
+    uv.push(x * k, lo * k, x * k, hi * k);
+  }
+  for (let i = 0; i < xs.length - 1; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    // Winding chosen so the face normal comes out +Y (see computeVertexNormals).
+    idx.push(a, b, c, b, d, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * The river channel, as the ground modules need it.
+ *
+ * cityLayout owns the bent centreline; this is the shared reader so the ground
+ * cut, the lane markings and water.js all agree on where the water is. Falling
+ * back to the straight band keeps this working if a future layout drops the
+ * bend helpers.
+ */
+export function riverChannel(layout) {
+  const r = (layout && layout.river) || {};
+  const centerAt = typeof r.centerAt === 'function' ? r.centerAt : () => WORLD.RIVER_Z;
+  const halfAt = typeof r.halfAt === 'function' ? r.halfAt : () => WORLD.RIVER_HALF_W;
+  return {
+    centerAt,
+    halfAt,
+    /** -z bank at x. */
+    top: (x) => centerAt(x) - halfAt(x),
+    /** +z bank at x. */
+    bot: (x) => centerAt(x) + halfAt(x),
+    /** Widest cut over [x0,x1] — used to keep a road out of the water. */
+    spanOver(x0, x1) {
+      let top = Infinity, bot = -Infinity;
+      for (let i = 0; i <= 8; i++) {
+        const x = x0 + ((x1 - x0) * i) / 8;
+        top = Math.min(top, centerAt(x) - halfAt(x));
+        bot = Math.max(bot, centerAt(x) + halfAt(x));
+      }
+      return { top, bot };
+    },
+  };
+}
+
 export function buildStreets(ctx) {
   const { scene, layout } = ctx;
   const S = WORLD.SIZE;

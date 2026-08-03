@@ -150,9 +150,13 @@ class Room {
     const dt = (now - this.lastTick) / 1000;
     this.lastTick = now;
 
-    // drop silent clients
+    // Drop clients that have gone quiet. This is only a backstop: liveness is
+    // really tracked by protocol-level ping/pong below, because a client
+    // spends up to a minute inside a synchronous world build during which it
+    // cannot send anything, and a short message-based timeout would evict it
+    // mid-load — taking the room (and therefore the shared seed) with it.
     for (const c of [...this.clients.values()]) {
-      if (now - c.lastSeen > 15000) {
+      if (now - c.lastSeen > 180000) {
         try { c.ws.close(); } catch { /* already gone */ }
         this.remove(c.id);
       }
@@ -218,6 +222,11 @@ wss.on('connection', (ws, req) => {
   const room = getRoom(roomName);
   let client = null;
 
+  // Browsers answer WebSocket pings in the network stack, not in JS, so this
+  // keeps working while the page is blocked building the city.
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   ws.on('message', (raw) => {
     const msg = decode(raw.toString());
     if (!msg) return;
@@ -251,6 +260,15 @@ wss.on('connection', (ws, req) => {
 setInterval(() => {
   for (const room of rooms.values()) room.tick();
 }, SNAPSHOT_INTERVAL);
+
+// Liveness. A socket that misses two consecutive pings is genuinely gone.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch { /* socket already closing */ }
+  }
+}, 15000);
 
 console.log(`[miami-devour] room server listening on ws://localhost:${PORT}`);
 console.log(`  join a room:  ws://localhost:${PORT}?room=<name>`);

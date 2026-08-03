@@ -197,7 +197,16 @@ export class ConsumeSystem {
     }
   }
 
-  _capture(hole, c, t) {
+  /**
+   * Play the full swallow animation for an object a REMOTE player ate.
+   * No score, no screen shake, no popup — their meal, our pixels.
+   */
+  captureRemote(hole, c, t) {
+    if (!c || c.state === STATE.FALLING || c.state === STATE.GONE) return;
+    this._capture(hole, c, t, true);
+  }
+
+  _capture(hole, c, t, remote = false) {
     this.registry.remove(c);
     c.state = STATE.FALLING;
     c.fallT = 0;
@@ -271,7 +280,9 @@ export class ConsumeSystem {
 
     this.falling.push(c);
 
-    const gained = hole.addScore(c.score, c.label);
+    // In a networked match the server owns every hole's score, so crediting it
+    // locally would double-count the moment the next snapshot lands.
+    const gained = remote ? 0 : hole.addScore(c.score, c.label);
 
     // --- feedback --------------------------------------------------------
     const fx = this.effects;
@@ -289,10 +300,11 @@ export class ConsumeSystem {
         fx.addShake(0.05 + c.radius * 0.012);
       }
     }
-    if (hole.isPlayer) {
+    if (hole.isPlayer && !remote) {
       fx.popup(_v, `+${c.score}`, big ? 0xffc93c : 0xffffff, big);
     }
-    if (this.onSwallow) this.onSwallow(hole, c, gained);
+    if (remote) fx.shake = Math.min(fx.shake, 0.05);
+    if (this.onSwallow) this.onSwallow(hole, c, gained, remote);
   }
 
   /**
@@ -442,6 +454,13 @@ export class ConsumeSystem {
         const dz = a.position.z - b.position.z;
         const d = Math.hypot(dx, dz);
         if (d > a.radius * 0.85) continue;
+
+        // Kills involving a networked hole are the server's call, not ours —
+        // two clients each resolving locally would disagree about who died.
+        if (this.networked && (a.type === 'remote' || b.type === 'remote')) {
+          if (a.isPlayer && this.onClaimKill) this.onClaimKill(b);
+          continue;
+        }
 
         // a swallows b
         b.alive = false;

@@ -50,6 +50,22 @@ CRITICAL RULES:
   your module's draw-call and triangle contribution.
 - Comment WHY, not WHAT, matching the existing style.
 
+CITY-WIDE DEFECTS the project lead has already confirmed in screenshots. Open
+shots/lead-all/*.png yourself before starting. Whoever owns each one, fix it:
+  1. Large blocks render as BARE flat slabs — big empty cream plazas and empty
+     green rectangles with nothing on them. See shots/lead-all/park.png.
+     (props / nature)
+  2. Some blocks are DARK GREY VOIDS: the base ground plane showing through
+     where a zone produced no geometry at all. Every parcel must get something —
+     a building, a surface car park with markings and parked cars, a fenced lot,
+     a plaza. (buildings / nature)
+  3. The whole city has almost no street furniture and no people. (props /
+     pedestrians)
+  4. Towers are near-identical teal boxes with a white cube on top; the skyline
+     has no rhythm. (buildings)
+  5. Marina basins cut into the shore render as grey land, not water; the
+     coastline silhouette is wrong. (water / streets)
+
 PERFORMANCE BUDGET — this is currently BLOWN and it is everyone's problem.
 Measured right now on the 'menu-hero' preset (whole city visible):
   5,228 draw calls / 815k triangles.   Target: <= 1,500 draw calls / <= 1.8M tris.
@@ -64,7 +80,7 @@ The main offender is that each building is a Group of many small meshes. Rules:
   - Individually-swallowable objects must stay individually addressable, so
     merge WITHIN an object, never across two objects that can be eaten
     separately.
-Measure with `node tools/shot.mjs --presets menu-hero,street-level` and report
+Measure with: node tools/shot.mjs --presets menu-hero,street-level  and report
 the drawCalls/triangles delta your module caused. If you push the total up,
 you are not finished.
 
@@ -308,11 +324,11 @@ Build a crowd system from scratch on top of src/world/roadNetwork.js, which give
 you per-block sidewalk loops (dense waypoints), crossings at every junction, and
 the traffic-light phase function.
 
-1. MODULE SHAPE. Export `buildPedestrians(ctx)` following the same contract as
+1. MODULE SHAPE. Export buildPedestrians(ctx) following the same contract as
    the other world modules (see worldBuild.js). Register your per-frame update as
    ctx.scene.userData.pedestrianUpdate = (dt) => {...}. Do NOT edit worldBuild.js
    — the orchestrator will be wired up separately; just export the function with
-   exactly the name `buildPedestrians`.
+   exactly the name buildPedestrians.
 2. CHARACTERS. Low-poly but well-proportioned humans, ~1.75 m: head, torso,
    arms, legs. Several body types. Distinct outfits by archetype:
      office worker (shirt/blazer, bag), tourist (shorts, camera, backpack,
