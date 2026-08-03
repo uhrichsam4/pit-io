@@ -40,10 +40,30 @@ export class Consumable {
     this.slot = opts.slot ?? -1;
 
     this.position = opts.position ? opts.position.clone() : new THREE.Vector3();
-    /** Horizontal footprint radius — used for suction + capture tests. */
+    /** Horizontal footprint radius — used for support + overlap tests. */
     this.radius = opts.radius ?? 0.5;
     /** Visual height, used for debris + camera shake weighting. */
     this.height = opts.height ?? this.radius * 2;
+
+    /**
+     * The smallest opening this object can actually pass through, once it has
+     * tipped over. This is NOT the footprint radius: a car is 4.4 m long but
+     * under 2 m wide, so nose-first it goes through a hole far smaller than
+     * itself. Requiring the hole to exceed the whole footprint is what made
+     * props visibly refuse to be eaten by a hole that plainly dwarfed them.
+     *
+     * Defaults to a conservative fraction of the footprint; content modules
+     * should pass an explicit value for anything strongly elongated.
+     */
+    // 0.62 is the half-width of a roughly 1:1.6 rectangle whose half-diagonal
+    // is `radius` — i.e. the narrow way through, which is how an elongated
+    // object actually goes down. A 4.4 m car (radius ~1.7) comes out at ~1.05,
+    // so an opening about 2.1 m across swallows it nose-first: far smaller than
+    // the car, but not absurdly so.
+    this.passRadius = opts.passRadius ?? Math.max(0.12, this.radius * 0.62);
+
+    /** Centre-of-mass height above the ground. Drives the topple dynamics. */
+    this.comHeight = opts.comHeight ?? this.height * 0.42;
 
     const tier = opts.tier || TIER.TINY;
     this.tier = tier;

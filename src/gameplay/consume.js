@@ -1,6 +1,21 @@
 /**
  * The swallow system — how the city physically goes down the hole.
  *
+ * ELIGIBILITY IS PHYSICAL, NOT A TIER LOOKUP.
+ * There is no size class deciding what may be eaten. Two questions decide
+ * everything, and both are geometry:
+ *
+ *   1. Does the opening take ground out from under this object?
+ *      ANY hole does this to ANY object it overlaps. A hole a quarter the size
+ *      of a car still removes the ground under one wheel, and that wheel drops.
+ *   2. Can the object pass through once it has tipped?
+ *      Compared against `passRadius` — the smallest cross-section the object
+ *      can present — NOT its footprint. A car is 4.4 m long and under 2 m
+ *      wide; nose-first it goes through an opening far smaller than itself.
+ *
+ * An earlier version gated on a tier constant as well, which is what made a
+ * 1 m bench refuse a hole three times its size. That gate is gone.
+ *
  * THE OBJECT THAT FALLS IS THE OBJECT THAT WAS STANDING THERE.
  * Props live as slots in an InstancedMesh, and it is that slot's matrix which
  * is animated. Nothing is spawned to stand in for it, so there is no second
@@ -87,15 +102,19 @@ const FIT = 0.92;
 /** Peak inward acceleration at the lip, m/s^2. */
 const SUCK_ACCEL = 30.0;
 
-/**
- * Unsupported fraction at which the centre of mass is over the void and the
- * prop commits to falling. Exactly 0.5 for a uniform disc; a touch under,
- * because real props carry their mass low and toward their base.
- */
-const COMMIT_SUPPORT_LOSS = 0.46;
+/** Below this much overlap the object is still solidly supported. */
+const TILT_START_LOSS = 0.04;
 
-/** Below this much loss the prop is still solidly supported: no motion at all. */
-const TILT_START_LOSS = 0.05;
+/**
+ * Gravity used for the topple. The object is treated as a rigid body pivoting
+ * about the last edge of ground still under it, so the angular acceleration is
+ * proportional to how far its centre of mass has swung past that edge — which
+ * is why a topple starts almost imperceptibly and then goes over hard.
+ */
+const G_TORQUE = 15.0;
+
+/** Angle past which a body that fits is committed and gravity simply takes it. */
+const PASS_ANGLE = 0.95;   // ~54 degrees
 
 /** Seconds before a consumed prop returns to the world. */
 export const RESPAWN_DELAY = 30;
@@ -169,16 +188,32 @@ export class ConsumeSystem {
   }
 
   /**
-   * Whether this hole is capable of taking this prop at all.
-   *
-   * The physical half of the rule is that the opening must be wider than the
-   * prop's own footprint — otherwise the prop simply bridges the gap, which is
-   * what the overlap maths says anyway. The tier gate on top of it is what
-   * paces progression.
+   * Can this object physically pass through this opening, once tipped?
+   * Compared against passRadius (smallest presented cross-section), not the
+   * footprint — that distinction is the whole point.
+   */
+  canPassThrough(hole, c) {
+    return hole.radius >= c.passRadius * this.eatScale;
+  }
+
+  /**
+   * Kept for callers that just want "will this ever go in". Eligibility is now
+   * purely geometric; nothing consults a size class.
    */
   canEat(hole, c) {
-    if (hole.radius < c.radius * FIT) return false;
-    return hole.radius >= c.eatRadius * this.eatScale;
+    return this.canPassThrough(hole, c);
+  }
+
+  /**
+   * How far a body may topple before it wedges against the far side of an
+   * opening too small to swallow it. A hole that is nearly big enough lets it
+   * go almost all the way over; a small one only lets a corner dip in.
+   */
+  restAngle(hole, c) {
+    const need = Math.max(0.05, c.passRadius * this.eatScale);
+    const ratio = hole.radius / need;
+    if (ratio >= 1) return Math.PI;
+    return Math.max(0.10, Math.min(1.25, ratio * ratio * 1.25));
   }
 
   /** @param {number} dt @param {import('./hole.js').Hole[]} holes @param {number} t */
@@ -204,8 +239,11 @@ export class ConsumeSystem {
         ox: 0, oy: 0, oz: 0,      // offset from the authored resting place
         vx: 0, vz: 0,
         roll: 0,                  // wheel rotation, radians
-        tilt: 0,                  // current lean toward the opening, radians
+        tilt: 0,                  // current topple angle about the support edge
+        tiltVel: 0,               // angular velocity, rad/s
         loss: 0,                  // unsupported fraction, 0..1
+        pivotX: 0, pivotZ: 0,     // the last edge of ground still under it
+        settled: false,           // wedged in an opening too small to pass
         nx: 0, nz: 1,             // unit direction toward the opening
         hole: null,
       };
@@ -221,24 +259,25 @@ export class ConsumeSystem {
   }
 
   _processHole(hole, dt, t) {
-    const R = hole.radius * HOLE.INFLUENCE_F;
+    // Reach far enough to catch anything the opening overlaps at all, even a
+    // building many times its size — that object still loses ground.
+    const R = Math.max(hole.radius * HOLE.INFLUENCE_F, hole.radius + 14);
     const list = this.registry.query(hole.position.x, hole.position.z, R, this._query);
     if (list.length === 0) return;
 
     for (let i = 0; i < list.length; i++) {
       const c = list[i];
       if (c.state === STATE.FALLING || c.state === STATE.GONE) continue;
-      // A hole too small for this prop cannot unsupport it: it bridges.
-      if (!this.canEat(hole, c)) continue;
 
       const dx = hole.position.x - c.position.x;
       const dz = hole.position.z - c.position.z;
       const d = Math.hypot(dx, dz);
       const loss = overlapFraction(d, Math.max(0.12, c.radius), hole.radius);
+      // No ground taken from under it: nothing happens. This is the only test.
       if (loss < TILT_START_LOSS) continue;
 
       const dyn = this._dyn(c);
-      // If two holes are under it, the one taking more of its footprint wins.
+      // If two openings are under it, the one taking more of its footprint wins.
       if (dyn.hole && dyn.hole !== hole && dyn.loss > loss) continue;
       dyn.hole = hole;
       dyn.loss = loss;
@@ -246,19 +285,20 @@ export class ConsumeSystem {
       dyn.nx = dx * inv;
       dyn.nz = dz * inv;
 
-      // More than half the footprint over the void: the centre of mass has
-      // nothing under it and it goes.
-      if (loss >= COMMIT_SUPPORT_LOSS) { this._capture(hole, c, t); continue; }
-
       c.state = STATE.WOBBLE;
       this.attracted.add(c);
     }
   }
 
   /**
-   * Integrate every prop that is currently losing support. The tilt is a
-   * continuous function of how much ground it has lost, so a hole creeping
-   * under a bench takes it over degree by degree rather than in one step.
+   * Integrate every object that currently has ground missing from under it.
+   *
+   * The model is a rigid body pivoting about the last edge of ground still
+   * supporting it — which is the rim of the opening on the object's side, not
+   * the object's own edge. Gravity acts at the centre of mass; the torque is
+   * proportional to how far that mass has swung horizontally past the pivot.
+   * So a wide object with a corner over the hole barely stirs, and the further
+   * it goes the harder it goes, which is what "believable weight" means.
    */
   _updateSupport(dt, t) {
     if (this.attracted.size === 0) return;
@@ -269,51 +309,89 @@ export class ConsumeSystem {
       }
       const dyn = c._dyn;
       const hole = dyn && dyn.hole;
-      if (!hole || !hole.alive || !this.canEat(hole, c)) { this._regainSupport(c, dt); continue; }
+      if (!hole || !hole.alive) { this._regainSupport(c, dt); continue; }
 
-      // Re-measure this frame: the hole may have moved on.
+      // Re-measure: the opening may have moved on, or grown.
       const dx = hole.position.x - c.position.x;
       const dz = hole.position.z - c.position.z;
       const d = Math.hypot(dx, dz);
       const loss = overlapFraction(d, Math.max(0.12, c.radius), hole.radius);
       if (loss < TILT_START_LOSS) { this._regainSupport(c, dt); continue; }
-      if (loss >= COMMIT_SUPPORT_LOSS) { this._capture(hole, c, t); continue; }
 
       dyn.loss = loss;
       const inv = 1 / (d || 1e-4);
       dyn.nx = dx * inv;
       dyn.nz = dz * inv;
 
-      // 0 at first contact, 1 at the commit threshold.
-      const u = Math.min(1, (loss - TILT_START_LOSS) / (COMMIT_SUPPORT_LOSS - TILT_START_LOSS));
       const profile = c._profile ?? (c._profile = profileFor(c));
 
-      // It slides as it loses grip, harder the more of it is hanging.
-      const accel = SUCK_ACCEL * (0.10 + 0.90 * u * u);
+      /* ---- the pivot: the rim of the opening on the supported side ------ */
+      // Ground still exists outside the hole, so the body hinges on the lip
+      // between itself and that ground.
+      dyn.pivotX = hole.position.x - dyn.nx * hole.radius;
+      dyn.pivotZ = hole.position.z - dyn.nz * hole.radius;
+
+      /* ---- gravity torque about that pivot ------------------------------ */
+      // Horizontal distance from the pivot to the centre of mass, measured
+      // along the direction of the opening. Positive means the mass is out
+      // over the void.
+      const comLever0 = (c.position.x - dyn.pivotX) * dyn.nx
+                      + (c.position.z - dyn.pivotZ) * dyn.nz;
+      const comH = Math.max(0.12, c.comHeight);
+      const L = Math.max(0.35, Math.hypot(comLever0, comH));
+
+      // Rotate the mass by the angle it has already turned through.
+      const phi0 = Math.atan2(comH, comLever0);
+      const phi = phi0 - dyn.tilt;
+      const lever = Math.cos(phi) * L;      // horizontal arm, signed
+
+      // Only the unsupported share of the body is actually cantilevered.
+      const cantilever = Math.min(1, loss / 0.55);
+      let alpha = (G_TORQUE * lever * cantilever) / (L * L);
+
+      // Friction and the remaining contact resist the very start of a topple,
+      // so a barely-overlapping object creaks rather than instantly rolling.
+      alpha -= Math.sign(dyn.tiltVel || 1) * 0.9 * (1 - cantilever);
+
+      // Wheels give way easily; a building resists its own mass.
+      const inertia = profile === FALL.ROLL ? 0.75
+        : profile === FALL.LEAN ? 1.15
+        : profile === FALL.SINK ? 2.6
+        : 1.0;
+      dyn.tiltVel += (alpha / inertia) * dt;
+      dyn.tiltVel *= Math.exp(-1.1 * dt);
+      dyn.tilt += dyn.tiltVel * dt;
+      if (dyn.tilt < 0) { dyn.tilt = 0; dyn.tiltVel = Math.max(0, dyn.tiltVel); }
+
+      /* ---- can it actually go through? ---------------------------------- */
+      const fits = this.canPassThrough(hole, c);
+      if (!fits) {
+        // Wedged: it tips as far as the opening allows and rests there,
+        // nose-down in a hole too small to swallow it, until the hole grows.
+        const rest = this.restAngle(hole, c);
+        if (dyn.tilt >= rest) {
+          dyn.tilt = rest;
+          dyn.tiltVel *= -0.18;      // a small bounce as it settles onto the rim
+          dyn.settled = true;
+        }
+      } else if (dyn.tilt >= PASS_ANGLE || loss > 0.92) {
+        // Past the balance point with room to pass: gravity owns it now.
+        this._capture(hole, c, t);
+        continue;
+      }
+
+      /* ---- it also slides and rolls toward the opening ------------------- */
+      const slideDrive = cantilever * (0.25 + 0.75 * Math.min(1, dyn.tilt / 0.6));
+      const accel = SUCK_ACCEL * 0.5 * slideDrive;
       dyn.vx += dyn.nx * accel * dt;
       dyn.vz += dyn.nz * accel * dt;
-      const grip = Math.exp(-(2.6 + 6.0 / Math.max(1, c.radius * 2)) * dt);
+      const grip = Math.exp(-(3.2 + 6.0 / Math.max(1, c.radius * 2)) * dt);
       dyn.vx *= grip; dyn.vz *= grip;
-
-      let lateral = 1;
-      let tiltGain = 0.55;
-      switch (profile) {
-        case FALL.ROLL:  tiltGain = 0.34; break;
-        // A tree barely shifts its base; it rotates about it, a long way.
-        case FALL.LEAN:  tiltGain = 0.85; lateral = Math.exp(-1.6 * dt); break;
-        case FALL.TOPPLE: tiltGain = 0.70; break;
-        // A building goes down where it stands.
-        case FALL.SINK:  tiltGain = 0.14; lateral = Math.exp(-5.0 * dt); break;
-        default: break;
-      }
-      dyn.vx *= lateral; dyn.vz *= lateral;
+      if (profile === FALL.LEAN) { dyn.vx *= Math.exp(-2.4 * dt); dyn.vz *= Math.exp(-2.4 * dt); }
+      if (profile === FALL.SINK) { dyn.vx *= Math.exp(-6.0 * dt); dyn.vz *= Math.exp(-6.0 * dt); }
 
       const stepX = dyn.vx * dt, stepZ = dyn.vz * dt;
       dyn.ox += stepX; dyn.oz += stepZ;
-
-      // The unsupported side drops as the ground goes out from under it.
-      dyn.tilt = u * u * tiltGain;
-      dyn.oy = -u * u * Math.min(0.45, c.height * 0.16);
       if (profile === FALL.ROLL) {
         dyn.roll += Math.hypot(stepX, stepZ) / Math.max(0.25, c.height * 0.22);
       }
@@ -323,9 +401,7 @@ export class ConsumeSystem {
       c.position.z = _rest.z + dyn.oz;
       this.registry.rehash(c);
 
-      // A shudder as it grinds over the failing edge.
-      const jit = u * 0.03 * Math.sin(t * 26 + c.id * 1.7);
-      this._composeSurfacePose(c, dyn, jit);
+      this._composePivotPose(c, dyn);
       this._writePose(c);
     }
   }
@@ -339,6 +415,8 @@ export class ConsumeSystem {
     dyn.oz += -dyn.oz * k;
     dyn.oy += -dyn.oy * k;
     dyn.tilt += -dyn.tilt * k;
+    dyn.tiltVel *= 0.6;
+    dyn.settled = false;
     dyn.vx *= 0.82; dyn.vz *= 0.82;
     dyn.loss = 0;
 
@@ -346,11 +424,11 @@ export class ConsumeSystem {
     c.position.x = _rest.x + dyn.ox;
     c.position.z = _rest.z + dyn.oz;
     this.registry.rehash(c);
-    this._composeSurfacePose(c, dyn, 0);
+    this._composePivotPose(c, dyn);
     this._writePose(c);
 
     if (Math.abs(dyn.ox) < 0.01 && Math.abs(dyn.oz) < 0.01 && Math.abs(dyn.tilt) < 0.01) {
-      dyn.ox = dyn.oz = dyn.oy = dyn.tilt = 0;
+      dyn.ox = dyn.oz = dyn.oy = dyn.tilt = dyn.tiltVel = 0;
       dyn.vx = dyn.vz = 0;
       dyn.hole = null;
       this._resetPose(c);
@@ -374,19 +452,39 @@ export class ConsumeSystem {
     return p;
   }
 
-  /** Pose for a prop still on the surface, tilting toward the opening. */
-  _composeSurfacePose(c, dyn, jit) {
+  /**
+   * Pose for a body that is toppling but has not yet let go.
+   *
+   * It rotates about the ground edge, not about its own centre — that is the
+   * difference between a bench pivoting off a kerb and a bench spinning in
+   * place. The whole body swings, so the far end lifts as the near end drops.
+   */
+  _composePivotPose(c, dyn) {
     const pose = this._pose(c);
-    // Tilt about the horizontal axis perpendicular to the opening, so the prop
-    // goes over toward it rather than sideways.
     _axis.set(dyn.nz, 0, -dyn.nx).normalize();
-    _q.setFromAxisAngle(_axis, dyn.tilt + jit);
+    _q.setFromAxisAngle(_axis, dyn.tilt);
+
+    this._restPos(c, _rest);
+    // Where the body is standing right now, before rotation.
+    _v.set(_rest.x + dyn.ox, this._restY(c), _rest.z + dyn.oz);
+    _pivot.set(dyn.pivotX, this._restY(c), dyn.pivotZ);
+    // Keep the hinge within the body's own footprint: a pivot further away
+    // than the object is long would sling it across the street.
+    _rel.copy(_v).sub(_pivot);
+    const reach = Math.max(0.2, c.radius * 1.25);
+    if (_rel.length() > reach) {
+      _rel.setLength(reach);
+      _pivot.copy(_v).sub(_rel);
+    }
+    _rel.applyQuaternion(_q);
+    pose.pos.copy(_pivot).add(_rel);
+    // Never let the topple push it up through the pavement.
+    if (pose.pos.y > this._restY(c)) pose.pos.y = this._restY(c);
+
     if (c._profile === FALL.ROLL && dyn.roll !== 0) {
       _qRoll.setFromAxisAngle(_axis, dyn.roll);
       _q.multiply(_qRoll);
     }
-    this._restPos(c, _rest);
-    pose.pos.set(_rest.x + dyn.ox, this._restY(c) + dyn.oy, _rest.z + dyn.oz);
     pose.quat.copy(_q).multiply(this._restQuat(c, _qRest));
     pose.scale.copy(this._restScale(c, _sRest));
   }
@@ -459,8 +557,8 @@ export class ConsumeSystem {
     const profile = c._profile ?? (c._profile = profileFor(c));
     c._style = profile;
 
-    // Start the fall from exactly where it currently stands, mid-tilt.
-    this._composeSurfacePose(c, dyn, 0);
+    // Start the fall from exactly where it currently stands, mid-topple.
+    this._composePivotPose(c, dyn);
     const pose = this._pose(c);
     c._startPos.copy(pose.pos);
     c._startQuat = pose.quat.clone();
@@ -483,6 +581,7 @@ export class ConsumeSystem {
     );
     c._tipAxis = new THREE.Vector3(c._nz, 0, -c._nx).normalize();
     c._tipFrom = dyn.tilt;
+    c._tipVel = dyn.tiltVel;
     c._tipTarget =
       profile === FALL.LEAN ? Math.PI * (0.55 + Math.random() * 0.20)
       : profile === FALL.TOPPLE ? Math.PI * (0.48 + Math.random() * 0.18)
@@ -688,7 +787,8 @@ export class ConsumeSystem {
     if (dyn) {
       dyn.ox = dyn.oy = dyn.oz = 0;
       dyn.vx = dyn.vz = 0;
-      dyn.roll = 0; dyn.tilt = 0; dyn.loss = 0; dyn.hole = null;
+      dyn.roll = 0; dyn.tilt = 0; dyn.tiltVel = 0; dyn.loss = 0;
+      dyn.hole = null; dyn.settled = false;
     }
     c.state = STATE.IDLE;
     c.fallT = 0;

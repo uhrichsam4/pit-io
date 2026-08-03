@@ -61,7 +61,7 @@ const r = await p.evaluate(() => {
   const sweep=(rx)=>{
     const c=[...g.registry.byId.values()].find(o=>rx.test(o.kind||'') && reachable(o) && o.state===0);
     if(!c) return {error:'no candidate'};
-    const holeR=Math.max(c.eatRadius*1.06, c.radius*1.25, 1.2);
+    const holeR=Math.max(c.passRadius*1.10, 1.0);
     const cx=c.position.x, cz=c.position.z, rows=[];
     for(let d=(c.radius+holeR)*1.02; d>=0; d-=(c.radius+holeR)*0.09){
       if(c.state>=2){ rows.push({d:+d.toFixed(2), committed:true}); break; }
@@ -78,6 +78,54 @@ const r = await p.evaluate(() => {
     bench: sweep(/bench/i),
     palm:  sweep(/royal|palm/i),
   };
+
+  // --- 2b. WIDE OBJECT, SMALL HOLE ----------------------------------------
+  // The headline case: a hole much smaller than a car must still take the
+  // ground from under one end and tip it, rather than ignoring it.
+  const wide=(rx)=>{
+    const c=[...g.registry.byId.values()].find(o=>rx.test(o.kind||'') && reachable(o) && o.state===0);
+    if(!c) return {error:'no candidate'};
+    // The hole can never be smaller than HOLE.START_RADIUS (DEV.setSize clamps
+    // to it), so a genuine "hole smaller than the prop" case needs a prop that
+    // is comfortably bigger than the starting hole.
+    const holeR=Math.max(2.0, c.radius*0.42);
+    const rows=[];
+    // Park the opening under ONE END of the prop, not its centre.
+    park(c.position.x + c.radius*0.80, c.position.z, holeR);
+    for(let i=0;i<240;i++){
+      g.stepSimulation(1/60);
+      const d=c._dyn;
+      if(i%40===0) rows.push({f:i, loss:d?+d.loss.toFixed(2):0,
+        tiltDeg:d?+(d.tilt*57.3).toFixed(1):0, settled:d?!!d.settled:false, state:c.state});
+      if(c.state>=2){ rows.push({f:i, fellIn:true}); break; }
+    }
+    return {kind:c.kind, radius:+c.radius.toFixed(2), passRadius:+c.passRadius.toFixed(2),
+            holeR:+holeR.toFixed(2), canPass:g.consume.canPassThrough({radius:holeR},c), rows};
+  };
+  out.wideObject={ bus: wide(/bus|truck|van|lorry/i), storefront: wide(/storefront/i) };
+
+  // --- 2c. VISIBLE TOPPLE OVER TIME ---------------------------------------
+  // The sweep gives each distance a single frame, which understates the tilt.
+  // Here the opening is parked under ONE END and simply held, which is what a
+  // player driving up to a prop actually does.
+  const hold=(rx,label)=>{
+    const c=[...g.registry.byId.values()].find(o=>rx.test(o.kind||'') && reachable(o) && o.state===0);
+    if(!c) return {error:'no candidate for '+label};
+    const holeR=Math.max(2.0, c.passRadius*1.05);
+    park(c.position.x + (c.radius+holeR)*0.52, c.position.z, holeR);
+    const rows=[]; let peak=0;
+    for(let i=0;i<150;i++){
+      g.stepSimulation(1/60);
+      const d=c._dyn;
+      if(d) peak=Math.max(peak, d.tilt*57.3);
+      if(i%15===0) rows.push({f:i, loss:d?+d.loss.toFixed(2):0, tiltDeg:d?+(d.tilt*57.3).toFixed(1):0, state:c.state});
+      if(c.state>=2){ rows.push({f:i, fellIn:true, tiltWhenItWent:+peak.toFixed(1)}); break; }
+    }
+    return {kind:c.kind, radius:+c.radius.toFixed(2), holeR:+holeR.toFixed(2),
+            peakTiltDeg:+peak.toFixed(1), rows};
+  };
+  out.topple={ bench: hold(/bench/i,'bench'), sign: hold(/sign|lamp|meter/i,'sign'),
+               table: hold(/table|cart/i,'table'), car: hold(/sedan|suv|taxi/i,'car') };
 
   // --- 3. NO DUPLICATE LEFT BEHIND ----------------------------------------
   const inst=[...g.registry.byId.values()].find(c=>c.backing===1 && c.radius<1.5 && c.state===0 && reachable(c));
