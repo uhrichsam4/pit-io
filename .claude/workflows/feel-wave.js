@@ -37,6 +37,13 @@ RULES:
 - Comment WHY, not WHAT.
 - Do at least 4 look-fix cycles.
 
+CURRENT STATE (measured, whole-city 'menu-hero' preset):
+  956 draw calls, 3.83M triangles, 23,806 consumable objects.
+Draw calls are healthy. TRIANGLES ARE ~2x THE TARGET (1.8M) — the city got very
+dense in the last wave. If your work touches geometry, do not add to that, and
+if you can cheaply reduce it (LOD, lower-poly distant instances, decimating
+props the camera never gets near) that is genuinely valuable. Report your delta.
+
 Your final message is a REPORT: what changed, what you measured, which presets
 you inspected, what still needs work, what you need from others.
 `;
