@@ -50,6 +50,54 @@ const MODULES = [
   ['pedestrians', buildPedestrians],
 ];
 
+
+/**
+ * Measure what an object actually puts on the ground.
+ *
+ * Content modules hand-declare `radius`/`height`, and an audit of all 129 prop
+ * kinds found them systematically wrong — a city bus declaring 3.2 m against a
+ * true 5.98 m contact footprint, a construction site declaring 9.6 against
+ * 22.6. The consumption physics runs on those numbers, so the game was
+ * computing support loss for objects roughly half the size of the ones the
+ * player can see. Measuring the geometry removes a whole class of that bug and
+ * keeps it removed when the art changes.
+ *
+ * Two extents matter and must not be conflated:
+ *   contact — geometry in the lowest fifth of the object. This is what rests on
+ *             the ground, so it is what support and overlap must use. A palm's
+ *             16 m frond crown says nothing about how it is held up.
+ *   narrow  — the smaller horizontal side of that contact patch, which is the
+ *             way an elongated object goes down a hole.
+ */
+const _geoCache = new WeakMap();
+function measureGeometry(geometry) {
+  let m = _geoCache.get(geometry);
+  if (m) return m;
+  if (!geometry.boundingBox) geometry.computeBoundingBox();
+  const bb = geometry.boundingBox;
+  const height = bb.max.y - bb.min.y;
+  const hiLocal = bb.min.y + height * 0.20;
+  const pos = geometry.attributes.position;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) > hiLocal) continue;
+    const x = pos.getX(i), z = pos.getZ(i);
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  // Degenerate contact band (a sphere on a stick): fall back to full extents.
+  if (!(maxX > minX)) { minX = bb.min.x; maxX = bb.max.x; minZ = bb.min.z; maxZ = bb.max.z; }
+  const cw = maxX - minX, cd = maxZ - minZ;
+  m = {
+    height,
+    baseY: bb.min.y,
+    contactRadius: Math.hypot(cw, cd) / 2,
+    narrowHalf: Math.min(cw, cd) / 2,
+  };
+  _geoCache.set(geometry, m);
+  return m;
+}
+
 /** Coarse occupancy grid so modules don't stack props on top of each other. */
 class Occupancy {
   constructor(cell = 3) {
@@ -96,7 +144,7 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
     TIER,
     groups,
     occ,
-    stats: { consumables: 0, meshes: 0, instances: 0 },
+    stats: { consumables: 0, meshes: 0, instances: 0, measured: 0, corrected: 0 },
 
     group(name) {
       let g = groups[name];
@@ -124,12 +172,31 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
       );
       if (slot < 0) return null;
       if (opts.decor) return null;
+
+      // Ground truth from the mesh, scaled by this instance. Authored values
+      // are kept only as a fallback, or when a module opts out explicitly.
+      const gm = measureGeometry(pool.geometry);
+      const sc = typeof opts.scale === 'number' ? (opts.scale ?? 1) : 1;
+      const measured = opts.exactSize ? null : {
+        radius: gm.contactRadius * sc,
+        height: gm.height * sc,
+        passRadius: Math.max(0.12, gm.narrowHalf * sc * 1.02),
+      };
+      if (measured) {
+        ctx.stats.measured++;
+        const declared = opts.radius ?? 0.5;
+        if (Math.abs(declared - measured.radius) / Math.max(0.05, measured.radius) > 0.35) {
+          ctx.stats.corrected++;
+        }
+      }
+
       const c = new Consumable({
         backing: BACKING.INSTANCE,
         pool, slot,
         position: pos,
-        radius: opts.radius ?? 0.5,
-        height: opts.height ?? 1,
+        radius: measured ? measured.radius : (opts.radius ?? 0.5),
+        height: measured ? measured.height : (opts.height ?? 1),
+        passRadius: opts.passRadius ?? (measured ? measured.passRadius : undefined),
         tier: opts.tier || TIER.TINY,
         eatRadius: opts.eatRadius,
         score: opts.score,
@@ -151,12 +218,32 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
       (opts.parent || ctx.group(opts.group || 'misc')).add(object);
       if (opts.decor) return null;
       const pos = opts.position || object.position;
+      // Buildings and other one-off meshes: measure the assembled object.
+      let mRadius = opts.radius ?? 1;
+      let mHeight = opts.height ?? 1;
+      let mPass = opts.passRadius;
+      if (!opts.exactSize) {
+        object.updateWorldMatrix(true, true);
+        const box = new THREE.Box3().setFromObject(object);
+        if (Number.isFinite(box.min.x) && box.max.x > box.min.x) {
+          const w = box.max.x - box.min.x, d = box.max.z - box.min.z;
+          mRadius = Math.hypot(w, d) / 2;
+          mHeight = Math.max(0.2, box.max.y - box.min.y);
+          mPass = mPass ?? Math.max(0.12, Math.min(w, d) / 2 * 1.02);
+          ctx.stats.measured++;
+          if (Math.abs((opts.radius ?? 1) - mRadius) / Math.max(0.05, mRadius) > 0.35) {
+            ctx.stats.corrected++;
+          }
+        }
+      }
+
       const c = new Consumable({
         backing: BACKING.MESH,
         object,
         position: pos,
-        radius: opts.radius ?? 1,
-        height: opts.height ?? 1,
+        radius: mRadius,
+        height: mHeight,
+        passRadius: mPass,
         tier: opts.tier || TIER.SMALL,
         eatRadius: opts.eatRadius,
         score: opts.score,
@@ -211,7 +298,9 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
   console.info(
     `[worldBuild] ${registry.aliveCount} consumables | ` +
     `${pstats.pools} pools / ${pstats.instances} instances | ` +
-    `${(performance.now() - t0).toFixed(0)}ms`
+    `${(performance.now() - t0).toFixed(0)}ms | ` +
+    `${ctx.stats.measured} sized from geometry ` +
+    `(${ctx.stats.corrected} were off by >35% as authored)`
   );
 
   return { layout, props, ctx };
