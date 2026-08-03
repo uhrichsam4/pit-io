@@ -55,10 +55,12 @@ export function updateHoleUniforms(holes, time) {
   for (let i = 0; i < n; i++) {
     const h = holes[i];
     const v = holeData[i];
-    // displayRadius, not radius: the ground opening has to breathe with the
-    // gulp animation or the dirt collar detaches from the cut for a few frames
-    // after every swallow.
-    const r = h.displayRadius != null ? h.displayRadius : h.radius;
+    // cutRadius, not radius: the ground opening has to breathe with the gulp
+    // animation, and the hole's pit mesh and dirt collar are built against the
+    // exact same number. Falls back gracefully for anything hole-shaped that
+    // does not carry the field (net ghosts, tests).
+    const r = h.cutRadius != null ? h.cutRadius
+            : (h.displayRadius != null ? h.displayRadius : h.radius);
     v.set(h.position.x, h.position.z, r, h.alive ? 1 : 0);
     const c = holeTint[i];
     c.x = h.color ? h.color.r : 1;
@@ -138,7 +140,7 @@ const CUT_FRAGMENT = /* glsl */ `
       // provably unaffected. Most ground pixels in a city-wide frame are
       // nowhere near any hole, and skipping their noise taps is what pays for
       // the multi-octave edge in the first place.
-      if (dist > r * 1.45 + 1.2) continue;
+      if (dist > r * 1.40 + 10.0) continue;
 
       vec2 dir = d / max(dist, 1e-4);
       float edge = r * (1.0 + ${EDGE_AMP.toFixed(4)} * hcEdge(dir, uHoleTint[i].w));
@@ -152,14 +154,23 @@ const CUT_FRAGMENT = /* glsl */ `
       float soft = 1.0 - smoothstep(0.0, max(0.85, r * 0.34), t);
       rim = max(rim, max(core, soft * 0.52));
 
-      float g = soft * soft;
+      // Owner-coloured stain, deliberately WIDER than the contact shadow. The
+      // coloured lip itself is a couple of pixels at the distance the game is
+      // played at, so with a tight halo four rival holes were four identical
+      // black blobs. This wash is the only owner cue that survives the zoom.
+      // Capped in METRES, not scaled all the way up: the halo exists so that a
+      // 6 m rival is not an anonymous black blob from 120 m out. A 34 m hole
+      // already shows its coloured lip at that distance, and letting the wash
+      // grow with it just paints twenty metres of road pink.
+      float g = 1.0 - smoothstep(0.0, clamp(r * 0.62, 1.6, 8.0), t);
+      g *= g;
       if (g > halo) { halo = g; haloCol = uHoleTint[i].rgb; }
     }
 
-    if (rim > 0.0) {
+    if (rim > 0.0 || halo > 0.0) {
       // Owner colour first, contact shadow on top: the darkest band must always
       // win at the very edge or the hole stops being the darkest thing around.
-      diffuseColor.rgb = mix(diffuseColor.rgb, haloCol * 0.5, halo * 0.22);
+      diffuseColor.rgb = mix(diffuseColor.rgb, haloCol * 0.62, halo * 0.30);
       diffuseColor.rgb = mix(diffuseColor.rgb, uRimColor, pow(rim, 1.35) * 0.96);
     }
   }

@@ -55,7 +55,7 @@ const _up = new THREE.Vector3(0, 1, 0);
 export const FALL = { SLIDE: 0, ROLL: 1, TOPPLE: 2, LEAN: 3, SINK: 4 };
 
 /** Gravity for the plunge. Exaggerated: real g feels floaty at this scale. */
-const G = 26.0;
+const G = 21.0;
 
 /**
  * The hole must be this multiple of an object's own footprint radius before it
@@ -65,7 +65,7 @@ const G = 26.0;
 const FIT = 0.92;
 
 /** Peak inward acceleration at the lip, m/s^2. */
-const SUCK_ACCEL = 26.0;
+const SUCK_ACCEL = 30.0;
 
 const ROLLING = /car|sedan|suv|taxi|van|truck|bus|pickup|hatch|sport|convert|police|ambul|shuttle|mixer|excav|loader|dumper|flatbed|garbage|cart|stand|scooter|bike|bicycle|barrel|drum|trolley|wheelie/i;
 const TREES = /palm|tree|royal|sabal|coconut|banyan|canopy|frond|bougain|tabebuia/i;
@@ -243,18 +243,25 @@ export class ConsumeSystem {
           dyn.roll += travelled / Math.max(0.25, c.height * 0.22);
           dyn.lean = pull * 0.10;
           break;
-        case FALL.LEAN:
+        case FALL.LEAN: {
           // A tree does not slide much; it leans, and it leans a long way.
+          // The extra drag MUST be time-based — a per-frame multiplier
+          // compounds to ~0.002/second at 60 fps and the tree never arrives.
           dyn.lean = pull * pull * 0.42;
-          dyn.vx *= 0.90; dyn.vz *= 0.90;
+          const treeDrag = Math.exp(-1.6 * dt);
+          dyn.vx *= treeDrag; dyn.vz *= treeDrag;
           break;
+        }
         case FALL.TOPPLE:
           dyn.lean = pull * pull * 0.30;
           break;
-        case FALL.SINK:
+        case FALL.SINK: {
+          // A building barely shifts laterally — it goes down where it stands.
           dyn.lean = pull * 0.06;
-          dyn.vx *= 0.55; dyn.vz *= 0.55;
+          const massDrag = Math.exp(-5.0 * dt);
+          dyn.vx *= massDrag; dyn.vz *= massDrag;
           break;
+        }
         default:
           dyn.lean = pull * 0.16;
           break;
@@ -418,8 +425,8 @@ export class ConsumeSystem {
     c._tTip = profile === FALL.SINK ? 0.55 + heft * 0.35
       : profile === FALL.LEAN ? 0.42 + heft * 0.20
       : profile === FALL.TOPPLE ? 0.34 + heft * 0.18
-      : profile === FALL.ROLL ? 0.24 + heft * 0.16
-      : 0.16 + heft * 0.12;
+      : profile === FALL.ROLL ? 0.30 + heft * 0.16
+      : 0.24 + heft * 0.12;
     c._tPlunge = 0.45 + Math.min(0.8, c.radius * 0.055) + (profile === FALL.SINK ? 0.4 : 0);
     c._fallDur = c._tShake + c._tTip + c._tPlunge;
     c._plungeVY = 0;
@@ -519,7 +526,7 @@ export class ConsumeSystem {
         obj.quaternion.copy(c._startQuat).premultiply(_q2);
 
         c._plungeY = obj.position.y;
-        c._plungeVY = -e * 5.5;
+        c._plungeVY = -e * 3.0;
         c._tipQuat = _q2.clone();
         continue;
       }

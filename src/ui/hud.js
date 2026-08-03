@@ -27,17 +27,15 @@ const TIER_COLORS = [
 ];
 
 /**
- * Cross-screen UI state. The results screen wants facts only the live HUD ever
- * sees (the player's biggest single meal, the name they typed). Both files are
- * part of the same UI layer, so they share this rather than pushing extra
- * fields onto gameplay objects or asking game.js for another call.
+ * Cross-screen UI state. The results screen wants a fact only the live HUD ever
+ * sees — the player's biggest single meal. Both files are part of the same UI
+ * layer, so they share this rather than pushing extra fields onto gameplay
+ * objects or asking game.js for another call.
  */
 export const uiState = {
   /** @type {{label:string, score:number}|null} */
   bestMeal: null,
-  playerName: '',
-  peakRank: null,
-  reset() { this.bestMeal = null; this.peakRank = null; },
+  reset() { this.bestMeal = null; },
 };
 
 export class HUD {
@@ -197,6 +195,11 @@ export class HUD {
     this._dt = Math.min(0.1, Math.max(0.0005, now - this._now));
     this._now = now;
 
+    // The clock only ever runs down, so time going UP means a fresh round.
+    // game.js has no "new match" call into the HUD, and match-scoped state
+    // (frenzy banner, one-shot hints, rank history) must not survive one.
+    if (seconds > this._lastSecs + 1) this._resetMatchState();
+
     const s = Math.max(0, Math.ceil(seconds));
     if (s !== this._lastSecs) {
       this._lastSecs = s;
@@ -222,6 +225,21 @@ export class HUD {
     if (elapsed > 2.5 && elapsed < 30) {
       this.toast('gate', '<span class="ic">!</span>Swallow only what <b>fits</b> &mdash; start on litter and cones', 7.5);
     }
+  }
+
+  _resetMatchState() {
+    this._frenzy = false;
+    this.frenzyEl.classList.remove('on', 'slim');
+    clearTimeout(this._frenzyT);
+    this._hints.clear();
+    this.toastEl.innerHTML = '';
+    this._lastRank = 0;
+    this._lastTier = -1;
+    this._lastScore = 0;
+    this._dead = false;
+    this.deadEl.classList.remove('on');
+    for (const item of this._feedItems.slice()) this._dropFeed(item);
+    uiState.reset();
   }
 
   /* ====================================================================== */
@@ -297,7 +315,6 @@ export class HUD {
         }
       }
       this._lastRank = myRank;
-      if (uiState.peakRank == null || myRank < uiState.peakRank) uiState.peakRank = myRank;
     }
   }
 
@@ -321,8 +338,11 @@ export class HUD {
         };
         this._rows.set(h.id, row);
       }
+      // className reset wipes p1/p2/p3/dead; null the caches so the next tick
+      // re-stamps them instead of thinking they are already applied.
       row.el.className = h === me ? 'row me' : 'row';
-      row.rank = -1;                            // force a re-stamp next tick
+      row.rank = -1;
+      row.alive = null;
       const hex = `#${h.color.getHexString()}`;
       row.nm.textContent = h.name;
       row.dot.style.background = hex;
@@ -440,7 +460,8 @@ export class HUD {
       }
       if (climbed) {
         restart(this.sizeEl, 'tierup');
-        this.tierUpVal.textContent = next ? `${cur.label} unlocked` : 'Everything is edible';
+        this.tierUpEl.style.setProperty('--tier-c', c);
+        this.tierUpVal.textContent = cur.label;
         restart(this.tierUpEl, 'on');
       }
     }

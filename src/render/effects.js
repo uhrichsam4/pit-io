@@ -78,8 +78,10 @@ const P_VERT = /* glsl */ `
     vSeed = aSeed;
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     // Dust plumes expand as they age. Doing it here rather than on the CPU
-    // keeps the size attribute static after birth.
-    float grow = 1.0 + (1.0 - aLife) * 1.35;
+    // keeps the size attribute static after birth. Starting small and growing
+    // hard is what makes neighbouring particles overlap into a single plume
+    // instead of reading as a scatter of discrete white dots against the void.
+    float grow = 0.55 + (1.0 - aLife) * 2.3;
     gl_PointSize = aSize * grow * (300.0 / max(0.001, -mv.z));
     gl_Position = projectionMatrix * mv;
   }
@@ -107,7 +109,10 @@ const P_FRAG = /* glsl */ `
     float soft = 1.0 - smoothstep(0.02, bite, r2);
     // Fade in fast, out slow: a puff should appear instantly and linger.
     float fade = smoothstep(0.0, 0.12, 1.0 - vLife) * vLife;
-    gl_FragColor = vec4(vColor, soft * clamp(fade * 1.6, 0.0, 1.0));
+    // Capped below 1: dozens of overlapping plumes during a block-sized meal
+    // otherwise stack into an opaque fog that veils the void, and the void
+    // being the darkest thing on screen is the whole point of the game.
+    gl_FragColor = vec4(vColor, soft * clamp(fade * 1.35, 0.0, 0.78));
     #include <colorspace_fragment>
   }
 `;
@@ -254,7 +259,23 @@ export class Effects {
     this.sHigh = 0;
 
     /* ---- solid debris chunks -------------------------------------------- */
-    const chunk = new THREE.BoxGeometry(1, 1, 1);
+    // A rubble shard, not a sugar cube. docs/ART_DIRECTION.md §6 makes sharp
+    // 90-degree box edges an explicit tell of cheap 3D, and a collapsing tower
+    // throws chunks big enough for the player to read their silhouette. A
+    // jittered icosahedron is 20 triangles — 8 more than a box — and reads as
+    // broken masonry from any angle.
+    const chunk = new THREE.IcosahedronGeometry(0.62, 0);
+    {
+      const p = chunk.attributes.position;
+      for (let i = 0; i < p.count; i++) {
+        // Deterministic jitter: a hash of the index, so every hole in every
+        // client gets the same silhouette and the geometry stays shareable.
+        const h = Math.sin(i * 12.9898) * 43758.5453;
+        const j = 0.72 + (h - Math.floor(h)) * 0.56;
+        p.setXYZ(i, p.getX(i) * j, p.getY(i) * j, p.getZ(i) * j);
+      }
+      chunk.computeVertexNormals();
+    }
     this.debrisMat = new THREE.MeshStandardMaterial({
       roughness: 0.86, metalness: 0.02,
     });
@@ -282,7 +303,11 @@ export class Effects {
 
     /* ---- shockwave rings -------------------------------------------------- */
     this.rings = [];
-    const ringGeo = new THREE.RingGeometry(0.55, 1.0, 84, 4);
+    // ONE radial segment. vT is derived from the vertex radius and interpolated
+    // across the quad, which is already exactly the linear ramp the profile
+    // needs — extra radial rings are pure triangle cost, and with 24 rings in
+    // the pool that adds up during a collapse.
+    const ringGeo = new THREE.RingGeometry(0.55, 1.0, 96, 1);
     ringGeo.rotateX(-Math.PI / 2);
     this._ringGeo = ringGeo;
     for (let i = 0; i < MAX_RINGS; i++) {
@@ -310,11 +335,9 @@ export class Effects {
 
     this._m4 = new THREE.Matrix4();
     this._q = new THREE.Quaternion();
-    this._q2 = new THREE.Quaternion();
     this._v = new THREE.Vector3();
     this._sv = new THREE.Vector3();
     this._col = new THREE.Color();
-    this._col2 = new THREE.Color();
     /** Lifetime colour targets: dust cools and greys as it settles. */
     this._settle = new THREE.Color(PALETTE.SMOKE);
 
@@ -439,13 +462,19 @@ export class Effects {
       this.dSpin[k * 3 + 1] = (Math.random() - 0.5) * 16;
       this.dSpin[k * 3 + 2] = (Math.random() - 0.5) * 16;
 
-      // Slabs and shards, not sugar cubes.
-      const base = scale * (0.45 + Math.random() * 1.05);
+      // Slabs and shards, not sugar cubes. Capped: consume.js sizes debris from
+      // the eaten object's radius, and an unclamped tower produces nine-metre
+      // blocks that read as broken geometry rather than as rubble.
+      const base = Math.min(3.4, scale * (0.45 + Math.random() * 1.05));
       this.dScale[k * 3] = base * (0.7 + Math.random() * 0.9);
       this.dScale[k * 3 + 1] = base * (0.35 + Math.random() * 0.7);
       this.dScale[k * 3 + 2] = base * (0.7 + Math.random() * 0.9);
 
-      this.dLife[k] = 1.3 + Math.random() * 0.9;
+      // Long enough to actually reach the ground. A tower sheds debris from
+      // 40 m up; a flat 2 s life fades it out still airborne, which is exactly
+      // the "objects disappearing without falling in" review failure.
+      this.dLife[k] = 1.3 + Math.random() * 0.9
+        + Math.sqrt(Math.max(0, this.dPos[k * 3 + 1]) / 11);
       this.dRest[k] = 0;
       const j = 0.82 + Math.random() * 0.36;
       this.debris.instanceColor.setXYZ(k, this._col.r * j, this._col.g * j, this._col.b * j);

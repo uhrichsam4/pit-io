@@ -503,6 +503,14 @@ export class BotController {
       // context scan below — this is only the seed.
       wx = h.position.x - this.threat.position.x;
       wz = h.position.z - this.threat.position.z;
+      const fl = Math.hypot(wx, wz) || 1;
+      wx /= fl; wz /= fl;
+      // Retreat TOWARD food where that costs nothing. Measured: bots that spent
+      // a fifth of the match in a dead sprint finished last by a mile, because
+      // running away is the one activity in this game that earns nothing.
+      const gx = this.goal.x - h.position.x, gz = this.goal.y - h.position.z;
+      const gl = Math.hypot(gx, gz);
+      if (gl > 1) { wx += (gx / gl) * 0.45; wz += (gz / gl) * 0.45; }
     } else if (this.mode === BOT_MODE.HUNT && this.prey) {
       const eta = Math.min(3.5, this._interceptTime(
         this.prey, Math.hypot(this.prey.position.x - h.position.x, this.prey.position.z - h.position.z)
@@ -577,6 +585,25 @@ export class BotController {
       if (s > bestS) { bestS = s; bestI = i; }
     }
 
+    /* ---- 2b. hard water veto ----------------------------------------- */
+    // The scores above are soft, and a soft preference is not a guarantee: a
+    // 25 m hole crossing a riverbank was measured putting its centre in the
+    // channel for a few frames. Re-pick among headings whose SHORT lookahead
+    // is dry, so "never drive into the water" is enforced rather than
+    // encouraged. Only the short probe is hard — the long one must stay soft or
+    // a bot on a peninsula has no legal move at all.
+    const guard = 8 + r * 0.8;
+    let vetoed = false;
+    if (isWaterAt(h.position.x + DIR_X[bestI] * guard, h.position.z + DIR_Z[bestI] * guard, this.layout)) {
+      vetoed = true;
+      let safeI = -1, safeS = -1e9;
+      for (let i = 0; i < DIRS; i++) {
+        if (isWaterAt(h.position.x + DIR_X[i] * guard, h.position.z + DIR_Z[i] * guard, this.layout)) continue;
+        if (_score[i] > safeS) { safeS = _score[i]; safeI = i; }
+      }
+      if (safeI >= 0) bestI = safeI;
+    }
+
     /* ---- 3. sub-sample the winner and slew toward it ----------------- */
     // Parabolic interpolation across the winning bin's neighbours: 16 bins is
     // 22.5 deg apart and steering to bin centres alone reads as notchy.
@@ -584,7 +611,9 @@ export class BotController {
     const c = _score[bestI];
     const rr = _score[(bestI + 1) % DIRS];
     const denom = (l - 2 * c + rr);
-    const off = Math.abs(denom) > 1e-5
+    // Never interpolate off a vetoed bin — its neighbours are the water we just
+    // rejected.
+    const off = (!vetoed && Math.abs(denom) > 1e-5)
       ? THREE.MathUtils.clamp(0.5 * (l - rr) / denom, -1, 1) : 0;
     let want = ((bestI + off) / DIRS) * Math.PI * 2;
 

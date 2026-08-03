@@ -46,8 +46,9 @@ const _grit = new THREE.Vector3();
 /* ========================================================================== */
 
 const PIT_VERT = /* glsl */ `
-  varying vec2 vUv;
-  varying vec2 vDirH;
+  varying vec2  vUv;
+  varying vec2  vDirH;
+  varying float vR;
   void main() {
     vUv = uv;
     // Horizontal outward direction in object space. The hole group is never
@@ -55,6 +56,11 @@ const PIT_VERT = /* glsl */ `
     // term needs, and it dodges the non-uniform scale that would wreck a
     // normalMatrix-transformed normal.
     vDirH = normalize(position.xz + vec2(1e-5));
+    // Radius in profile units. The fragment shader measures depth from the
+    // per-pixel ground cut using this, NOT from the uv row, because the uv rows
+    // are a 64-gon and anchoring the hot lip to them drew a visibly faceted
+    // pink polygon instead of a circle.
+    vR = length(position.xz);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
@@ -68,20 +74,26 @@ const PIT_FRAG = /* glsl */ `
   uniform float uPulse;     // swallow ring, -1..1
   uniform float uFlash;     // tier-up celebration, 0..1
   uniform vec2  uSunXZ;     // horizontal sun direction, for a faint wall catch
-  varying vec2 vUv;
-  varying vec2 vDirH;
-
-  float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
-  float noise(vec2 p){
-    vec2 i = floor(p), f = fract(p);
-    vec2 u = f*f*(3.0-2.0*f);
-    return mix(mix(hash(i), hash(i+vec2(1,0)), u.x),
-               mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), u.x), u.y);
-  }
+  uniform float uSeed;      // must match the ground cut's torn edge
+  varying vec2  vUv;
+  varying vec2  vDirH;
+  varying float vR;
+  ${HOLE_EDGE_GLSL}
 
   void main() {
-    float up = clamp(vUv.y, 0.0, 1.0);   // 1 at the lip, 0 at the throat's end
-    float d  = 1.0 - up;                 // descent, 0 at the lip
+    // Descent measured from the ACTUAL torn cut, not from the mesh's top row.
+    float edge = 1.0 + ${EDGE_AMP.toFixed(4)} * hcEdge(vDirH, uSeed);
+    float below = edge - vR;
+    // The overhang — mesh above the tear — is NOT discarded. At the far lip the
+    // view rays graze just inside the cut and continue away and downward, so
+    // without that collar of geometry they pass clean under the ground plane
+    // and out to the sky: a pale wedge across the top of every hole. It is what
+    // seals the funnel against y=0. It just has to be pure shadow, never lip.
+    float outside = step(below, 0.0);
+    float d = clamp(below / max(0.25, edge), 0.0, 1.0);
+    // Depth along the wall, used only for the spiral shear: the striations have
+    // to twist with real vertical distance, which radius does not track.
+    float dv = clamp(1.0 - vUv.y, 0.0, 1.0);
     float a  = vUv.x;                    // 0..1 around
 
     /* ---- swirling striations --------------------------------------------
@@ -90,28 +102,28 @@ const PIT_FRAG = /* glsl */ `
        spiral accelerate as it descends — that acceleration is the entire
        reason it reads as suction rather than as a striped cone. Every angular
        frequency is an integer so the field is continuous across the uv seam. */
-    float twist = d * 2.7;
-    float spin  = uTime * (0.06 + d * 0.55);
+    float twist = dv * 2.7;
+    float spin  = uTime * (0.06 + dv * 0.55);
     float b1 = 0.5 + 0.5 * sin((a + twist + spin) * 6.28318 * 7.0);
-    float b2 = 0.5 + 0.5 * sin((a + twist * 2.4 + uTime * (0.03 + d * 0.95)) * 6.28318 * 19.0);
+    float b2 = 0.5 + 0.5 * sin((a + twist * 2.4 + uTime * (0.03 + dv * 0.95)) * 6.28318 * 19.0);
     float striae = mix(b1, b2, 0.42);
     striae *= striae * striae;           // thin ridges, wide grooves
 
     // Break the corduroy with noise sampled ON THE CIRCLE, so it is periodic
     // in 'a' and there is no seam where uv wraps.
-    vec2 ring = vec2(cos(a * 6.28318), sin(a * 6.28318));
-    striae *= 0.30 + 0.70 * noise(ring * 7.0 + vec2(d * 9.0 - uTime * 0.75, 0.0));
+    striae *= 0.30 + 0.70 * hcNoise(vDirH * 7.0 + vec2(dv * 9.0 - uTime * 0.75, 0.0));
 
     /* ---- the void -------------------------------------------------------- */
-    vec3 col = mix(uWall, uVoid, smoothstep(0.0, 0.38, d));
-    col *= exp(-d * 4.2);                // hard ambient falloff down the throat
-    col += uWall * striae * 1.7 * (1.0 - smoothstep(0.08, 0.66, d));
+    vec3 col = mix(uWall, uVoid, smoothstep(0.0, 0.34, d));
+    col *= exp(-d * 4.6);                // hard ambient falloff down the throat
+    col += uWall * striae * 2.1 * (1.0 - smoothstep(0.05, 0.55, d));
 
-    // Faint sun catch on the up-sun side of the throat, so the pit has a
-    // direction and does not collapse into a flat disc at small sizes. The
-    // wall's INWARD normal is -vDirH, hence the negation.
+    // Sun catch on the up-sun side of the throat. This is the term that gives
+    // the pit a direction; without it a big hole collapses into a flat disc,
+    // which is the specific failure the brief calls out. The wall's INWARD
+    // normal is -vDirH, hence the negation.
     float sun = max(0.0, dot(-vDirH, uSunXZ));
-    col += uWall * pow(sun, 2.5) * 2.0 * (1.0 - smoothstep(0.0, 0.50, d));
+    col += uWall * pow(sun, 2.0) * 2.6 * (1.0 - smoothstep(0.0, 0.62, d));
 
     /* ---- inner glow ------------------------------------------------------
        Something is burning down there. Deliberately starved: the owner tint is
@@ -126,13 +138,18 @@ const PIT_FRAG = /* glsl */ `
        and anything fatter turns the hole into a neon doughnut at close camera
        distances while adding nothing at the distance the game is actually
        played at. */
-    float lip = smoothstep(0.032, 0.0, d);
-    float lipPow = lip * lip;
-    col += uLipHot * lipPow * (0.34 + 0.40 * uFlash + 0.22 * max(uPulse, 0.0));
-    col += uTint * lipPow * lip * (0.26 + 0.8 * uFlash);
+    // 'below' is a RADIAL distance, and near the top the wall is near-vertical,
+    // so a band that looks reasonable as a number projects enormous on the far
+    // side of the opening where the wall faces the camera. 0.8% of the radius.
+    float lip = smoothstep(0.014, 0.0, max(below, 0.0)) * (1.0 - outside);
+    float lipPow = lip * lip * lip;
+    col += uLipHot * lipPow * (0.75 + 0.9 * uFlash + 0.5 * max(uPulse, 0.0));
+    col += uTint * lipPow * lip * (0.55 + 1.4 * uFlash);
 
     // Never let the very bottom pick up anything at all.
-    col *= smoothstep(-0.02, 0.22, up);
+    col *= smoothstep(-0.02, 0.22, 1.0 - dv);
+    // Overhang to pure void, so the seal reads as an undercut shadow.
+    col = mix(col, uVoid * 0.4, outside);
 
     gl_FragColor = vec4(max(col, 0.0), 1.0);
     #include <colorspace_fragment>
@@ -231,7 +248,7 @@ const LIP_FRAG = /* glsl */ `
     // more of the cells, so cracks fade in as the hole gets hungrier.
     const float cells = 40.0;
     float sizeK = clamp(uRadius / 14.0, 0.0, 1.0);
-    float thresh = 0.68 - 0.44 * sizeK;
+    float thresh = 0.56 - 0.40 * sizeK;
     float ca = (vAng / 6.28318 + 1.0) * cells;
     float crack = 0.0;
     for (int k = -1; k <= 1; k++) {
@@ -273,7 +290,7 @@ const LIP_FRAG = /* glsl */ `
     float collar = smoothstep(0.0, 0.04, vT)
                  * (1.0 - smoothstep(0.05 + clod * 0.12, 0.24 + clod * 0.34, vT));
     collar *= 0.72 + 0.45 * clod;
-    float rimBand = smoothstep(0.035, 0.0, vT);   // owner glow, see LIP_EMISSIVE
+    float rimBand = smoothstep(0.10, 0.0, vT);    // owner glow, see LIP_EMISSIVE
     float a = clamp(collar, 0.0, 1.0);
     a = max(a, crack * 0.9);
     a = max(a, dust * 0.55);
@@ -298,8 +315,11 @@ const LIP_FRAG = /* glsl */ `
  */
 const LIP_EMISSIVE = /* glsl */ `
   {
-    float band = smoothstep(0.035, 0.0, vT);
-    float k = band * band * (0.30 + 0.40 * max(uPulse, 0.0) + 1.5 * uFlash);
+    // Wide enough to survive the gameplay zoom. At 0.035 of the collar this was
+    // 15 cm on a 7 m hole — under a pixel from 120 m out, and four rival holes
+    // read as four identical black blobs.
+    float band = smoothstep(0.10, 0.0, vT);
+    float k = band * band * (0.34 + 0.45 * max(uPulse, 0.0) + 1.6 * uFlash);
     totalEmissiveRadiance += uOwner * k;
   }
 `;
@@ -325,8 +345,19 @@ let _burstGeo = null;
  * plane exactly at the nominal cut, with the wobble amplitude covered by
  * starting the collar slightly inside it.
  */
-function pitProfileR(v) { return 0.030 + 0.970 * Math.pow(v, 0.40); }
-function pitProfileY(v) { return -Math.pow(1 - v, 1.18); }
+/**
+ * Top radius is 1.045, not 1.0. hcEdge is bounded at ±0.50, so the tear reaches
+ * 1.0375r at most; a mesh that stops at exactly 1.0 leaves a sliver of nothing
+ * along the angles where the tear reaches furthest, and — worse — leaves the
+ * far lip open to the sky. Kept as tight as the bound allows, because every
+ * millimetre of overhang is undercut depth at the near lip.
+ *
+ * The y exponent is steep (1.55) so the wall is near-vertical for the first
+ * metre: that is the cut through the crust, and it holds the undercut to ~3%
+ * of the pit's depth.
+ */
+function pitProfileR(v) { return 0.030 + 1.015 * Math.pow(v, 0.40); }
+function pitProfileY(v) { return -Math.pow(1 - v, 1.85); }
 
 function buildPitGeometry() {
   const RAD = 64, H = 6;
@@ -348,7 +379,7 @@ function buildPitGeometry() {
 }
 
 function buildLipGeometry() {
-  const SEG = 128, RINGS = 4;
+  const SEG = 96, RINGS = 4;
   const count = (SEG + 1) * (RINGS + 1);
   const pos = new Float32Array(count * 3);
   const nor = new Float32Array(count * 3);
@@ -401,7 +432,9 @@ function sharedGeometries() {
     _capGeo.rotateX(-Math.PI / 2);
     _capGeo.__shared = true;
     _lipGeo = buildLipGeometry();
-    _burstGeo = new THREE.RingGeometry(0.70, 1.0, 72, 1);
+    // Thin. At 0.70 the tier-up ring was a 4 m wide pink smear rather than a
+    // shockfront, and additive blending made it worse.
+    _burstGeo = new THREE.RingGeometry(0.885, 1.0, 96, 1);
     _burstGeo.rotateX(-Math.PI / 2);
     _burstGeo.__shared = true;
   }
@@ -490,6 +523,7 @@ export class Hole {
         uTint: { value: this.color.clone() },
         uLipHot: { value: new THREE.Color(PALETTE.HOLE_GLOW) },
         uSunXZ: { value: SUN_XZ.clone() },
+        uSeed: { value: this.edgeSeed },
         uTime: { value: 0 },
         uPulse: { value: 0 },
         uFlash: { value: 0 },
@@ -610,7 +644,12 @@ export class Hole {
     // when several things go down at once, so a mouthful hits harder than a
     // crumb without any special-casing. Scaled by the RELATIVE size of the meal
     // so eating a bench at r=40 does not shake the world.
-    const rel = grew / Math.max(0.15, this.radius);
+    // grew can come back NEGATIVE when the radius is set from outside the score
+    // curve (dev harness, a netcode snapshot, a retuned GROWTH_* constant) and
+    // addScore then re-solves it. A negative impulse would suck the hole inward
+    // on a swallow, which is the exact opposite of the feedback we want, so the
+    // spring is only ever kicked outward.
+    const rel = Math.max(0, grew) / Math.max(0.15, this.radius);
     this.pulseV += Math.min(9.0, 1.6 + rel * 90.0);
     this.chompImpulse = Math.min(1, this.chompImpulse + 0.4);
 
@@ -743,9 +782,14 @@ export class Hole {
   syncVisual(t = 0) {
     const r = this.displayRadius;
     const p = this.pulse;
-    // Volume-preserving-ish: wider means shallower, and vice versa.
-    const wide = 1 + p * 0.085;
-    const deep = 1 - p * 0.16;
+    // Volume-preserving-ish: wider means shallower, and vice versa. The gains
+    // are large relative to the spring's amplitude (a mid-size meal peaks at
+    // p ~= 0.13, a building at ~0.3) because the previous 0.085 gain moved the
+    // lip by one percent — mathematically a pulse, visually nothing.
+    // The lower clamp keeps the drawn opening from ever shrinking meaningfully
+    // below the gameplay capture radius.
+    const wide = Math.max(0.94, 1 + p * 0.45);
+    const deep = 1 - p * 0.55;
     // Rim brightness, separate from the geometric squash. The player's rim
     // breathes and a rival's does not: bot palette entry 0 (#ff4d8d) is within
     // a few percent of the player's hot pink, and in a scrum that one cue is
@@ -754,21 +798,29 @@ export class Hole {
 
     this.group.position.set(this.position.x, 0, this.position.z);
 
+    // ONE radius drives the ground cut, the pit and the collar. All three apply
+    // the same torn-edge function, so if their radii disagree by even a percent
+    // the pit's overhang escapes the cut on one side while the collar floats
+    // over the void on the other. render/groundShader.js reads this field.
+    this.cutRadius = r * wide;
+
     // Floor of 6.5 m, not 4.5: gameplay/consume.js plunges objects to
     // max(6, radius * PIT_DEPTH_F), and a funnel shallower than the fall lets
     // a swallowed bench pop out of the bottom of its own hole.
     const pitDepth = Math.max(6.5, r * HOLE.PIT_DEPTH_F);
-    this.pit.scale.set(r * wide, pitDepth * deep, r * wide);
+    this.pit.scale.set(this.cutRadius, pitDepth * deep, this.cutRadius);
     this.cap.scale.set(r, 1, r);
     this.cap.position.y = -pitDepth * deep + 0.02;
 
     const u = this.lipUniforms;
     if (u) {
-      u.uRadius.value = r * wide;
+      u.uRadius.value = this.cutRadius;
       // Collar width in METRES, deliberately sublinear: cracks around a 60 m
       // hole should look like a shattered plate, not like a second crater.
       u.uWidth.value = Math.min(14, 0.85 + r * 0.52);
-      u.uLift.value = Math.min(0.9, 0.045 + r * 0.038);
+      // The collar heaves with the gulp too — the earth is being pushed up by
+      // whatever just went down.
+      u.uLift.value = Math.min(0.9, 0.045 + r * 0.038) * (1 + Math.max(0, p) * 0.9);
       u.uHtime.value = t;
       const sp = Math.hypot(this.velocity.x, this.velocity.z);
       if (sp > 0.001) u.uVel.value.set(this.velocity.x / sp, this.velocity.z / sp);
@@ -784,10 +836,10 @@ export class Hole {
     if (this._burstT >= 0) {
       const k = this._burstT / 0.85;
       const e = 1 - Math.pow(1 - k, 2.6);
-      const br = r * (1.0 + e * 2.4);
+      const br = r * (1.0 + e * 2.6);
       this.burst.visible = true;
       this.burst.scale.set(br, 1, br);
-      this.burstMaterial.opacity = Math.pow(1 - k, 1.7) * 0.85;
+      this.burstMaterial.opacity = Math.pow(1 - k, 1.4) * 1.15;
     } else if (this.burst.visible) {
       this.burst.visible = false;
       this.burstMaterial.opacity = 0;

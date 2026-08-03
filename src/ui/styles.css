@@ -23,7 +23,6 @@
   --hot-deep: #d4176a;
   --sun: #ffc93c;
   --aqua: #37e6d5;
-  --lilac: #b98cff;
   --lime: #4dff9e;
   --orange: #ff9430;
 
@@ -38,7 +37,6 @@
   --t7: #c58cff;
 
   /* --- surfaces --------------------------------------------------------- */
-  --ink: #060b14;
   --txt: #fbf7ef;
   --dim: rgba(251, 247, 239, 0.60);
   --dimmer: rgba(251, 247, 239, 0.34);
@@ -80,17 +78,6 @@ html, body {
 
 #hud-layer { font-size: calc(16px * var(--s)); }
 
-/* Numeric readouts must never jitter as digits change. */
-.num {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1, 'lnum' 1;
-}
-
-.mono-label {
-  font-size: 0.62em; font-weight: 700; letter-spacing: 0.18em;
-  text-transform: uppercase; color: var(--dim);
-}
-
 /* ======================================================================== */
 /* PANEL SYSTEM                                                             */
 /* ======================================================================== */
@@ -100,8 +87,8 @@ html, body {
   background: var(--plate);
   border: 1px solid var(--edge);
   border-radius: 0.95em;
-  backdrop-filter: blur(15px) saturate(1.4);
-  -webkit-backdrop-filter: blur(15px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.35);
+  -webkit-backdrop-filter: blur(12px) saturate(1.35);
   box-shadow:
     0 0.85em 2.1em rgba(2, 6, 14, 0.46),
     0 0.1em 0.2em rgba(2, 6, 14, 0.34),
@@ -114,15 +101,17 @@ html, body {
   background: linear-gradient(90deg, transparent, var(--edge-hi), transparent);
 }
 
-/* Corner scrims. Cheap insurance that white text never lands on white stucco. */
+/* Edge scrims. Cheap insurance that white text never lands on white stucco.
+   Kept shallow and low-alpha on purpose: the city is the product, and a heavy
+   letterbox gradient is the fastest way to make a bright game look grey. */
 .hud-scrim { position: absolute; left: 0; right: 0; pointer-events: none; }
 .hud-scrim.top {
-  top: 0; height: 12em;
-  background: linear-gradient(180deg, rgba(5, 10, 20, 0.46), rgba(5, 10, 20, 0.14) 52%, transparent);
+  top: 0; height: 10.5em;
+  background: linear-gradient(180deg, rgba(5, 10, 20, 0.40), rgba(5, 10, 20, 0.10) 55%, transparent);
 }
 .hud-scrim.bottom {
-  bottom: 0; height: 13em;
-  background: linear-gradient(0deg, rgba(5, 10, 20, 0.46), rgba(5, 10, 20, 0.12) 58%, transparent);
+  bottom: 0; height: 11em;
+  background: linear-gradient(0deg, rgba(5, 10, 20, 0.40), rgba(5, 10, 20, 0.09) 60%, transparent);
 }
 
 /* ======================================================================== */
@@ -180,7 +169,7 @@ html, body {
 /* ======================================================================== */
 
 #hud-frenzy {
-  position: absolute; top: 6.2em; left: 50%;
+  position: absolute; top: 6.5em; left: 50%;
   transform: translateX(-50%) scale(0.7);
   padding: 0.42em 1.3em 0.5em; border-radius: 0.6em;
   display: none; text-align: center; white-space: nowrap;
@@ -438,8 +427,14 @@ html, body {
   color: #17101d; white-space: nowrap;
 }
 #hud-tierup.on { display: block; animation: tierCard 2.4s var(--ease) forwards; }
-#hud-tierup .k { font-size: 0.55em; font-weight: 900; letter-spacing: 0.26em; opacity: 0.72; }
-#hud-tierup .v { font-size: 1.05em; font-weight: 900; letter-spacing: 0.03em; line-height: 1.1; }
+#hud-tierup .k {
+  font-size: 0.55em; font-weight: 900; letter-spacing: 0.26em; opacity: 0.7;
+  text-transform: uppercase;
+}
+#hud-tierup .v {
+  font-size: 1.05em; font-weight: 900; letter-spacing: 0.05em; line-height: 1.1;
+  text-transform: uppercase;
+}
 @keyframes tierCard {
   0%   { opacity: 0; transform: translateY(1.2em) scale(0.82); }
   8%   { opacity: 1; transform: translateY(0) scale(1.08); }
@@ -470,11 +465,6 @@ html, body {
 #hud-map .frame i:nth-child(2) { top: 0; right: 0; border-left: 0; border-bottom: 0; border-radius: 0 0.72em 0 0; }
 #hud-map .frame i:nth-child(3) { bottom: 0; left: 0; border-right: 0; border-top: 0; border-radius: 0 0 0 0.72em; }
 #hud-map .frame i:nth-child(4) { bottom: 0; right: 0; border-left: 0; border-top: 0; border-radius: 0 0 0.72em 0; }
-#hud-map .tag {
-  position: absolute; left: 50%; bottom: 0.05em; transform: translateX(-50%);
-  font-size: 0.5em; font-weight: 800; letter-spacing: 0.22em; color: rgba(255, 255, 255, 0.55);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8); pointer-events: none; white-space: nowrap;
-}
 
 /* ======================================================================== */
 /* KILL FEED                                                                */
@@ -681,7 +671,9 @@ html, body {
    spectrum reads as a demo, not a logo. */
 .title .tl {
   display: block;
-  font-size: clamp(52px, 11.5vw, 148px);
+  /* Height-aware: on a phone in landscape 11.5vw alone puts two lines of
+     display type through the bottom of the screen. */
+  font-size: clamp(38px, min(11.5vw, 21vh), 148px);
   font-weight: 900; letter-spacing: -0.035em; text-transform: uppercase;
   background:
     linear-gradient(104deg, transparent 43%, rgba(255, 255, 255, 0.92) 50%, transparent 57%),
@@ -728,12 +720,20 @@ html, body {
 .name-row .k {
   font-size: 0.66em; font-weight: 900; letter-spacing: 0.28em; color: var(--dim);
 }
+.name-row:focus-within {
+  border-color: rgba(255, 201, 60, 0.6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12),
+              0 0 0 0.14em rgba(255, 201, 60, 0.22),
+              0 0.5em 1.6em rgba(2, 6, 14, 0.5);
+}
 .name-row input {
   width: 8.5em; padding: 0.35em 0.6em;
   background: transparent; border: 0; outline: 0;
   font-family: var(--font); font-size: 1em; font-weight: 850; letter-spacing: 0.04em;
-  color: var(--sun); text-align: center;
+  color: var(--sun); text-align: center; caret-color: var(--sun);
   text-shadow: 0 0 0.7em rgba(255, 201, 60, 0.45);
+  /* body sets user-select:none for the game; a text field is the exception. */
+  user-select: text; -webkit-user-select: text;
 }
 .name-row input::placeholder { color: rgba(255, 255, 255, 0.28); font-weight: 700; }
 .name-row .dice {
@@ -911,7 +911,9 @@ html, body {
 
 .res-list {
   display: flex; flex-direction: column; gap: 0.1em;
-  max-height: 38vh; overflow: hidden;
+  max-height: 38vh; overflow-y: auto; overflow-x: hidden;
+  touch-action: pan-y;                 /* body sets touch-action:none for the game */
+  scrollbar-width: thin;
   padding: 0.45em 0.35em; border-radius: 0.7em;
   background: rgba(4, 9, 18, 0.45);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
@@ -986,6 +988,17 @@ html, body {
   #hud-toast { bottom: 0.6em; }
   #hud-board { top: 0.6em; right: 0.6em; }
   .res-list { max-height: 30vh; }
+  #hud-stick .ring { width: 7em; height: 7em; }
+  #hud-stick .knob { width: 2.8em; height: 2.8em; }
+}
+
+/* Very short viewports: the menu has to fit without scrolling. */
+@media (max-height: 470px) {
+  .tagline, .eyebrow { display: none; }
+  .menu-in { gap: 0.55em; padding: 0.6em; }
+  .res-card { padding: 0.9em 1em 1em; gap: 0.6em; }
+  .place .n { font-size: clamp(34px, 9vh, 60px); }
+  .btn { padding: 0.55em 1.9em 0.6em; font-size: 0.95em; }
 }
 
 @media (max-width: 720px) {

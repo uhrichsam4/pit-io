@@ -1543,11 +1543,17 @@ export class Audio {
    * calls it, and this method then does nothing.
    */
   _trackMatch(now, radius) {
-    if (this._explicitMatchState) return;
-    if (this._matchT0 === undefined || (radius <= 1.35 && this._lastRadius > 2.2)) {
-      this._newMatch(now);
-    }
+    const reset = radius <= 1.35 && this._lastRadius > 2.2;
     this._lastRadius = radius;
+    if (this._matchT0 === undefined) { this._newMatch(now); return; }
+    // The reset heuristic stays armed even when the game drives the arc
+    // explicitly, but only once the current arc has run out. Otherwise a single
+    // matchEnd() would strand the track in its outro for the rest of the
+    // session, since nothing would ever tell us a new round had begun.
+    if (reset && (!this._explicitMatchState || now - this._matchT0 > MATCH.DURATION)) {
+      this._newMatch(now);
+      return;
+    }
   }
 
   _newMatch(t0) {

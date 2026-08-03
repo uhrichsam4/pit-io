@@ -22,8 +22,9 @@ import { WORLD } from '../config.js';
  * into brown mush at 190 px. Warm throughout — a blue-grey map under a warm
  * city is the same mistake the art bible bans on the asphalt (§3). */
 const INK = {
-  street: '#2c2620',        // base fill: anything not a parcel is roadway
-  avenue: '#413931',
+  land: '#4a4137',          // ground with no parcel on it
+  street: '#302a23',        // roadway is cut dark INTO the land
+  avenue: '#221d18',        // arteries darkest, so the spines read
   block: '#82725a',
   blockTall: '#a58f69',     // towers read lighter: the skyline's mass, mapped
   park: '#419a55',
@@ -193,23 +194,25 @@ export class Minimap {
     const k = S / 336;
 
     g.clearRect(0, 0, S, S);
-    g.fillStyle = INK.street;
+    // Generic land first. Parcel-free ground (park bands, the rail cut, the
+    // civic superblocks) must not inherit the road colour — the first version
+    // did, and downtown grew several convincing black holes.
+    g.fillStyle = INK.land;
     g.fillRect(0, 0, S, S);
 
     if (!layout) { this._static = cv; return; }
 
-    /* --- avenues, so the grid has a hierarchy and not just a texture ----- */
+    /* --- the street grid, cut INTO the land ------------------------------ */
+    const bayX = X(layout.bayEdge ?? WORLD.BAY_EDGE);
     for (const r of layout.roadsX || []) {
-      if (r.cls === 'street') continue;
       const w = Math.max(1, r.half * 2 * P);
-      g.fillStyle = INK.avenue;
+      g.fillStyle = r.cls === 'street' ? INK.street : INK.avenue;
       g.fillRect(X(r.pos) - w / 2, 0, w, S);
     }
     for (const r of layout.roadsZ || []) {
-      if (r.cls === 'street') continue;
       const w = Math.max(1, r.half * 2 * P);
-      g.fillStyle = INK.avenue;
-      g.fillRect(0, Y(r.pos) - w / 2, X(layout.bayEdge ?? WORLD.BAY_EDGE), w);
+      g.fillStyle = r.cls === 'street' ? INK.street : INK.avenue;
+      g.fillRect(0, Y(r.pos) - w / 2, bayX, w);
     }
 
     /* --- parcels --------------------------------------------------------- */

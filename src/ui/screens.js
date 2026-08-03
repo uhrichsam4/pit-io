@@ -45,7 +45,6 @@ export class Screens {
 
     this._cd = -99;
     this.playerName = readName();
-    uiState.playerName = this.playerName;
 
     this.showLoading('Building Miami…');
   }
@@ -136,7 +135,6 @@ export class Screens {
     const input = this.el.querySelector('#name-in');
     const commit = () => {
       this.playerName = cleanName(input.value) || 'You';
-      uiState.playerName = this.playerName;
       writeName(this.playerName);
     };
     input.addEventListener('input', commit);

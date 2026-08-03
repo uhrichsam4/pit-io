@@ -94,7 +94,7 @@ export const HOLE = {
    * That convex shape is what makes the tier ladder land in the right order at
    * the right sizes, and it is the arc the game is selling.
    */
-  GROWTH_K: 330,
+  GROWTH_K: 300,
   GROWTH_P: 0.55,
   /**
    * Hard cap, and a deliberate brake rather than a formality. Camera distance
