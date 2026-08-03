@@ -36,14 +36,29 @@
  *    sets, scooter rows, barrier lines, lounger rows) are placed as clusters,
  *    never as independent dice rolls.
  *
- * NOTE ON ctx.isFree: buildings.js claims `max(w,d)*0.5` around a block centre,
- * which on the coarse 3 m occupancy grid covers the whole parcel *including the
- * sidewalk*. So the shared grid cannot gate pavement placement — it would leave
- * the city bare, which is the bug this module exists to fix. Props therefore
- * keep their own fine (1.5 m) grid for prop-vs-prop, derive the building
- * keep-out from the block's own setback data, and use `ctx.isFree` only as a
- * soft hint (retry a few jittered candidates) so palms and vehicles are dodged
- * where the shared grid still carries useful information.
+ * 6. NOTHING SHARES GROUND WITH ANYTHING. Three separate tests, because they
+ *    answer three different questions and none of them can answer another's:
+ *
+ *    prop vs prop     the placer's own fine (1.6 m) grid, claiming the MEASURED
+ *                     contact footprint of each prop — see `contactRadius`.
+ *    prop vs scenery  `Placer.sceneryClear`, which asks the registry. nature.js
+ *                     and buildings.js have already run, so their hedges, beds
+ *                     and street trees are in it with real measured radii. This
+ *                     is what stopped 600 audit pairs of bollards-inside-hedges.
+ *    prop vs building the block's own setback data, NOT the shared grid:
+ *                     buildings.js claims `max(w,d)*0.5` around a block centre,
+ *                     which on the coarse 3 m occupancy grid covers the whole
+ *                     parcel *including the sidewalk*. Gating pavement
+ *                     placement on that leaves the city bare, which is the bug
+ *                     this module exists to fix, so `ctx.isFree` is only ever a
+ *                     soft hint here (retry a few jittered candidates).
+ *
+ * 7. A REFUSED SITE IS NOT A LOST PROP. Every one of those tests can say no, and
+ *    saying no three times per placement cost a fifth of the city's furniture
+ *    the first time it was tried. So the callers slide the prop a metre or two
+ *    along the line it belongs to (`putAlong`) instead of dropping it: the kerb
+ *    rhythm survives, the density survives, and the prop still ends up
+ *    somewhere a person would have put it.
  */
 
 import * as THREE from 'three';
@@ -1143,8 +1158,12 @@ const DEFS = {
   planterSquare: { g: gPlanterSquare, tier: T.SMALL, r: 0.78, h: 1.45, label: 'Planter', debris: P.PLANTER },
   planterTrough: { g: gPlanterTrough, tier: T.SMALL, r: 1.00, h: 1.10, label: 'Flower Trough', shadow: true, debris: P.PLANTER },
   pottedPalm: { g: gPottedPalm, tier: T.MEDIUM, r: 0.80, h: 1.90, label: 'Potted Palm', debris: P.PALM_FROND },
-  // Hangs off a Deco lamp bracket, hence the y offset.
-  hangBasket: { g: gHangBasket, tier: T.TINY, r: 0.34, h: 0.80, y: 3.86, label: 'Flower Basket', debris: P.FLOWER_MAGENTA },
+  /* Hangs off a Deco lamp bracket, so its y is derived, not chosen: gLampDeco
+     puts the bracket bar at local 4.44 with an 0.08 section, the post base sits
+     at Y_WALK, and gHangBasket's hanger rod tops out at local 0.28. That gives
+     4.44 - 0.155 - 0.28 = 4.005, and the basket then grips the bar instead of
+     floating the 26 cm below it that the hand-set 3.86 left. */
+  hangBasket: { g: gHangBasket, tier: T.TINY, r: 0.34, h: 0.80, y: 4.005, label: 'Flower Basket', debris: P.FLOWER_MAGENTA },
 
   /* café terrace ---------------------------------------------------------- */
   cafeTable: { g: gCafeTable, tier: T.SMALL, r: 0.46, h: 0.78, label: 'Café Table', debris: P.TABLE_TOP },
@@ -1198,22 +1217,113 @@ const MAT_OF = {
 };
 
 const _geoCache = new Map();
+function geometryFor(key) {
+  let geo = _geoCache.get(key);
+  if (!geo) {
+    const m = new M();
+    DEFS[key].g(m);
+    geo = m.geometry();
+    _geoCache.set(key, geo);
+  }
+  return geo;
+}
+
 function factoryFor(key) {
-  return () => {
-    let geo = _geoCache.get(key);
-    if (!geo) {
-      const m = new M();
-      DEFS[key].g(m);
-      geo = m.geometry();
-      _geoCache.set(key, geo);
-    }
-    return { geometry: geo, material: mat(MAT_OF[key] || 'prop') };
-  };
+  return () => ({ geometry: geometryFor(key), material: mat(MAT_OF[key] || 'prop') });
+}
+
+/**
+ * What this prop actually puts on the ground, measured off its own merged
+ * geometry exactly the way worldBuild measures it (the horizontal extent of the
+ * lowest fifth of the object).
+ *
+ * The `r` values in DEFS were authored by eye and worldBuild now ignores them
+ * for the physics, so a placer that still reserved them was reserving a number
+ * nothing else in the game believes: `parasol` claimed 1.45 m for a 12 cm pole,
+ * so nothing could stand under a canopy that is meant to shade loungers, while
+ * `benchSlat` claimed 1.00 against a true 0.94 and quietly rejected the bin
+ * that belongs beside it. Reserve what the mesh occupies and both stop.
+ */
+const _contactCache = new Map();
+function contactRadius(key) {
+  let r = _contactCache.get(key);
+  if (r !== undefined) return r;
+  const geo = geometryFor(key);
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const hiLocal = bb.min.y + (bb.max.y - bb.min.y) * 0.20;
+  const pos = geo.attributes.position;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) > hiLocal) continue;
+    const x = pos.getX(i), z = pos.getZ(i);
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  if (!(maxX > minX)) { minX = bb.min.x; maxX = bb.max.x; minZ = bb.min.z; maxZ = bb.max.z; }
+  r = Math.hypot(maxX - minX, maxZ - minZ) / 2;
+  _contactCache.set(key, r);
+  return r;
 }
 
 /* ========================================================== placer ====== */
 
 const SIDE_ROT = { n: Math.PI, s: 0, w: -Math.PI / 2, e: Math.PI / 2 };
+
+/* ------------------------------------------------------ ground surfaces -- */
+
+/**
+ * Bridge decks and their approach ramps, replicated from streets.js.
+ *
+ * These two numbers are a contract streets.js and vehicles.js already share
+ * (`streets.js: DECK_Y / DECK_RAMP`, `vehicles.js: deckHeight()`); this module
+ * only needs to know WHERE the ground stops being flat. Kerb furniture placed
+ * inside the skirt was landing at Y_WALK against a carriageway that had climbed
+ * to 1.04 m, so 163 props were buried up to the shoulders in tarmac. Nothing
+ * this module makes belongs on a crossing — streets.js stands the bridge's own
+ * lamps — so the whole skirt is simply refused.
+ */
+const DECK_Y = 1.2;
+const DECK_RAMP = 7;
+
+function deckHeight(bridges, x, z) {
+  for (let i = 0; i < bridges.length; i++) {
+    const b = bridges[i];
+    const kx = (b.width * 0.5 + DECK_RAMP - Math.abs(x - b.x)) / DECK_RAMP;
+    if (kx <= 0) continue;
+    const kz = (b.length * 0.5 + DECK_RAMP - Math.abs(z - b.z)) / DECK_RAMP;
+    if (kz <= 0) continue;
+    const k = Math.min(1, kx) * Math.min(1, kz);
+    if (k > 0) return DECK_Y * k;
+  }
+  return 0;
+}
+
+/**
+ * Radius above which a registered entity is a BUILDING, not scenery.
+ *
+ * nature.js and buildings.js both run before this module, so everything they
+ * placed is already in the registry with a footprint measured from its own
+ * geometry — far better information than the shared 3 m occupancy grid. But a
+ * storefront's bounding circle is 13 m and a tower's is over 20, which covers
+ * the entire pavement this module has to work on. So the registry is consulted
+ * only for things small enough to be furniture, planting or street trees; the
+ * building keep-out keeps coming from the block's own setback data.
+ */
+const SCENERY_MAX_R = 3.2;
+
+/**
+ * How much of two footprints may overlap before it reads as a defect. Matched
+ * to the audit's own penetration test (`(ra+rb)*0.62 - d > 0.25`) with the
+ * slack removed, so what gets rejected here is exactly what gets counted there.
+ */
+const SCENERY_FIT = 0.62;
+
+/** Metres to slide a refused prop along its own line before giving up on it. */
+const SLIDE = [0, 1.15, -1.15, 2.4, -2.4];
+
+/** Unit vector along a block edge, in the same sense `edgePt`'s `u` runs. */
+const EDGE_DIR = { n: [1, 0], s: [1, 0], w: [0, 1], e: [0, 1] };
 
 function edgePt(b, s, u, inset) {
   if (s === 'n') return { x: b.x - b.w / 2 + u, z: b.z - b.d / 2 + inset };
@@ -1235,6 +1345,25 @@ class Placer {
     this.tried = 0;
     this.cell = 1.6;
     this.grid = new Map();
+    this.bridges = ctx.layout.bridges || [];
+    this._near = [];
+    this.rejected = { water: 0, bridge: 0, scenery: 0, occupied: 0 };
+  }
+
+  /**
+   * Would this footprint interpenetrate scenery some earlier module placed?
+   * See SCENERY_MAX_R for why buildings are deliberately not consulted here.
+   */
+  sceneryClear(x, z, r) {
+    const near = this.ctx.registry.query(x, z, r + SCENERY_MAX_R, this._near);
+    for (let i = 0; i < near.length; i++) {
+      const c = near[i];
+      if (c.radius > SCENERY_MAX_R) continue;
+      const reach = (r + c.radius) * SCENERY_FIT;
+      const dx = c.position.x - x, dz = c.position.z - z;
+      if (dx * dx + dz * dz < reach * reach) return false;
+    }
+    return true;
   }
 
   _key(i, j) { return (i + 8192) * 20000 + (j + 8192); }
@@ -1273,35 +1402,86 @@ class Placer {
 
   /**
    * @param {number} [claimR] ground footprint to test and reserve. Defaults to
-   *   the prop's own radius; pass 0 for things that legitimately share a
-   *   footprint with something already placed (an umbrella through a café
-   *   table, a basket hanging off a lamp bracket).
+   *   the prop's MEASURED contact footprint; pass 0 for things that legitimately
+   *   share a footprint with something already placed (a basket hanging off a
+   *   lamp bracket), or an explicit value where the mesh understates what the
+   *   object needs (a parasol stands on a 12 cm pole but shades 2.8 m).
    * @returns {boolean} placed
    */
   put(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
     const d = DEFS[key];
     if (!d) return false;
     this.tried++;
+    // A prop in the bay or halfway up a bridge ramp is wrong however tidily it
+    // is spaced, so the site is disqualified before anything else is tested.
+    if (this.ctx.layout.isWater(x, z)) { this.rejected.water++; return false; }
+    if (deckHeight(this.bridges, x, z) > 0.02) { this.rejected.bridge++; return false; }
     if (claimR !== 0) {
-      const rr = (claimR < 0 ? d.r * scale : claimR) + 0.10;
-      if (!this.free(x, z, rr)) return false;
-      this.claim(x, z, rr);
+      const foot = claimR < 0 ? Math.max(0.25, contactRadius(key) * scale) : claimR;
+      if (!this.free(x, z, foot + 0.10)) { this.rejected.occupied++; return false; }
+      if (!this.sceneryClear(x, z, foot)) { this.rejected.scenery++; return false; }
+      this.claim(x, z, foot + 0.10);
     }
     this.items.push({ key, x, z, rot, scale, hex, dy });
     return true;
   }
 
-  /** Soft-hint variant: nudge off anything the shared grid already knows about. */
-  putSoft(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
+  /**
+   * Place at (x,z) or, failing that, a little way along the line (ux,uz).
+   *
+   * A kerb run is a rhythm, not a set of fixed points. Once the placer started
+   * refusing sites that sat inside a park hedge or a bandshell apron, refusing
+   * outright cost the city a fifth of its street furniture — where sliding the
+   * bin a metre down the same kerb keeps the rhythm, the density AND the fix.
+   */
+  putAlong(key, x, z, ux, uz, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
+    for (let i = 0; i < SLIDE.length; i++) {
+      const t = SLIDE[i];
+      if (this.put(key, x + ux * t, z + uz * t, rot, scale, hex, claimR, dy)) return t;
+    }
+    return null;
+  }
+
+  /**
+   * Soft-hint variant: nudge off anything the shared grid already knows about,
+   * then place anyway.
+   *
+   * The forcing tail is deliberate on a built block — buildings.js claims
+   * `max(w,d)*0.5` around the block centre, which on a 3 m grid swallows the
+   * pavement too, so an honest `isFree` gate there leaves the city bare (see
+   * the file header). `strict` turns the tail off, and the three zones that
+   * carry no building at all — park, plaza, marina apron — pass it, because
+   * there the only thing objecting is nature.js's pond, bandshell or fountain
+   * apron, and a picnic table in the pond is not a trade worth making.
+   */
+  putSoft(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0, strict = false) {
     const r = this.rng;
-    for (let t = 0; t < 3; t++) {
+    // Strict callers get more candidates because they have no fallback: the
+    // shared grid over-claims badly (a bandshell's `occupy(r=17)` marks a 35 m
+    // square on a 3 m grid), so a single dice roll inside a park throws away
+    // furniture that had somewhere perfectly good to stand five metres away.
+    const tries = strict ? 8 : 4;
+    for (let t = 0; t < tries; t++) {
       const jx = t === 0 ? 0 : (r() - 0.5) * 5.0;
       const jz = t === 0 ? 0 : (r() - 0.5) * 5.0;
-      if (this.ctx.isFree(x + jx, z + jz, 0)) {
-        return this.put(key, x + jx, z + jz, rot, scale, hex, claimR, dy);
-      }
+      if (!this.ctx.isFree(x + jx, z + jz, 0)) continue;
+      if (this.put(key, x + jx, z + jz, rot, scale, hex, claimR, dy)) return true;
     }
+    if (strict) { this.rejected.occupied++; return false; }
     return this.put(key, x, z, rot, scale, hex, claimR, dy);
+  }
+
+  /**
+   * `putSoft` that gives up rather than forcing.
+   *
+   * ONLY for blocks that carry no building: park, plaza and marina apron.
+   * A construction site and a parking structure both register a mesh, and
+   * buildings.js claims `radius * 0.92` around it — 20 m on a construction
+   * parcel — which carpets the whole block on the shared grid. Using this there
+   * does not tidy the yard, it empties it.
+   */
+  putOpen(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
+    return this.putSoft(key, x, z, rot, scale, hex, claimR, dy, true);
   }
 
   emit() {
@@ -1332,16 +1512,20 @@ class Placer {
       // Claim on the shared grid so vehicles/pedestrians do not stand inside a
       // bus shelter. Radius 0 marks a single 3 m cell — anything larger would
       // carpet the whole map at this density.
-      ctx.occupy(it.x, it.z, d.r > 1.2 ? d.r : 0);
+      const foot = contactRadius(it.key) * (typeof it.scale === 'number' ? it.scale : 1);
+      ctx.occupy(it.x, it.z, foot > 1.2 ? foot : 0);
     }
     for (const [key, n] of counts) {
       const g = _geoCache.get(key);
       if (g) tris += (g.index.count / 3) * n;
     }
+    const rj = this.rejected;
     console.info(
       `[props] ${counts.size} pools / ${this.items.length} instances / ` +
       `${(tris / 1000).toFixed(0)}k tris / ` +
-      `${((this.items.length / this.tried) * 100).toFixed(0)}% of ${this.tried} attempts placed`
+      `${((this.items.length / this.tried) * 100).toFixed(0)}% of ${this.tried} attempts placed ` +
+      `| refused: ${rj.occupied} occupied, ${rj.scenery} into scenery, ` +
+      `${rj.bridge} on a bridge, ${rj.water} in water`
     );
     return { pools: counts.size, instances: this.items.length, tris };
   }
@@ -1381,7 +1565,18 @@ function dressMedians(pl, layout, rng) {
     const cross = alongX ? layout.roadsX : layout.roadsZ;
     const lo = alongX ? -S + 30 : -S + 30;
     const hi = alongX ? WORLD.BAY_EDGE - 30 : S - 30;
-    const inner = Math.max(0.6, (road.medianW || 7) * 0.5 - 1.5);
+
+    /* The island is NOT empty ground. streets.js runs a solid clipped hedge
+       spine down its centre — 0.13 m to 0.99 m tall, half-width
+       min(1.15, medianW/2 - 1.1) — and everything shorter than a metre that
+       this module planted on the centreline was simply inside it: 95 props
+       buried in a hedge. Low furniture therefore goes in the soil strip
+       between the hedge and the median kerb, which is where it belongs anyway.
+       Lamp standards stay on the centreline: a post rising out of a planted
+       median is the correct thing, and the rhythm is the point. */
+    const halfW = (road.medianW || 7) * 0.5;
+    const hedge = Math.max(0, Math.min(1.15, halfW - 1.1));
+    const kerbIn = halfW - 0.75;
 
     let sinceLamp = 12;
     for (let t = lo; t < hi; t += 4.0 + rng() * 2.5) {
@@ -1401,14 +1596,25 @@ function dressMedians(pl, layout, rng) {
         if (pl.putSoft('lampDeco', x, z, rotAlong, 1, null, -1, MEDIAN_DY)) sinceLamp = 0;
         continue;
       }
-      const off = (rng() - 0.5) * inner;
+      const key = rng.weighted([
+        ['uplighter', 9], ['planterRound', 4], ['bollardStone', 3],
+        ['planterTrough', 3],
+      ]);
+      // Uplighters graze the hedge, so they sit right against its face; planting
+      // needs its own clear soil between hedge and kerb.
+      const pr = contactRadius(key);
+      const nearFace = hedge + pr + 0.12;
+      const farFace = kerbIn - pr;
+      if (farFace < nearFace) continue;
+      const off = (key === 'uplighter' ? nearFace : nearFace + rng() * (farFace - nearFace))
+        * (rng.chance(0.5) ? -1 : 1);
       const px = alongX ? x : road.pos + off;
       const pz = alongX ? road.pos + off : z;
-      const key = rng.weighted([
-        ['uplighter', 8], ['planterRound', 4], ['bollardStone', 3],
-        ['planterTrough', 3], ['binMesh', 1],
-      ]);
-      pl.put(key, px, pz, rotAlong, 1, null, -1, MEDIAN_DY);
+      // Uplighters aim across the hedge; the rest face along the road with it.
+      const rot = key === 'uplighter'
+        ? rotAlong + (off > 0 ? -Math.PI / 2 : Math.PI / 2)
+        : rotAlong;
+      pl.put(key, px, pz, rot, 1, null, -1, MEDIAN_DY);
     }
   }
 }
@@ -1524,14 +1730,21 @@ function kerbRun(pl, b, s, r, band, life) {
   const kind = (b.onSpine || b.onBoulevard)
     ? (life > 0.45 ? 'lampDeco' : 'lampModern')
     : (life > 0.3 ? 'lampModern' : 'lampPark');
-  for (let u = 4 + r() * 6; u < len - 4; u += gap) {
-    const p = edgePt(b, s, u, 1.35);
-    if (pl.put(kind, p.x, p.z, rot)) {
-      // Deco posts carry hanging baskets off both bracket ends. They hang at
-      // 3.9 m, so they reserve no ground (claim 0).
+  const [ux, uz] = EDGE_DIR[s];
+  for (let u0 = 4 + r() * 6; u0 < len - 4; u0 += gap) {
+    const p = edgePt(b, s, u0, 1.35);
+    const slid = pl.putAlong(kind, p.x, p.z, ux, uz, rot);
+    if (slid !== null) {
+      const u = u0 + slid;
+      // Deco posts carry a basket off EACH bracket end — one alone reads as a
+      // mistake from the game camera. gLampDeco's bracket ends sit at local
+      // +-0.60, which after the placer's rotation is +-0.60 along this edge.
+      // They hang at 4 m, so they reserve no ground (claim 0).
       if (kind === 'lampDeco' && r.chance(0.45)) {
-        const q = edgePt(b, s, u + 0.6, 1.35);
-        pl.put('hangBasket', q.x, q.z, rot, 1, null, 0);
+        for (const du of [-0.6, 0.6]) {
+          const q = edgePt(b, s, u + du, 1.35);
+          pl.put('hangBasket', q.x, q.z, rot, 1, null, 0);
+        }
       }
       if (r.chance(0.3)) {
         const q = edgePt(b, s, u + 1.6, 0.8);
@@ -1542,13 +1755,15 @@ function kerbRun(pl, b, s, r, band, life) {
 
   /* One shelter per busy boulevard frontage. */
   if ((b.onBoulevard || b.onSpine) && life > 0.42 && len > 30 && r.chance(0.5)) {
-    const u = 8 + r() * (len - 20);
-    const p = edgePt(b, s, u, Math.min(2.1, Math.max(1.5, band - 0.9)));
-    if (pl.put('busShelter', p.x, p.z, rot)) {
+    const u0 = 8 + r() * (len - 20);
+    const p = edgePt(b, s, u0, Math.min(2.1, Math.max(1.5, band - 0.9)));
+    const slid = pl.putAlong('busShelter', p.x, p.z, ux, uz, rot);
+    if (slid !== null) {
+      const u = u0 + slid;
       const q = edgePt(b, s, u + 3.2, 1.1);
-      pl.put('binMesh', q.x, q.z, rot);
+      pl.putAlong('binMesh', q.x, q.z, ux, uz, rot);
       const q2 = edgePt(b, s, u - 3.2, 1.15);
-      pl.put('signParking', q2.x, q2.z, rot);
+      pl.putAlong('signParking', q2.x, q2.z, ux, uz, rot);
     }
   }
 
@@ -1563,12 +1778,13 @@ function kerbRun(pl, b, s, r, band, life) {
     const jitter = (r() - 0.5) * 0.3;
     if (key === 'scooter') { scooterRow(pl, b, s, u, inset, rot, r); continue; }
     if (key === 'bikeRack') { bikeCluster(pl, b, s, u, inset, rot, r); continue; }
-    if (!pl.putSoft(key, p.x, p.z, rot + jitter)) continue;
+    const slid = pl.putAlong(key, p.x, p.z, ux, uz, rot + jitter);
+    if (slid === null) continue;
     // Companions: real street furniture arrives in pairs — a bin beside the
     // bench, a second planter beside the first, litter beside the cart.
     if (COMPANION[key] && r.chance(0.36)) {
-      const q = edgePt(b, s, u + 1.5 + r() * 0.9, inset + (r() - 0.5) * 0.5);
-      pl.put(r.pick(COMPANION[key]), q.x, q.z, rot + (r() - 0.5) * 0.4);
+      const q = edgePt(b, s, u + slid + 1.5 + r() * 0.9, inset + (r() - 0.5) * 0.5);
+      pl.putAlong(r.pick(COMPANION[key]), q.x, q.z, ux, uz, rot + (r() - 0.5) * 0.4);
     }
   }
 
@@ -1585,11 +1801,12 @@ function kerbRun(pl, b, s, r, band, life) {
         ['picnicTable', 2], ['stanchion', 2], ['lampPark', 3],
       ]);
       if (key === 'cafeTable') { cafeCluster(pl, p.x, p.z, rot, r, 1); continue; }
-      pl.putSoft(key, p.x, p.z, rot + (r() - 0.5) * 0.5);
+      pl.putAlong(key, p.x, p.z, ux, uz, rot + (r() - 0.5) * 0.5);
     }
   }
 
-  /* Parking meters march along the kerb wherever cars park — regular, close in. */
+  /* Parking meters march along the kerb wherever cars park — regular, close in.
+     The rhythm is the point, so a blocked meter is skipped rather than slid. */
   if (life > 0.34 && !b.onSpine && r.chance(0.30)) {
     for (let u = 6 + r() * 4; u < len - 5; u += 9.6) {
       const p = edgePt(b, s, u, 1.0);
@@ -1639,13 +1856,15 @@ function facadeRun(pl, b, s, r, band, life) {
     : [['pottedPalm', 3], ['planterSquare', 6], ['benchSlat', 5], ['binWheelie', 3],
       ['bollardStone', 4], ['utilityBox', 2], ['sandwichBoard', 2]];
 
+  const [ux, uz] = EDGE_DIR[s];
   for (let u = 3 + r() * 3; u < len - 3; u += step * (0.72 + r() * 0.8)) {
     const p = edgePt(b, s, u, inset + (r() - 0.5) * 0.5);
     const key = r.weighted(table);
-    if (!pl.putSoft(key, p.x, p.z, rot + (r() - 0.5) * 0.4)) continue;
+    const slid = pl.putAlong(key, p.x, p.z, ux, uz, rot + (r() - 0.5) * 0.4);
+    if (slid === null) continue;
     if (COMPANION[key] && r.chance(0.32)) {
-      const q = edgePt(b, s, u + 1.3 + r() * 0.8, inset - 0.3 - r() * 0.6);
-      pl.put(r.pick(COMPANION[key]), q.x, q.z, rot + (r() - 0.5) * 0.5);
+      const q = edgePt(b, s, u + slid + 1.3 + r() * 0.8, inset - 0.3 - r() * 0.6);
+      pl.putAlong(r.pick(COMPANION[key]), q.x, q.z, ux, uz, rot + (r() - 0.5) * 0.5);
     }
   }
 }
@@ -1663,35 +1882,65 @@ function cornerDressing(pl, b, r) {
     const x = (sx === 'w' ? b.x - b.w / 2 : b.x + b.w / 2) + ox;
     const z = (sz === 'n' ? b.z - b.d / 2 : b.z + b.d / 2) + oz;
     const rot = Math.atan2(-ox, -oz);
-    if (r.chance(0.55)) pl.put(r.chance(0.6) ? 'signStop' : 'signNoEntry', x, z, rot);
-    if (r.chance(0.5)) pl.put('hydrant', x + ox * 0.7, z + oz * 0.7, rot);
+    // A corner is the busiest 3 m of pavement in the city and the one most
+    // likely to already hold a street tree or a park hedge, so the sign and the
+    // hydrant walk back along the kerb they belong to instead of being dropped.
+    const sgn = Math.sign(ox) || 1;
+    if (r.chance(0.55)) {
+      pl.putAlong(r.chance(0.6) ? 'signStop' : 'signNoEntry', x, z, sgn, 0, rot);
+    }
+    if (r.chance(0.5)) pl.putAlong('hydrant', x + ox * 0.7, z + oz * 0.7, 0, Math.sign(oz) || 1, rot);
     if (r.chance(0.4)) {
       for (let k = 0; k < 3; k++) {
         pl.put('bollard', x - ox * 0.2 + k * ox * 0.55, z - oz * 0.2 + k * oz * 0.55, 0);
       }
     }
-    if (b.streetLife > 0.5 && r.chance(0.35)) pl.put('newsBox', x + ox * 0.3, z - oz * 0.4, rot);
+    if (b.streetLife > 0.5 && r.chance(0.35)) {
+      pl.putAlong('newsBox', x + ox * 0.3, z - oz * 0.4, sgn, 0, rot);
+    }
   }
 }
 
 /* ------------------------------------------------------ zone dressings --- */
 
+/**
+ * One café setting. `rot` is the frontage it belongs to: a terrace is a row of
+ * settings ALONG a shopfront, so the cluster is only ever displaced parallel to
+ * that frontage — displacing it freely walked tables out into the carriageway
+ * and broke the read that these belong to the shop behind them.
+ */
 function cafeCluster(pl, x, z, rot, r, n = 1) {
+  // Local +x after the placer's Y rotation. Sliding along it keeps the setting
+  // on the terrace line instead of wandering off the kerb.
+  const ax = Math.cos(rot), az = -Math.sin(rot);
   for (let c = 0; c < n; c++) {
-    const cx = x + (r() - 0.5) * 4.5;
-    const cz = z + (r() - 0.5) * 4.5;
-    if (!pl.put('cafeTable', cx, cz, r() * TAU)) continue;
-    // 1.15 m out: table radius + chair radius + the placer's own margins. Any
-    // closer and the collision test silently eats most of the seating.
+    const t = (r() - 0.5) * 5.0;
+    const rot0 = rot + (r() - 0.5) * 0.5;
+    // Slide the whole setting down the terrace rather than losing it: a table
+    // that cannot stand at this exact metre is still wanted two metres on.
+    const slid = pl.putAlong('cafeTable', x + ax * t, z + az * t, ax, az, rot0);
+    if (slid === null) continue;
+    const cx = x + ax * (t + slid), cz = z + az * (t + slid);
+    /* Seats ring the table on even slots. When the setting gets a parasol it
+       takes one of those slots and stands on its own base rather than through
+       the tabletop: a co-located pole is invisible from the game camera but it
+       is 51 interpenetrating pairs in the audit, and a 1.26 m canopy from
+       1.5 m out still shades the whole setting. */
     const seats = 3 + r.int(0, 1);
+    const shaded = r.chance(0.5);
+    const slots = seats + (shaded ? 1 : 0);
     for (let k = 0; k < seats; k++) {
-      const a = (k / seats) * TAU + r() * 0.5;
+      // 1.15 m out: table radius + chair radius + the placer's own margins. Any
+      // closer and the collision test silently eats most of the seating.
+      const a = rot0 + (k / slots) * TAU + (r() - 0.5) * 0.22;
       const sx = cx + Math.cos(a) * 1.15, sz = cz + Math.sin(a) * 1.15;
       // Face the table: local +z maps to (sin rotY, cos rotY).
       pl.put('cafeChair', sx, sz, Math.atan2(-Math.cos(a), -Math.sin(a)));
     }
-    // The pole goes through the table, so it claims no ground of its own.
-    if (r.chance(0.5)) pl.put('umbrella', cx, cz, r() * TAU, 1, null, 0);
+    if (shaded) {
+      const a = rot0 + (seats / slots) * TAU;
+      pl.put('umbrella', cx + Math.cos(a) * 1.5, cz + Math.sin(a) * 1.5, r() * TAU);
+    }
   }
 }
 
@@ -1706,25 +1955,31 @@ function retailTerrace(pl, b, r, band) {
     const p = edgePt(b, s, u, Math.max(1.9, band * 0.62));
     cafeCluster(pl, p.x, p.z, rot, r, 1);
   }
+  const [ux, uz] = EDGE_DIR[s];
   // String-light poles bracket a terrace; that catenary is a lot of the mood.
   if (life > 0.45 && r.chance(0.55)) {
     const u = 6 + r() * Math.max(1, len - 12);
     for (const du of [0, 5.5]) {
       const p = edgePt(b, s, u + du, Math.max(1.7, band * 0.5));
-      pl.put('stringPole', p.x, p.z, rot);
+      pl.putAlong('stringPole', p.x, p.z, ux, uz, rot);
     }
   }
   if (r.chance(0.5)) {
     const u = 4 + r() * Math.max(1, len - 8);
     const p = edgePt(b, s, u, 1.5);
-    pl.put(r.chance(0.5) ? 'foodCart' : 'hotdogStand', p.x, p.z, rot);
+    pl.putAlong(r.chance(0.5) ? 'foodCart' : 'hotdogStand', p.x, p.z, ux, uz, rot);
   }
-  // Newspaper vending row.
+  // Newspaper vending row: boxes stand shoulder to shoulder, so the row as a
+  // whole is slid rather than each box independently.
   if (r.chance(0.32)) {
-    const u = 4 + r() * Math.max(1, len - 10);
-    for (let k = 0; k < 3 + r.int(0, 2); k++) {
-      const p = edgePt(b, s, u + k * 0.62, 1.25);
-      pl.put('newsBox', p.x, p.z, rot);
+    const u0 = 4 + r() * Math.max(1, len - 10);
+    const p0 = edgePt(b, s, u0, 1.25);
+    const slid = pl.putAlong('newsBox', p0.x, p0.z, ux, uz, rot);
+    if (slid !== null) {
+      for (let k = 1; k < 3 + r.int(0, 2); k++) {
+        const p = edgePt(b, s, u0 + slid + k * 0.62, 1.25);
+        pl.put('newsBox', p.x, p.z, rot);
+      }
     }
   }
 }
@@ -1734,7 +1989,10 @@ function towerForecourt(pl, b, r, band) {
   const len = edgeLen(b, s);
   const rot = SIDE_ROT[s];
   const mid = len / 2 + (r() - 0.5) * len * 0.2;
-  // Flanking potted palms + a rope line either side of the door.
+  const [ux, uz] = EDGE_DIR[s];
+  // Flanking potted palms + a rope line either side of the door. The pair is
+  // symmetric about the entrance, so these do NOT slide — a lopsided pair of
+  // door palms looks worse than a single one.
   for (const sgn of [-1, 1]) {
     const p = edgePt(b, s, mid + sgn * 2.4, Math.max(1.8, band * 0.6));
     pl.put('pottedPalm', p.x, p.z, rot);
@@ -1743,7 +2001,7 @@ function towerForecourt(pl, b, r, band) {
   }
   if (r.chance(0.55)) {
     const p = edgePt(b, s, mid + 3.6, 1.6);
-    pl.put('valetStand', p.x, p.z, rot);
+    pl.putAlong('valetStand', p.x, p.z, ux, uz, rot);
   }
   if (r.chance(0.45)) {
     for (let k = 0; k < 5; k++) {
@@ -1757,6 +2015,15 @@ function towerForecourt(pl, b, r, band) {
   }
 }
 
+/**
+ * Everything designed sits on the site's own axes. A plaza full of benches at
+ * random yaw is the loudest "procedural" tell there is, and it costs nothing to
+ * fix: pick one of the four square headings and jitter it by a couple of
+ * degrees so the row is not machine-perfect either.
+ */
+const SQUARE = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+const squared = (r) => r.pick(SQUARE) + (r() - 0.5) * 0.16;
+
 function plazaFurniture(pl, b, r) {
   const n = Math.round((b.w * b.d) / 115 * DENSITY);
   for (let i = 0; i < n; i++) {
@@ -1767,8 +2034,10 @@ function plazaFurniture(pl, b, r) {
       ['bollardStone', 6], ['lampPark', 4], ['pottedPalm', 5], ['fountain', 2],
       ['cafeTable', 4], ['benchSlat', 5], ['planterTrough', 3],
     ]);
-    if (key === 'cafeTable') { cafeCluster(pl, x, z, 0, r, 1); continue; }
-    pl.putSoft(key, x, z, r() * TAU);
+    if (key === 'cafeTable') { cafeCluster(pl, x, z, r.pick(SQUARE), r, 1); continue; }
+    // Open block: nothing here has a building claim, so an occupied cell means
+    // nature.js's fountain apron or seating steps and the site is genuinely gone.
+    pl.putOpen(key, x, z, squared(r));
   }
   // A ring of planters around the centre reads as designed public realm.
   if (Math.min(b.w, b.d) > 34 && r.chance(0.6)) {
@@ -1791,17 +2060,36 @@ function parkFurniture(pl, b, r) {
       ['lampPark', 5], ['fountain', 3], ['dogStation', 3], ['planterRound', 3],
       ['bollardStone', 3], ['binMuni', 3],
     ]);
-    pl.putSoft(key, x, z, r() * TAU);
+    /* Benches in a park come in facing pairs across a walk, with the bin at one
+       end — that trio is what makes a lawn read as a park rather than as an
+       object field. A bench is authored facing +z, so a pair set 2.6 m apart on
+       the same axis and turned 180 degrees from each other looks across at
+       itself. */
+    if (key === 'benchBackless' || key === 'benchSlat') {
+      const face = r.pick(SQUARE);
+      const nx = Math.sin(face), nz = Math.cos(face);   // the direction it faces
+      if (!pl.putOpen(key, x - nx * 1.3, z - nz * 1.3, face)) continue;
+      pl.putOpen(key, x + nx * 1.3, z + nz * 1.3, face + Math.PI);
+      if (r.chance(0.45)) {
+        pl.putOpen('binMesh', x + nz * 2.0 - nx * 1.3, z - nx * 2.0 - nz * 1.3, face);
+      }
+      continue;
+    }
+    pl.putOpen(key, x, z, squared(r));
   }
-  // Picnic groves: tables come in twos and threes around a shady spot.
+  // Picnic groves: tables come in twos and threes around a shady spot, set out
+  // square to each other the way somebody would actually drag them.
   const groves = 2 + r.int(0, 2);
   for (let g = 0; g < groves; g++) {
     const gx = b.x + (r() - 0.5) * b.w * 0.6;
     const gz = b.z + (r() - 0.5) * b.d * 0.6;
+    const face = r.pick(SQUARE);
+    const ax = Math.cos(face), az = -Math.sin(face);
     for (let k = 0; k < 2 + r.int(0, 2); k++) {
-      pl.putSoft('picnicTable', gx + (r() - 0.5) * 7, gz + (r() - 0.5) * 7, r() * TAU);
+      pl.putOpen('picnicTable', gx + ax * k * 3.2 + (r() - 0.5) * 1.2,
+        gz + az * k * 3.2 + (r() - 0.5) * 1.2, face + (r() - 0.5) * 0.14);
     }
-    pl.putSoft('binMesh', gx + (r() - 0.5) * 8, gz + (r() - 0.5) * 8, 0);
+    pl.putOpen('binMesh', gx - ax * 2.4, gz - az * 2.4, face);
   }
 }
 
@@ -1810,11 +2098,14 @@ function marinaApron(pl, b, r) {
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.86;
     const z = b.z + (r() - 0.5) * b.d * 0.86;
-    pl.putSoft(r.weighted([
+    const key = r.weighted([
       ['cleat', 8], ['crate', 6], ['bollardStone', 5], ['benchSlat', 5],
       ['binMesh', 4], ['lampPark', 4], ['pallet', 4], ['planterRound', 3],
       ['lounger', 3], ['parasol', 2],
-    ]), x, z, r() * TAU);
+    ]);
+    // A parasol stands on a 12 cm pole, so its measured footprint would let a
+    // crate sit under the canopy. It reserves the ground its shade covers.
+    pl.putOpen(key, x, z, squared(r), 1, null, key === 'parasol' ? 0.9 : -1);
   }
   // Cleats march along the seaward edge at a fixed dock spacing.
   const ez = b.x + b.w / 2 - 1.2;
@@ -1835,8 +2126,8 @@ function beachFront(pl, b, r) {
       const z = b.z - b.d / 2 + u;
       const placed = pl.put('lounger', x, z, Math.PI / 2 + (r() - 0.5) * 0.2);
       if (placed && r.chance(0.7)) pl.put('lounger', x, z + 1.35, Math.PI / 2 + (r() - 0.5) * 0.2);
-      // The canopy is meant to overhang the loungers, so it only reserves its
-      // pole — claiming its full 1.45 m radius rejected every single one.
+      // The canopy is meant to overhang the loungers, so it reserves a little
+      // more than its 12 cm pole and nothing like its 2.8 m span.
       if (placed && r.chance(0.6)) pl.put('parasol', x - 1.7, z + 0.7, 0, 1, null, 0.35);
     }
   }
@@ -1852,10 +2143,12 @@ function lotFurniture(pl, b, r, band) {
     const s = r.pick(['n', 's', 'w', 'e']);
     const u = 3 + r() * Math.max(1, edgeLen(b, s) - 6);
     const p = edgePt(b, s, u, 0.9 + r() * Math.max(0.3, band - 1.2));
-    pl.putSoft(r.weighted([
+    const [ux, uz] = EDGE_DIR[s];
+    // A garage IS a building, so the shared grid is unusable here (see putOpen).
+    pl.putAlong(r.weighted([
       ['bollard', 9], ['cone', 6], ['utilityBox', 4], ['barrel', 3],
       ['signParking', 5], ['binWheelie', 3], ['aframe', 2],
-    ]), p.x, p.z, SIDE_ROT[s]);
+    ]), p.x, p.z, ux, uz, SIDE_ROT[s]);
   }
 }
 
@@ -1906,31 +2199,40 @@ function constructionYard(pl, b, r, band) {
     pl.put('aframe', ex, ez, alongX ? 0 : Math.PI / 2, 1, null, -1, -0.155);
   }
 
-  /* Site yard: material stacks, welfare units, scaffolding. */
+  /* Site yard: material stacks, welfare units, scaffolding. Everything on a
+     site is set down square to the hoarding, because that is the only way it
+     fits and because that is how a banksman lands it off a lorry. */
   const n = Math.round((b.w * b.d) / 145 * DENSITY);
+  const yard = r.pick(SQUARE);
+  const ax = Math.cos(yard), az = -Math.sin(yard);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.78;
     const z = b.z + (r() - 0.5) * b.d * 0.78;
-    pl.putSoft(r.weighted([
+    // The site's own hoarding mesh claims the whole parcel on the shared grid,
+    // so this slides along the yard axis rather than consulting it.
+    pl.putAlong(r.weighted([
       ['crate', 9], ['pallet', 8], ['sandbags', 6], ['scaffold', 6],
       ['cone', 6], ['barrel', 5], ['aframe', 4], ['portaloo', 3],
       ['jersey', 3], ['waterBarrier', 3],
-    ]), x, z, r() * TAU);
+    ]), x, z, ax, az, yard + (r() - 0.5) * 0.2);
   }
-  // Portaloos come in banks of two or three.
+  // Portaloos come in banks of two or three, shoulder to shoulder facing out.
   if (r.chance(0.7)) {
     const bx = b.x + (r() - 0.5) * b.w * 0.5;
     const bz = b.z + (r() - 0.5) * b.d * 0.5;
-    const a = r() * TAU;
     for (let k = 0; k < 2 + r.int(0, 1); k++) {
-      pl.putSoft('portaloo', bx + Math.cos(a) * k * 1.35, bz + Math.sin(a) * k * 1.35, a + Math.PI / 2);
+      pl.putAlong('portaloo', bx + ax * k * 1.35, bz + az * k * 1.35, -az, ax, yard);
     }
   }
-  // Pallet + crate stacks cluster near one corner, like a real materials drop.
+  // Pallet + crate stacks cluster near one corner, like a real materials drop:
+  // laid out in short rows rather than tipped over the yard at random.
   const dx = b.x + (r() - 0.5) * b.w * 0.45;
   const dz = b.z + (r() - 0.5) * b.d * 0.45;
   for (let k = 0; k < 4 + r.int(0, 4); k++) {
-    pl.putSoft(r.chance(0.5) ? 'pallet' : 'crate',
-      dx + (r() - 0.5) * 6, dz + (r() - 0.5) * 6, r() * TAU);
+    const row = Math.floor(k / 3), col = k % 3;
+    pl.putAlong(r.chance(0.5) ? 'pallet' : 'crate',
+      dx + ax * col * 1.5 - az * row * 1.6 + (r() - 0.5) * 0.5,
+      dz + az * col * 1.5 + ax * row * 1.6 + (r() - 0.5) * 0.5,
+      ax, az, yard + (r() - 0.5) * 0.16);
   }
 }

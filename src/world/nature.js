@@ -1380,6 +1380,17 @@ function makeFlagpole(cell) {
  * One entry per instanced pool. `h` is the nominal height in metres at scale 1
  * — every scale multiplier below is relative to that, so the metric sanity in
  * the art bible (palm ~10 m) holds.
+ *
+ * `clear` is read against the SHARED occupancy grid and is about other modules.
+ * `sep` is nature's own personal space, enforced even on forced placements, and
+ * it is deliberately much smaller than the crown: a hedge run wants its units
+ * to interlock at 3.2 m centres, so hedge sep is 1.35, not the 2.3 m its cards
+ * actually span. Two seps must sum to less than the spacing a run asks for or
+ * the run silently thins out.
+ *
+ * `cap` is the instanced pool's ceiling. Spare capacity costs 76 bytes and no
+ * draw calls (finalize() sets mesh.count), a full pool costs silent missing
+ * planting — so every one of these is sized well above what the city uses.
  */
 const SPECIES = {
   /*
@@ -1390,7 +1401,7 @@ const SPECIES = {
    * real thing: crown spread runs 70-90% of total height.
    */
   royalA: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 700, clear: 2.8,
+    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 1000, clear: 2.8, sep: 1.5,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
       seed: 11, h: 13.5, rBot: 0.55, rTop: 0.42, bark: 'barkRoyal', crownshaft: true,
@@ -1399,7 +1410,7 @@ const SPECIES = {
     }),
   },
   royalB: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 10.4, rad: 1.6, cap: 700, clear: 2.6,
+    label: 'Royal Palm', tier: TIER.LARGE, h: 10.4, rad: 1.6, cap: 900, clear: 2.6, sep: 1.45,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
       seed: 23, h: 10.4, rBot: 0.50, rTop: 0.40, bark: 'barkRoyal', crownshaft: true,
@@ -1408,7 +1419,7 @@ const SPECIES = {
     }),
   },
   coconutA: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 10.6, rad: 1.7, cap: 700, clear: 2.7,
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 10.6, rad: 1.7, cap: 900, clear: 2.7, sep: 1.5,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
       seed: 37, h: 10.6, rBot: 0.48, rTop: 0.34, bark: 'barkCoco', crownshaft: false,
@@ -1417,7 +1428,7 @@ const SPECIES = {
     }),
   },
   coconutB: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 8.0, rad: 1.6, cap: 600, clear: 2.5,
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 8.0, rad: 1.6, cap: 700, clear: 2.5, sep: 1.4,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
       seed: 41, h: 8.0, rBot: 0.46, rTop: 0.32, bark: 'barkCoco', crownshaft: false,
@@ -1426,7 +1437,7 @@ const SPECIES = {
     }),
   },
   sabal: {
-    label: 'Sabal Palm', tier: TIER.LARGE, h: 8.4, rad: 1.5, cap: 700, clear: 2.4,
+    label: 'Sabal Palm', tier: TIER.LARGE, h: 8.4, rad: 1.5, cap: 900, clear: 2.4, sep: 1.35,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
       seed: 53, h: 8.4, rBot: 0.40, rTop: 0.35, bark: 'barkFib', crownshaft: false,
@@ -1435,7 +1446,7 @@ const SPECIES = {
     }),
   },
   fanShort: {
-    label: 'Fan Palm', tier: TIER.MEDIUM, h: 3.6, rad: 1.7, cap: 600, clear: 2.0,
+    label: 'Fan Palm', tier: TIER.MEDIUM, h: 3.6, rad: 1.7, cap: 800, clear: 2.0, sep: 0.9,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
       seed: 67, h: 3.6, rBot: 0.48, rTop: 0.44, bark: 'barkFib', crownshaft: false,
@@ -1444,7 +1455,7 @@ const SPECIES = {
     }),
   },
   banyan: {
-    label: 'Banyan Tree', tier: TIER.LARGE, h: 13.0, rad: 2.6, cap: 400, clear: 4.2,
+    label: 'Banyan Tree', tier: TIER.LARGE, h: 13.0, rad: 2.6, cap: 600, clear: 4.2, sep: 2.4,
     debris: PALETTE.TREE_CANOPY,
     geo: () => makeTree({
       seed: 71, h: 13.0, trunkF: 0.42, rBot: 0.95, rTop: 0.55, bark: 'barkOak',
@@ -1452,7 +1463,7 @@ const SPECIES = {
     }),
   },
   liveOak: {
-    label: 'Live Oak', tier: TIER.LARGE, h: 10.5, rad: 2.1, cap: 450, clear: 3.6,
+    label: 'Live Oak', tier: TIER.LARGE, h: 10.5, rad: 2.1, cap: 700, clear: 3.6, sep: 1.9,
     debris: PALETTE.TREE_CANOPY,
     geo: () => makeTree({
       seed: 83, h: 10.5, trunkF: 0.46, rBot: 0.60, rTop: 0.36, bark: 'barkOak',
@@ -1460,7 +1471,7 @@ const SPECIES = {
     }),
   },
   tabebuia: {
-    label: 'Tabebuia', tier: TIER.LARGE, h: 8.2, rad: 1.7, cap: 400, clear: 3.0,
+    label: 'Tabebuia', tier: TIER.LARGE, h: 8.2, rad: 1.7, cap: 600, clear: 3.0, sep: 1.5,
     debris: PALETTE.FLOWER_YELLOW,
     geo: () => makeTree({
       seed: 97, h: 8.2, trunkF: 0.52, rBot: 0.36, rTop: 0.22, bark: 'barkOak',
@@ -1468,7 +1479,7 @@ const SPECIES = {
     }),
   },
   bougain: {
-    label: 'Bougainvillea', tier: TIER.MEDIUM, h: 4.6, rad: 1.5, cap: 500, clear: 2.4,
+    label: 'Bougainvillea', tier: TIER.MEDIUM, h: 4.6, rad: 1.5, cap: 700, clear: 2.4, sep: 1.1,
     debris: PALETTE.FLOWER_MAGENTA,
     geo: () => makeTree({
       seed: 101, h: 4.6, trunkF: 0.38, rBot: 0.22, rTop: 0.13, bark: 'barkOak',
@@ -1476,7 +1487,7 @@ const SPECIES = {
     }),
   },
   seagrapeT: {
-    label: 'Sea Grape', tier: TIER.MEDIUM, h: 5.0, rad: 1.9, cap: 450, clear: 2.8,
+    label: 'Sea Grape', tier: TIER.MEDIUM, h: 5.0, rad: 1.9, cap: 600, clear: 2.8, sep: 1.4,
     debris: PALETTE.TREE_CANOPY,
     geo: () => makeTree({
       seed: 113, h: 5.0, trunkF: 0.34, rBot: 0.30, rTop: 0.19, bark: 'barkOak',
@@ -1484,7 +1495,7 @@ const SPECIES = {
     }),
   },
   mangrove: {
-    label: 'Mangrove', tier: TIER.MEDIUM, h: 4.2, rad: 1.8, cap: 400, clear: 2.6,
+    label: 'Mangrove', tier: TIER.MEDIUM, h: 4.2, rad: 1.8, cap: 500, clear: 2.6, sep: 1.1,
     debris: PALETTE.TREE_CANOPY_DARK,
     geo: () => makeTree({
       seed: 127, h: 4.2, trunkF: 0.44, rBot: 0.40, rTop: 0.16, bark: 'barkFib',
@@ -1493,78 +1504,78 @@ const SPECIES = {
   },
 
   hedge: {
-    label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 3000, clear: 0.0,
+    label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 3600, clear: 0.0, sep: 1.05,
     debris: PALETTE.HEDGE, noShadow: false,
     geo: () => makeBush({ seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2 }),
   },
   shrub: {
-    label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2600, clear: 0.7,
+    label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2600, clear: 0.7, sep: 0.6,
     debris: PALETTE.HEDGE,
     geo: () => makeBush({ seed: 137, w: 1.9, h: 1.5, cell: 'shrubA', cards: 3 }),
   },
   flowerPink: {
-    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 1600, clear: 0.6,
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.45,
     debris: PALETTE.FLOWER_PINK,
     geo: () => makeBush({ seed: 149, w: 2.2, h: 0.95, cell: 'canopyPink', cards: 2 }),
   },
   flowerYellow: {
-    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 1600, clear: 0.6,
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.45,
     debris: PALETTE.FLOWER_YELLOW,
     geo: () => makeBush({ seed: 151, w: 2.2, h: 0.95, cell: 'canopyYel', cards: 2 }),
   },
   ornGrass: {
-    label: 'Ornamental Grass', tier: TIER.TINY, h: 1.15, rad: 0.6, cap: 2200, clear: 0.5,
+    label: 'Ornamental Grass', tier: TIER.TINY, h: 1.15, rad: 0.6, cap: 2800, clear: 0.5, sep: 0.36,
     debris: PALETTE.GRASS_DRY,
     geo: () => makeBush({ seed: 157, w: 1.5, h: 1.15, cell: 'grassTuft', cards: 3, top: false }),
   },
 
   planterS: {
-    label: 'Planter', tier: TIER.MEDIUM, h: 2.0, rad: 1.0, cap: 700, clear: 1.3,
+    label: 'Planter', tier: TIER.MEDIUM, h: 2.0, rad: 1.0, cap: 900, clear: 1.3, sep: 1.0,
     debris: PALETTE.PLANTER,
     geo: () => makePlanter(2.0, 2.0, 0.85),
   },
   planterL: {
-    label: 'Raised Planter', tier: TIER.MEDIUM, h: 2.6, rad: 2.4, cap: 500, clear: 2.6,
+    label: 'Raised Planter', tier: TIER.MEDIUM, h: 2.6, rad: 2.4, cap: 700, clear: 2.6, sep: 1.4,
     debris: PALETTE.PLANTER,
     geo: () => makePlanter(5.0, 2.2, 1.05),
   },
   pergola: {
-    label: 'Shade Structure', tier: TIER.XLARGE, h: 3.2, rad: 3.4, cap: 120, clear: 3.6,
+    label: 'Shade Structure', tier: TIER.XLARGE, h: 3.2, rad: 3.4, cap: 140, clear: 3.6, sep: 2.2,
     debris: PALETTE.WOOD_DECK,
     geo: () => makePergola(6.4, 4.2, 3.0),
   },
   fountainS: {
-    label: 'Fountain', tier: TIER.XLARGE, h: 3.4, rad: 3.2, cap: 90, clear: 3.6,
+    label: 'Fountain', tier: TIER.XLARGE, h: 3.4, rad: 3.2, cap: 110, clear: 3.6, sep: 2.6,
     debris: PALETTE.WATER_POOL,
     geo: () => makeFountain(1.0, 1),
   },
   fountainL: {
-    label: 'Grand Fountain', tier: TIER.HUGE, h: 6.0, rad: 5.2, cap: 40, clear: 5.6,
+    label: 'Grand Fountain', tier: TIER.HUGE, h: 6.0, rad: 5.2, cap: 60, clear: 5.6, sep: 4.4,
     debris: PALETTE.WATER_POOL,
     geo: () => makeFountain(1.7, 2),
   },
   bandshell: {
-    label: 'Bandshell', tier: TIER.HUGE, h: 8.4, rad: 7.5, cap: 20, clear: 8.5,
+    label: 'Bandshell', tier: TIER.HUGE, h: 8.4, rad: 7.5, cap: 24, clear: 8.5, sep: 5.5,
     debris: PALETTE.CONCRETE_WARM,
     geo: () => makeBandshell(),
   },
   playground: {
-    label: 'Playground', tier: TIER.XLARGE, h: 2.7, rad: 4.0, cap: 40, clear: 4.5,
+    label: 'Playground', tier: TIER.XLARGE, h: 2.7, rad: 4.0, cap: 50, clear: 4.5, sep: 3.2,
     debris: PALETTE.FABRIC_AQUA,
     geo: () => makePlayground(),
   },
   hoop: {
-    label: 'Basketball Hoop', tier: TIER.MEDIUM, h: 3.6, rad: 0.6, cap: 60, clear: 0.9,
+    label: 'Basketball Hoop', tier: TIER.MEDIUM, h: 3.6, rad: 0.6, cap: 70, clear: 0.9, sep: 0.4,
     debris: PALETTE.STEEL,
     geo: () => makeHoop(),
   },
   flagUS: {
-    label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 90, clear: 1.2,
+    label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 100, clear: 1.2, sep: 0.5,
     debris: PALETTE.STEEL,
     geo: () => makeFlagpole('sw_coral'),
   },
   flagCity: {
-    label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 90, clear: 1.2,
+    label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 110, clear: 1.2, sep: 0.5,
     debris: PALETTE.STEEL,
     geo: () => makeFlagpole('sw_aqua'),
   },
@@ -1676,6 +1687,143 @@ class Buckets {
 }
 
 /* ======================================================================== */
+/*  WHERE PLANTING IS ALLOWED                                               */
+/* ======================================================================== */
+
+/**
+ * Four independent reasons a site is not plantable, and the shared occupancy
+ * grid answers none of them.
+ *
+ * Buildings claim occupancy as a SQUARE sized to their circumradius, which on
+ * a 40 m parcel swallows the entire pavement — so every kerbside planting in
+ * this file passes `force` and skips the read. That bought us street trees and
+ * cost us the two tests that actually matter: a full census of all 5,036
+ * plants found ~350 standing inside a building's massing, and nothing at all
+ * stopped two forced plantings landing on the same square metre.
+ *
+ * So nature keeps its own answers:
+ *   WATER       layout.isWater — mangroves are the one sanctioned exception.
+ *   CARRIAGEWAY layout.isRoad — true on a median too, which is why island
+ *               planting has to say so explicitly.
+ *   FOOTPRINTS  the buildings' MEASURED world AABBs. A trunk may stand right
+ *               against a facade; it may not stand in the lobby. Measured, not
+ *               derived from the parcel, so it tracks whatever buildings.js
+ *               does next.
+ *   SPACING     a private point set that forced placements still respect, so
+ *               nature can ignore the buildings' over-claim without also
+ *               ignoring itself.
+ */
+
+const FP_CELL = 24;
+/** @type {Map<number, {x0:number,x1:number,z0:number,z1:number}[]>} */
+let FOOTPRINTS = new Map();
+
+const hashKey = (x, z, cell) =>
+  (Math.floor(x / cell) + 4096) * 8192 + (Math.floor(z / cell) + 4096);
+
+function buildFootprints(ctx) {
+  FOOTPRINTS = new Map();
+  const grp = ctx.groups && ctx.groups.buildings;
+  if (!grp) return 0;
+  const box = new THREE.Box3();
+  let n = 0;
+  for (const root of grp.children) {
+    box.setFromObject(root);
+    if (!Number.isFinite(box.min.x) || !(box.max.x > box.min.x)) continue;
+    // 0.3 m of clearance: a trunk rendered flush against a wall still reads as
+    // growing through it.
+    const r = {
+      x0: box.min.x - 0.3, x1: box.max.x + 0.3,
+      z0: box.min.z - 0.3, z1: box.max.z + 0.3,
+    };
+    const cx0 = Math.floor(r.x0 / FP_CELL), cx1 = Math.floor(r.x1 / FP_CELL);
+    const cz0 = Math.floor(r.z0 / FP_CELL), cz1 = Math.floor(r.z1 / FP_CELL);
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cz = cz0; cz <= cz1; cz++) {
+        const k = (cx + 4096) * 8192 + (cz + 4096);
+        let a = FOOTPRINTS.get(k);
+        if (!a) { a = []; FOOTPRINTS.set(k, a); }
+        a.push(r);
+      }
+    }
+    n++;
+  }
+  return n;
+}
+
+function inBuilding(x, z) {
+  const a = FOOTPRINTS.get(hashKey(x, z, FP_CELL));
+  if (!a) return false;
+  for (const r of a) if (x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1) return true;
+  return false;
+}
+
+/**
+ * How much open pavement there actually is between the kerb and the wall.
+ *
+ * The parcel says one thing and the building says another: buildings.js caps
+ * its pair of setbacks at a third of the parcel depth, so on a shallow lot the
+ * facade stands a metre inside the setback this file assumed, and the entire
+ * foundation planting line lands in the lobby and is refused. Marching in from
+ * the kerb against the measured footprints turns "no planting at all" into
+ * "planting against the wall", which is what foundation planting is.
+ * (nx, nz) points INWARD, away from the kerb.
+ */
+function wallDepth(x, z, nx, nz, max) {
+  for (let d = 0.6; d <= max; d += 0.35) {
+    if (inBuilding(x + nx * d, z + nz * d)) return d;
+  }
+  return max;
+}
+
+const SEP_CELL = 4;
+/** @type {Map<number, number[]>} flat [x, z, r, ...] per cell */
+let PLANTED = new Map();
+
+/** Is there room for something of personal-space radius `r` centred here? */
+function sepFree(x, z, r) {
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      const a = PLANTED.get(hashKey(x + i * SEP_CELL, z + j * SEP_CELL, SEP_CELL));
+      if (!a) continue;
+      for (let k = 0; k < a.length; k += 3) {
+        const dx = x - a[k], dz = z - a[k + 1], rr = r + a[k + 2];
+        if (dx * dx + dz * dz < rr * rr) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function sepTake(x, z, r) {
+  const k = hashKey(x, z, SEP_CELL);
+  let a = PLANTED.get(k);
+  if (!a) { a = []; PLANTED.set(k, a); }
+  a.push(x, z, r);
+}
+
+/**
+ * Claim a rectangle in the SHARED grid.
+ *
+ * Steps, seat walls and amphitheatre terraces are merged surfaces, so they
+ * never went through addInstanced and never claimed anything — and the plaza
+ * planting that runs after them dropped live oaks into the middle of a flight
+ * of steps. A disc at the centroid is not enough for a 20 m run.
+ */
+function claimBox(ctx, x, z, w, d, r = 1.4) {
+  const nx = Math.max(1, Math.ceil(w / 3));
+  const nz = Math.max(1, Math.ceil(d / 3));
+  for (let i = 0; i <= nx; i++) {
+    for (let j = 0; j <= nz; j++) {
+      const px = x - w / 2 + (w * i) / nx;
+      const pz = z - d / 2 + (d * j) / nz;
+      ctx.occupy(px, pz, r);
+      sepTake(px, pz, r);
+    }
+  }
+}
+
+/* ======================================================================== */
 /*  PLACEMENT                                                               */
 /* ======================================================================== */
 
@@ -1691,7 +1839,14 @@ function factoryFor(key, tintHex) {
   return _factories[fk];
 }
 
-const stats = { trees: 0, palms: 0, bushes: 0, features: 0, instances: 0 };
+const stats = { trees: 0, palms: 0, bushes: 0, features: 0, instances: 0, capped: 0 };
+/**
+ * Why sites were refused. Reported every boot, because the failure mode of a
+ * placement rule is silence: a bad `sep` or an over-wide footprint just thins
+ * the city out and nothing says so. If `building` or `spacing` runs away, the
+ * planting has gone somewhere it should not have been asked to go.
+ */
+const rej = { water: 0, road: 0, building: 0, spacing: 0, occupied: 0 };
 
 /**
  * Place one instanced species. Returns the Consumable, or null if the ground
@@ -1699,6 +1854,16 @@ const stats = { trees: 0, palms: 0, bushes: 0, features: 0, instances: 0 };
  */
 function plant(ctx, key, x, z, rot, scale, opts = {}) {
   const def = SPECIES[key];
+
+  /* Invariants first, cheapest test first. These hold for FORCED placements
+     too — `force` is only ever meant to overrule the buildings' over-claimed
+     occupancy square, never the bay, the carriageway or a lobby. */
+  if (!opts.shoreline && ctx.layout.isWater(x, z)) { rej.water++; return null; }
+  if (!opts.island && ctx.layout.isRoad(x, z)) { rej.road++; return null; }
+  if (inBuilding(x, z)) { rej.building++; return null; }
+  const sep = opts.sep ?? def.sep;
+  if (sep > 0 && !sepFree(x, z, sep)) { rej.spacing++; return null; }
+
   const clear = opts.clear ?? def.clear;
   if (clear > 0) {
     // `force` skips the read but still writes. Buildings claim a SQUARE of
@@ -1706,9 +1871,10 @@ function plant(ctx, key, x, z, rot, scale, opts = {}) {
     // swallows the pavement strip as well — so a street tree that is
     // geometrically fine would be rejected. The kerb strip is ours by
     // construction, so we claim it and let props.js work around us.
-    if (!opts.force && !ctx.isFree(x, z, clear)) return null;
+    if (!opts.force && !ctx.isFree(x, z, clear)) { rej.occupied++; return null; }
     ctx.occupy(x, z, opts.force ? Math.min(clear, 1.7) : clear);
   }
+  if (sep > 0) sepTake(x, z, sep);
   const tints = TINTS[key];
   const tint = tints ? tints[opts.tintIndex !== undefined
     ? opts.tintIndex % tints.length : 0] : undefined;
@@ -1728,11 +1894,31 @@ function plant(ctx, key, x, z, rot, scale, opts = {}) {
     debrisColor: def.debris,
     decor: opts.decor,
   });
+  // A full pool returns null. Counting it would report planting that is not on
+  // screen, which is exactly how a capacity ceiling hides for weeks.
+  if (!c && !opts.decor) { stats.capped++; return null; }
   stats.instances++;
   if (PALMS.includes(key)) stats.palms++;
   else if (SHADE.includes(key) || key === 'seagrapeT' || key === 'mangrove') stats.trees++;
   else stats.bushes++;
   return c;
+}
+
+/**
+ * Try a frontage site, then walk it toward the kerb.
+ *
+ * The nominal setback is derived from the parcel, but buildings.js caps the
+ * pair of setbacks at a third of the parcel depth, so on a shallow lot the
+ * building line sits well inside where we wanted the hedge. Nudging outward
+ * turns "hedge inside the shopfront, therefore rejected, therefore bare kerb"
+ * into a hedge 60 cm further out. (nx, nz) points at the kerb.
+ */
+function plantOut(ctx, key, x, z, nx, nz, rot, scale, opts, steps = 3, step = 0.6) {
+  for (let i = 0; i <= steps; i++) {
+    const c = plant(ctx, key, x + nx * i * step, z + nz * i * step, rot, scale, opts);
+    if (c) return c;
+  }
+  return null;
 }
 
 /** Circular tree pit / mulch ring under a street tree. Grounds it visually. */
@@ -1743,6 +1929,23 @@ function treePit(B, x, z, r, y) {
 /* -------------------------------------------------------------- medians --- */
 
 /**
+ * How far short of a junction streets.js stops the raised island, and the
+ * shortest run it will build one on at all.
+ *
+ * These MIRROR streets.js: NOSE there is CROSS_GAP + CROSS_W + 1.6 = 6.3, and
+ * `if (b - a < 18) continue`. This file used to pull back only 3 m and had no
+ * minimum length, so it planted royal palms on 40-odd stretches where no island
+ * exists — a tree standing 14 cm above bare carriageway, which is precisely the
+ * "floating, and growing out of a road" pair of defects. If streets.js retunes
+ * its island, this has to follow; there is no way to import the constants
+ * because they are module-private over there.
+ */
+const MEDIAN_NOSE = 6.3;
+const MEDIAN_MIN_RUN = 18;
+/** The island tapers to a point over its last 3 m; keep the trunks off that. */
+const MEDIAN_TAPER = 4.5;
+
+/**
  * Boulevard median PLANTING.
  *
  * streets.js owns the median surface, its kerb rings and the low hedge spine
@@ -1750,6 +1953,12 @@ function treePit(B, x, z, r, y) {
  * Brickell Ave read as Brickell Ave from the menu-hero camera: a continuous
  * line of royal palms marching down the middle of the city, with colour at
  * their feet. Soil sits at y=0.142, just under Y_WALK.
+ *
+ * The line is laid on a GLOBAL LATTICE, not from the start of each run: the
+ * island is chopped into a run per city block, and restarting the rhythm at
+ * every junction is what made a boulevard planted at a constant 12 m read as a
+ * different spacing every block. Quantising z to a shared step means the palms
+ * carry straight through the junctions — which is the whole point of an avenue.
  */
 function buildMedians(ctx) {
   const { layout } = ctx;
@@ -1772,7 +1981,9 @@ function buildMedians(ctx) {
     // Break the strip at every cross street so the island does not pave over
     // the junctions.
     const cuts = [-S];
-    for (const rz of layout.roadsZ) { cuts.push(rz.pos - rz.half - 3, rz.pos + rz.half + 3); }
+    for (const rz of layout.roadsZ) {
+      cuts.push(rz.pos - rz.half - MEDIAN_NOSE, rz.pos + rz.half + MEDIAN_NOSE);
+    }
     cuts.push(S);
     cuts.sort((a, b) => a - b);
 
@@ -1782,13 +1993,16 @@ function buildMedians(ctx) {
       // Walk the segment in 5 m steps and keep only the contiguous dry runs;
       // the river crossing sits inside a single 170 m segment, so testing the
       // midpoint alone would happily bridge it.
+      // 2 m steps, not 5: streets.js bisects its wet/dry flip to 25 cm, so a
+      // coarse sample here can keep 5 m of run that has no island under it and
+      // stand a palm on the river.
       let start = null;
-      for (let z = cuts[i]; z <= cuts[i + 1] + 0.01; z += 5) {
+      for (let z = cuts[i]; z <= cuts[i + 1] + 0.01; z += 2) {
         const zz = Math.min(z, cuts[i + 1]);
         if (clearAt(road.pos, zz)) {
           if (start === null) start = zz;
         } else if (start !== null) {
-          runs.push({ z0: start, z1: zz - 5 }); start = null;
+          runs.push({ z0: start, z1: zz - 2 }); start = null;
         }
       }
       if (start !== null) runs.push({ z0: start, z1: cuts[i + 1] });
@@ -1798,26 +2012,33 @@ function buildMedians(ctx) {
     const spine = Math.min(1.05, half - 0.75);
     const lane = (s) => road.pos + s * (spine + 0.55 + rng() * Math.max(0.2, half - spine - 1.4));
 
-    for (const run of runs) {
-      const z0 = run.z0 + 5, z1 = run.z1 - 5;
-      if (z1 - z0 < 12) continue;
+    /* One species for the whole avenue. Rolling the dice per palm gives a
+       median that is 40% royal, 30% sabal and 30% coconut in no order at all,
+       which reads as a nursery clearance rather than a planting scheme. */
+    const key = rng.weighted([['royalA', 46], ['royalB', 26], ['sabal', 16], ['coconutA', 12]]);
+    const STEP = 9.5;
 
-      const step = 12 + rng() * 5;
-      for (let z = z0; z < z1; z += step) {
-        // Palms rise straight out of the hedge spine — that stacked silhouette
-        // is exactly what the real boulevard looks like.
-        const key = rng.chance(0.66) ? (rng.chance(0.55) ? 'royalA' : 'royalB')
-          : rng.chance(0.6) ? 'sabal' : 'coconutA';
-        plant(ctx, key, road.pos + (rng() - 0.5) * 0.5, z, rng() * 6.283,
-          0.92 + rng() * 0.26, { y: -0.012, clear: 2.0 });
-        if (rng.chance(0.8)) {
-          plant(ctx, rng.chance(0.5) ? 'flowerPink' : 'flowerYellow',
-            lane(rng.sign()), z + step * 0.5,
-            rng() * 6.283, 0.8 + rng() * 0.35, { y: -0.012, clear: 0.5 });
-        }
-        if (rng.chance(0.6)) {
-          plant(ctx, 'ornGrass', lane(rng.sign()), z + step * 0.26,
-            rng() * 6.283, 0.75 + rng() * 0.45, { y: -0.012, clear: 0.4 });
+    for (const run of runs) {
+      if (run.z1 - run.z0 < MEDIAN_MIN_RUN) continue;   // streets.js built no island here
+      const z0 = run.z0 + MEDIAN_TAPER, z1 = run.z1 - MEDIAN_TAPER;
+      if (z1 - z0 < STEP * 0.5) continue;
+
+      for (let z = Math.ceil(z0 / STEP) * STEP; z <= z1; z += STEP) {
+        plant(ctx, key, road.pos + (rng() - 0.5) * 0.4, z, rng() * 6.283,
+          0.92 + rng() * 0.26, { y: -0.012, clear: 2.0, island: true });
+        // Colour at their feet, on the half-step, so the underplanting reads as
+        // a continuous ribbon rather than a ring around each trunk.
+        const mid = z + STEP * 0.5;
+        if (mid > z1) continue;
+        for (const s of [-1, 1]) {
+          if (rng.chance(0.72)) {
+            plant(ctx, rng.chance(0.5) ? 'flowerPink' : 'flowerYellow',
+              lane(s), mid, rng() * 6.283, 0.8 + rng() * 0.35,
+              { y: -0.012, clear: 0.5, island: true });
+          } else {
+            plant(ctx, 'ornGrass', lane(s), mid, rng() * 6.283, 0.75 + rng() * 0.45,
+              { y: -0.012, clear: 0.4, island: true });
+          }
         }
       }
     }
@@ -1840,10 +2061,17 @@ function buildStreetTrees(ctx, B, b, rng) {
   const inset = Math.max(1.75, Math.min(2.35, Math.min(b.w, b.d) * 0.06));
   const grand = b.onSpine || b.onBoulevard;
 
+  let run = 0;
   for (const fr of b.frontageStreets) {
+    const firstRun = run++ === 0;
     const cls = fr.road.cls;
-    const spacing = cls === ROAD_CLASS.BOULEVARD ? 10.5
-      : cls === ROAD_CLASS.AVENUE ? 13.0 : 16.0;
+    // Real street-tree spacing is 8-12 m, and the wider end of that was leaving
+    // 16 m holes on quiet streets and skipping short frontages entirely
+    // (`len < spacing * 0.9` below). Tightening the rhythm is the cheapest
+    // density there is: it costs no draw call, only instances in a pool that is
+    // already open.
+    const spacing = cls === ROAD_CLASS.BOULEVARD ? 9.5
+      : cls === ROAD_CLASS.AVENUE ? 11.5 : 13.5;
     const horiz = fr.side === 'n' || fr.side === 's';
     const len = horiz ? b.w : b.d;
     if (len < spacing * 0.9) continue;
@@ -1858,19 +2086,32 @@ function buildStreetTrees(ctx, B, b, rng) {
 
     for (let i = 0; i <= n; i++) {
       const t = -len / 2 + 2.5 + gap * i;
-      let x, z;
-      if (fr.side === 'n') { x = b.x + t; z = b.z - b.d / 2 + inset; }
-      else if (fr.side === 's') { x = b.x + t; z = b.z + b.d / 2 - inset; }
-      else if (fr.side === 'w') { x = b.x - b.w / 2 + inset; z = b.z + t; }
-      else { x = b.x + b.w / 2 - inset; z = b.z + t; }
+      let x, z, nx = 0, nz = 0, ax = 0, az = 0;
+      if (fr.side === 'n') { x = b.x + t; z = b.z - b.d / 2 + inset; nz = -1; ax = 1; }
+      else if (fr.side === 's') { x = b.x + t; z = b.z + b.d / 2 - inset; nz = 1; ax = 1; }
+      else if (fr.side === 'w') { x = b.x - b.w / 2 + inset; z = b.z + t; nx = -1; az = 1; }
+      else { x = b.x + b.w / 2 - inset; z = b.z + t; nx = 1; az = 1; }
 
-      const c = plant(ctx, key, x, z, rng() * 6.283, 0.86 + rng() * 0.3, { force: true });
+      // Nudge toward the kerb rather than lose the tree — on a shallow parcel
+      // buildings.js has already eaten the setback this inset assumed — but
+      // only twice: three steps would stand the trunk on the kerb itself.
+      // The two runs meeting at a corner both want the last 2.5 m of it and
+      // `force` stops occupancy arbitrating; the spacing set does it instead,
+      // and unlike a blanket corner skip it only drops the tree when there
+      // really is another one there.
+      const c = plantOut(ctx, key, x, z, nx, nz,
+        rng() * 6.283, 0.86 + rng() * 0.3, { force: true }, 2, 0.45);
       if (!c) continue;
-      treePit(B, x, z, 1.05, ctx.Y_WALK + 0.02);
-      // Under-planting at the base of every third tree.
-      if (rng.chance(0.34)) {
-        plant(ctx, 'ornGrass', x + (rng() - 0.5) * 1.3, z + (rng() - 0.5) * 1.3,
-          rng() * 6.283, 0.7 + rng() * 0.4, { clear: 0.35, force: true });
+      const px = c.position.x, pz = c.position.z;
+      treePit(B, px, pz, 1.05, ctx.Y_WALK + 0.02);
+      // Under-planting beside the pit, ALONG the kerb line rather than behind
+      // it: a metre inland is exactly where the foundation hedge runs, and a
+      // collar of grass there quietly deletes one hedge unit per street tree.
+      if (rng.chance(0.55)) {
+        const s = rng.sign();
+        plant(ctx, rng.chance(0.6) ? 'ornGrass' : 'shrub',
+          px + ax * s * 1.5, pz + az * s * 1.5,
+          rng() * 6.283, 0.7 + rng() * 0.4, { clear: 0.35, force: true, tintIndex: i });
       }
     }
   }
@@ -1988,8 +2229,13 @@ function parkBlock(ctx, B, b, rng) {
       else if (fr.side === 's') { hx = b.x + t; hz = z1 - 0.9; rot = 0; }
       else if (fr.side === 'w') { hx = x0 + 0.9; hz = b.z + t; rot = Math.PI / 2; }
       else { hx = x1 - 0.9; hz = b.z + t; rot = Math.PI / 2; }
-      plant(ctx, 'hedge', hx, hz, rot, 0.92 + rng() * 0.2,
-        { clear: 0, tintIndex: i, y: walled ? 0.34 : 0 });
+      // Sit ON the turf, never on top of the wall. The wall is a 0.42 m plinth
+      // 55 cm in FRONT of this line, so lifting the hedge to meet its coping
+      // left a 34 cm gap of daylight under every hedge unit on a walled park —
+      // 430-odd of them, the largest single grounding defect in the module. A
+      // low wall with a hedge standing behind it at grade is what the real
+      // thing looks like anyway.
+      plant(ctx, 'hedge', hx, hz, rot, 0.92 + rng() * 0.2, { clear: 0, tintIndex: i });
     }
     if (walled) {
       const wy = ctx.Y_WALK;
@@ -2009,50 +2255,120 @@ function parkBlock(ctx, B, b, rng) {
   // how every bandshell, court and pond in the city ended up rejected.
   parkFeature(ctx, B, b, rng, y);
 
+  /* --- shade along the walk --------------------------------------------- */
+  /* One species, one spacing, one offset: a path you can follow by its trees is
+     the cheapest possible signal that somebody DESIGNED this park rather than
+     seeded it. Runs after the hero feature so a court or a pond still wins the
+     ground it needs. */
+  if (Math.min(b.w, b.d) > 26) {
+    const alongX = b.w >= b.d;
+    const key = rng.weighted([['royalA', 26], ['liveOak', 24], ['sabal', 18],
+      ['tabebuia', 18], ['coconutA', 14]]);
+    const runLen = (alongX ? hw : hd) * 2 - pin * 2;
+    const n = Math.max(2, Math.round(runLen / 9));
+    for (const s of [-1, 1]) {
+      const off = (alongX ? hd : hw) - pin - 2.4;
+      for (let i = 0; i <= n; i++) {
+        const t = -runLen / 2 + (runLen / n) * i;
+        const px = alongX ? b.x + t : b.x + s * off;
+        const pz = alongX ? b.z + s * off : b.z + t;
+        if (plant(ctx, key, px, pz, rng() * 6.283, 0.88 + rng() * 0.24, { clear: 1.8 })) {
+          treePit(B, px, pz, 1.0, y + 0.02);
+        }
+      }
+    }
+  }
+
   /* --- flower beds ------------------------------------------------------ */
-  const beds = 1 + rng.int(0, 2);
+  const beds = 2 + rng.int(0, 2);
   for (let i = 0; i < beds; i++) {
     const bw = 3.4 + rng() * 4.0, bd = 2.4 + rng() * 3.0;
     const bx = b.x + (rng() - 0.5) * Math.max(0, b.w - bw - 8);
     const bz = b.z + (rng() - 0.5) * Math.max(0, b.d - bd - 8);
     if (!ctx.isFree(bx, bz, Math.max(bw, bd) * 0.5)) continue;
+    if (ctx.layout.isWater(bx, bz) || inBuilding(bx, bz)) continue;
     // Claim it, or props.js drops a traffic cone in the middle of the petunias.
     ctx.occupy(bx, bz, Math.max(bw, bd) * 0.45);
-    B.add('mulch', tile(bw, bd, bx, bz, y + 0.035, 3));
+    // A RAISED bed: soil 15 cm up inside a 22 cm edging. The soil used to sit
+    // 3.5 cm above the turf inside the same edging, so the bed read as a shallow
+    // pit with the flowers at the bottom of it, and every bloom was planted a
+    // further 5 cm below the soil it was supposed to be growing in.
+    const soil = 0.15;
+    B.add('mulch', tile(bw, bd, bx, bz, y + soil, 3));
     B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz - bd / 2, 1));
     B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz + bd / 2, 1));
     B.add('kerb', box(0.22, 0.22, bd, bx - bw / 2, y + 0.11, bz, 1));
     B.add('kerb', box(0.22, 0.22, bd, bx + bw / 2, y + 0.11, bz, 1));
     const key = rng.chance(0.5) ? 'flowerPink' : 'flowerYellow';
-    const cols = Math.max(2, Math.round(bw / 1.5)), rows = Math.max(1, Math.round(bd / 1.5));
+    const cols = Math.max(2, Math.round(bw / 1.4)), rows = Math.max(1, Math.round(bd / 1.4));
     for (let cx = 0; cx < cols; cx++) {
       for (let cz = 0; cz < rows; cz++) {
         plant(ctx, key,
           bx - bw / 2 + (cx + 0.5) * (bw / cols),
           bz - bd / 2 + (cz + 0.5) * (bd / rows),
-          rng() * 6.283, 0.75 + rng() * 0.35, { clear: 0 });
+          rng() * 6.283, 0.75 + rng() * 0.35, { clear: 0, y: 0.015 + soil });
       }
     }
   }
 
-  /* --- canopy ----------------------------------------------------------- */
-  const treeN = Math.max(4, Math.round(b.area / 68));
-  for (let i = 0; i < treeN; i++) {
+  /* --- canopy: groves, not confetti ------------------------------------- */
+  /*
+   * Scattering trees uniformly across the parcel is the single loudest
+   * "procedurally generated" tell there is — you get an even grey-green fur
+   * with no shape to it. A real park is a few GROVES of one species with open
+   * mown lawn between them, so pick a handful of grove centres, give each its
+   * own species, and cluster around them with a sqrt falloff (uniform in area,
+   * so the grove is dense at the middle and frays at the edge).
+   */
+  const coastal = () => rng.weighted([['royalA', 22], ['coconutA', 22], ['seagrapeT', 26],
+    ['sabal', 16], ['banyan', 14]]);
+  const inland = () => rng.weighted([['banyan', 20], ['liveOak', 22], ['royalA', 16],
+    ['royalB', 12], ['tabebuia', 14], ['bougain', 10], ['sabal', 6]]);
+  const speciesFor = b.bayfront ? coastal : inland;
+
+  const treeN = Math.max(6, Math.round(b.area / 46));
+  const groveN = Math.max(2, Math.min(5, Math.round(b.area / 900)));
+  let planted = 0;
+  for (let gi = 0; gi < groveN && planted < treeN; gi++) {
+    const gx = b.x + (rng() - 0.5) * b.w * 0.72;
+    const gz = b.z + (rng() - 0.5) * b.d * 0.72;
+    const gr = Math.min(Math.min(b.w, b.d) * 0.24, 7 + rng() * 7);
+    const key = speciesFor();
+    const n = Math.ceil(treeN / groveN);
+    for (let i = 0; i < n && planted < treeN; i++) {
+      const a = rng() * 6.283, dd = Math.sqrt(rng()) * gr;
+      // Every third grove gets a second species threaded through it, which is
+      // what stops a grove reading as a stamp.
+      const k = gi % 3 === 2 && rng.chance(0.3) ? speciesFor() : key;
+      if (plant(ctx, k, gx + Math.cos(a) * dd, gz + Math.sin(a) * dd,
+        rng() * 6.283, 0.85 + rng() * 0.35)) planted++;
+    }
+  }
+  // Whatever the groves could not fit goes out as specimen trees on the lawn.
+  for (let i = 0; planted < treeN && i < treeN * 2; i++) {
     const tx = b.x + (rng() - 0.5) * b.w * 0.86;
     const tz = b.z + (rng() - 0.5) * b.d * 0.86;
-    const key = b.bayfront
-      ? rng.weighted([['royalA', 22], ['coconutA', 22], ['seagrapeT', 26], ['sabal', 16], ['banyan', 14]])
-      : rng.weighted([['banyan', 20], ['liveOak', 22], ['royalA', 16], ['royalB', 12],
-        ['tabebuia', 14], ['bougain', 10], ['sabal', 6]]);
-    plant(ctx, key, tx, tz, rng() * 6.283, 0.85 + rng() * 0.35);
+    if (plant(ctx, speciesFor(), tx, tz, rng() * 6.283, 0.85 + rng() * 0.35)) planted++;
   }
-  const shrubN = Math.max(3, Math.round(b.area / 160));
+
+  /* Understorey follows the groves rather than the parcel: shrub masses belong
+     under the canopy edge, not marooned in the middle of the mown lawn. */
+  const shrubN = Math.max(4, Math.round(b.area / 105));
   for (let i = 0; i < shrubN; i++) {
     plant(ctx, rng.chance(0.62) ? 'shrub' : 'ornGrass',
       b.x + (rng() - 0.5) * b.w * 0.88, b.z + (rng() - 0.5) * b.d * 0.88,
       rng() * 6.283, 0.8 + rng() * 0.45, { tintIndex: i });
   }
 }
+
+/**
+ * Height of a feature's own paved apron above Y_WALK.
+ *
+ * Park surfaces stack: lawn at Y_WALK+0.015, a court/apron/sandpit a further
+ * 55 mm on top of that. `plant` positions from Y_WALK, so anything standing on
+ * an apron has to add the pair back or it is buried in its own paving.
+ */
+const DECK = 0.07;
 
 /** The thing that makes a given park memorable. Sized to the parcel. */
 function parkFeature(ctx, B, b, rng, y) {
@@ -2082,9 +2398,16 @@ function parkFeature(ctx, B, b, rng, y) {
     court(B, cx, cz, Math.max(cw, cd), Math.min(cw, cd), y + 0.055, kind, rot);
     ctx.occupy(cx, cz, Math.max(cw, cd) * 0.5);
     if (kind === 'hard') {
-      const half = Math.max(cw, cd) * 0.5 + 0.6;
-      plant(ctx, 'hoop', cx - Math.cos(rot) * half, cz - Math.sin(rot) * half, rot + Math.PI, 1, { clear: 0 });
-      plant(ctx, 'hoop', cx + Math.cos(rot) * half, cz + Math.sin(rot) * half, rot, 1, { clear: 0 });
+      // Just INSIDE the baseline. Outside it the post stands on turf while
+      // claiming the court's height, which floats it 5.5 cm; inside, it is on
+      // its own surface and the backboard overhangs the key, which is where a
+      // backboard belongs. DECK is that surface: a feature apron sits 55 mm
+      // above the lawn, which itself sits 15 mm above Y_WALK.
+      const half = Math.max(cw, cd) * 0.5 - 0.35;
+      plant(ctx, 'hoop', cx - Math.cos(rot) * half, cz - Math.sin(rot) * half,
+        rot + Math.PI, 1, { clear: 0, y: DECK });
+      plant(ctx, 'hoop', cx + Math.cos(rot) * half, cz + Math.sin(rot) * half,
+        rot, 1, { clear: 0, y: DECK });
     }
     stats.features++;
   } else if (small > 20 && roll < 0.62) {
@@ -2096,15 +2419,22 @@ function parkFeature(ctx, B, b, rng, y) {
     B.add('kerb', box(0.3, 0.26, pd, cx - pw / 2, y + 0.13, cz, 1));
     B.add('kerb', box(0.3, 0.26, pd, cx + pw / 2, y + 0.13, cz, 1));
     ctx.occupy(cx, cz, Math.max(pw, pd) * 0.5);
-    plant(ctx, 'playground', cx + 1.2, cz, rng.chance(0.5) ? 0 : Math.PI, 1, { clear: 0 });
+    plant(ctx, 'playground', cx + 1.2, cz, rng.chance(0.5) ? 0 : Math.PI, 1,
+      { clear: 0, y: DECK });
     stats.features++;
   } else if (small > 34 && roll < 0.74) {
     /* Bandshell facing an arc of amphitheatre steps. */
     plant(ctx, 'bandshell', cx, cz - b.d * 0.24, 0, 0.9 + rng() * 0.2, { clear: 0 });
+    let deepest = 0;
     for (let i = 0; i < 4; i++) {
       const r = 9 + i * 2.4;
       B.add('stone', box(r * 1.5, 0.42 * (i + 1), 1.9, cx, y + 0.21 * (i + 1), cz + b.d * 0.02 + i * 2.2, 2));
+      deepest = i * 2.2;
     }
+    // Merged surfaces claim nothing on their own, and a disc at the centroid
+    // does not cover a 27 m arc of terraces — which is how live oaks ended up
+    // growing out of the seating.
+    claimBox(ctx, cx, cz + b.d * 0.02 + deepest / 2, 9 * 1.5 + 12, deepest + 2.4, 1.6);
     ctx.occupy(cx, cz, Math.min(b.w, b.d) * 0.40);
     stats.features++;
   } else if (roll < 0.88) {
@@ -2113,26 +2443,27 @@ function parkFeature(ctx, B, b, rng, y) {
     B.add('plazaBase', tile(aw, ad, cx, cz, y + 0.055, 6));
     B.add('plazaAccent', tile(aw, 1.6, cx, cz - ad / 2 + 0.8, y + 0.07, 2));
     B.add('plazaAccent', tile(aw, 1.6, cx, cz + ad / 2 - 0.8, y + 0.07, 2));
-    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 1.0 + rng() * 0.3, { clear: 0 });
+    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 1.0 + rng() * 0.3, { clear: 0, y: DECK });
     ctx.occupy(cx, cz, 4.0);
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * 6.283 + 0.7;
       plant(ctx, 'planterS', cx + Math.cos(a) * 5.6, cz + Math.sin(a) * 5.6, a, 1,
-        { clear: 1.1, force: true });
+        { clear: 1.1, force: true, y: DECK });
     }
     if (rng.chance(0.4) && aw > 12) {
-      plant(ctx, 'pergola', cx + aw * 0.34, cz, Math.PI / 2, 1, { clear: 2.5, force: true });
+      plant(ctx, 'pergola', cx + aw * 0.34, cz, Math.PI / 2, 1,
+        { clear: 2.5, force: true, y: DECK });
     }
     stats.features++;
   } else {
     /* Public art on a plinth, ringed with paving. */
     B.add('plazaInlay', disc(5.2, 16, cx, y + 0.055, cz, null));
     B.add('plazaAccent', disc(6.0, 16, cx, y + 0.05, cz, null));
-    placeSculpture(ctx, cx, cz, rng, true);
+    placeSculpture(ctx, cx, cz, rng, true, DECK);
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * 6.283 + 0.4;
       plant(ctx, 'fanShort', cx + Math.cos(a) * 4.6, cz + Math.sin(a) * 4.6, a, 1,
-        { clear: 1.4, force: true });
+        { clear: 1.4, force: true, y: 0.065 });
     }
     stats.features++;
   }
@@ -2208,7 +2539,13 @@ function plazaBlock(ctx, B, b, rng) {
   const cx = b.x, cz = b.z;
   const small = Math.min(b.w, b.d);
 
-  if (b.landmark && /Amphitheatre|Amphitheater/i.test(b.landmark) && small > 26) {
+  if (inBuilding(cx, cz)) {
+    /* A hand-placed landmark already stands here — Government Center, the
+       arena, the amphitheatre. buildings.js gets the middle of the block; this
+       file used to build a SECOND amphitheatre on top of the first and thread
+       six rows of stepped seating through its walls. The edge planting below
+       still runs, which is all a landmark forecourt should have. */
+  } else if (b.landmark && /Amphitheatre|Amphitheater/i.test(b.landmark) && small > 26) {
     /* The hand-placed hero: a bandshell facing a bowl of stepped seating. */
     plant(ctx, 'bandshell', cx, cz - hd * 0.52, 0, 1.15, { clear: 0 });
     for (let i = 0; i < 6; i++) {
@@ -2216,6 +2553,9 @@ function plazaBlock(ctx, B, b, rng) {
       B.add('stone', box(w, 0.44 * (i + 1), 2.0, cx, ctx.Y_WALK + 0.22 * (i + 1),
         cz - hd * 0.20 + i * 2.3, 2));
     }
+    // The terraces run 13 m deep and are merged surfaces, so they claim nothing
+    // by themselves; the disc below only covers the middle of the bowl.
+    claimBox(ctx, cx, cz - hd * 0.20 + 5.75, Math.min(b.w * 0.86, 42.5), 15, 1.7);
     ctx.occupy(cx, cz, small * 0.44);
   } else if (small > 25) {
     plant(ctx, 'fountainL', cx, cz, rng() * 6.283, 1.0 + rng() * 0.25, { clear: 0 });
@@ -2227,6 +2567,32 @@ function plazaBlock(ctx, B, b, rng) {
     placeSculpture(ctx, cx, cz, rng, true);
   }
   stats.features++;
+
+  /* Seating steps against one edge — plazas are for sitting on.
+     BEFORE the planting, not after: these are merged `stone` geometry that
+     claims no ground of its own, and running them last let the green panels and
+     the palm allée put live oaks in the middle of a flight of steps. */
+  const along0 = b.w >= b.d;
+  const sgn0 = rng.chance(0.5) ? -1 : 1;
+  const seatOff = (along0 ? hd : hw) - 4.8;
+  const seatX = along0 ? b.x : b.x + sgn0 * seatOff;
+  const seatZ = along0 ? b.z + sgn0 * seatOff : b.z;
+  if (small > 20 && rng.chance(0.7) && !inBuilding(seatX, seatZ)) {
+    const along = along0;
+    const sgn = sgn0;
+    const runL = Math.min(20, (along ? b.w : b.d) * 0.55);
+    for (let i = 0; i < 3; i++) {
+      const soff = (along ? hd : hw) - 5.5 + i * 1.4;
+      if (along) {
+        B.add('stone', box(runL, 0.4 * (i + 1), 1.5, b.x, ctx.Y_WALK + 0.2 * (i + 1), b.z + sgn * soff, 2));
+      } else {
+        B.add('stone', box(1.5, 0.4 * (i + 1), runL, b.x + sgn * soff, ctx.Y_WALK + 0.2 * (i + 1), b.z, 2));
+      }
+    }
+    const mid = (along ? hd : hw) - 5.5 + 1.4;
+    if (along) claimBox(ctx, b.x, b.z + sgn * mid, runL, 4.7, 1.3);
+    else claimBox(ctx, b.x + sgn * mid, b.z, 4.7, runL, 1.3);
+  }
 
   /* --- green panels ----------------------------------------------------- */
   // A plaza with no turf at all is a car park with pattern on it. Two kerbed
@@ -2274,21 +2640,6 @@ function plazaBlock(ctx, B, b, rng) {
     }
   }
 
-  /* Seating steps against one edge — plazas are for sitting on. */
-  if (small > 20 && rng.chance(0.7)) {
-    const along = b.w >= b.d;
-    const sgn = rng.chance(0.5) ? -1 : 1;
-    const runL = Math.min(20, (along ? b.w : b.d) * 0.55);
-    for (let i = 0; i < 3; i++) {
-      const off = (along ? hd : hw) - 5.5 + i * 1.4;
-      if (along) {
-        B.add('stone', box(runL, 0.4 * (i + 1), 1.5, b.x, ctx.Y_WALK + 0.2 * (i + 1), b.z + sgn * off, 2));
-      } else {
-        B.add('stone', box(1.5, 0.4 * (i + 1), runL, b.x + sgn * off, ctx.Y_WALK + 0.2 * (i + 1), b.z, 2));
-      }
-    }
-  }
-
   /* Raised planters around the edges. Forced: a plaza has no building on it,
      so the only thing occupancy can be objecting to is our own planting, and a
      planter tucked beside a palm is exactly what a plaza looks like. */
@@ -2321,18 +2672,23 @@ function plazaBlock(ctx, B, b, rng) {
   }
 }
 
-function placeSculpture(ctx, x, z, rng, force = false) {
+function placeSculpture(ctx, x, z, rng, force = false, dy = 0) {
   const hex = rng.pick([
     PALETTE.ACCENT_HOT, PALETTE.ACCENT_SUN, PALETTE.ACCENT_AQUA,
     PALETTE.STUCCO_CORAL, PALETTE.ACCENT_LILAC, PALETTE.PATINA,
   ]);
+  // Same invariants as plant(): public art is not exempt from the bay or a
+  // building, and `force` only ever overrules the occupancy grid.
+  if (ctx.layout.isWater(x, z) || ctx.layout.isRoad(x, z) || inBuilding(x, z)) return null;
+  if (!sepFree(x, z, 1.9)) return null;
   if (!force && !ctx.isFree(x, z, 2.6)) return null;
   ctx.occupy(x, z, 2.6);
+  sepTake(x, z, 1.9);
   const c = ctx.addInstanced('nat-sculpture', () => ({
     geometry: makeSculpture(0x5c17),
     material: painted(0xffffff, 0.46, 0.10),
   }), {
-    position: _v3.set(x, ctx.Y_WALK, z),
+    position: _v3.set(x, ctx.Y_WALK + dy, z),
     rotationY: rng() * 6.283,
     scale: 0.9 + rng() * 0.5,
     hex,
@@ -2395,12 +2751,35 @@ function waterfrontBlock(ctx, B, b, rng) {
   }
 
   const edgeX = b.x + hw * 0.78;
-  const en = Math.max(2, Math.round((hd * 2) / 5.0));
+  const en = Math.max(2, Math.round((hd * 2) / 4.4));
   for (let i = 0; i < en; i++) {
     const pz = b.z - hd + (hd * 2 / en) * (i + 0.5);
     plant(ctx, rng.weighted([['seagrapeT', 40], ['mangrove', 28], ['shrub', 20], ['ornGrass', 12]]),
       edgeX + (rng() - 0.5) * 2.0, pz, rng() * 6.283, 0.85 + rng() * 0.4,
       { tintIndex: i, force: true });
+  }
+
+  /* MANGROVES ON THE WATER — the one sanctioned exception to "nothing in the
+     bay". A mangrove standing in 30 cm of water at the foot of the seawall is
+     what the real shoreline looks like and what makes the edge read as a coast
+     rather than as a cut. Nothing else in this file may pass `shoreline`, and
+     it is limited to the first couple of metres past the wall: any further out
+     and it is a tree in the sea. */
+  if (!dock) {
+    const mn = Math.max(2, Math.round((hd * 2) / 9));
+    for (let i = 0; i < mn; i++) {
+      const pz = b.z - hd + (hd * 2 / mn) * (i + 0.5) + (rng() - 0.5) * 2.2;
+      // March east to find where the land actually stops. A promenade parcel
+      // may end up to 14 m short of the bay edge, so planting a fixed offset
+      // from the parcel would put mangroves on the seawall road half the time.
+      let wet = -1;
+      for (let d = 0; d <= 18; d += 0.5) {
+        if (ctx.layout.isWater(b.x + hw + d, pz)) { wet = b.x + hw + d; break; }
+      }
+      if (wet < 0) continue;
+      plant(ctx, 'mangrove', wet + 0.7 + rng() * 1.5, pz, rng() * 6.283, 0.8 + rng() * 0.4,
+        { shoreline: true, clear: 0, force: true, y: -0.55 });
+    }
   }
   // Planted terraces stepping down to the water.
   if (b.w > 26 && rng.chance(0.7)) {
@@ -2432,29 +2811,65 @@ function waterfrontBlock(ctx, B, b, rng) {
 function builtBlock(ctx, B, b, rng) {
   buildStreetTrees(ctx, B, b, rng);
 
-  // Foundation planting along the busiest frontage.
-  const fr = b.frontageStreets[0];
-  if (!fr || b.streetLife < 0.22) return;
-  const horiz = fr.side === 'n' || fr.side === 's';
-  const len = (horiz ? b.w : b.d) - 6;
-  if (len < 8) return;
-  // Sit between the street trees and the building line. Scaled off the parcel
-  // so a 20 m lot does not get a hedge growing through its own shopfront.
+  /* Foundation planting.
+     On EVERY public frontage, not just the busiest one: a corner lot with a
+     planted south side and a bare east side reads as an unfinished model, and
+     the frontage is exactly the strip the player's camera spends the game
+     looking at. */
+  if (b.streetLife < 0.22) return;
   const inset = Math.max(2.3, Math.min(b.sidewalk * 0.8, Math.min(b.w, b.d) * 0.5 * 0.15));
-  const n = Math.floor(len / 3.4);
-  for (let i = 0; i < n; i++) {
-    const t = -len / 2 + (i + 0.5) * (len / n);
-    let px, pz, rot;
-    if (fr.side === 'n') { px = b.x + t; pz = b.z - b.d / 2 + inset; rot = 0; }
-    else if (fr.side === 's') { px = b.x + t; pz = b.z + b.d / 2 - inset; rot = 0; }
-    else if (fr.side === 'w') { px = b.x - b.w / 2 + inset; pz = b.z + t; rot = Math.PI / 2; }
-    else { px = b.x + b.w / 2 - inset; pz = b.z + t; rot = Math.PI / 2; }
-    if (rng.chance(0.62)) {
-      plant(ctx, 'hedge', px, pz, rot, 0.85 + rng() * 0.2, { clear: 1.2, tintIndex: i, force: true });
-    } else {
-      plant(ctx, rng.chance(0.5) ? 'shrub' : 'ornGrass', px, pz, rng() * 6.283,
-        0.8 + rng() * 0.4, { clear: 1.0, tintIndex: i, force: true });
+  let fi = 0;
+  for (const fr of b.frontageStreets) {
+    const horiz = fr.side === 'n' || fr.side === 's';
+    const len = (horiz ? b.w : b.d) - 6;
+    if (len < 8) continue;
+    // Secondary frontages get a thinner, quieter line — a full hedge on all
+    // four sides of every block is its own kind of wallpaper.
+    const density = fi++ === 0 ? 3.4 : 4.6;
+    const n = Math.floor(len / density);
+    for (let i = 0; i < n; i++) {
+      const t = -len / 2 + (i + 0.5) * (len / n);
+      // Kerb point and the inward normal, then ask the measured footprint how
+      // far in the wall actually is and sit 1 m in front of it.
+      let kx, kz, nx = 0, nz = 0, rot;
+      if (fr.side === 'n') { kx = b.x + t; kz = b.z - b.d / 2; nz = 1; rot = 0; }
+      else if (fr.side === 's') { kx = b.x + t; kz = b.z + b.d / 2; nz = -1; rot = 0; }
+      else if (fr.side === 'w') { kx = b.x - b.w / 2; kz = b.z + t; nx = 1; rot = Math.PI / 2; }
+      else { kx = b.x + b.w / 2; kz = b.z + t; nx = -1; rot = Math.PI / 2; }
+      const d = Math.max(1.5, Math.min(inset, wallDepth(kx, kz, nx, nz, inset + 3.5) - 1.0));
+      const px = kx + nx * d, pz = kz + nz * d;
+      if (rng.chance(0.62)) {
+        plantOut(ctx, 'hedge', px, pz, -nx, -nz, rot, 0.85 + rng() * 0.2,
+          { clear: 1.2, tintIndex: i, force: true }, 2, 0.5);
+      } else {
+        plantOut(ctx, rng.chance(0.5) ? 'shrub' : 'ornGrass', px, pz, -nx, -nz,
+          rng() * 6.283, 0.8 + rng() * 0.4,
+          { clear: 1.0, tintIndex: i, force: true }, 2, 0.5);
+      }
     }
+  }
+
+  /* COASTAL EDGE ON A BUILT LOT.
+     The bay and the river run past far more towers than promenades — only six
+     blocks in the whole city are zoned promenade — so without this the seawall
+     reads as a bare cream band for most of its length. A row of sea grapes and
+     palms along the water-facing side is cheap and it is what actually holds
+     that edge together from the menu-hero camera. */
+  if (!b.bayfront && !b.riverwalk) return;
+  const seaward = b.bayfront ? 'e' : (b.z > 0 ? 'n' : 's');
+  const along = seaward === 'n' || seaward === 's';
+  const runL = (along ? b.w : b.d) - 6;
+  if (runL < 8) return;
+  const en = Math.max(2, Math.round(runL / 6.5));
+  for (let i = 0; i <= en; i++) {
+    const t = -runL / 2 + (runL / en) * i;
+    const off = (along ? b.d : b.w) / 2 - 2.0;
+    const ex = along ? b.x + t : b.x + (seaward === 'e' ? off : -off);
+    const ez = along ? b.z + (seaward === 's' ? off : -off) : b.z + t;
+    const key = rng.weighted([['seagrapeT', 30], ['coconutA', 22], ['royalB', 18],
+      ['shrub', 18], ['ornGrass', 12]]);
+    plant(ctx, key, ex, ez, rng() * 6.283, 0.85 + rng() * 0.35,
+      { clear: 1.2, force: true, tintIndex: i });
   }
 }
 
@@ -2467,7 +2882,13 @@ export function buildNature(ctx) {
   const B = new Buckets();
 
   stats.trees = 0; stats.palms = 0; stats.bushes = 0;
-  stats.features = 0; stats.instances = 0;
+  stats.features = 0; stats.instances = 0; stats.capped = 0;
+  rej.water = 0; rej.road = 0; rej.building = 0; rej.spacing = 0; rej.occupied = 0;
+
+  // Buildings run before us, so their assembled geometry is on the scene and
+  // can be measured. Nothing else can tell us where a wall actually is.
+  PLANTED = new Map();
+  const nFoot = buildFootprints(ctx);
 
   buildMedians(ctx);
 
@@ -2504,6 +2925,10 @@ export function buildNature(ctx) {
     `[nature] ${stats.palms} palms + ${stats.trees} trees + ${stats.bushes} shrubs/beds, `
     + `${stats.features} park features | ${stats.instances} instances in `
     + `${Object.keys(_factories).length + 1} pools + ${merged.calls} merged meshes `
-    + `(${Math.round(merged.tris / 1000)}k static tris)`
+    + `(${Math.round(merged.tris / 1000)}k static tris) | `
+    + `${nFoot} building footprints avoided | refused `
+    + `${rej.building} in-building, ${rej.spacing} too close, ${rej.occupied} occupied, `
+    + `${rej.water} in water, ${rej.road} on road`
+    + (stats.capped ? ` | WARNING ${stats.capped} plantings dropped, a pool is FULL` : '')
   );
 }

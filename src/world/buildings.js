@@ -106,27 +106,66 @@ function pointNormals(p) {
   return out;
 }
 
-/** Move a convex plan outward (o>0) or inward (o<0) along its bisectors. */
+/**
+ * Move a convex plan outward (o>0) or inward (o<0) along its bisectors.
+ *
+ * WHY THE INWARD CLAMP IS PER-EDGE AND NOT AN INRADIUS TEST.
+ * An inward offset shortens every edge, and on a deep-and-narrow parcel the
+ * short chamfer edges vanish long before the inradius is used up. Past that
+ * point the miter formula happily keeps going: the edge's two ends cross, its
+ * outward normal flips, and the NEXT offset then drives those vertices
+ * outward. The plan becomes a bow-tie whose planBounds is bigger than the plan
+ * it came from — which is how a midrise setback ended up 4 m WIDER than the
+ * storey below it and hanging over the pavement, and how the Freedom Tower's
+ * crown lantern (sized off planBounds) grew to 41 m across on a 13 m parcel.
+ * So the limit is the offset at which the FIRST edge is about to disappear.
+ */
 function offsetPlan(p, o) {
-  const n = p.length, out = [];
-  if (o < 0) {
-    // An inset deeper than the inradius folds the polygon into a star. Every
-    // caller derives its inset from a facade dimension, so clamp rather than
-    // ask them all to check.
-    const bb = planBounds(p);
-    o = Math.max(o, -0.42 * Math.min(bb.w, bb.d));
-  }
+  const n = p.length;
+  // Per-vertex displacement for a unit offset. 1/cos(half-angle) so a chamfer
+  // corner moves out as far as its faces do.
+  const u = [];
   for (let i = 0; i < n; i++) {
     const a = edgeN(p[(i - 1 + n) % n], p[i]);
     const b = edgeN(p[i], p[(i + 1) % n]);
     let mx = a[0] + b[0], mz = a[1] + b[1];
     const L = Math.hypot(mx, mz) || 1;
     mx /= L; mz /= L;
-    // 1/cos(half-angle) so a chamfer corner moves out as far as its faces do.
-    const k = o / Math.max(0.4, mx * a[0] + mz * a[1]);
-    out.push([p[i][0] + mx * k, p[i][1] + mz * k]);
+    const k = 1 / Math.max(0.4, mx * a[0] + mz * a[1]);
+    u.push([mx * k, mz * k]);
   }
+  if (o < 0) {
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      const dx = p[j][0] - p[i][0], dz = p[j][1] - p[i][1];
+      const L = Math.hypot(dx, dz);
+      if (L < 1e-5) continue;
+      // Rate this edge shortens at, per metre of inward offset.
+      const rate = ((u[j][0] - u[i][0]) * dx + (u[j][1] - u[i][1]) * dz) / L;
+      if (rate > 1e-5) o = Math.max(o, (0.02 - L) / rate);
+    }
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) out.push([p[i][0] + u[i][0] * o, p[i][1] + u[i][1] * o]);
   return out;
+}
+
+/**
+ * Step a plan back by `t` metres for a setback.
+ *
+ * offsetPlan now refuses to fold a plan, which on a thin parcel means it can
+ * only inset a little — leaving a "setback" that does not visibly step back.
+ * Falling back to a centred scale keeps the storey above smaller on every side
+ * without ever inverting an edge.
+ */
+function insetPlan(p, t) {
+  const bb = planBounds(p);
+  const q = offsetPlan(p, -t);
+  const qb = planBounds(q);
+  if (qb.w <= bb.w - t && qb.d <= bb.d - t) return q;
+  const sx = Math.max(0.5, 1 - (2 * t) / Math.max(1, bb.w));
+  const sz = Math.max(0.5, 1 - (2 * t) / Math.max(1, bb.d));
+  return movePlan(scalePlan(movePlan(p, -bb.cx, -bb.cz), sx, sz), bb.cx, bb.cz);
 }
 
 function scalePlan(p, sx, sz) { return p.map((q) => [q[0] * sx, q[1] * (sz ?? sx)]); }
@@ -712,14 +751,14 @@ function crown(B, plan, y, r, opt = {}) {
       B.trim(loft([{ p, y: yy }, { p, y: yy + h }], { capTop: false }), i % 2 ? P.CONCRETE : P.PRECAST);
       B.trim(slabGeo(p, yy + h, 0.42, 0.7), P.CONCRETE_WARM);
       yy += h + 0.42;
-      p = offsetPlan(p, -Math.min(bb.w, bb.d) * 0.11);
+      p = insetPlan(p, Math.min(bb.w, bb.d) * 0.11);
       if (Math.hypot(planBounds(p).w, planBounds(p).d) < 6) break;
     }
     B.trim(loft([{ p, y: yy }], { capTop: true }), P.ROOF_GRAVEL);
     if (opt.lit) B.lit(loft([{ p: offsetPlan(plan, 0.25), y: y + 1.2 }, { p: offsetPlan(plan, 0.25), y: y + 2.0 }], {}), litHex);
     top = yy;
   } else if (kind === 'taper') {
-    const p2 = offsetPlan(plan, -Math.min(bb.w, bb.d) * 0.3);
+    const p2 = insetPlan(plan, Math.min(bb.w, bb.d) * 0.3);
     const h = 7 + r() * 9;
     B.trim(loft([{ p: plan, y }, { p: p2, y: y + h }], { capTop: true }), P.PRECAST);
     top = y + h;
@@ -861,7 +900,7 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
     if (r.chance(0.35)) fins(B, plan, y, segTop, 4, 0.85, P.STUCCO_WHITE);
     if (!last) {
       B.trim(slabGeo(plan, segTop, 0.55, 1.5), P.STUCCO_WHITE);
-      const next = offsetPlan(plan, -(2.2 + r() * 3.4));
+      const next = insetPlan(plan, 2.2 + r() * 3.4);
       roofScape(B, offsetPlan(plan, 0.9), segTop + 0.55, r, {
         tank: false, parapetH: 1.0, pool: r.chance(0.26), avoid: offsetPlan(next, 2.0),
       });
@@ -905,7 +944,7 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
 
     B.trim(slabGeo(plan, top, 0.45, 0.55), P.CONCRETE_WARM);   // cornice
     if (i < steps - 1) {
-      const nextPlan = offsetPlan(plan, -(1.8 + r() * 2.6));
+      const nextPlan = insetPlan(plan, 1.8 + r() * 2.6);
       roofScape(B, offsetPlan(plan, 0.2), top + 0.45, r, {
         tank: false, parapetH: 0.9, avoid: offsetPlan(nextPlan, 1.6),
       });
@@ -945,8 +984,13 @@ const SIGN_V0 = 1 - 0.17, SIGN_V1 = 1 - 0.055;
 function awning(B, w, y, zFace, proj, drop, hex) {
   if (!B.sk.awn) {
     // No striped band in this texture — model a plain fabric canopy instead.
-    const g = box(w, 0.22, proj, 0, y - drop * 0.5, zFace + proj / 2, 3);
-    g.rotateX(-0.2); g.translate(0, y * 0.2, 0);
+    // Sloped about its own centre, then moved to the facade. Rotating it after
+    // the translate pivoted it around the building origin, which threw the
+    // fabric 2-3 m into the air and left it hanging off nothing above the
+    // valance it is supposed to be attached to.
+    const g = box(w, 0.22, Math.hypot(proj, drop), 0, -0.11, 0, 3);
+    g.rotateX(Math.atan2(drop, proj));
+    g.translate(0, y - drop / 2, zFace + proj / 2);
     B.trim(g, hex || P.FABRIC_CORAL);
     B.trim(box(w, 0.5, 0.16, 0, y - drop - 0.5, zFace + proj, 3), hex || P.FABRIC_CORAL);
     return;
@@ -1051,16 +1095,23 @@ function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
     B.trim(box(lw * 0.62, 3.1, 0.22, 0, 0.1, bb.z1 - 0.1, 2), P.ALUMINIUM);
   }
   // A-board on the pavement, part of the shop so it falls with it.
+  // Both leaves are tilted about their own centre and only then moved out to
+  // the kerb: rotateX on a leaf that has already been pushed 20 m down the
+  // parcel swings it about the SHOP's origin, which buried one leaf up to 4 m
+  // under the pavement and left the other floating over it. That single bug
+  // was every "sunken storefront" in the audit.
   if (r.chance(0.4)) {
-    const ax = (r() - 0.5) * lw * 0.5;
-    const g1 = box(0.9, 1.1, 0.09, ax, 0, bb.z1 + 1.3, 1.5); g1.rotateX(0.16);
-    B.trim(g1, P.SIGN_LIGHT);
-    const g2 = box(0.9, 1.1, 0.09, ax, 0, bb.z1 + 1.6, 1.5); g2.rotateX(-0.16);
-    B.trim(g2, P.SIGN_DARK);
+    const ax = (r() - 0.5) * lw * 0.5, az = bb.z1 + 1.45;
+    for (const [tilt, hex] of [[0.16, P.SIGN_LIGHT], [-0.16, P.SIGN_DARK]]) {
+      const g = box(0.9, 1.1, 0.09, 0, -0.55, 0, 1.5);
+      g.rotateX(tilt);
+      g.translate(ax, 0.55, az - Math.sign(tilt) * 0.16);
+      B.trim(g, hex);
+    }
   }
 
   register(ctx, group, B, world, Math.max(lw, ld) * 0.5, h + 1.4, TIER.HUGE,
-    'storefront', opt.label || 'Storefront', hex);
+    'storefront', opt.label || 'Storefront', hex, { lw, ld });
 }
 
 /* ============================================================ garage ==== */
@@ -1140,7 +1191,7 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
   B.trim(box(0.4, 3.4, 2.6, bb.x1 - 0.3, 4.5, bb.z1 - 3.0, 3), P.SIGN_BLUE);
 
   register(ctx, group, B, world, Math.max(lw, ld) * 0.5, top + 4, TIER.MASSIVE,
-    'garage', 'Parking Garage', P.PRECAST);
+    'garage', 'Parking Garage', P.PRECAST, { lw, ld });
 }
 
 /** Surface car park: fence, planting kerb, painted bays, parked cars, kiosk. */
@@ -1181,7 +1232,7 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
     B.trim(box(1.5, 0.28, 0.5, x, 7.9, bb.cz, 2), P.ALUMINIUM);
   }
   register(ctx, group, B, world, Math.max(lw, ld) * 0.5, 3, TIER.HUGE,
-    'lot', 'Car Park', P.CONCRETE_DARK);
+    'lot', 'Car Park', P.CONCRETE_DARK, { lw, ld });
 }
 
 const CAR_HEX = [
@@ -1236,7 +1287,7 @@ function scaffold(B, x0, x1, y0, y1, z, hex) {
  * so they get the full kit: core, exposed slabs, crane, scaffold, netting,
  * hoarding, portacabins and stacked materials.
  */
-function construction(ctx, group, b, r, world, lw, ld, h) {
+function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
   const B = new Build(trimSkin());
   const floors = Math.max(3, Math.round(h / 3.6));
   const cw = Math.max(6, lw * 0.28), cd = Math.max(6, ld * 0.28);
@@ -1287,15 +1338,33 @@ function construction(ctx, group, b, r, world, lw, ld, h) {
     B.trim(box(1.3, sh, 0.05, x, 0, bb.z1 + 1.25, 3), netHex);
   }
 
-  /* Crane. */
-  towerCrane(ctx, B, bb.x0 + Math.max(4, lw * 0.16), bb.z0 + Math.max(4, ld * 0.18),
-    h + 10 + r() * 12, Math.min(30, Math.max(lw, ld) * 0.8), r() * Math.PI * 2, r);
-
-  /* Hoarding around the lot + portacabins + a skip. */
-  const hoard = offsetPlan(rectPlan(lw + 3.4, ld + 3.4, 2.0), 0);
+  /* Hoarding — the site boundary, so it may never leave the parcel. */
+  const hoard = rectPlan(Math.min(lw + 3.4, lotW ?? lw + 3.4),
+    Math.min(ld + 3.4, lotD ?? ld + 3.4), 2.0);
   B.trim(parapetGeo(hoard, 0, 3.0, 0.22), r.pick([P.FABRIC_SKY, P.STUCCO_WHITE, P.FABRIC_AQUA]));
   B.trim(parapetGeo(hoard, 3.0, 0.22, 0.4), P.SIGN_DARK);
   const hb = planBounds(hoard);
+
+  /* Crane.
+   * The jib runs along the site's long axis and is cut so that BOTH ends stay
+   * inside the hoarding. Swinging a 30 m jib to a random bearing on a 25 m
+   * parcel hung it over the street and the neighbouring block — and since the
+   * consumption footprint is measured off the assembled geometry, it also made
+   * the site claim 12 m of ground it does not stand on. */
+  const alongX = hb.w >= hb.d;
+  const span = alongX ? hb.w : hb.d;
+  const cross = (alongX ? hb.d : hb.w) / 2;
+  // Forward reach is jib+1.6, counter-jib reach is 0.34*jib+2.7; both must fit
+  // inside `span`, which pins the jib length and where the mast stands.
+  const jib = Math.max(8, Math.min(30, (span - 4.3) / 1.34));
+  const back = 0.34 * jib + 2.7;
+  // Cab and counterweight are 3 m wide, so keep that much clear of the side.
+  const lat = -Math.min(cross * 0.42, Math.max(0, cross - 3.2));
+  towerCrane(ctx, B,
+    alongX ? -span / 2 + back : lat,
+    alongX ? lat : -span / 2 + back,
+    h + 10 + r() * 12, jib, alongX ? 0 : -Math.PI / 2, r);
+
   for (let i = 0; i < 2 + Math.floor(r() * 2); i++) {
     const cx = hb.x1 - 4.0, cz = hb.z0 + 4 + i * 3.4;
     B.trim(box(6.0, 2.7, 2.9, cx, i > 1 ? 2.85 : 0, cz, 3), i % 2 ? P.STUCCO_WHITE : P.FABRIC_SKY);
@@ -1304,7 +1373,7 @@ function construction(ctx, group, b, r, world, lw, ld, h) {
   B.trim(box(4.4, 1.5, 2.2, hb.x0 + 4, 0, hb.z1 - 3.2, 3), P.RUST);
 
   register(ctx, group, B, world, Math.max(lw, ld) * 0.6, h + 26, TIER.MASSIVE,
-    'construction', 'Construction Site', P.CONCRETE);
+    'construction', 'Construction Site', P.CONCRETE, { lw: lotW ?? hb.w, ld: lotD ?? hb.d });
 }
 
 /* ========================================================= landmarks ==== */
@@ -1328,8 +1397,13 @@ function arena(ctx, B, r, lw, ld, h) {
     g.translate(cx * (lw / 2) * 1.01, 0, cz * (ld / 2) * 1.01);
     B.trim(g, P.CONCRETE);
   }
-  B.trim(slabGeo(plan, glassTop, 1.8, 2.6), P.CONCRETE_WARM);
-  B.lit(loft([{ p: offsetPlan(plan, 2.9), y: glassTop + 0.3 }, { p: offsetPlan(plan, 2.9), y: glassTop + 1.4 }], { smooth: true }), P.NEON_PINK);
+  // Fascia depth scales with the drum. The arena only ever gets the parcel the
+  // zoner hands it, and Kaseya Center's is 20 m wide, not the 118 m the
+  // landmark asks for — a fixed 2.6 m fascia there is a third of the building
+  // hanging over the pavement.
+  const fas = Math.min(2.6, Math.max(0.6, Math.min(lw, ld) * 0.05));
+  B.trim(slabGeo(plan, glassTop, 1.8, fas), P.CONCRETE_WARM);
+  B.lit(loft([{ p: offsetPlan(plan, fas + 0.3), y: glassTop + 0.3 }, { p: offsetPlan(plan, fas + 0.3), y: glassTop + 1.4 }], { smooth: true }), P.NEON_PINK);
 
   /* Barrel roof — scaled rings, not inset ones: an inset on a 118x88 ellipse
      collapses the short axis long before the long one. */
@@ -1343,10 +1417,12 @@ function arena(ctx, B, r, lw, ld, h) {
     const a = (i / 9) * Math.PI * 2;
     acUnit(B, Math.cos(a) * bb.w * 0.16, glassTop + 10.6, Math.sin(a) * bb.d * 0.16, 1.7, r);
   }
-  /* Entrance canopy on columns. */
-  B.trim(box(lw * 0.42, 1.1, 11, 0, 7.6, bb.z1 + 3.0, 5), P.CHROME);
+  /* Entrance canopy on columns — a deliberate overhang, but sized off the
+     drum so it stays a canopy instead of becoming an 8 m slab over the road. */
+  const cProj = Math.max(2.4, Math.min(11, ld * 0.16));
+  B.trim(box(lw * 0.42, 1.1, cProj, 0, 7.6, bb.z1 + cProj * 0.34, 5), P.CHROME);
   for (const sx of [-1, 1]) {
-    B.trim(cyl(0.55, 7.6, 10, sx * lw * 0.17, 0, bb.z1 + 7.4), P.STEEL);
+    B.trim(cyl(0.55, 7.6, 10, sx * lw * 0.17, 0, bb.z1 + cProj * 0.62), P.STEEL);
   }
   return glassTop + 11;
 }
@@ -1357,15 +1433,18 @@ function decoTower(ctx, B, r, lw, ld, h) {
   const uS = B.sk.uScale, vS = B.sk.vScale;
   const bh = Math.min(h * 0.34, 22);
   B.face(loft([{ p: base, y: 0 }, { p: base, y: bh }], { uScale: uS, vScale: vS }));
-  // Colonnade across the entrance.
+  // Colonnade across the entrance. Its projection tracks the parcel depth —
+  // a fixed 2.7 m portico on a 12 m deep lot is a fifth of the building
+  // standing on the pavement.
   const bb = planBounds(base);
+  const por = Math.max(0.9, Math.min(1.7, ld * 0.12));
   for (let i = 0; i < 6; i++) {
-    B.trim(cyl(0.62, 8.0, 10, bb.x0 + lw * (i + 0.5) / 6, 0, bb.z1 + 1.4), P.STUCCO_WHITE);
+    B.trim(cyl(0.62, 8.0, 10, bb.x0 + lw * (i + 0.5) / 6, 0, bb.z1 + por), P.STUCCO_WHITE);
   }
-  B.trim(box(lw + 2.4, 1.3, 3.4, 0, 8.0, bb.z1 + 1.0, 4), P.STUCCO_WHITE);
+  B.trim(box(lw + 1.2, 1.3, por * 2 + 0.6, 0, 8.0, bb.z1 + por * 0.7, 4), P.STUCCO_WHITE);
   B.trim(slabGeo(base, bh, 0.6, 1.0), P.STUCCO_WHITE);
 
-  let p = offsetPlan(base, -Math.min(lw, ld) * 0.16), y = bh + 0.6;
+  let p = insetPlan(base, Math.min(lw, ld) * 0.16), y = bh + 0.6;
   const shaftTop = h * 0.80;
   B.face(loft([{ p, y }, { p, y: shaftTop }], { uScale: uS, vScale: vS, capTop: false }));
   for (let yy = y + STOREY; yy < shaftTop; yy += STOREY) B.trim(slabGeo(p, yy, 0.26, 0.22), P.STUCCO_WHITE);
@@ -1380,11 +1459,15 @@ function decoTower(ctx, B, r, lw, ld, h) {
     B.trim(loft([{ p: cp, y: cy }, { p: cp, y: cy + hh }], { uScale: 5, vScale: 5 }), P.STUCCO_CREAM);
     B.lit(loft([{ p: offsetPlan(cp, 0.22), y: cy + hh * 0.55 }, { p: offsetPlan(cp, 0.22), y: cy + hh * 0.9 }], {}), P.NEON_YELLOW);
     cy += hh;
-    cp = offsetPlan(cp, -Math.min(lw, ld) * 0.09);
+    cp = insetPlan(cp, Math.min(lw, ld) * 0.09);
   }
   const cb = planBounds(cp);
-  B.trim(cyl(Math.max(2.0, cb.w * 0.45), 6.0, 10, 0, cy, 0), P.STUCCO_WHITE);
-  B.trim(cyl(Math.max(2.0, cb.w * 0.5), 4.0, 10, 0, cy + 6, 0, 0.15), P.TERRACOTTA);
+  // A lantern is round, so its radius has to come off the SHORT axis of the
+  // crown. Sizing it off cb.w put a 41 m drum on a 13 m deep parcel, hanging
+  // 11 m over the carriageway on both sides.
+  const lantern = Math.max(1.6, Math.min(cb.w, cb.d) * 0.45);
+  B.trim(cyl(lantern, 6.0, 10, 0, cy, 0), P.STUCCO_WHITE);
+  B.trim(cyl(lantern * 1.12, 4.0, 10, 0, cy + 6, 0, 0.15), P.TERRACOTTA);
   B.trim(cyl(0.28, 7.0, 6, 0, cy + 10, 0, 0.1), P.ALUMINIUM);
   B.lit(cyl(0.5, 0.5, 6, 0, cy + 16.6, 0), P.LIGHT_RED);
   return cy + 17;
@@ -1414,8 +1497,57 @@ function civicBlock(ctx, B, r, lw, ld, h) {
 
 const ROT = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
 
+/**
+ * FOOTPRINT DISCIPLINE — measured, not assumed.
+ *
+ * Every building must stand inside the parcel it was handed with its base
+ * flush to the pavement. Anything sprawling past the lot line is standing on
+ * the kerb, the carriageway or a neighbour; and now that the consumption
+ * physics measures the assembled geometry, an overhang ALSO makes the building
+ * claim ground it is not standing on, so the hole has to eat further out than
+ * the silhouette to take it. addMesh has already built every child's bounding
+ * box by the time this runs, so reading them back is free.
+ *
+ * `fit` is the lot the building was drawn for, in the building's own frame.
+ */
+function onCarriageway(layout, x, z) {
+  for (const r of layout.roadsX) if (Math.abs(x - r.pos) < r.half) return true;
+  for (const r of layout.roadsZ) if (Math.abs(z - r.pos) < r.half) return true;
+  return false;
+}
+
+const _footprint = new Map();
+function auditFootprint(ctx, kind, root, world, fit) {
+  let lo = null, hi = null;
+  for (const m of root.children) {
+    const bb = m.geometry.boundingBox;
+    if (!bb) continue;
+    if (!lo) { lo = bb.min.clone(); hi = bb.max.clone(); } else { lo.min(bb.min); hi.max(bb.max); }
+  }
+  if (!lo) return;
+  const e = _footprint.get(kind) || { n: 0, road: 0, offGround: 0, over: 0 };
+  e.n++;
+  if (Math.abs(lo.y) > 0.2) e.offGround++;
+  // Overhang past the lot line is expected — that is what an awning, a canopy
+  // and an A-board are for. Crossing the KERB is not, so test the silhouette's
+  // corners against the carriageway rather than against the lot. Deliberately
+  // NOT layout.isRoad: that also counts the service alleys, and a rear awning
+  // reaching a metre over the back lane it faces is the design, not a fault.
+  const c = Math.cos(world.rot), s = Math.sin(world.rot);
+  for (let i = 0; i < 4; i++) {
+    const lx = i & 1 ? hi.x : lo.x, lz = i & 2 ? hi.z : lo.z;
+    const wx = world.x + lx * c + lz * s, wz = world.z - lx * s + lz * c;
+    if (onCarriageway(ctx.layout, wx, wz)) { e.road++; break; }
+  }
+  if (fit) {
+    e.over = Math.max(e.over,
+      +Math.max(Math.max(-lo.x, hi.x) - fit.lw / 2, Math.max(-lo.z, hi.z) - fit.ld / 2).toFixed(1));
+  }
+  _footprint.set(kind, e);
+}
+
 /** Register a finished Build as a Consumable sitting exactly on the pavement. */
-function register(ctx, group, B, world, radius, height, tier, kind, label, hex) {
+function register(ctx, group, B, world, radius, height, tier, kind, label, hex, fit) {
   const root = B.finish();
   root.position.set(world.x, ctx.Y_WALK, world.z);
   root.rotation.y = world.rot;
@@ -1429,6 +1561,7 @@ function register(ctx, group, B, world, radius, height, tier, kind, label, hex) 
   ctx.occupy(world.x, world.z, radius * 0.92);
   if (!ctx.fadeableBuildings) ctx.fadeableBuildings = [];
   ctx.fadeableBuildings.push(root);
+  auditFootprint(ctx, kind, root, world, fit);
   return root;
 }
 
@@ -1511,6 +1644,7 @@ export function buildBuildings(ctx) {
   // alone would also catch ordinary Deco infill that happens to sit in a park.
   const heroes = new Set(layout.landmarks.map((l) => l.name));
 
+  _footprint.clear();
   let count = 0;
 
   for (const b of layout.blocks) {
@@ -1550,7 +1684,14 @@ export function buildBuildings(ctx) {
     }
   }
 
-  console.info(`[buildings] ${count} buildings`);
+  const rows = [..._footprint.entries()];
+  const bad = rows.filter(([, e]) => e.road || e.offGround)
+    .map(([k, e]) => `${k}: ${e.road}/${e.n} over the carriageway`
+      + (e.offGround ? `, ${e.offGround} not flush to the pavement` : ''));
+  console.info(`[buildings] ${count} buildings | `
+    + (bad.length ? `FOOTPRINT: ${bad.join('; ')}`
+      : 'all on the pavement, none over the carriageway')
+    + ` | widest reach past a lot line ${Math.max(0, ...rows.map(([, e]) => e.over))}m (awnings, canopies)`);
 }
 
 /* ------------------------------------------------------------ towers --- */
@@ -1599,7 +1740,7 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
     });
     register(ctx, group, MB, pl.world, Math.max(pl.lw, pl.ld) * 0.5, mt,
       hCap > 120 || isLandmark ? TIER.LANDMARK : TIER.MASSIVE, 'tower',
-      b.landmark || 'Residential Tower', hex);
+      b.landmark || 'Residential Tower', hex, { lw: pl.lw, ld: pl.ld });
     made++;
     if (annexLot) made += annex(ctx, group, r, annexLot, side);
     return made;
@@ -1639,7 +1780,7 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
 
   register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, top,
     hCap > 120 || isLandmark ? TIER.LANDMARK : TIER.MASSIVE, 'tower',
-    b.landmark || 'Glass Tower', P.GLASS_TEAL);
+    b.landmark || 'Glass Tower', P.GLASS_TEAL, { lw: pl.lw, ld: pl.ld });
   made++;
 
   if (annexLot) made += annex(ctx, group, r, annexLot, side);
@@ -1655,7 +1796,7 @@ function annex(ctx, group, r, lot, side) {
   const ah = 9 + r() * 16;
   const top = midrise(ctx, AB, r, ap.lw * 0.93, ap.ld * 0.93, ah, { deco: r.chance(0.45) });
   register(ctx, group, AB, ap.world, Math.max(ap.lw, ap.ld) * 0.5, top,
-    TIER.MASSIVE, 'midrise', 'Podium Annex', hex);
+    TIER.MASSIVE, 'midrise', 'Podium Annex', hex, { lw: ap.lw, ld: ap.ld });
   return 1;
 }
 
@@ -1697,7 +1838,7 @@ function midriseBlock(ctx, group, b, r, lot, side) {
     });
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, top,
       TIER.MASSIVE, 'midrise',
-      r.chance(0.5) ? 'Apartment Block' : 'Office Block', hex);
+      r.chance(0.5) ? 'Apartment Block' : 'Office Block', hex, { lw: pl.lw, ld: pl.ld });
     made++;
   }
   return made;
@@ -1777,7 +1918,10 @@ function parkingBlock(ctx, group, b, r, lot, side) {
 function constructionBlock(ctx, group, b, r, lot, side) {
   const pl = place(lot, side);
   const h = Math.max(12, b.floors * 3.6 * (0.6 + r() * 0.5));
-  construction(ctx, group, b, r, pl.world, pl.lw * 0.78, pl.ld * 0.78, h);
+  // The lot dimensions go in as well: the site is 78% of the parcel but the
+  // hoarding is drawn 1.7 m outside the site, which on a small lot put the
+  // fence itself on the pavement.
+  construction(ctx, group, b, r, pl.world, pl.lw * 0.78, pl.ld * 0.78, h, pl.lw, pl.ld);
   return 1;
 }
 
@@ -1792,9 +1936,11 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
 
   if (style === STYLE.ARENA) {
     const B = new Build(trimSkin());
-    const top = arena(ctx, B, r, pl.lw * 1.02, pl.ld * 1.02, h);
+    // 0.96, not 1.02: the drum carries a 0.6 m plinth outside the plan, so
+    // drawing it oversize started the building already past the parcel line.
+    const top = arena(ctx, B, r, pl.lw * 0.96, pl.ld * 0.96, h);
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.55, top,
-      TIER.LANDMARK, 'landmark', b.landmark || 'Arena', P.PRECAST);
+      TIER.LANDMARK, 'landmark', b.landmark || 'Arena', P.PRECAST, { lw: pl.lw, ld: pl.ld });
     return 1;
   }
   if (style === STYLE.CIVIC) {
@@ -1802,7 +1948,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
     const B = new Build(stuccoSkin(hex));
     const top = civicBlock(ctx, B, r, pl.lw * 0.96, pl.ld * 0.96, Math.min(h, 34));
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.55, top,
-      TIER.LANDMARK, 'landmark', b.landmark || 'Civic Hall', hex);
+      TIER.LANDMARK, 'landmark', b.landmark || 'Civic Hall', hex, { lw: pl.lw, ld: pl.ld });
     return 1;
   }
   if (style === STYLE.DECO) {
@@ -1810,7 +1956,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
     const B = new Build(stuccoSkin(hex));
     const top = decoTower(ctx, B, r, pl.lw * 0.9, pl.ld * 0.9, h);
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, top,
-      TIER.LANDMARK, 'landmark', b.landmark || 'Deco Tower', hex);
+      TIER.LANDMARK, 'landmark', b.landmark || 'Deco Tower', hex, { lw: pl.lw, ld: pl.ld });
     return 1;
   }
   if (style === STYLE.STUCCO) {
@@ -1827,7 +1973,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
     awning(B, pl.lw * 0.84, 4.0, bb.z1, 2.6, 0.7, P.FABRIC_CORAL);
     B.trim(box(pl.lw * 0.9, 0.3, 3.0, 0, 4.2, bb.z1 + 1.5, 4), P.FABRIC_CORAL);
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, hh + 4,
-      TIER.MASSIVE, 'landmark', b.landmark || 'Market Hall', hex);
+      TIER.MASSIVE, 'landmark', b.landmark || 'Market Hall', hex, { lw: pl.lw, ld: pl.ld });
     return 1;
   }
   // STYLE.GLASS / STYLE.TOWER — hero towers.

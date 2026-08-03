@@ -1199,6 +1199,61 @@ function variantGeometry(key, spec) {
 }
 
 /**
+ * Ground truth from the shape buffer, measured once per shape and cached.
+ *
+ * worldBuild.js already measures this geometry to size the consumption physics.
+ * Placement has to read the SAME numbers or the two are describing different
+ * objects — which is how a fleet ends up parked in bays too narrow for it.
+ *
+ *   minY      the lowest point of the shape, i.e. how far the tyres sit above
+ *             the origin. Every road vehicle here bottoms out 12-75 mm up.
+ *   contactW  width across the contact patch — what has to fit in a kerb bay.
+ *   contactD  length along it — what has to fit between two bay ticks.
+ *   radius    the same contact radius worldBuild hands the physics.
+ */
+const _metricCache = new Map();
+function shapeMetrics(key) {
+  let m = _metricCache.get(key);
+  if (m) return m;
+  const p = getShape(key).pos.array;
+  let minY = Infinity, maxY = -Infinity;
+  for (let i = 1; i < p.length; i += 3) {
+    if (p[i] < minY) minY = p[i];
+    if (p[i] > maxY) maxY = p[i];
+  }
+  // Contact band: the lowest fifth of the object, which is what rests on the
+  // ground. A bus mirror 3 m up says nothing about the bay it needs.
+  const hiY = minY + (maxY - minY) * 0.20;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    if (p[i + 1] > hiY) continue;
+    if (p[i] < minX) minX = p[i]; if (p[i] > maxX) maxX = p[i];
+    if (p[i + 2] < minZ) minZ = p[i + 2]; if (p[i + 2] > maxZ) maxZ = p[i + 2];
+  }
+  const cw = maxX - minX, cd = maxZ - minZ;
+  m = { minY, height: maxY - minY, contactW: cw, contactD: cd,
+        radius: Math.hypot(cw, cd) / 2 };
+  _metricCache.set(key, m);
+  return m;
+}
+
+/**
+ * Put the origin where the shape's lowest geometry lands on `surface`.
+ *
+ * Road vehicles were all spawned at y = surface + 0.015 as a z-fight guard, but
+ * their wheel cylinders already bottom out 48-75 mm above the shape origin, so
+ * the guard stacked on top of a gap and the whole fleet hovered 6-9 cm over the
+ * tarmac. Measuring it gives a real 4 mm of clearance instead of a guessed one.
+ *
+ * A hull is the exception: boats are authored with y = 0 AT THE WATERLINE and
+ * geometry below it, so their draught is the author's and must not be seated.
+ */
+function seatY(type, surface) {
+  const minY = shapeMetrics(type).minY;
+  return minY > 0 ? surface - minY + 0.004 : surface;
+}
+
+/**
  * Triangles per shape and the resulting fleet cost. Exported so the geometry
  * budget can be checked without booting a renderer:
  *   node -e "import('./src/world/vehicles.js').then(m=>console.log(m.vehicleShapeStats()))"
@@ -1312,7 +1367,7 @@ const FLEET = {
  * the pool never allocates an instanceColor and the fall-proxy inherits the
  * baked colours exactly.
  */
-function spawn(ctx, state, type, vi, x, y, z, rotY, dynamic) {
+function spawn(ctx, state, type, vi, x, surfaceY, z, rotY, dynamic) {
   const def = FLEET[type];
   const spec = def.paints[vi % def.paints.length];
   const key = `veh:${type}:${vi}`;
@@ -1320,7 +1375,9 @@ function spawn(ctx, state, type, vi, x, y, z, rotY, dynamic) {
     geometry: variantGeometry(type, spec),
     material: vehicleMaterial(),
   }), {
-    position: new THREE.Vector3(x, y, z),
+    // Callers pass the SURFACE the thing stands on; seatY turns that into an
+    // origin, so nobody has to remember a per-shape fudge.
+    position: new THREE.Vector3(x, seatY(type, surfaceY), z),
     rotationY: rotY,
     tier: TIER[def.tier],
     radius: def.r,
@@ -1360,17 +1417,74 @@ const BRAKE_MAX = 9.0;
  */
 const STOP_SETBACK = 4.0;
 
-/** Bridge decks sit 1.2 m proud of the carriageway; ramp on over 7 m. */
-function deckHeight(bridges, x, z) {
+/* --------------------------------------------------------- bridges ---- */
+/**
+ * MUST mirror `bridgeSpans` / `yAt` in streets.js, the way `lanePlan` below
+ * mirrors its kerb bays. streets.js owns the deck geometry; this is the only
+ * description of it traffic has.
+ *
+ * The previous version ramped 1.2 m in BOTH axes around the raw AABB in
+ * layout.bridges, and that is not the surface streets.js builds. It builds
+ * between `lo` and `hi`, which are the AABB CLAMPED INWARD to the nearest
+ * crossing road, and its approach ramp is only as long as the gap left over —
+ * frequently shorter than 7 m, and 0 m where a road abuts the deck. Two
+ * consequences, both of which the audit was seeing:
+ *
+ *   · The Brickell Key Causeway's AABB is 42 m long but its deck is the 24 m
+ *     between SE 8 St and SE 10 St. The old cross-axis ramp then lifted traffic
+ *     on SE 8 St — a road 25 m away that never touches the causeway — by up to
+ *     0.57 m of clear air.
+ *   · Where a ramp is shortened, cars ramped over 7 m while the asphalt ramped
+ *     over less, so they climbed ahead of the deck.
+ *
+ * The three river bridges happen to be unclamped with full 7 m ramps, which is
+ * why they looked fine and hid the bug.
+ */
+const DECK_Y = 1.2;
+const DECK_RAMP = 7;
+
+function buildDeckSpans(layout) {
+  return layout.bridges.map((br) => {
+    const alongZ = br.length >= br.width;
+    const half = (alongZ ? br.length : br.width) / 2;
+    const c = alongZ ? br.z : br.x;
+    const perp = alongZ ? layout.roadsZ : layout.roadsX;
+    let lo = c - half, hi = c + half;
+    for (const r of perp) {
+      const a = r.pos - r.half, b = r.pos + r.half;
+      if (b <= c && b > lo) lo = b;
+      if (a >= c && a < hi) hi = a;
+    }
+    let freeLo = 1e4, freeHi = 1e4;
+    for (const r of perp) {
+      const a = r.pos - r.half, b = r.pos + r.half;
+      if (b <= lo) freeLo = Math.min(freeLo, lo - b);
+      if (a >= hi) freeHi = Math.min(freeHi, a - hi);
+    }
+    return {
+      alongZ, lo, hi,
+      cross: alongZ ? br.x : br.z,
+      halfW: br.width / 2,
+      rampLo: Math.min(DECK_RAMP, freeLo),
+      rampHi: Math.min(DECK_RAMP, freeHi),
+    };
+  });
+}
+
+/** Height of the running surface at (x,z); 0 anywhere that is not a deck. */
+function deckHeight(spans, x, z) {
   let y = 0;
-  for (let i = 0; i < bridges.length; i++) {
-    const b = bridges[i];
-    const kx = (b.width * 0.5 + 7 - Math.abs(x - b.x)) / 7;
-    if (kx <= 0) continue;
-    const kz = (b.length * 0.5 + 7 - Math.abs(z - b.z)) / 7;
-    if (kz <= 0) continue;
-    const k = Math.min(1, kx) * Math.min(1, kz);
-    if (k > 0) y = Math.max(y, 1.2 * k);
+  for (let i = 0; i < spans.length; i++) {
+    const sp = spans[i];
+    // Beyond the fascia there is a parapet and a drop, not a ramp.
+    if (Math.abs((sp.alongZ ? x : z) - sp.cross) > sp.halfW) continue;
+    const t = sp.alongZ ? z : x;
+    const t0 = sp.lo - sp.rampLo, t1 = sp.hi + sp.rampHi;
+    if (t < t0 || t > t1) continue;
+    const a = sp.rampLo > 0 ? (t - t0) / sp.rampLo : 1;
+    const b = sp.rampHi > 0 ? (t1 - t) / sp.rampHi : 1;
+    const k = Math.max(0, Math.min(1, a, b));
+    if (k * DECK_Y > y) y = k * DECK_Y;
   }
   return y;
 }
@@ -1491,7 +1605,11 @@ class Traffic {
         // Losing support: the consume system owns its transform now, so it is
         // no longer a car in a queue. Leave it in the lane list (it may regain
         // support if the hole moves on) but stop driving it.
-        if (c.state >= 1) continue;
+        if (c.state >= 1) { v.held = true; continue; }
+        // Just handed back. It has been sitting with its wheels over an opening,
+        // so it pulls away from rest — resuming at the speed it was doing when
+        // the ground went would snap it forward the instant it settled.
+        if (v.held) { v.held = false; v.v = 0; }
 
         let acc = IDM_A * (1 - Math.pow(v.v / v.v0, 4));
 
@@ -1499,7 +1617,11 @@ class Traffic {
         const lead = L[i + 1];
         if (lead && !lead.dead) {
           const gap = (lead.s - lead.len * 0.5) - (v.s + v.len * 0.5);
-          acc = Math.min(acc, this._interact(v, gap, lead.v));
+          // A leader the consume system has taken over is stationary whatever
+          // its last driven speed says. Following that stale speed is how a
+          // queue drives into the back of a car teetering over a hole.
+          const lv = (lead.c && lead.c.state >= 1) ? 0 : lead.v;
+          acc = Math.min(acc, this._interact(v, gap, lv));
         }
 
         // --- signals + turn decision ---------------------------------------
@@ -1669,6 +1791,9 @@ class Traffic {
       const L = o.list;
       for (let i = 0; i < L.length; i++) {
         const d = sJ - L[i].s;
+        // Same reason as car-following: a held car is not coming, so waiting
+        // for it would stall the turn behind a car that cannot move.
+        if (L[i].c && L[i].c.state >= 1) continue;
         if (d > 0 && d < 30 && L[i].v > 1.5) return true;
       }
     }
@@ -1747,7 +1872,7 @@ function pickVariant(rng, type) {
 
 /** Fill every driveable lane stretch with moving traffic. */
 function placeMoving(ctx, state, traf, rng) {
-  const bridges = ctx.layout.bridges;
+  const decks = state.decks;
   for (const info of traf.lanes) {
     const lane = info.lane;
     const cls = lane.road.cls;
@@ -1764,15 +1889,17 @@ function placeMoving(ctx, state, traf, rng) {
         const def = FLEET[type];
         if (!traf.hasRoom(info, s, def.len)) continue;
         const p = traf.net.sampleLane(lane, s, {});
-        const y = deckHeight(bridges, p.x, p.z) + 0.015;
         const vi = pickVariant(rng, type);
-        const c = spawn(ctx, state, type, vi, p.x, y, p.z, traf.net.headingOf(lane), true);
+        const c = spawn(ctx, state, type, vi, p.x, deckHeight(decks, p.x, p.z), p.z,
+          traf.net.headingOf(lane), true);
         if (!c) continue;
         const vf = (BIG.has(type) ? 0.78 : 0.92) + rng() * 0.22;
         traf.add({
           c, lane, s, seg: si, len: def.len, dead: false,
+          // Cached so the updater never has to look the shape up per frame.
+          yOff: seatY(type, 0),
           v: lane.speed * vf * 0.75, v0: lane.speed * vf, vf,
-          turn: null, decided: -1, waitT: 0,
+          turn: null, decided: -1, waitT: 0, held: false,
           noTurn: type === 'articBus',
         }, info);
       }
@@ -1784,7 +1911,7 @@ function placeMoving(ctx, state, traf, rng) {
 function placeParked(ctx, state, rng) {
   const { layout } = ctx;
   const S = WORLD.SIZE;
-  const bridges = layout.bridges;
+  const decks = state.decks;
   for (const r of [...layout.roadsX, ...layout.roadsZ]) {
     const pp = lanePlan(r);
     if (pp.park < 2.1) continue;
@@ -1793,30 +1920,41 @@ function placeParked(ctx, state, rng) {
     const lo = -S + 24;
     const hi = alongX ? WORLD.BAY_EDGE - 26 : S - 24;
     const cross = alongX ? layout.roadsX : layout.roadsZ;
+    // Where the last car on each side of this road ends, along the kerb. The
+    // ticks are 6.6 m apart but a box truck's contact patch is 8.2 m long, so
+    // consecutive ticks were putting two of them 1.6 m inside each other.
+    const kerbEnd = [-Infinity, -Infinity];
     for (let t = Math.ceil(lo / 6.6) * 6.6 + 3.3; t < hi; t += 6.6) {
       let atJunction = false;
       for (const cr of cross) {
         if (Math.abs(t - cr.pos) < cr.half + 9) { atJunction = true; break; }
       }
       if (atJunction) continue;
-      for (const s of [-1, 1]) {
+      for (let si = 0; si < 2; si++) {
+        const s = si ? 1 : -1;
         const x = alongX ? t : r.pos + s * off;
         const z = alongX ? r.pos + s * off : t;
         if (layout.isWater(x, z)) continue;
-        if (deckHeight(bridges, x, z) > 0.01) continue;
+        if (deckHeight(decks, x, z) > 0.01) continue;
         // Runs and gaps, not confetti: a slow term along the road gives blocks
         // of solid parking broken by driveways and hydrant clearances, which
         // is what a real kerb looks like. Uniform noise reads as a fence.
         const run = 0.5 + 0.5 * Math.sin(t * 0.020 + r.pos * 0.31 + s * 1.7);
         if (!rng.chance(0.16 + 0.52 * run)) continue;
         const type = rng.weighted(KERB_MIX);
-        const def = FLEET[type];
-        if (def.len > 6.4 && !rng.chance(0.4)) continue;
+        const m = shapeMetrics(type);
+        // The bay is what streets.js painted. A vehicle wider than it either
+        // rides the kerb or juts into the running lane; 0.2 m of mirror-and-arch
+        // overhang is what a real kerb tolerates, a whole wheel is not.
+        if (m.contactW > pp.park + 0.2) continue;
+        const halfLen = m.contactD * 0.5;
+        if (t - halfLen < kerbEnd[si] + 0.4) continue;
         const rot = alongX
           ? (s > 0 ? Math.PI / 2 : -Math.PI / 2)
           : (s > 0 ? Math.PI : 0);
-        spawn(ctx, state, type, pickVariant(rng, type), x, 0.015, z,
-          rot + (rng() - 0.5) * 0.035, false);
+        if (!spawn(ctx, state, type, pickVariant(rng, type), x, 0, z,
+          rot + (rng() - 0.5) * 0.035, false)) continue;
+        kerbEnd[si] = t + halfLen;
       }
     }
   }
@@ -1826,6 +1964,14 @@ function placeParked(ctx, state, rng) {
  * Angle parking on parcels nobody else claimed. These are exactly the bare
  * slabs the review flagged, so anything that lands here is a win — but the
  * occupancy test keeps us off other modules' geometry.
+ *
+ * CURRENTLY YIELDS NOTHING, ON PURPOSE. All 137 candidate parcels fail the
+ * isFree() test, because buildings.js now builds on every one of them and
+ * claims it — a parking parcel gets a real deck garage or a surface lot with
+ * its own baked cars, both of which already read as parking. Forcing cars in
+ * here would stack a second fleet on top of that one. Kept because it costs
+ * nothing and is the right home for lot parking the moment a bare parcel exists
+ * again; do not "fix" the zero by loosening the occupancy test.
  */
 function placeLots(ctx, state, rng) {
   let lots = 0;
@@ -1850,8 +1996,8 @@ function placeLots(ctx, state, rng) {
         if (!rng.chance(0.46)) continue;
         const type = rng.weighted(LOT_MIX);
         const rot = (alongX ? 0 : Math.PI / 2) + ang * (ri % 2 ? 1 : -1);
-        spawn(ctx, state, type, pickVariant(rng, type), x, ctx.Y_WALK + 0.01, z, rot, false);
-        ctx.occupy(x, z, 1.8);
+        const c = spawn(ctx, state, type, pickVariant(rng, type), x, ctx.Y_WALK, z, rot, false);
+        if (c) ctx.occupy(x, z, c.radius * 0.7);
       }
     }
   }
@@ -1869,7 +2015,11 @@ const BOAT_Y = 0.12;
 function placeBoats(ctx, state, rng) {
   const { layout } = ctx;
   const boats = [];
+  // Nothing floats on land. isWater() also reports dry inside a bridge AABB,
+  // which is the point: a hull moored under a causeway is inside the deck, not
+  // under it. That is how a skiff ended up parked in the Brickell Key Causeway.
   const put = (type, x, z, rot, moving) => {
+    if (!layout.isWater(x, z)) return null;
     const c = spawn(ctx, state, type, pickVariant(rng, type), x, BOAT_Y, z, rot, !!moving);
     if (c) boats.push({ c, x, z, rot, phase: rng() * 6.28 });
     return c;
@@ -1928,10 +2078,18 @@ function placeBoats(ctx, state, rng) {
     for (let i = 0; i < n; i++) {
       if (!rng.chance(0.6)) continue;
       const t = (i + 0.5) / n;
-      const x = w > d ? ch.x0 + t * w : (ch.x0 + ch.x1) / 2;
-      const z = w > d ? (ch.z0 + ch.z1) / 2 : ch.z0 + t * d;
-      put(rng.weighted([['skiff', 44], ['waterTaxi', 32], ['sailBoat', 24]]),
-        x, z, w > d ? Math.PI / 2 : 0);
+      const type = rng.weighted([['skiff', 44], ['waterTaxi', 32], ['sailBoat', 24]]);
+      const rot = w > d ? Math.PI / 2 : 0;
+      // The mid-line of the Key Cut South is exactly where the causeway lands,
+      // so the nominal slot is dry. Shuffle along the cut before giving up
+      // rather than losing the boat and leaving the channel empty.
+      for (const nudge of [0, -0.22, 0.22, -0.38, 0.38]) {
+        const u = t + nudge;
+        if (u <= 0.04 || u >= 0.96) continue;
+        const x = w > d ? ch.x0 + u * w : (ch.x0 + ch.x1) / 2;
+        const z = w > d ? (ch.z0 + ch.z1) / 2 : ch.z0 + u * d;
+        if (put(type, x, z, rot)) break;
+      }
     }
   }
 
@@ -1986,8 +2144,12 @@ function placeMachinery(ctx, state, rng) {
       const type = r.weighted([['excavator', 26], ['wheelLoader', 20],
         ['siteDumper', 18], ['cementMixer', 12], ['scissorLift', 14],
         ['roadRoller', 10]]);
-      spawn(ctx, state, type, 0, x, ctx.Y_WALK + 0.01, z, rot + (r() - 0.5) * 0.5, false);
-      ctx.occupy(x, z, 2.4);
+      const c = spawn(ctx, state, type, 0, x, ctx.Y_WALK, z, rot + (r() - 0.5) * 0.5, false);
+      // Claim what the machine actually covers, not a flat 2.4 m. An excavator
+      // is 4.4 m across the tracks and a site dumper 3.8 m, and pedestrians.js
+      // reads this grid AFTER us — under-claiming is why the crowd walked
+      // through the plant.
+      if (c) ctx.occupy(x, z, c.radius * 0.85);
     }
     if (cranes < 7 && r.chance(0.6) && Math.min(b.w, b.d) > 34) {
       const x = b.x + (r() - 0.5) * b.w * 0.5;
@@ -1995,8 +2157,8 @@ function placeMachinery(ctx, state, rng) {
       let clear = true;
       for (const q of placed) if (Math.hypot(q[0] - x, q[1] - z) < 11) { clear = false; break; }
       if (!clear) continue;
-      spawn(ctx, state, 'craneBase', 0, x, ctx.Y_WALK + 0.01, z, r() * 1.5, false);
-      ctx.occupy(x, z, 4.2);
+      const c = spawn(ctx, state, 'craneBase', 0, x, ctx.Y_WALK, z, r() * 1.5, false);
+      if (c) ctx.occupy(x, z, c.radius * 0.85);
       cranes++;
     }
   }
@@ -2030,7 +2192,9 @@ function placeBikes(ctx, state, rng) {
 export function buildVehicles(ctx) {
   const rng = makeRNG(0x7c3a51);
   const net = ctx.roads || (ctx.roads = new RoadNetwork(ctx.layout));
-  const state = { pools: new Set(), counts: {}, total: 0 };
+  // Built once: placement and the updater must read the same deck as each other
+  // and as streets.js, or traffic and asphalt drift apart over a river.
+  const state = { pools: new Set(), counts: {}, total: 0, decks: buildDeckSpans(ctx.layout) };
 
   const traf = new Traffic(ctx, net, rng);
   placeMoving(ctx, state, traf, rng);
@@ -2069,7 +2233,7 @@ export function buildVehicles(ctx) {
 
 function makeUpdater(ctx, traf, state, boats) {
   const registry = ctx.registry;
-  const bridges = ctx.layout.bridges;
+  const decks = state.decks;
   const out = { x: 0, z: 0, rot: 0 };
   const q = new THREE.Quaternion();
   const e = new THREE.Euler();
@@ -2095,7 +2259,7 @@ function makeUpdater(ctx, traf, state, boats) {
       // for the matrix every frame, which is what stopped cars ever tilting.
       if (c.state >= 1) continue;
       traf.place(v, out);
-      pos.set(out.x, deckHeight(bridges, out.x, out.z) + 0.015, out.z);
+      pos.set(out.x, deckHeight(decks, out.x, out.z) + v.yOff, out.z);
       e.set(0, out.rot, 0);
       q.setFromEuler(e);
       c.position.copy(pos);
