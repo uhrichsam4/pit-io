@@ -715,19 +715,20 @@ function cementMixer(sh) {
   for (const s of [-1, 1]) faceX(sh, s * 1.13, 2.20, 3.10, 1.10, 0.74, ROLE.GLASS, s);
   faceZ(sh, 0, 2.26, 3.90, 1.88, 0.80, ROLE.GLASS, 1);
   // The drum: two tapered cylinders tilted nose-up, plus the feed chute.
-  const tilt = 0.20;
-  const drumY = 2.30, drumZ = -0.90;
+  // Nose-down toward the discharge chute at the rear, like the real thing.
+  const tilt = 0.13;
+  const drumY = 2.55, drumZ = -0.90;
   const sy = Math.sin(tilt), cyy = Math.cos(tilt);
   const seg = 10;
   const emit = (r0, r1, z0, z1, role) => {
     const mz = (z0 + z1) / 2;
-    cyl(sh, 0, drumY + (mz - drumZ) * sy, drumZ + (mz - drumZ) * cyy,
+    cyl(sh, 0, drumY - (mz - drumZ) * sy, drumZ + (mz - drumZ) * cyy,
       r0, r1, Math.abs(z1 - z0), seg, 'z', role, [false, false]);
   };
   emit(0.70, 1.30, -3.60, -2.10, ROLE.MACH);
   emit(1.30, 1.30, -2.10, 0.40, ROLE.MACH);
   emit(1.30, 0.86, 0.40, 1.50, ROLE.MACH);
-  cyl(sh, 0, drumY - 0.55, -3.70, 0.70, 0.70, 0.14, seg, 'z', ROLE.MACH_LO);
+  cyl(sh, 0, drumY + 0.36, -3.72, 0.72, 0.72, 0.14, seg, 'z', ROLE.MACH_LO);
   chamfer(sh, 0, 1.60, -4.30, 1.10, 0.30, 1.30, 0.08, ROLE.STEEL);
   for (const s of [-1, 1]) box(sh, s * 1.06, 1.30, -1.2, 0.14, 1.70, 0.20, ROLE.STEEL);
   chamfer(sh, 0, 0.66, -0.9, 2.16, 0.34, 6.6, 0.06, ROLE.DARK);
@@ -1753,8 +1754,8 @@ function placeLots(ctx, state, rng) {
     if (!ctx.isFree(b.x, b.z, rad)) continue;
     lots++;
     const alongX = b.w >= b.d;
-    const rows = Math.max(1, Math.floor((alongX ? b.d : b.w) / 17));
-    const nbay = Math.floor(((alongX ? b.w : b.d) - 10) / 3.1);
+    const rows = Math.min(2, Math.max(1, Math.floor((alongX ? b.d : b.w) / 17)));
+    const nbay = Math.min(13, Math.floor(((alongX ? b.w : b.d) - 10) / 3.1));
     const ang = 1.05;   // ~60 degrees to the aisle
     for (let ri = 0; ri < rows; ri++) {
       const rowOff = (ri - (rows - 1) / 2) * 16.5;
@@ -1763,7 +1764,7 @@ function placeLots(ctx, state, rng) {
         const x = b.x + (alongX ? along : rowOff);
         const z = b.z + (alongX ? rowOff : along);
         if (!ctx.isFree(x, z, 2.2)) continue;
-        if (!rng.chance(0.62)) continue;
+        if (!rng.chance(0.58)) continue;
         const type = rng.weighted(LOT_MIX);
         const rot = (alongX ? 0 : Math.PI / 2) + ang * (ri % 2 ? 1 : -1);
         spawn(ctx, state, type, pickVariant(rng, type), x, ctx.Y_WALK + 0.01, z, rot, false);
@@ -1867,9 +1868,9 @@ function placeMachinery(ctx, state, rng) {
 /** Bikes leaning at the kerb on lively blocks — cheap, and the street reads. */
 function placeBikes(ctx, state, rng) {
   for (const b of ctx.layout.blocks) {
-    if (b.streetLife < 0.45) continue;
+    if (b.streetLife < 0.55) continue;
     const r = makeRNG(b.seed ^ 0x2b19);
-    const n = r.int(0, 3);
+    const n = r.int(0, 2);
     for (let i = 0; i < n; i++) {
       const side = r.int(0, 3);
       const hw = b.w / 2 - 1.6, hd = b.d / 2 - 1.6;

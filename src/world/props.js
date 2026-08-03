@@ -462,14 +462,14 @@ function gBinMesh(m) {
 function gBenchSlat(m) {
   // Timber slats on cast-iron ends — the standard Miami park bench.
   m.col(P.BENCH_WOOD);
-  m.prism(0, 0.03, [[0.44, 1.94, 0.46], [0.50, 1.94, 0.44]]);
+  m.prism(0, 0.04, [[0.44, 1.94, 0.48], [0.50, 1.94, 0.46]]);
   m.col(P.BENCH_WOOD, 0.94);
-  m.beam(-0.95, 0.76, -0.20, 0.95, 0.76, -0.20, 0.06, 0.30);
+  m.board(0, 1.94, 0.52, -0.20, 0.90, -0.28, 0.07);
   m.col(P.BENCH_METAL);
   for (const s of [-1, 1]) {
-    m.beam(s * 0.86, 0.0, 0.22, s * 0.86, 0.46, 0.20, 0.07, 0.07);
-    m.beam(s * 0.86, 0.0, -0.22, s * 0.86, 0.90, -0.22, 0.07, 0.07);
-    m.beam(s * 0.86, 0.46, 0.22, s * 0.86, 0.46, -0.22, 0.07, 0.07);
+    m.beam(s * 0.86, 0.0, 0.24, s * 0.86, 0.46, 0.22, 0.08, 0.08, false);
+    m.beam(s * 0.86, 0.0, -0.22, s * 0.86, 0.50, -0.22, 0.08, 0.08, false);
+    m.beam(s * 0.86, 0.46, 0.24, s * 0.86, 0.48, -0.22, 0.07, 0.07, false);
   }
 }
 
@@ -600,10 +600,9 @@ function gMailbox(m) {
 
 function gParkingMeter(m) {
   m.col(P.PARKING_METER);
-  m.tube(0, 0, [[0, 0.16], [0.05, 0.13], [1.02, 0.075]], 6, { cols: [P.STEEL_DARK, P.PARKING_METER] });
-  m.prism(0, 0, [[1.02, 0.28, 0.22], [1.08, 0.32, 0.26], [1.42, 0.32, 0.26], [1.48, 0.27, 0.21]]);
-  m.col(P.SIGN_DARK).prism(0, 0.135, [[1.14, 0.22, 0.02], [1.34, 0.22, 0.02]]);
-  m.col(P.NEON_AQUA).prism(0, 0.145, [[1.20, 0.16, 0.01], [1.28, 0.16, 0.01]]);
+  m.tube(0, 0, [[0, 0.16], [0.05, 0.13], [1.02, 0.075]], 5, { cols: [P.STEEL_DARK, P.PARKING_METER] });
+  m.prism(0, 0, [[1.02, 0.30, 0.24], [1.42, 0.32, 0.26], [1.48, 0.26, 0.20]]);
+  m.col(P.NEON_AQUA).prism(0, 0.135, [[1.16, 0.20, 0.02], [1.34, 0.20, 0.02]]);
 }
 
 function gNewsBox(m) {
@@ -814,16 +813,15 @@ function gBikeRack(m) {
 
 function gScooter(m) {
   m.col(P.TYRE);
-  wheelZ(m, -0.48, 0.13, 0.13, 0.05, 7);
-  wheelZ(m, 0.42, 0.13, 0.13, 0.05, 7);
+  wheelZ(m, -0.48, 0.13, 0.13, 0.05, 6);
+  wheelZ(m, 0.42, 0.13, 0.13, 0.05, 6);
   m.col(0xf4f4f4);
-  m.beam(-0.48, 0.16, 0, 0.42, 0.16, 0, 0.16, 0.06);
-  m.prism(-0.05, 0, [[0.19, 0.62, 0.17], [0.23, 0.58, 0.15]]);
-  m.beam(0.42, 0.18, 0, 0.50, 1.00, 0, 0.05, 0.05, false);
+  m.prism(-0.03, 0, [[0.14, 0.86, 0.17], [0.22, 0.80, 0.15]]);
+  m.beam(0.42, 0.16, 0, 0.50, 1.00, 0, 0.055, 0.055, false);
   m.col(P.SIGN_DARK);
-  m.beam(0.50, 1.00, -0.22, 0.50, 1.00, 0.22, 0.05, 0.05);
+  m.beam(0.50, 1.00, -0.22, 0.50, 1.00, 0.22, 0.05, 0.05, false);
   m.col(P.NEON_AQUA);
-  m.prism(-0.05, 0, [[0.235, 0.34, 0.13], [0.245, 0.34, 0.13]]);
+  m.prism(-0.03, 0, [[0.225, 0.42, 0.12], [0.235, 0.42, 0.12]]);
 }
 
 /* -- lighting ------------------------------------------------------------- */
@@ -941,12 +939,12 @@ function gDisplayRack(m) {
     m.beam(s * 0.62, 0, 0, s * 0.62, 1.52, 0, 0.05, 0.05, false);
     m.beam(s * 0.62, 0.04, -0.32, s * 0.62, 0.04, 0.32, 0.05, 0.05);
   }
-  m.beam(-0.62, 1.50, 0, 0.62, 1.50, 0, 0.05, 0.05);
+  m.beam(-0.62, 1.50, 0, 0.62, 1.50, 0, 0.05, 0.05, false);
   // Hanging stock, blocked in so it reads as clothing at 4 m.
   const cols = [P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_SUN, P.FABRIC_SKY, P.FABRIC_PINK];
-  for (let k = 0; k < 6; k++) {
+  for (let k = 0; k < 5; k++) {
     m.col(cols[k % cols.length]);
-    m.prism(-0.50 + k * 0.20, 0, [[0.74, 0.17, 0.30], [1.44, 0.15, 0.26]]);
+    m.prism(-0.48 + k * 0.24, 0, [[0.74, 0.21, 0.30], [1.44, 0.19, 0.26]], { capTop: false });
   }
 }
 
@@ -1531,12 +1529,14 @@ function cafeCluster(pl, x, z, rot, r, n = 1) {
     const cx = x + (r() - 0.5) * 4.5;
     const cz = z + (r() - 0.5) * 4.5;
     if (!pl.put('cafeTable', cx, cz, r() * TAU)) continue;
-    const seats = 2 + r.int(0, 2);
+    // 1.15 m out: table radius + chair radius + the placer's own margins. Any
+    // closer and the collision test silently eats most of the seating.
+    const seats = 3 + r.int(0, 1);
     for (let k = 0; k < seats; k++) {
-      const a = (k / seats) * TAU + r() * 0.6;
-      pl.put('cafeChair', cx + Math.cos(a) * 0.92, cz + Math.sin(a) * 0.92, a + Math.PI / 2);
+      const a = (k / seats) * TAU + r() * 0.5;
+      pl.put('cafeChair', cx + Math.cos(a) * 1.15, cz + Math.sin(a) * 1.15, -a - Math.PI / 2);
     }
-    if (r.chance(0.55)) pl.put('umbrella', cx, cz, r() * TAU);
+    if (r.chance(0.5)) pl.put('umbrella', cx, cz, r() * TAU);
   }
 }
 
