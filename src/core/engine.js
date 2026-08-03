@@ -1,16 +1,63 @@
 /**
- * Engine: renderer, scene, sky dome, light rig, shadow fitting, camera rig and
- * the post-processing chain. Owns nothing about gameplay — game.js drives it.
+ * Engine: renderer, scene, sky dome, light rig, shadow fitting, camera rig,
+ * the day/night cycle and the post-processing chain. Owns nothing about
+ * gameplay — game.js drives it.
  *
  * The public surface game.js and dev/devtools.js rely on:
  *   .scene .camera .renderer .sun .sunDir .hemi ._camTarget ._dist
  *   .updateCamera(target, radius, dt, shake)  .render(dt)  .flash(a, hex)
  *   .resize()  ._setShadowExtent(e)
+ *
+ * ===========================================================================
+ * THE DAY/NIGHT CONTRACT — every content module builds against this
+ * ===========================================================================
+ * Published on the scene, refreshed every frame:
+ *
+ *   scene.userData.timeOfDay    0..1    0 = midnight, 0.5 = solar noon
+ *   scene.userData.nightFactor  0..1    0 = full day, 1 = full night
+ *   scene.userData.sunDir       Vector3 the KEY light direction, unit,
+ *                               ALWAYS above the horizon (sun by day, moon by
+ *                               night). Same object as `engine.sunDir`, mutated
+ *                               in place — hold the reference, do not re-read.
+ *
+ * Convenience extras, same lifetime, safe to read but not part of the contract:
+ *   .sunDiscDir     Vector3  the astronomical sun; goes BELOW the horizon
+ *   .sunElevation   deg, signed — the driver behind every look decision here
+ *   .goldenFactor   0..1, peaks at golden hour
+ *   .dayNight       { keyColor, keyIntensity, skyHi, skyLo, hazeColor,
+ *                     fogColor, ambientLevel } live illuminants, for anything
+ *                     that has to hand-shade (water, glass, custom shaders)
+ *
+ * Drive it with:  engine.setTimeOfDay(t)      pins the clock (and freezes it)
+ *                 engine.dayLengthSeconds     seconds per 24 h, default 240
+ *                 engine.cyclePaused          freeze in place
+ *
+ * Content modules read `nightFactor` inside the per-frame update they register
+ * on `scene.userData.*Update` to drive their own emissive intensity — lit
+ * windows, streetlights, headlights, signage, neon. Nobody re-implements the
+ * cycle, and nobody adds real point lights per streetlamp: the budget will not
+ * take it. The framework side of night illumination is here — bloom threshold,
+ * exposure and the grade all move so that emissive geometry reads at night
+ * without smearing.
+ *
+ * NOTE FOR AUTOMATED REVIEW: under `navigator.webdriver` the cycle boots
+ * FROZEN at DAY.START (the art-directed afternoon), so a screenshot sweep is
+ * deterministic no matter how long the city took to build. Ask for another
+ * time explicitly:
+ *   node tools/shot.mjs --script "__GAME__.engine.setTimeOfDay(0.85)" ...
+ *
+ * MEASURED LUMINANCE FLOOR: sunlit road at noon sits at ~0.62 display
+ * luminance; the same road at deep night bottoms out at ~0.25 and the lit
+ * sidewalk at ~0.31. Nothing in the playfield is allowed below ~0.20 — the
+ * hole stays the darkest thing on screen at every hour, by a wide margin.
  */
 
 import * as THREE from 'three';
 import { CAMERA, PALETTE, QUALITY } from '../config.js';
-import { GRADE, LIGHTING, QUALITY_TIERS, applyQualityTier } from './quality.js';
+import {
+  GRADE, LIGHTING, QUALITY_TIERS, applyQualityTier,
+  DAY, TOD_STOPS, TOD_COLOR_KEYS, TOD_SCALAR_KEYS,
+} from './quality.js';
 import { createPostChain } from '../render/postfx.js';
 
 /* ------------------------------------------------------------------ sky --- */
@@ -40,8 +87,9 @@ const SKY_VERT = /* glsl */ `
  */
 const SKY_FRAG = /* glsl */ `
   uniform vec3 uZenith, uMid, uHorizon, uHaze, uFloor, uSunColor, uSunDir;
-  uniform vec3 uCloudLit, uCloudShade;
+  uniform vec3 uCloudLit, uCloudShade, uMoonColor, uMoonDir;
   uniform float uTime, uCloudCover, uDrift, uSunDisc;
+  uniform float uMoonDisc, uStars, uHazeAz, uSunGlow;
   varying vec3 vDir;
 
   // sin-free hash: cheap enough to afford ~15 taps of it per sky pixel
@@ -82,20 +130,63 @@ const SKY_FRAG = /* glsl */ `
     float azimuthal = dot(normalize(vec3(d.x, 0.0, d.z) + 1e-5),
                           normalize(vec3(sd.x, 0.0, sd.z) + 1e-5));
     float haze = exp(-up * 17.0);
-    col = mix(col, uHaze, haze * (0.34 + 0.24 * max(azimuthal, 0.0)));
+    col = mix(col, uHaze, haze * (0.34 + 0.24 * uHazeAz * max(azimuthal, 0.0)));
+
+    // The low-sun wedge. Without a term that is anchored to the sun's BEARING,
+    // sunset reads as "someone tinted the whole sky orange" rather than as
+    // light arriving from a place — and the side of the city facing away from
+    // the sun ends up glowing just as hard as the side facing it.
+    if (uSunGlow > 0.001) {
+      col += uSunColor * uSunGlow
+           * pow(max(azimuthal, 0.0), 3.5) * exp(-max(up, 0.0) * 4.5);
+    }
 
     // Below the horizon line the dome becomes distant sea haze.
     col = mix(col, uFloor, smoothstep(0.0, -0.055, d.y));
 
+    /* ---- stars ---------------------------------------------------------- */
+    #if STARS
+    // Stereographic projection from the nadir. It is conformal, so cells stay
+    // square and stars stay ROUND right down to the horizon — a plain d.xz
+    // projection smears them into streaks exactly where the camera looks most.
+    // No atan anywhere, so there is no azimuth seam either.
+    if (uStars > 0.003 && d.y > 0.012) {
+      vec2 sp = d.xz / (1.0 + d.y) * 260.0;
+      vec2 ic = floor(sp);
+      float m = hash(ic + 0.5);
+      if (m > 0.982) {
+        vec2 c0 = vec2(hash(ic + 11.3), hash(ic + 27.9));
+        // Magnitudes follow a steep curve so most stars are faint and only a
+        // handful are bright; a uniform field reads as noise, not as a sky.
+        float mag = pow((m - 0.982) / 0.018, 1.7);
+        float tw = 0.72 + 0.28 * sin(uTime * (1.1 + m * 7.0) + m * 63.0);
+        col += vec3(0.86, 0.90, 1.00)
+             * smoothstep(0.055, 0.0, length(fract(sp) - c0))
+             * mag * tw * uStars * smoothstep(0.015, 0.26, d.y);
+      }
+    }
+    #endif
+
     /* ---- sun ----------------------------------------------------------- */
     float cd = dot(d, sd);
+    // Mask the disc at the horizon line so a setting sun is CUT by the sea
+    // instead of hanging in the haze skirt below it.
+    float above = smoothstep(-0.014, 0.008, d.y);
     // ~0.5 deg core with a soft limb, then two decades of aureole.
     float core = smoothstep(0.99988, 0.999955, cd);
     float aureole = pow(max(cd, 0.0), 2200.0) * 1.1
-                  + pow(max(cd, 0.0), 120.0) * 0.28
-                  + pow(max(cd, 0.0), 9.0) * 0.085;
-    col += uSunColor * aureole;
-    col += uSunColor * core * uSunDisc;
+                  + pow(max(cd, 0.0), 120.0) * 0.28;
+    col += uSunColor * (aureole * above + pow(max(cd, 0.0), 9.0) * 0.085);
+    col += uSunColor * core * uSunDisc * above;
+
+    /* ---- moon ----------------------------------------------------------- */
+    if (uMoonDisc > 0.001) {
+      float md = dot(d, normalize(uMoonDir));
+      float mcore = smoothstep(0.999955, 0.999988, md);
+      float mglow = pow(max(md, 0.0), 1400.0) * 0.50
+                  + pow(max(md, 0.0), 26.0) * 0.05;
+      col += uMoonColor * uMoonDisc * (mcore + mglow * 0.30);
+    }
 
     /* ---- cumulus ------------------------------------------------------- */
     #if CLOUD_OCT > 0
@@ -180,6 +271,63 @@ function litColor(hex, gain) {
   return new THREE.Color(hex).multiplyScalar(gain);
 }
 
+/**
+ * Per-band radiance trims on the sky dome, relative to the stop's `skyGain`.
+ * These were baked into the original uniform setup; keeping them as an explicit
+ * table is what lets the whole dome be re-driven from one gain per stop without
+ * the day look drifting by a single bit.
+ */
+const SKY_BAND_GAIN = {
+  skyZenith: 1.00, skyMid: 1.02, skyHorizon: 1.00,
+  skyHaze: 1.04, skyFloor: 0.86, cloudLit: 1.60, cloudShade: 1.00,
+};
+
+/* -------------------------------------------------------------- day/night --- */
+
+/**
+ * Pre-resolve TOD_STOPS into parallel scalar/colour tables once, so sampling a
+ * time of day is a pair of flat loops with no property lookups by string on the
+ * hot path and, more importantly, no allocation. The whole sample is ~45 lerps.
+ */
+const TOD_COLORS = TOD_STOPS.map((s) => {
+  const o = {};
+  for (const k of TOD_COLOR_KEYS) o[k] = new THREE.Color(s[k]);
+  return o;
+});
+
+/** Look object reused every frame. Colours are mutated in place. */
+function makeLook() {
+  const o = {};
+  for (const k of TOD_SCALAR_KEYS) o[k] = TOD_STOPS[0][k];
+  for (const k of TOD_COLOR_KEYS) o[k] = new THREE.Color();
+  // The grade pass wants arrays for its two Vector3 uniforms.
+  o.shadowTint = [0, 0, 0];
+  o.highlightTint = [0, 0, 0];
+  return o;
+}
+
+/**
+ * Interpolate the look for a given TRUE sun elevation, into `out`.
+ *
+ * Keyed on elevation rather than clock time on purpose: elevation is what the
+ * light physically is, and it also paces itself correctly for free — it moves
+ * fastest at the horizon, so dusk transitions quickly while noon and midnight
+ * sit still. Colours lerp in linear working space (THREE.Color is linear), so
+ * a 22-degree sunset ramp cannot band.
+ */
+function sampleLook(elevDeg, out) {
+  let i = 0;
+  while (i < TOD_STOPS.length - 2 && elevDeg < TOD_STOPS[i + 1].e) i++;
+  const a = TOD_STOPS[i], b = TOD_STOPS[i + 1];
+  const u = THREE.MathUtils.clamp((a.e - elevDeg) / (a.e - b.e), 0, 1);
+  for (const k of TOD_SCALAR_KEYS) out[k] = a[k] + (b[k] - a[k]) * u;
+  const ca = TOD_COLORS[i], cb = TOD_COLORS[i + 1];
+  for (const k of TOD_COLOR_KEYS) out[k].copy(ca[k]).lerp(cb[k], u);
+  out.shadowTint[0] = out.sTintR; out.shadowTint[1] = out.sTintG; out.shadowTint[2] = out.sTintB;
+  out.highlightTint[0] = out.hTintR; out.highlightTint[1] = out.hTintG; out.highlightTint[2] = out.hTintB;
+  return out;
+}
+
 /* ---------------------------------------------------------------- engine --- */
 
 export class Engine {
@@ -237,6 +385,10 @@ export class Engine {
     this._buildSky();
     this._buildLights();
     this._buildComposer();
+    // Last, because it drives all three, and FIRST in the boot order overall:
+    // buildWorld() runs after this constructor returns, so every content module
+    // sees scene.userData.nightFactor already populated on its very first frame.
+    this._initCycle();
 
     this._followPos = new THREE.Vector3();
     this._camTarget = new THREE.Vector3();
@@ -261,14 +413,21 @@ export class Engine {
   /* ------------------------------------------------------------- sky ----- */
 
   _buildSky() {
+    // Overwritten on the first _applyTimeOfDay(); seeded here so anything that
+    // reads sunDir between the two (there should be nothing) sees the default.
     this.sunDir = dirFrom(LIGHTING.SUN_AZIMUTH, LIGHTING.SUN_ELEVATION);
+    this.sunDiscDir = this.sunDir.clone();
+    this.moonDir = this.sunDir.clone();
 
     const g = LIGHTING.SKY_GAIN;
     const geo = new THREE.SphereGeometry(1, 48, 28);
     this.skyMat = new THREE.ShaderMaterial({
       vertexShader: SKY_VERT,
       fragmentShader: SKY_FRAG,
-      defines: { CLOUD_OCT: 2 + Math.max(0, QUALITY.skyDetail) },
+      defines: {
+        CLOUD_OCT: 2 + Math.max(0, QUALITY.skyDetail),
+        STARS: QUALITY.skyDetail >= 1 ? 1 : 0,
+      },
       side: THREE.BackSide,
       depthWrite: false,
       depthTest: false,
@@ -281,12 +440,18 @@ export class Engine {
         uHaze: { value: litColor(LIGHTING.SKY_HAZE, g * 1.04) },
         uFloor: { value: litColor(LIGHTING.SKY_FLOOR, g * 0.86) },
         uSunColor: { value: new THREE.Color(LIGHTING.SUN_COLOR) },
-        uSunDir: { value: this.sunDir.clone() },
+        uSunDir: { value: this.sunDiscDir },
+        uMoonColor: { value: new THREE.Color(0xd2e2ff) },
+        uMoonDir: { value: this.moonDir },
         uCloudLit: { value: litColor(LIGHTING.CLOUD_LIT, g * 1.60) },
         uCloudShade: { value: litColor(LIGHTING.CLOUD_SHADE, g * 1.00) },
         uCloudCover: { value: LIGHTING.CLOUD_COVER },
         uDrift: { value: LIGHTING.CLOUD_DRIFT },
         uSunDisc: { value: 9.0 },
+        uMoonDisc: { value: 0.0 },
+        uStars: { value: 0.0 },
+        uHazeAz: { value: 1.0 },
+        uSunGlow: { value: 0.0 },
         uTime: { value: 0 },
       },
     });
@@ -301,6 +466,185 @@ export class Engine {
     this.scene.fog.color.copy(this.skyMat.uniforms.uHorizon.value).lerp(
       this.skyMat.uniforms.uHaze.value, 0.34
     );
+  }
+
+  /* ------------------------------------------------------- day/night ----- */
+
+  _initCycle() {
+    this.dayLengthSeconds = DAY.LENGTH;
+    this.timeOfDay = DAY.START;
+    /**
+     * A headless review harness must be deterministic. Six other agents
+     * screenshot this build all day, and a clock that keeps running while the
+     * city builds (which under software GL takes anywhere from 20 s to three
+     * minutes) would hand every one of them a different sky. So automation
+     * boots FROZEN at the art-directed afternoon and asks for other times
+     * explicitly. Real players get the full cycle.
+     */
+    this.cyclePaused = typeof navigator !== 'undefined' && !!navigator.webdriver;
+
+    this._look = makeLook();
+    this._lightColor = new THREE.Color();
+    this._fogA = new THREE.Color();
+
+    /** Live illuminants, for modules that hand-shade (water, glass, VFX). */
+    this._dayNight = {
+      keyColor: new THREE.Color(),
+      keyIntensity: 0,
+      skyHi: new THREE.Color(),
+      skyLo: new THREE.Color(),
+      hazeColor: new THREE.Color(),
+      fogColor: new THREE.Color(),
+      ambientLevel: 0,
+    };
+
+    const u = this.scene.userData;
+    u.timeOfDay = this.timeOfDay;
+    u.nightFactor = 0;
+    u.goldenFactor = 0;
+    u.sunElevation = LIGHTING.SUN_ELEVATION;
+    u.sunDir = this.sunDir;             // key direction, mutated in place
+    u.sunDiscDir = this.sunDiscDir;     // astronomical sun, may be below y=0
+    u.dayNight = this._dayNight;
+
+    this._applyTimeOfDay();
+  }
+
+  /**
+   * Pin the clock. `freeze` defaults to true because every caller of this is a
+   * harness or a debug key pinning a specific hour, and a cycle that keeps
+   * crawling underneath makes those shots non-reproducible. Pass false (or set
+   * `engine.cyclePaused = false`) to scrub while the cycle keeps running.
+   * @param {number} t 0..1, wrapped
+   */
+  setTimeOfDay(t, freeze = true) {
+    this.timeOfDay = ((t % 1) + 1) % 1;
+    this.cyclePaused = !!freeze;
+    this._applyTimeOfDay();
+    return this;
+  }
+
+  _advanceCycle(dt) {
+    if (!this.cyclePaused && this.dayLengthSeconds > 0 && dt > 0) {
+      this.timeOfDay = (this.timeOfDay + dt / this.dayLengthSeconds) % 1;
+      this._applyTimeOfDay();
+    }
+  }
+
+  /**
+   * Resolve the whole rig for `this.timeOfDay`: sun geometry, key direction,
+   * light rig, sky dome, fog, IBL strength and the grade.
+   *
+   * WHY THE KEY DIRECTION IS NOT THE SUN DIRECTION
+   * A directional light grazing the horizon is not renderable — the shadow
+   * ortho degenerates along the light axis, texels smear, and every up-facing
+   * surface acnes. And the obvious fix (swap to a moon on the opposite side at
+   * sunset) is worse: it rotates the key ~180 deg in azimuth over the handful
+   * of seconds the sun spends near the horizon, and the whole city's shadows
+   * sweep round like a searchlight.
+   *
+   * So: the key keeps the sun's AZIMUTH for the entire 24 h — one continuous,
+   * smooth sweep — and only its ELEVATION is reshaped. It is softly floored at
+   * KEY_MIN_ELEV so it never grazes, and at night it is pulled down toward
+   * MOON_MAX_ELEV so moonlight rakes lower and softer than a noon sun. The
+   * result has no discontinuity anywhere in the cycle: shadows lengthen into
+   * dusk, soften, go blue, and shorten again. Meanwhile the astronomical sun
+   * (`sunDiscDir`) really does set, because that is what the sky draws.
+   */
+  _applyTimeOfDay() {
+    const theta = (this.timeOfDay - 0.25) * Math.PI * 2;
+    const sinT = Math.sin(theta);
+    const rawElev = DAY.SUN_ELEV_MAX * sinT;
+    const az = DAY.SUN_AZ_NOON - DAY.SUN_AZ_HALF * Math.cos(theta);
+
+    const night = 1 - THREE.MathUtils.smoothstep(rawElev, DAY.NIGHT_ELEV_LO, DAY.NIGHT_ELEV_HI);
+    const golden = THREE.MathUtils.smoothstep(rawElev, -4, 4)
+                 * (1 - THREE.MathUtils.smoothstep(rawElev, 8, 24));
+
+    // Soft floor: exp() rather than Math.max so there is no derivative kink at
+    // the horizon, and it converges fast enough that the floor is invisible by
+    // mid-morning (at 55 deg it lifts the sun by 0.65 deg).
+    const a = Math.abs(rawElev);
+    const lifted = a + DAY.KEY_MIN_ELEV * Math.exp(-a / DAY.KEY_MIN_ELEV);
+    // Remap the same curve into the moon's shallower range, and cross-fade on
+    // nightFactor. Both agree at the horizon, so the fade is a no-op exactly
+    // where it happens — which is why nothing swings.
+    const span = (lifted - DAY.KEY_MIN_ELEV) / (DAY.SUN_ELEV_MAX - DAY.KEY_MIN_ELEV);
+    const moonElev = DAY.KEY_MIN_ELEV + (DAY.MOON_MAX_ELEV - DAY.KEY_MIN_ELEV) * span;
+    const keyElev = lifted + (moonElev - lifted) * night;
+
+    dirFrom(az, keyElev, this.sunDir);
+    dirFrom(az, rawElev, this.sunDiscDir);
+    this.moonDir.copy(this.sunDir);
+
+    const look = sampleLook(rawElev, this._look);
+
+    /* ---- light rig ---- */
+    this.sun.color.copy(look.sun);
+    this.sun.intensity = look.sunI;
+    this.hemi.color.copy(look.hemiSky);
+    this.hemi.groundColor.copy(look.hemiGround);
+    this.hemi.intensity = look.hemiI;
+    this.fill.color.copy(look.fill);
+    this.fill.intensity = look.fillI;
+    this.bounce.color.copy(look.bounce);
+    this.bounce.intensity = look.bounceI;
+    this.ambient.color.copy(look.ambient);
+    this.ambient.intensity = look.ambientI;
+    // Fill and bounce keep their authored bearings relative to the key, so the
+    // shadow side stays modelled however far round the sun has travelled.
+    this.fill.position.copy(dirFrom(az + 180, LIGHTING.FILL_ELEVATION, _tmp)).multiplyScalar(300);
+    this.bounce.position.copy(dirFrom(az + 166, LIGHTING.BOUNCE_ELEVATION, _tmp)).multiplyScalar(300);
+
+    // The IBL is a baked DAY sky; running it at full strength after dark would
+    // paint noon reflections onto every glass tower. Fade it out and let the
+    // analytic rig carry night. (A second night PMREM is the real fix — see the
+    // handover note; it needs materials.js.)
+    if (this.scene.environment) this.scene.environmentIntensity = look.env;
+
+    /* ---- sky dome ---- */
+    const u = this.skyMat.uniforms;
+    const g = look.skyGain;
+    u.uZenith.value.copy(look.skyZenith).multiplyScalar(g * SKY_BAND_GAIN.skyZenith);
+    u.uMid.value.copy(look.skyMid).multiplyScalar(g * SKY_BAND_GAIN.skyMid);
+    u.uHorizon.value.copy(look.skyHorizon).multiplyScalar(g * SKY_BAND_GAIN.skyHorizon);
+    u.uHaze.value.copy(look.skyHaze).multiplyScalar(g * SKY_BAND_GAIN.skyHaze);
+    u.uFloor.value.copy(look.skyFloor).multiplyScalar(g * SKY_BAND_GAIN.skyFloor);
+    u.uCloudLit.value.copy(look.cloudLit).multiplyScalar(g * SKY_BAND_GAIN.cloudLit);
+    u.uCloudShade.value.copy(look.cloudShade).multiplyScalar(g * SKY_BAND_GAIN.cloudShade);
+    u.uSunColor.value.copy(look.skySun);
+    u.uMoonColor.value.copy(look.moon);
+    u.uCloudCover.value = look.cloudCover;
+    u.uSunDisc.value = look.sunDisc;
+    u.uMoonDisc.value = look.moonDisc;
+    u.uStars.value = look.stars;
+    u.uHazeAz.value = look.hazeAz;
+    u.uSunGlow.value = look.sunGlow;
+
+    /* ---- atmosphere ---- */
+    // Fog must land exactly on the dome's horizon band or the skyline grows a
+    // seam where the city stops and the sky starts.
+    this.scene.fog.color.copy(u.uHorizon.value).lerp(u.uHaze.value, look.fogBlend);
+    this.scene.fog.near = look.fogNear;
+    this.scene.fog.far = look.fogFar;
+
+    /* ---- grade ---- */
+    this.post.setLook(look);
+
+    /* ---- publish ---- */
+    const d = this.scene.userData;
+    d.timeOfDay = this.timeOfDay;
+    d.nightFactor = night;
+    d.goldenFactor = golden;
+    d.sunElevation = rawElev;
+    const dn = this._dayNight;
+    dn.keyColor.copy(look.sun);
+    dn.keyIntensity = look.sunI;
+    dn.skyHi.copy(u.uMid.value);
+    dn.skyLo.copy(u.uHorizon.value);
+    dn.hazeColor.copy(u.uHaze.value);
+    dn.fogColor.copy(this.scene.fog.color);
+    dn.ambientLevel = look.ambientI + look.hemiI;
   }
 
   /* ---------------------------------------------------------- lights ----- */
@@ -440,7 +784,14 @@ export class Engine {
     // fitted to the ground alone frustum-culls the very casters whose shadows
     // fall into it. Grow toward the sun and slide the centre the same amount:
     // an asymmetric box with one uniform texel size.
-    const lean = Math.min(extent * 0.45, 60);
+    //
+    // The offset goes as cot(elevation), so the 17 deg golden-hour key needs
+    // ~3.3x the reach of the 56 deg afternoon key or the low sun — the one hour
+    // whose long shadows are the entire point — is the hour that loses them.
+    // Scaled relative to the authored 56 deg so the default fit is unchanged,
+    // and hard-capped because every metre of lean costs shadow-map resolution.
+    const cot = Math.min(3.5, 1 / Math.max(0.12, this.sunDir.y)) / 1.206;
+    const lean = Math.min(extent * 0.45 * cot, 110);
     extent = Math.ceil((extent + lean * 0.5) / 8) * 8;
     _centre.addScaledVector(_ly, lean * 0.5);
 
@@ -468,9 +819,18 @@ export class Engine {
     const s = this.sun.shadow;
     // ~1.4 texels along the normal kills acne without lifting the contact point
     // off the ground (peter-panning) — affordable now that texel is small.
-    s.normalBias = THREE.MathUtils.clamp(texel * 1.4 * QUALITY.shadowBiasScale, 0.012, 0.55);
+    //
+    // The depth error a texel produces on a receiver grows as 1/sin(elevation):
+    // a bias tuned for the 56 deg afternoon key acnes the whole road surface
+    // once the sun drops to golden hour. Scaled relative to that same 56 deg so
+    // the default is bit-identical, capped at 3x so the low-sun hours trade a
+    // little contact accuracy for a clean ground plane rather than the reverse.
+    const graze = THREE.MathUtils.clamp(0.829 / Math.max(0.12, this.sunDir.y), 1.0, 3.0);
+    s.normalBias = THREE.MathUtils.clamp(
+      texel * 1.4 * graze * QUALITY.shadowBiasScale, 0.012, 0.62);
     s.bias = -0.05 / (c.far - c.near);
-    s.radius = QUALITY.shadowRadius;
+    // Moonlight has no hard edge, and a low sun's penumbra is genuinely wider.
+    s.radius = QUALITY.shadowRadius * (this._look ? this._look.shadowSoft : 1);
   }
 
   /* ------------------------------------------------------------ post ----- */
@@ -502,7 +862,11 @@ export class Engine {
     this._applyShadowQuality();
     this._applyPostQuality();
     this.skyMat.defines.CLOUD_OCT = 2 + Math.max(0, QUALITY.skyDetail);
+    this.skyMat.defines.STARS = QUALITY.skyDetail >= 1 ? 1 : 0;
     this.skyMat.needsUpdate = true;
+    // _applyPostQuality() re-reads GRADE, i.e. the noon baseline. Without this
+    // a tier drop at 3am snaps the grade back to daylight.
+    this._applyTimeOfDay();
     console.info(`[engine] quality -> ${t.name} (frame ${this._frameMs.toFixed(1)}ms)`);
   }
 
@@ -577,12 +941,16 @@ export class Engine {
     this.renderer.info.reset();
     this._tickAdaptive();
 
+    // ~45 lerps and ~30 uniform writes; measured at 0.02-0.04 ms. Skipped
+    // entirely while the cycle is frozen.
+    this._advanceCycle(dt);
+
     // materials.buildEnvironment() runs after this constructor and sets its own
     // IBL strength; the balance between IBL and the analytic rig is a lighting
     // decision, so re-assert it once the map exists.
     if (!this._envApplied && this.scene.environment) {
-      this.scene.environmentIntensity = LIGHTING.ENV_INTENSITY;
       this._envApplied = true;
+      this._applyTimeOfDay();
     }
 
     this.skyMat.uniforms.uTime.value = this.time;

@@ -1225,7 +1225,12 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
         capacity: 900,
         tier: ctx.TIER.SMALL,
         radius: 0.36, height: 0.82,
-        label: 'Mooring bollard', kind: 'bollard',
+        // NOT 'bollard': props.js registers 1,040 street bollards under that
+        // kind, and the prop audit groups by kind and samples the first 40 —
+        // which were all quay bollards sitting on the seawall coping over
+        // water. The audit reported props.js's bollards as 100% floating and
+        // in the sea, which is neither true nor about props.js at all.
+        label: 'Mooring bollard', kind: 'mooringBollard',
         castShadow: true, receiveShadow: true,
       });
       bollards++;

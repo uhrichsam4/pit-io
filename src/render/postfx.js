@@ -280,9 +280,21 @@ export function createPostChain(renderer, scene, camera) {
     passes.ao = null;
   }
 
+  /**
+   * Time-of-day override for the look.
+   *
+   * GRADE is the authored NOON baseline and stays that way — the engine hands
+   * a fresh interpolated look in every frame the sun moves, and anything it
+   * omits falls through to GRADE. Stored rather than applied-and-forgotten
+   * because applyQuality() re-reads GRADE: without this, an adaptive tier drop
+   * at 3am would snap the grade back to daylight mid-frame.
+   */
+  let look = null;
+  const pick = (k) => (look && look[k] !== undefined ? look[k] : GRADE[k]);
+
   // Bloom thresholds the *pre-exposure* buffer, so the artistic threshold is
   // expressed in post-exposure terms and divided back out here.
-  const bloomThreshold = () => GRADE.bloomThreshold / Math.max(0.05, GRADE.exposure);
+  const bloomThreshold = () => pick('bloomThreshold') / Math.max(0.05, pick('exposure'));
   passes.bloom = new UnrealBloomPass(
     new THREE.Vector2(size.x, size.y),
     GRADE.bloomStrength, GRADE.bloomRadius, bloomThreshold()
@@ -305,18 +317,44 @@ export function createPostChain(renderer, scene, camera) {
     passes.smaa = null;
   }
 
-  /** Push the current QUALITY / GRADE values into the live passes. */
-  function applyQuality() {
+  /** Write the current look (time-of-day over GRADE) into the live passes. */
+  function writeLook() {
     if (passes.bloom) {
-      passes.bloom.enabled = QUALITY.bloom;
-      passes.bloom.strength = GRADE.bloomStrength;
-      passes.bloom.radius = GRADE.bloomRadius;
+      passes.bloom.strength = pick('bloomStrength');
+      passes.bloom.radius = pick('bloomRadius');
       passes.bloom.threshold = bloomThreshold();
     }
+    if (passes.ao) passes.ao.blendIntensity = pick('aoIntensity');
+    const u = passes.grade.uniforms;
+    u.uExposure.value = pick('exposure');
+    u.uContrast.value = pick('contrast');
+    u.uSaturation.value = pick('saturation');
+    u.uTemperature.value = pick('temperature');
+    u.uShadowTint.value.set(...pick('shadowTint'));
+    u.uHighlightTint.value.set(...pick('highlightTint'));
+    u.uNeutralise.value = pick('neutralise');
+    u.uVignette.value = pick('vignette');
+    u.uAberration.value = pick('aberration');
+    u.uDither.value = pick('dither');
+    u.uToneStart.value = pick('toneStart');
+    u.uToneDesat.value = pick('toneDesat');
+  }
+
+  /**
+   * Install the interpolated time-of-day look. Called every frame the sun
+   * moves; see the `look` declaration above for why it is retained.
+   */
+  function setLook(next) {
+    look = next;
+    writeLook();
+  }
+
+  /** Push the current QUALITY / GRADE values into the live passes. */
+  function applyQuality() {
+    if (passes.bloom) passes.bloom.enabled = QUALITY.bloom;
     if (passes.smaa) passes.smaa.enabled = QUALITY.smaa;
     if (passes.ao) {
       passes.ao.enabled = QUALITY.ao;
-      passes.ao.blendIntensity = GRADE.aoIntensity;
       passes.ao.updateGtaoMaterial({
         radius: GRADE.aoRadius,
         distanceExponent: GRADE.aoDistanceExponent,
@@ -326,19 +364,7 @@ export function createPostChain(renderer, scene, camera) {
       });
       passes.ao.updatePdMaterial({ samples: QUALITY.aoDenoiseSamples });
     }
-    const u = passes.grade.uniforms;
-    u.uExposure.value = GRADE.exposure;
-    u.uContrast.value = GRADE.contrast;
-    u.uSaturation.value = GRADE.saturation;
-    u.uTemperature.value = GRADE.temperature;
-    u.uShadowTint.value.set(...GRADE.shadowTint);
-    u.uHighlightTint.value.set(...GRADE.highlightTint);
-    u.uNeutralise.value = GRADE.neutralise;
-    u.uVignette.value = GRADE.vignette;
-    u.uAberration.value = GRADE.aberration;
-    u.uDither.value = GRADE.dither;
-    u.uToneStart.value = GRADE.toneStart;
-    u.uToneDesat.value = GRADE.toneDesat;
+    writeLook();
   }
 
   /**
@@ -364,5 +390,5 @@ export function createPostChain(renderer, scene, camera) {
     composer.renderTarget2.dispose();
   }
 
-  return { composer, passes, stats, applyQuality, tuneAO, setSize, dispose };
+  return { composer, passes, stats, applyQuality, setLook, tuneAO, setSize, dispose };
 }
