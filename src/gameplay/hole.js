@@ -19,10 +19,11 @@
  * the whole throat with the owner colour and the hole came back from review as
  * a bright magenta bowl in a sunlit city — the exact opposite of the brief. So
  * everything here is budgeted in linear radiance: the wall base sits around
- * 0.006, the brightest striation ridge around 0.05, and the ONLY thing allowed
- * above 0.2 is the hot lip, which is four percent of the wall's height. Owner
- * identity is carried by that thin lip, by the coloured halo in the ground
- * shader, and by the collar's emissive rim — never by lifting the void.
+ * 0.02, the brightest striation ridge around 0.05, and the ONLY thing allowed
+ * above 0.2 is the hot lip — a band 1.4% of the radius wide, measured from the
+ * ground cut itself. Owner identity is carried by that thin lip, by the
+ * coloured halo in the ground shader, and by the collar's emissive rim; never
+ * by lifting the void.
  *
  * ---------------------------------------------------------------------------
  * WHY SQUASH-AND-STRETCH IS A SPRING
@@ -650,7 +651,7 @@ export class Hole {
     // on a swallow, which is the exact opposite of the feedback we want, so the
     // spring is only ever kicked outward.
     const rel = Math.max(0, grew) / Math.max(0.15, this.radius);
-    this.pulseV += Math.min(9.0, 1.6 + rel * 90.0);
+    this.pulseV = Math.min(12.0, this.pulseV + Math.min(9.0, 1.6 + rel * 90.0));
     this.chompImpulse = Math.min(1, this.chompImpulse + 0.4);
 
     const t = tierFor(this.radius);
@@ -730,7 +731,12 @@ export class Hole {
     const K = 210, C = 13.5;
     this.pulseV += (-K * this.pulse - C * this.pulseV) * sdt;
     this.pulse += this.pulseV * sdt;
-    this.pulse = THREE.MathUtils.clamp(this.pulse, -0.5, 0.5);
+    // Bounded, because impulses ACCUMULATE: a whole city block going down in
+    // one frame is a dozen addScore calls, and unbounded that slammed the
+    // amplitude to its clamp and opened the drawn ground 22% wider than the
+    // gameplay capture radius — objects visibly hovering over the void without
+    // being eaten.
+    this.pulse = THREE.MathUtils.clamp(this.pulse, -0.35, 0.35);
 
     // Display radius on its own, softer spring so growth overshoots and settles
     // rather than easing in — the overshoot is what reads as "it just ate".
@@ -788,7 +794,7 @@ export class Hole {
     // lip by one percent — mathematically a pulse, visually nothing.
     // The lower clamp keeps the drawn opening from ever shrinking meaningfully
     // below the gameplay capture radius.
-    const wide = Math.max(0.94, 1 + p * 0.45);
+    const wide = Math.max(0.94, 1 + p * 0.38);
     const deep = 1 - p * 0.55;
     // Rim brightness, separate from the geometric squash. The player's rim
     // breathes and a rival's does not: bot palette entry 0 (#ff4d8d) is within

@@ -462,13 +462,17 @@ export class Effects {
       this.dSpin[k * 3 + 1] = (Math.random() - 0.5) * 16;
       this.dSpin[k * 3 + 2] = (Math.random() - 0.5) * 16;
 
-      // Slabs and shards, not sugar cubes. Capped: consume.js sizes debris from
-      // the eaten object's radius, and an unclamped tower produces nine-metre
-      // blocks that read as broken geometry rather than as rubble.
-      const base = Math.min(3.4, scale * (0.45 + Math.random() * 1.05));
-      this.dScale[k * 3] = base * (0.7 + Math.random() * 0.9);
-      this.dScale[k * 3 + 1] = base * (0.35 + Math.random() * 0.7);
-      this.dScale[k * 3 + 2] = base * (0.7 + Math.random() * 0.9);
+      // Slabs and shards, not sugar cubes — and capped on the FINAL axis, not
+      // on the base. consume.js sizes debris from the eaten object's radius, so
+      // a storefront asks for scale 4; multiplied through by the per-axis
+      // spread that produced six-metre glass panes drifting past the towers
+      // like origami. A curtain-wall panel is about 1.5 x 3 m; 2.6 is the most
+      // a chunk should ever be.
+      const CAP = 2.6;
+      const base = scale * (0.45 + Math.random() * 1.05);
+      this.dScale[k * 3] = Math.min(CAP, base * (0.7 + Math.random() * 0.9));
+      this.dScale[k * 3 + 1] = Math.min(CAP, base * (0.35 + Math.random() * 0.7));
+      this.dScale[k * 3 + 2] = Math.min(CAP, base * (0.7 + Math.random() * 0.9));
 
       // Long enough to actually reach the ground. A tower sheds debris from
       // 40 m up; a flat 2 s life fades it out still airborne, which is exactly

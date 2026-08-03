@@ -520,7 +520,6 @@ export class BotController {
       wx = this.prey.position.x + this.prey.velocity.x * lead - h.position.x;
       wz = this.prey.position.z + this.prey.velocity.z * lead - h.position.z;
     } else {
-      const tgt = this.waypoint || this.goal;
       const gx = this.waypoint ? this.waypoint.x : this.goal.x;
       const gz = this.waypoint ? this.waypoint.y : this.goal.y;
       wx = gx - h.position.x;
@@ -528,7 +527,6 @@ export class BotController {
       if (this.waypoint && Math.abs(h.position.z - this.waypoint.y) < WORLD.RIVER_HALF_W * 0.5) {
         this.waypoint = null;   // deck cleared, resume the real goal
       }
-      void tgt;
     }
     let wl = Math.hypot(wx, wz);
     if (wl < 0.001) {

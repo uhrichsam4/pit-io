@@ -21,6 +21,11 @@ export const PHASE = {
   RESULTS: 'results',
 };
 
+/** A challenger must beat the incumbent by this much to take the marker. */
+const LEAD_MARGIN = 1.04;
+/** Minimum seconds between two "takes the lead" calls. */
+const LEAD_COOLDOWN = 12;
+
 /** Feed colours. Kept here so every announcement speaks the same language. */
 const COL = {
   CLOCK: '#ffffff',
@@ -59,6 +64,7 @@ export class Match {
 
     this._announced = new Set();
     this._tierCalled = 0;
+    this._leadCallAt = -99;
     this._sorted = [];
   }
 
@@ -71,6 +77,7 @@ export class Match {
     this.leader = null;
     this._announced.clear();
     this._tierCalled = 0;
+    this._leadCallAt = -99;
     for (const h of holes) {
       h.spawnGrace = 0;
       h.isLeader = false;
@@ -179,22 +186,40 @@ export class Match {
     }
   }
 
-  /** Recompute ranks and flag the leader so the HUD/minimap can mark them. */
+  /**
+   * Recompute ranks and flag the leader so the HUD/minimap can mark them.
+   *
+   * HYSTERESIS IS NOT OPTIONAL HERE. Two holes eating the same block trade the
+   * top slot several times a second; the first version of this emitted
+   * eighteen "takes the lead" lines in one match and the crown strobed. The
+   * incumbent has to be beaten by a clear margin to lose the marker, and the
+   * announcement additionally has a cooldown.
+   */
   _tickLeader() {
     const prev = this.leader;
     this._rank();
-    const lead = this._sorted[0] || null;
-    if (lead !== prev) {
-      if (prev) prev.isLeader = false;
-      if (lead) lead.isLeader = true;
-      this.leader = lead;
-      if (this.onLeadChange) this.onLeadChange(lead, prev);
-      // Only call it out once there is something to lead — the first few
-      // seconds otherwise produce a stream of meaningless lead changes.
-      if (lead && prev && lead.score > 250) {
-        this._announce(`<b>${lead.name}</b> takes the lead`,
-          `#${lead.color.getHexString()}`, 'lead');
-      }
+    const top = this._sorted[0] || null;
+    if (!top) return;
+
+    const takeover = !prev || !prev.alive
+      ? true
+      : top !== prev && top.score > prev.score * LEAD_MARGIN;
+    if (!takeover) {
+      if (prev && !prev.isLeader) prev.isLeader = true;
+      return;
+    }
+    if (top === prev) return;
+
+    if (prev) prev.isLeader = false;
+    top.isLeader = true;
+    this.leader = top;
+    if (this.onLeadChange) this.onLeadChange(top, prev);
+    // Only call it out once there is something to lead, and never twice inside
+    // the cooldown.
+    if (prev && top.score > 250 && this.elapsed - this._leadCallAt > LEAD_COOLDOWN) {
+      this._leadCallAt = this.elapsed;
+      this._announce(`<b>${top.name}</b> takes the lead`,
+        `#${top.color.getHexString()}`, 'lead');
     }
   }
 

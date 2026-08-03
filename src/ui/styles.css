@@ -618,13 +618,15 @@ html, body {
 
 /* Dim the live skyline enough to carry type, not enough to hide the city we
    spent the whole build making bright. Contrast is bought back locally, with
-   the outlined title and the plated cards, instead of globally. */
+   the outlined title and the plated cards, instead of globally.
+   NOTE: deliberately NO backdrop-filter. A full-viewport backdrop blur is
+   re-composited every frame on top of a live 3D scene, and it is the single
+   most expensive thing this stylesheet could ask for — it stalled the capture
+   harness outright. Layered gradients buy the same legibility for free. */
 .scr.veil {
   background:
-    radial-gradient(ellipse 78% 62% at 50% 44%, rgba(6, 12, 22, 0.52), rgba(4, 8, 16, 0.30) 62%, rgba(4, 8, 16, 0.52) 100%),
-    linear-gradient(0deg, rgba(4, 8, 16, 0.52), rgba(4, 8, 16, 0.02) 46%, rgba(4, 8, 16, 0.26));
-  backdrop-filter: blur(2.5px) saturate(1.12) brightness(0.94);
-  -webkit-backdrop-filter: blur(2.5px) saturate(1.12) brightness(0.94);
+    radial-gradient(ellipse 76% 60% at 50% 44%, rgba(6, 12, 22, 0.62), rgba(4, 8, 16, 0.34) 60%, rgba(4, 8, 16, 0.58) 100%),
+    linear-gradient(0deg, rgba(4, 8, 16, 0.58), rgba(4, 8, 16, 0.04) 46%, rgba(4, 8, 16, 0.32));
 }
 
 /* Slow chromatic wash — the "animated gradient" behind the title lockup.

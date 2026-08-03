@@ -135,11 +135,11 @@ const CUT_FRAGMENT = /* glsl */ `
       vec2 d = vHoleWorldPos.xz - h.xy;
       float dist = length(d);
       float r = h.z;
-      // Cheap reject BEFORE the noise taps: the tear can never exceed 1.05r and
-      // the widest halo lobe dies by r*1.34 + 0.85, so anything past this is
-      // provably unaffected. Most ground pixels in a city-wide frame are
-      // nowhere near any hole, and skipping their noise taps is what pays for
-      // the multi-octave edge in the first place.
+      // Cheap reject BEFORE the noise taps. hcEdge is bounded at +-0.50 so the
+      // tear never passes 1.038r, and the widest lobe below reaches
+      // max(0.34r, 8) past that — this bound covers both for every radius.
+      // Most ground pixels in a city-wide frame are nowhere near any hole, and
+      // skipping their noise taps is what pays for the multi-octave edge.
       if (dist > r * 1.40 + 10.0) continue;
 
       vec2 dir = d / max(dist, 1e-4);
@@ -158,9 +158,8 @@ const CUT_FRAGMENT = /* glsl */ `
       // coloured lip itself is a couple of pixels at the distance the game is
       // played at, so with a tight halo four rival holes were four identical
       // black blobs. This wash is the only owner cue that survives the zoom.
-      // Capped in METRES, not scaled all the way up: the halo exists so that a
-      // 6 m rival is not an anonymous black blob from 120 m out. A 34 m hole
-      // already shows its coloured lip at that distance, and letting the wash
+      // Capped in METRES rather than scaling all the way up: a 34 m hole
+      // already shows its lip colour at that distance, and letting the wash
       // grow with it just paints twenty metres of road pink.
       float g = 1.0 - smoothstep(0.0, clamp(r * 0.62, 1.6, 8.0), t);
       g *= g;

@@ -58,7 +58,27 @@ page.on('pageerror', (e) => errors.push(String(e && e.stack ? e.stack : e)));
 await page.goto('http://localhost:5173/', { waitUntil: 'domcontentloaded' });
 await page.waitForFunction('!!window.DEV', null, { timeout: 300000 });
 
-const setup = await page.evaluate(([at, size, pitch, dist, drive]) => {
+/**
+ * Vite HMR reloads the page whenever anything saves a source file, which during
+ * active development is constantly. A reload destroys the execution context
+ * mid-capture, so every step is wrapped: on loss we wait for the harness to come
+ * back, re-apply the setup, and carry on rather than dying half way through.
+ */
+async function resilient(fn, reSetup) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!/Execution context was destroyed|__GAME__|Target closed|reading 'frame'/.test(String(e))) throw e;
+      console.log('  (page reloaded — re-establishing state)');
+      await page.waitForFunction('!!window.DEV', null, { timeout: 300000 });
+      if (reSetup) await reSetup();
+    }
+  }
+  throw new Error('page kept reloading; give the tree a moment and retry');
+}
+
+const applySetup = () => page.evaluate(([at, size, pitch, dist, drive]) => {
   const g = window.__GAME__;
   window.DEV.play(true);
   window.DEV.hideUI(true);
@@ -103,10 +123,12 @@ const setup = await page.evaluate(([at, size, pitch, dist, drive]) => {
   return { x: Math.round(x), z: Math.round(z), dist: d };
 }, [AT, SIZE, PITCH, DIST, DRIVE]);
 
+const setup = await resilient(applySetup);
 console.log(`hole at (${setup.x}, ${setup.z}), r=${SIZE}, cam dist ${setup.dist}`);
 
 for (let f = 0; f < FRAMES; f++) {
-  const info = await page.evaluate(([step, drive]) => {
+  const info = await resilient(() => page.evaluate(([step, drive]) => {
+    if (!window.__GAME__) throw new Error('__GAME__ gone');
     const g = window.__GAME__;
     // Advance the simulation in small sub-steps so the physics integrates the
     // same way it does at runtime, then draw once.
@@ -127,7 +149,7 @@ for (let f = 0; f < FRAMES; f++) {
       score: Math.round(g.player.score),
       r: +g.player.radius.toFixed(2),
     };
-  }, [STEP, DRIVE]);
+  }, [STEP, DRIVE]), applySetup);
 
   const file = join(OUT, `f${String(f).padStart(2, '0')}.png`);
   await page.screenshot({ path: file, timeout: 300000 });
