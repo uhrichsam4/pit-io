@@ -45,7 +45,9 @@ export const PRESETS = {
     note: 'Miami River: bends, bridges, riverwalk, bulkheads.' },
   'park': { x: 290, z: -200, dist: 155, pitch: 34, yaw: 55, holeR: 4,
     note: 'Bayfront park + plaza: lawn, palms, paths, fountains.' },
-  'intersection': { x: 128, z: 194, dist: 95, pitch: 44, yaw: -35, holeR: 3,
+  // Steep enough to look down INTO the junction rather than across it — a
+  // shallower angle just fills the frame with the nearest tower.
+  'intersection': { x: 128, z: 194, dist: 125, pitch: 58, yaw: -35, holeR: 3,
     note: 'Brickell Ave x SE 10 St. Crosswalks, lane paint, signals, traffic.' },
   'construction': { x: -121, z: 54, dist: 155, pitch: 34, yaw: -35, holeR: 5,
     note: 'Construction site: cranes, slabs, hoarding, machinery.' },
@@ -137,6 +139,11 @@ export function installDevTools(game) {
       game.player.desiredDir.set(0, 0);
       if (opts.clearBots !== false) this.clearBots();
       game.forceSyncFrame = true;
+      // Advance the eased systems to steady state before anyone screenshots —
+      // occlusion fades, camera smoothing, display radius. Done with a coarse
+      // dt so it costs ~12 frames rather than ~40: under software GL every
+      // extra frame is expensive enough to blow a screenshot timeout.
+      this.render(opts.presettle ?? 14, 1 / 24);
       return this;
     },
 

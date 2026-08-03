@@ -135,10 +135,22 @@ street-level, hole-big, construction, menu-hero.
 
 YOU OWN: src/world/streets.js
 
-The road network is functional but crude. Known defects visible in screenshots:
-crosswalk stripes read as scattered white rectangles; lane markings are sparse
-and mechanical; sidewalks are one flat slab per block with a thin curb; there is
-no kerb detail, no gutter, no driveway, no median planting, no bridge structure.
+CONFIRMED DEFECTS the project lead has already seen in screenshots — fix these
+first and prove each one with a screenshot before moving on:
+  (a) BLOCKER: crosswalk "stripes" render as big cream squares scattered loose
+      across the carriageway, at the wrong size, spacing and orientation. Look
+      at shots/lead-all/intersection.png and shots/lead-all/hole-small.png.
+  (b) A thin MAGENTA/PINK line runs along block edges where the kerb meets the
+      road — a stray colour or z-fight. Find it and kill it.
+  (c) Sidewalks are one featureless slab per block; no kerb nose, no gutter, no
+      joints, no ramps.
+  (d) Lane markings are sparse and mechanical; no turn arrows, no stop bars.
+  (e) BLOCKER: you own the big base ground plane, and it currently extends as a
+      dark grey rectangle straight out under the bay and the marina basins —
+      see shots/lead-all/waterfront.png, the grey wedges sticking into the
+      water. Clip the land to the actual coastline from layout.isWater /
+      layout waterPolys, so the shore silhouette is correct and no land shows
+      under the sea. Coordinate with water.js via your report.
 
 Rebuild it:
 1. CROSSWALKS. Proper zebra bars, correctly aligned to each approach, sized to
@@ -381,6 +393,19 @@ YOU OWN: src/world/water.js
 
 Biscayne Bay and the Miami River are the backdrop to half the map and currently
 they are a single flat animated plane with a straight edge.
+
+CONFIRMED DEFECTS the project lead has seen — open shots/lead-all/waterfront.png
+and shots/lead-all/river.png before you start:
+  (a) BLOCKER: the bay reads as flat uniform cyan speckled with random white
+      blobs. It looks like scum on a swimming pool, not water. The foam/sparkle
+      term is far too strong and uniform, and there is no depth gradient.
+  (b) BLOCKER: dark grey wedges of the LAND base plane jut out into the bay at
+      the coastline, and the marina basins that cityLayout cut into the shore
+      render as dark grey land rather than water. The coastline silhouette is
+      wrong. Coordinate with streets.js (it owns the base ground plane) — if
+      the fix belongs there, say so in your report, but make the water side
+      correct regardless.
+  (c) No seawall detail, no promenade edge, no visible boats or docks.
 
 1. WATER SHADER. Keep it stylised and bright but make it genuinely good:
    depth-graded colour (turquoise shallows to deep cyan), animated normals from

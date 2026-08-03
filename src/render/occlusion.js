@@ -21,12 +21,20 @@
  * the building stay solid while the middle dissolves. That is what keeps the
  * shape legible.
  *
- * PER-MESH FADE WITH SHARED MATERIALS
- * -----------------------------------
- * Every tower could share one glass material, but each needs its own fade
- * value. Uniforms are uploaded per draw call, so `mesh.onBeforeRender` writes
- * this mesh's fade into the shared uniform immediately before its own draw.
- * One material, N independent fades, zero clones.
+ * PER-OBJECT FADE WITH SHARED MATERIALS
+ * -------------------------------------
+ * Every tower shares one cached glass material, but each needs its own fade.
+ * The obvious trick — write the value in `onBeforeRender` — silently does not
+ * work: three.js only re-uploads a material's uniforms when the material *id*
+ * changes between draws (`refreshMaterial` in WebGLRenderer.setProgram). Two
+ * hundred towers sharing one material are drawn back to back, so only the first
+ * one's value ever reaches the GPU and the whole city fades as a single unit.
+ *
+ * So instead: an object that is actively fading is lazily given its own clone
+ * of each material. Clones hit the same program cache key, so there is no
+ * shader recompile — just a private uniform block — and the differing material
+ * id is exactly what makes three upload it. Clones are only ever made for
+ * objects that actually fade (a handful at a time) and are cached for reuse.
  */
 
 import * as THREE from 'three';
@@ -103,11 +111,17 @@ export function applyOcclusionFade(material) {
   material.userData.__occFade = true;
 
   const prev = material.onBeforeCompile;
-  material.onBeforeCompile = (shader, renderer) => {
-    if (prev) prev(shader, renderer);
-    shader.uniforms.uOccFade = { value: 1 };
-    // Stash the live uniform so onBeforeRender can poke it per mesh.
-    material.userData.occUniform = shader.uniforms.uOccFade;
+  // Deliberately a `function`, not an arrow: three invokes this as
+  // `material.onBeforeCompile(...)`, so `this` is whichever material is being
+  // compiled. A cloned material must record its uniform on ITSELF — an arrow
+  // would close over the original and every clone would silently share it.
+  material.onBeforeCompile = function (shader, renderer) {
+    if (prev) prev.call(this, shader, renderer);
+    shader.uniforms.uOccFade = {
+      // A clone may already have been asked to fade before its first compile.
+      value: this.userData.__occPending ?? 1,
+    };
+    this.userData.occUniform = shader.uniforms.uOccFade;
 
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${PARS_VERT}`)
@@ -123,6 +137,29 @@ export function applyOcclusionFade(material) {
     `${prevKey ? prevKey.call(material) : ''}|occfade-v2`;
   material.needsUpdate = true;
   return material;
+}
+
+/**
+ * Clone a material for private per-object fading. The clone keeps the same
+ * program cache key, so three reuses the compiled program and this costs only
+ * a uniform block — but it gets a distinct material id, which is what forces
+ * the renderer to actually upload that uniform.
+ */
+function cloneFadeMaterial(src) {
+  const m = src.clone();
+  // THREE.Material.copy() does NOT carry onBeforeCompile or
+  // customProgramCacheKey across — a naive clone silently loses every shader
+  // patch and renders fully opaque, which is exactly the bug this exists to
+  // avoid. Copy them explicitly.
+  m.onBeforeCompile = src.onBeforeCompile;
+  m.customProgramCacheKey = src.customProgramCacheKey;
+  m.userData = { ...src.userData };
+  // The uniform handle must NOT be shared — it is populated on this clone's
+  // own compile, via `this` inside onBeforeCompile.
+  m.userData.occUniform = null;
+  m.userData.__occPending = 1;
+  m.needsUpdate = true;
+  return m;
 }
 
 const _camPos = new THREE.Vector3();
@@ -168,24 +205,54 @@ export class OcclusionSystem {
     if (!root || root.userData.__occRegistered) return;
     root.userData.__occRegistered = true;
     root.userData.occFade = 1;
+    root.userData.__occFaded = false;
 
-    let any = false;
+    /** @type {{mesh:THREE.Mesh, shared:THREE.Material|THREE.Material[]}[]} */
+    const parts = [];
     root.traverse((n) => {
       if (!n.isMesh) return;
       const mats = Array.isArray(n.material) ? n.material : [n.material];
       for (const m of mats) applyOcclusionFade(m);
-      // Push this mesh's fade into the shared uniform right before its draw.
-      n.onBeforeRender = () => {
-        const f = root.userData.occFade;
-        const list = Array.isArray(n.material) ? n.material : [n.material];
-        for (const m of list) {
-          const u = m.userData && m.userData.occUniform;
-          if (u) u.value = f;
-        }
-      };
-      any = true;
+      parts.push({ mesh: n, shared: n.material, clone: null });
     });
-    if (any) this.candidates.push(root);
+    if (!parts.length) return;
+    root.userData.__occParts = parts;
+    this.candidates.push(root);
+  }
+
+  /** Swap an object between its shared materials and its private faded clones. */
+  _setFadeMaterials(root, faded) {
+    const parts = root.userData.__occParts;
+    if (!parts) return;
+    if (faded && !root.userData.__occFaded) {
+      for (const p of parts) {
+        if (!p.clone) {
+          p.clone = Array.isArray(p.shared)
+            ? p.shared.map((m) => cloneFadeMaterial(m))
+            : cloneFadeMaterial(p.shared);
+        }
+        p.mesh.material = p.clone;
+      }
+      root.userData.__occFaded = true;
+    } else if (!faded && root.userData.__occFaded) {
+      for (const p of parts) p.mesh.material = p.shared;
+      root.userData.__occFaded = false;
+    }
+  }
+
+  /** Push the current fade value into this object's private uniforms. */
+  _pushFade(root) {
+    const parts = root.userData.__occParts;
+    if (!parts) return;
+    const f = root.userData.occFade;
+    for (const p of parts) {
+      const list = Array.isArray(p.mesh.material) ? p.mesh.material : [p.mesh.material];
+      for (const m of list) {
+        const u = m.userData && m.userData.occUniform;
+        if (u) u.value = f;
+        else m.userData.__occPending = f; // not compiled yet; applied on compile
+      }
+    }
   }
 
   /** Drop an object (it was swallowed). */
@@ -267,12 +334,21 @@ export class OcclusionSystem {
       const occluding = this._hitThisFrame.has(root);
       const target = occluding ? this.minFade : 1;
       const cur = root.userData.occFade ?? 1;
+
       if (Math.abs(cur - target) < 0.002) {
-        if (cur !== target) root.userData.occFade = target;
+        if (cur !== target) {
+          root.userData.occFade = target;
+          if (target >= 1) this._setFadeMaterials(root, false);
+          else this._pushFade(root);
+        }
         continue;
       }
       const k = target < cur ? outK : inK;
-      root.userData.occFade = cur + (target - cur) * k;
+      const next = cur + (target - cur) * k;
+      root.userData.occFade = next;
+      // Anything not fully solid renders through its private clone.
+      this._setFadeMaterials(root, true);
+      this._pushFade(root);
     }
   }
 

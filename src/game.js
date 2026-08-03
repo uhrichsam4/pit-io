@@ -9,6 +9,9 @@ import { buildEnvironment } from './core/materials.js';
 import { makeRNG } from './core/rng.js';
 import { Effects } from './render/effects.js';
 import { updateHoleUniforms } from './render/groundShader.js';
+import { OcclusionSystem } from './render/occlusion.js';
+import { audio } from './core/audio.js';
+import { TIER_LIST } from './config.js';
 import { EntityRegistry } from './gameplay/entities.js';
 import { Hole } from './gameplay/hole.js';
 import { ConsumeSystem } from './gameplay/consume.js';
@@ -49,13 +52,30 @@ export class Game {
     // and boot would hang, which breaks automated screenshotting.
     await new Promise((r) => setTimeout(r, 40));
 
-    const { layout } = buildWorld(eng.scene, this.registry, eng.renderer);
+    const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer);
     this.layout = layout;
+    this.worldCtx = ctx;
     this.trafficUpdate = eng.scene.userData.trafficUpdate || null;
+    this.pedestrianUpdate = eng.scene.userData.pedestrianUpdate || null;
     this.waterUniforms = eng.scene.userData.waterUniforms || null;
+
+    /* --- see-through fade for anything that hides the hole --------------- */
+    this.occlusion = new OcclusionSystem(eng.camera);
+    // Content modules advertise what may be faded. Fall back to walking the
+    // building group so this keeps working if a module forgets to opt in.
+    const fadeables = (ctx && ctx.fadeableBuildings) || null;
+    if (fadeables && fadeables.length) {
+      for (const o of fadeables) this.occlusion.register(o);
+    } else {
+      for (const name of ['buildings', 'structures']) {
+        this.occlusion.registerGroup(eng.scene.getObjectByName(name));
+      }
+    }
+    console.info(`[game] occlusion candidates: ${this.occlusion.candidates.length}`);
 
     this.hud = new HUD(this.uiRoot, eng.camera);
 
+    this._tierReached = 0;
     this.consume.onSwallow = (hole, c) => {
       if (c.tier.id >= 5 && this.hud) {
         this.hud.pushFeed(
@@ -63,7 +83,14 @@ export class Game {
           `#${hole.color.getHexString()}`
         );
       }
-      if (hole.isPlayer && c.tier.id >= 6) this.engine.flash(0.18, 0xffe6b0);
+      // A swallowed building must stop being a fade candidate, or the system
+      // keeps raycasting against geometry that is halfway down the pit.
+      if (c.object) this.occlusion.unregister(c.object);
+      if (hole.isPlayer) {
+        if (c.crumbles || c.tier.id >= 6) audio.crumble(Math.min(1, c.radius / 22));
+        else audio.chomp(Math.min(1, c.radius / 5));
+        if (c.tier.id >= 6) this.engine.flash(0.18, 0xffe6b0);
+      }
     };
     this.consume.onHoleEaten = (a, b) => {
       if (this.hud) {
@@ -72,9 +99,19 @@ export class Game {
           `#${a.color.getHexString()}`
         );
       }
-      if (a.isPlayer) this.engine.flash(0.30, 0xffffff);
-      if (b.isPlayer) this.engine.flash(0.45, 0xff3d8b);
+      if (a.isPlayer) { this.engine.flash(0.30, 0xffffff); audio.devourPlayer(); }
+      if (b.isPlayer) { this.engine.flash(0.45, 0xff3d8b); audio.death(); }
     };
+
+    // Browsers only allow audio after a gesture, so arm it on the first one.
+    const armAudio = () => {
+      audio.unlock();
+      audio.startMusic();
+      window.removeEventListener('pointerdown', armAudio);
+      window.removeEventListener('keydown', armAudio);
+    };
+    window.addEventListener('pointerdown', armAudio);
+    window.addEventListener('keydown', armAudio);
 
     this.match.onPhase = (p) => this._onPhase(p);
     this.match.onFrenzy = (on) => {
@@ -158,6 +195,7 @@ export class Game {
     const phase = this.match.phase;
     this.match.update(dt);
     if (this.trafficUpdate) this.trafficUpdate(dt);
+    if (this.pedestrianUpdate) this.pedestrianUpdate(dt);
     if (phase === PHASE.PLAYING || phase === PHASE.COUNTDOWN) {
       if (phase === PHASE.PLAYING && this.player && this.player.alive && !this.devCam) {
         this.player.desiredDir.copy(this.input.update());
@@ -203,6 +241,29 @@ export class Game {
 
     this.stepSimulation(dt);
     updateHoleUniforms(this.holes, t);
+
+    // Fade anything standing between the camera and the player's hole. Runs
+    // after movement so it reacts in the same frame the hole slides under a
+    // podium, and before the draw so there is no one-frame flash of solid.
+    if (this.occlusion && this.player) {
+      this.occlusion.update(dt, this.player.position, this.player.displayRadius);
+    }
+
+    // Size-tier chime + a rumble bed that grows with the hole.
+    if (this.player) {
+      let tier = 0;
+      for (let i = 0; i < TIER_LIST.length; i++) {
+        if (this.player.radius >= TIER_LIST[i].eatRadius) tier = i;
+      }
+      if (tier > this._tierReached) {
+        this._tierReached = tier;
+        audio.levelUp(tier);
+        if (this.hud) {
+          this.hud.pushFeed(`<b>UNLOCKED</b> — ${TIER_LIST[tier].label}`, '#37e6d5');
+        }
+      }
+      audio.updateAmbience(this.player.radius);
+    }
 
     // camera
     if (this.devCam) {

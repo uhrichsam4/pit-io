@@ -43,7 +43,7 @@ const PORT = Number(flag('port', 5173));
 const W = Number(flag('w', 1600));
 const H = Number(flag('h', 900));
 const OUT = resolve(String(flag('out', 'shots/latest')));
-const SETTLE = Number(flag('settle', 12));
+const SETTLE = Number(flag('settle', 8));
 const EXTRA = flag('script', null);
 const KEEP_UI = has('ui');
 const KEEP_BOTS = has('bots');
@@ -67,6 +67,8 @@ const page = await browser.newPage({
   viewport: { width: W, height: H },
   deviceScaleFactor: 1,
 });
+// Software GL renders this city slowly; the defaults are far too tight.
+page.setDefaultTimeout(180000);
 
 const consoleErrors = [];
 const pageErrors = [];
@@ -116,7 +118,7 @@ for (const name of presets) {
   await page.evaluate((n) => window.DEV.render(n), 4);
 
   const file = join(OUT, `${name}.png`);
-  await page.screenshot({ path: file });
+  await page.screenshot({ path: file, timeout: 180000 });
   const stats = await page.evaluate('window.DEV.stats()');
   const note = await page.evaluate((n) => window.DEV.PRESETS[n].note, name);
   report.shots.push({ preset: name, file, note, stats });
