@@ -1,125 +1,2346 @@
 /**
- * Nature + public space: parks, plazas, palms, shade trees, hedges, fountains.
- * BASELINE IMPLEMENTATION — expected to be replaced with a AAA version.
+ * Nature + public space: every park, plaza, promenade, median and street tree
+ * in Miami.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS FILE IS BUILT THE WAY IT IS
+ * ---------------------------------------------------------------------------
+ * A city needs ~2,000 palms. The obvious implementation — one THREE.Group per
+ * tree holding a trunk mesh and nine frond planes — costs ten draw calls per
+ * tree and buries the renderer (that single mistake was ~3,300 of the project's
+ * 5,200 draw calls). So:
+ *
+ *   1. ONE TEXTURE ATLAS.  Bark, crownshafts, fronds, canopies, flowers, water
+ *      and flat swatches all live in a single 1024px canvas, which means a
+ *      whole tree — trunk AND foliage — is one geometry with one material.
+ *   2. ONE INSTANCED POOL PER SPECIES.  A species is one draw call for the
+ *      entire map, and each instance is still individually swallowable because
+ *      pools.js leases a real proxy mesh at capture time.
+ *   3. MERGE EVERYTHING STATIC.  Lawns, paths, plaza paving, kerbs, court
+ *      markings, steps and walls for all 216 blocks collapse into ~15 meshes.
+ *
+ * Total cost of this module: ~45 draw calls for the entire city.
+ *
+ * ---------------------------------------------------------------------------
+ * WIND
+ * ---------------------------------------------------------------------------
+ * Every foliage geometry carries an `aWind` vertex attribute and the shared
+ * atlas material carries a vertex-shader sway (see `installWind`). It is free
+ * at runtime, it makes 2,000 palms breathe, and it reuses the clock uniform
+ * that groundShader.js already updates once a frame — no new per-frame hook.
+ * A NEGATIVE aWind means "this is water": the same code path bobs it vertically
+ * instead of leaning it sideways, which is how fountain basins ripple.
+ *
+ * ---------------------------------------------------------------------------
+ * SURFACES
+ * ---------------------------------------------------------------------------
+ * Anything at ground level goes through materials.ground() (or applyHoleCut)
+ * or the hole will not cut through it. That includes lawn, paving, mulch,
+ * courts, kerbs, low walls and pond water.
  */
 
 import * as THREE from 'three';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { TIER, PALETTE, WORLD } from '../config.js';
 import { makeRNG } from '../core/rng.js';
-import { Textures, ground, solid, foliage } from '../core/materials.js';
-import { ZONE } from './cityLayout.js';
+import { Textures, ground, foliage, painted } from '../core/materials.js';
+import { applyHoleCut, holeUniforms } from '../render/groundShader.js';
+import { ZONE, ROAD_CLASS } from './cityLayout.js';
 
-function palmGeometry() {
-  const parts = [];
-  const trunk = new THREE.CylinderGeometry(0.22, 0.38, 9, 8, 4);
-  // gentle S-curve
-  const pos = trunk.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i);
-    const t = (y + 4.5) / 9;
-    pos.setX(i, pos.getX(i) + Math.sin(t * 2.1) * 0.55);
-  }
-  pos.needsUpdate = true;
-  trunk.computeVertexNormals();
-  trunk.translate(0, 4.5, 0);
-  parts.push(trunk);
-  return trunk;
+/* ======================================================================== */
+/*  SHARED CLOCK                                                            */
+/* ======================================================================== */
+
+/**
+ * groundShader.js already pushes elapsed time into this uniform every frame.
+ * Borrowing it means the wind and the water need no update callback at all.
+ * Guarded so a refactor over there degrades to "no animation" rather than a
+ * module-load crash.
+ */
+const TIME = (holeUniforms && holeUniforms.uTime) || { value: 0 };
+
+/* ======================================================================== */
+/*  ATLAS                                                                   */
+/* ======================================================================== */
+
+const ATLAS = 1024;
+
+/**
+ * Cell rectangles in canvas pixels [x, y, w, h].
+ *
+ * Layout rule: every OPAQUE cell lives in the bottom two rows, packed against
+ * other opaque cells. Mip-chain bleed between neighbours is then brown-into-
+ * brown instead of leaf-into-bark, which is the artefact you actually notice.
+ */
+const CELL = {
+  frondA: [0, 0, 512, 256],          // pinnate palm frond, sunlit
+  frondB: [512, 0, 512, 256],        // pinnate palm frond, shaded + a torn tip
+  fanA: [0, 256, 256, 256],          // costapalmate fan (sabal / washingtonia)
+  shrubA: [256, 256, 256, 256],      // dense small-leaf shrub mass
+  seagrape: [512, 256, 256, 256],    // big round coastal leaves
+  grassTuft: [768, 256, 128, 256],   // ornamental grass
+  coconut: [896, 256, 128, 256],     // fruit cluster
+  canopyA: [0, 512, 256, 256],       // broadleaf canopy clump, mid green
+  canopyB: [256, 512, 256, 256],     // broadleaf canopy clump, deeper green
+  canopyPink: [512, 512, 256, 256],  // bougainvillea
+  canopyYel: [768, 512, 256, 256],   // tabebuia
+  barkRoyal: [0, 768, 128, 128],     // smooth pale concrete-grey ringed trunk
+  barkCoco: [128, 768, 128, 128],    // brown, diagonal leaf scars
+  barkFib: [256, 768, 128, 128],     // fibrous sabal boot
+  crownshaft: [384, 768, 128, 128],  // the green sheath under a royal crown
+  barkOak: [512, 768, 128, 128],     // furrowed hardwood
+  waterDisc: [640, 768, 128, 128],   // still water with concentric ripples
+  stoneTex: [768, 768, 128, 128],    // cast stone for basins and plinths
+  mulchTex: [896, 768, 128, 128],    // bark mulch
+};
+
+/** Flat colour swatches, 64x128 each, along the bottom row. */
+const SWATCH = [
+  'leaf', 'leafDark', 'wood', 'cream', 'stone', 'coral', 'aqua', 'sun',
+  'pink', 'white', 'sand', 'teal', 'magenta', 'terracotta', 'steel', 'shade',
+];
+const SWATCH_HEX = {
+  leaf: PALETTE.TREE_CANOPY, leafDark: PALETTE.TREE_CANOPY_DARK,
+  wood: PALETTE.WOOD_DECK, cream: PALETTE.CONCRETE_WARM,
+  stone: PALETTE.CONCRETE_DARK, coral: PALETTE.STUCCO_CORAL,
+  aqua: PALETTE.STUCCO_AQUA, sun: PALETTE.ACCENT_SUN,
+  pink: PALETTE.FLOWER_PINK, white: PALETTE.STUCCO_WHITE,
+  sand: PALETTE.SAND, teal: PALETTE.PATINA,
+  magenta: PALETTE.FLOWER_MAGENTA, terracotta: PALETTE.TERRACOTTA,
+  steel: PALETTE.STEEL, shade: PALETTE.MULCH,
+};
+for (let i = 0; i < SWATCH.length; i++) CELL[`sw_${SWATCH[i]}`] = [i * 64, 896, 64, 128];
+
+/** Deterministic PRNG — the atlas must be byte-identical every boot. */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
+
+const rgbOf = (hex) => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+const cssOf = (hex, a = 1) => {
+  const c = rgbOf(hex);
+  return `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+};
+const mixHex = (a, b, t) => {
+  const x = rgbOf(a), y = rgbOf(b);
+  return `rgb(${Math.round(x[0] + (y[0] - x[0]) * t)},${Math.round(x[1] + (y[1] - x[1]) * t)},${Math.round(x[2] + (y[2] - x[2]) * t)})`;
+};
+
+/* ------------------------------------------------------- cell painters --- */
+
+/**
+ * Pinnate palm frond (royal, coconut, queen).
+ *
+ * Leaflets are FILLED polygons, not strokes: strokes vanish into the mip chain
+ * and the crown turns to fog at 40 m. They taper, lean toward the tip, are
+ * longest at mid-span, and a handful are torn off — that asymmetry is most of
+ * what stops a procedural palm looking like a stencil.
+ */
+function drawFrond(g, rect, seed, light, mid, dark, torn) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const cy = Y + H * 0.5;
+  const x0 = X + W * 0.02, x1 = X + W * 0.985;
+  // Rachis: level at the base, drooping through the tip.
+  const rach = (t) => cy - Math.sin(t * Math.PI * 0.72) * H * 0.10 + t * t * H * 0.13;
+
+  const N = 40;
+  for (let side = 0; side < 2; side++) {
+    const dir = side === 0 ? -1 : 1;
+    for (let i = 0; i < N; i++) {
+      const t = (i + 0.5) / N;
+      if (rand() < torn && t > 0.18 && t < 0.92) continue;
+      const bx = x0 + (x1 - x0) * t;
+      const by = rach(t);
+      const len = (Math.pow(Math.sin(Math.PI * Math.pow(t, 0.86)), 0.72) * 0.40 + 0.04)
+        * H * (0.90 + rand() * 0.26);
+      const lean = 0.30 + t * 0.46;
+      const tipX = bx + len * lean;
+      const tipY = by + dir * len * (0.95 - t * 0.30);
+      const wide = Math.max(2.4, len * 0.14);
+
+      const sh = (side === 0 ? 0.0 : 0.40) + rand() * 0.36;
+      g.fillStyle = sh < 0.42 ? mixHex(light, mid, sh / 0.42) : mixHex(mid, dark, (sh - 0.42) / 0.58);
+      g.beginPath();
+      g.moveTo(bx - wide * 0.3, by);
+      g.quadraticCurveTo(
+        bx + len * lean * 0.36 - dir * wide * 0.9, by + dir * len * 0.44, tipX, tipY
+      );
+      g.quadraticCurveTo(
+        bx + len * lean * 0.36 + dir * wide * 0.9, by + dir * len * 0.40, bx + wide * 0.5, by
+      );
+      g.closePath();
+      g.fill();
+    }
+  }
+
+  /* Rachis on top — a solid spine keeps the frond readable when the leaflets
+     minify away. */
+  g.lineCap = 'round';
+  for (let pass = 0; pass < 2; pass++) {
+    g.strokeStyle = pass === 0 ? cssOf(dark, 0.92) : mixHex(mid, light, 0.5);
+    g.lineWidth = pass === 0 ? H * 0.030 : H * 0.019;
+    g.beginPath();
+    for (let i = 0; i <= 32; i++) {
+      const t = i / 32;
+      const x = x0 + (x1 - x0) * t;
+      const y = rach(t) + (pass === 0 ? H * 0.008 : 0);
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+}
+
+/** Costapalmate fan: segments radiating from a hinge at the bottom edge. */
+function drawFan(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const ox = X + W * 0.5, oy = Y + H * 0.99;
+  const light = PALETTE.PALM_FROND_LIGHT, mid = PALETTE.PALM_FROND, dark = PALETTE.PALM_FROND_DARK;
+  const N = 26;
+  const spread = Math.PI * 1.06;
+  for (let i = 0; i < N; i++) {
+    const t = (i + 0.5) / N;
+    const a = -Math.PI / 2 - spread / 2 + spread * t;
+    // Longest at the crown of the fan, shorter at the two outer wings.
+    const len = H * (0.52 + 0.44 * Math.sin(Math.PI * t)) * (0.92 + rand() * 0.16);
+    const wide = len * 0.085;
+    const sh = Math.abs(t - 0.42) * 1.5 + rand() * 0.3;
+    g.fillStyle = sh < 0.45 ? mixHex(light, mid, sh / 0.45) : mixHex(mid, dark, Math.min(1, (sh - 0.45) / 0.55));
+    const tx = ox + Math.cos(a) * len, ty = oy + Math.sin(a) * len;
+    const px = -Math.sin(a) * wide, py = Math.cos(a) * wide;
+    g.beginPath();
+    g.moveTo(ox + px * 0.4, oy + py * 0.4);
+    // Split tip — the notch is the giveaway that this is a fan palm.
+    g.lineTo(tx + px * 1.2, ty + py * 1.2);
+    g.lineTo(tx + Math.cos(a) * len * 0.10, ty + Math.sin(a) * len * 0.10);
+    g.lineTo(tx - px * 1.2, ty - py * 1.2);
+    g.lineTo(ox - px * 0.4, oy - py * 0.4);
+    g.closePath();
+    g.fill();
+  }
+  /* Hastula: the pale wedge where the segments meet the petiole. */
+  g.fillStyle = mixHex(light, mid, 0.3);
+  g.beginPath();
+  g.ellipse(ox, oy, W * 0.10, H * 0.07, 0, Math.PI, 0);
+  g.fill();
+}
+
+/**
+ * A broadleaf canopy clump.
+ *
+ * Built as overlapping lobes of small leaf dabs rather than one disc: the
+ * ragged silhouette is the entire difference between "tree" and "green ball".
+ */
+function drawCanopy(g, rect, seed, base, dark, light, flower, flowerP) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const cx = X + W * 0.5, cy = Y + H * 0.52;
+  const R = Math.min(W, H) * 0.47;
+
+  const lobes = [];
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2 + rand() * 0.7;
+    const d = R * (0.10 + rand() * 0.52);
+    lobes.push({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d * 0.9, r: R * (0.34 + rand() * 0.26) });
+  }
+  lobes.push({ x: cx, y: cy, r: R * 0.62 });
+
+  for (const L of lobes) {
+    const n = Math.round(48 * (L.r / R));
+    for (let i = 0; i < n; i++) {
+      const a = rand() * Math.PI * 2;
+      const d = Math.sqrt(rand()) * L.r;
+      const px = L.x + Math.cos(a) * d;
+      const py = L.y + Math.sin(a) * d;
+      // Light falls from the top-left, so leaves high in the mass are brighter.
+      const lit = 1 - (py - (cy - R)) / (2 * R);
+      const k = Math.max(0, Math.min(1, lit * 0.9 + rand() * 0.35 - 0.1));
+      let fill;
+      if (flower > 0 && rand() < flowerP * (0.45 + lit)) {
+        fill = mixHex(flower, PALETTE.FLOWER_WHITE, rand() * 0.35);
+      } else {
+        fill = k > 0.5 ? mixHex(base, light, (k - 0.5) * 1.5) : mixHex(dark, base, k * 2);
+      }
+      g.fillStyle = fill;
+      const lr = R * (0.055 + rand() * 0.070);
+      g.beginPath();
+      g.ellipse(px, py, lr, lr * (0.60 + rand() * 0.4), rand() * 3.14, 0, 6.29);
+      g.fill();
+    }
+  }
+  /* Deep shadow pocket at the underside so the clump reads as a volume. */
+  const sg = g.createRadialGradient(cx, cy + R * 0.42, R * 0.05, cx, cy + R * 0.35, R * 0.85);
+  sg.addColorStop(0, cssOf(dark, 0.42));
+  sg.addColorStop(1, cssOf(dark, 0));
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = sg;
+  g.fillRect(X, Y, W, H);
+  g.globalCompositeOperation = 'source-over';
+}
+
+/** Dense low shrub mass — flat-bottomed so it sits on the ground. */
+function drawShrub(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const base = PALETTE.HEDGE, light = PALETTE.HEDGE_LIGHT, dark = PALETTE.TREE_CANOPY_DARK;
+  for (let i = 0; i < 900; i++) {
+    // Bias the mass into a dome that meets the bottom edge squarely.
+    const u = rand(), v = Math.pow(rand(), 0.7);
+    const px = X + W * (0.05 + u * 0.9);
+    const dome = Math.sin(Math.PI * (0.05 + u * 0.9));
+    const py = Y + H * (1.0 - v * (0.22 + dome * 0.74));
+    const lit = 1 - (py - Y) / H;
+    const k = Math.max(0, Math.min(1, lit * 1.1 + rand() * 0.35 - 0.15));
+    g.fillStyle = k > 0.5 ? mixHex(base, light, (k - 0.5) * 1.6) : mixHex(dark, base, k * 2);
+    const lr = W * (0.018 + rand() * 0.026);
+    g.beginPath();
+    g.ellipse(px, py, lr, lr * (0.55 + rand() * 0.5), rand() * 3.14, 0, 6.29);
+    g.fill();
+  }
+}
+
+/** Sea grape: big leathery discs with a red midrib. Reads instantly coastal. */
+function drawSeagrape(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const base = PALETTE.TREE_CANOPY, light = PALETTE.TREE_CANOPY_LIGHT, dark = PALETTE.TREE_CANOPY_DARK;
+  for (let i = 0; i < 46; i++) {
+    const u = rand(), v = Math.pow(rand(), 0.6);
+    const dome = Math.sin(Math.PI * (0.08 + u * 0.84));
+    const px = X + W * (0.08 + u * 0.84);
+    const py = Y + H * (1.0 - v * (0.15 + dome * 0.80));
+    const r = W * (0.055 + rand() * 0.055);
+    const lit = 1 - (py - Y) / H;
+    g.fillStyle = lit > 0.5 ? mixHex(base, light, (lit - 0.5) * 1.5) : mixHex(dark, base, lit * 2);
+    g.beginPath();
+    g.ellipse(px, py, r, r * 0.86, rand() * 3.14, 0, 6.29);
+    g.fill();
+    g.strokeStyle = cssOf(PALETTE.RUST, 0.5);
+    g.lineWidth = Math.max(1, r * 0.09);
+    g.beginPath(); g.moveTo(px, py + r * 0.8); g.lineTo(px, py - r * 0.7); g.stroke();
+  }
+}
+
+/** Ornamental grass: a fan of thin arcing blades. */
+function drawGrassTuft(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const ox = X + W * 0.5, oy = Y + H * 0.99;
+  for (let i = 0; i < 70; i++) {
+    const a = -Math.PI / 2 + (rand() - 0.5) * 1.5;
+    const len = H * (0.42 + rand() * 0.55);
+    const bend = (rand() - 0.5) * W * 0.55;
+    const t = rand();
+    g.strokeStyle = t < 0.3 ? cssOf(PALETTE.GRASS_DRY, 0.95)
+      : t < 0.7 ? cssOf(PALETTE.GRASS, 0.95) : cssOf(PALETTE.GRASS_LIGHT, 0.95);
+    g.lineWidth = Math.max(1.4, W * 0.016 * (0.6 + rand()));
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(ox + (rand() - 0.5) * W * 0.2, oy);
+    g.quadraticCurveTo(
+      ox + Math.cos(a) * len * 0.5, oy + Math.sin(a) * len * 0.6,
+      ox + Math.cos(a) * len * 0.7 + bend, oy + Math.sin(a) * len
+    );
+    g.stroke();
+  }
+}
+
+/** Coconut cluster hanging under a crown. */
+function drawCoconuts(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  for (let i = 0; i < 9; i++) {
+    const px = X + W * (0.28 + rand() * 0.44);
+    const py = Y + H * (0.16 + rand() * 0.42);
+    const r = W * (0.13 + rand() * 0.07);
+    g.fillStyle = rand() < 0.4 ? mixHex(PALETTE.GRASS_DRY, PALETTE.WOOD_DARK, 0.4)
+      : mixHex(PALETTE.PALM_FROND_DARK, PALETTE.WOOD_DARK, 0.45);
+    g.beginPath(); g.ellipse(px, py, r, r * 1.12, 0, 0, 6.29); g.fill();
+    g.fillStyle = 'rgba(255,248,226,0.28)';
+    g.beginPath(); g.ellipse(px - r * 0.3, py - r * 0.35, r * 0.38, r * 0.30, 0, 0, 6.29); g.fill();
+  }
+  /* The stalk they hang from. */
+  g.strokeStyle = cssOf(PALETTE.WOOD_DARK, 0.9);
+  g.lineWidth = W * 0.05;
+  g.beginPath(); g.moveTo(X + W * 0.5, Y + H * 0.02); g.lineTo(X + W * 0.5, Y + H * 0.35); g.stroke();
+}
+
+/**
+ * A trunk bark strip. `kind` picks the species language:
+ *   'royal' smooth pale grey with faint growth rings
+ *   'coco'  brown with diagonal leaf scars
+ *   'fib'   criss-cross fibrous sabal boot
+ *   'oak'   deep vertical furrows
+ */
+function drawBark(g, rect, kind, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const spec = {
+    royal: { base: 0xbfb8a8, dark: 0x8e8878, light: 0xdcd6c6 },
+    coco: { base: PALETTE.PALM_TRUNK, dark: PALETTE.PALM_TRUNK_DARK, light: 0xc7a67c },
+    fib: { base: 0x9a7c54, dark: 0x6a5334, light: 0xbb9a68 },
+    oak: { base: 0x9c8b74, dark: 0x63563f, light: 0xbcac93 },
+  }[kind];
+
+  g.fillStyle = cssOf(spec.base);
+  g.fillRect(X, Y, W, H);
+
+  /* Cylindrical shading: the strip wraps a tube, so the left and right
+     eighths are the silhouette edges and must go dark. */
+  const shade = g.createLinearGradient(X, 0, X + W, 0);
+  shade.addColorStop(0.00, cssOf(spec.dark, 0.85));
+  shade.addColorStop(0.22, cssOf(spec.light, 0.30));
+  shade.addColorStop(0.55, cssOf(spec.base, 0.0));
+  shade.addColorStop(1.00, cssOf(spec.dark, 0.92));
+  g.fillStyle = shade;
+  g.fillRect(X, Y, W, H);
+
+  if (kind === 'royal') {
+    for (let i = 0; i < 22; i++) {
+      const y = Y + (i + rand() * 0.6) * (H / 22);
+      g.strokeStyle = cssOf(spec.dark, 0.16 + rand() * 0.14);
+      g.lineWidth = 1 + rand() * 1.6;
+      g.beginPath(); g.moveTo(X, y); g.lineTo(X + W, y + (rand() - 0.5) * 2); g.stroke();
+      g.strokeStyle = cssOf(spec.light, 0.16);
+      g.beginPath(); g.moveTo(X, y + 2); g.lineTo(X + W, y + 2); g.stroke();
+    }
+  } else if (kind === 'coco') {
+    for (let i = 0; i < 16; i++) {
+      const y = Y + (i + 0.3) * (H / 16);
+      g.strokeStyle = cssOf(spec.dark, 0.45);
+      g.lineWidth = 2.2;
+      g.beginPath(); g.moveTo(X, y); g.lineTo(X + W, y - H * 0.035); g.stroke();
+      g.strokeStyle = cssOf(spec.light, 0.30);
+      g.beginPath(); g.moveTo(X, y + 2.6); g.lineTo(X + W, y - H * 0.035 + 2.6); g.stroke();
+    }
+  } else if (kind === 'fib') {
+    for (let i = 0; i < 70; i++) {
+      const y = Y + rand() * H;
+      const x = X + rand() * W;
+      const l = 5 + rand() * 16;
+      g.strokeStyle = rand() < 0.5 ? cssOf(spec.dark, 0.4) : cssOf(spec.light, 0.32);
+      g.lineWidth = 1 + rand() * 1.8;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x + (rand() - 0.5) * l, y + (rand() < 0.5 ? -1 : 1) * l);
+      g.stroke();
+    }
+  } else {
+    for (let i = 0; i < 14; i++) {
+      const x = X + (i + rand() * 0.7) * (W / 14);
+      g.strokeStyle = cssOf(spec.dark, 0.35 + rand() * 0.2);
+      g.lineWidth = 1.4 + rand() * 2.6;
+      g.beginPath();
+      g.moveTo(x, Y);
+      for (let k = 1; k <= 5; k++) g.lineTo(x + (rand() - 0.5) * 5, Y + (H / 5) * k);
+      g.stroke();
+    }
+  }
+}
+
+/** Green crownshaft sheath (the smooth column under a royal palm crown). */
+function drawCrownshaft(g, rect) {
+  const [X, Y, W, H] = rect;
+  const grad = g.createLinearGradient(X, 0, X + W, 0);
+  grad.addColorStop(0.00, cssOf(PALETTE.PALM_FROND_DARK));
+  grad.addColorStop(0.30, cssOf(PALETTE.PALM_FROND));
+  grad.addColorStop(0.55, cssOf(PALETTE.PALM_FROND_LIGHT));
+  grad.addColorStop(1.00, cssOf(PALETTE.TREE_CANOPY_DARK));
+  g.fillStyle = grad;
+  g.fillRect(X, Y, W, H);
+  const fade = g.createLinearGradient(0, Y, 0, Y + H);
+  fade.addColorStop(0, cssOf(PALETTE.GRASS_DRY, 0.32));   // sun-bleached top
+  fade.addColorStop(1, cssOf(PALETTE.TREE_CANOPY_DARK, 0.30));
+  g.fillStyle = fade;
+  g.fillRect(X, Y, W, H);
+}
+
+/** Still water with concentric ripple rings, for fountain bowls. */
+function drawWaterCell(g, rect) {
+  const [X, Y, W, H] = rect;
+  const cx = X + W / 2, cy = Y + H / 2;
+  const grad = g.createRadialGradient(cx, cy, 0, cx, cy, W * 0.72);
+  grad.addColorStop(0.0, cssOf(PALETTE.SEA_SHALLOW));
+  grad.addColorStop(0.6, cssOf(PALETTE.WATER_POOL));
+  grad.addColorStop(1.0, cssOf(PALETTE.SEA_DEEP));
+  g.fillStyle = grad;
+  g.fillRect(X, Y, W, H);
+  for (let i = 1; i < 11; i++) {
+    g.strokeStyle = `rgba(255,255,255,${0.05 + (i % 2) * 0.08})`;
+    g.lineWidth = 1.6;
+    g.beginPath(); g.arc(cx, cy, (i / 11) * W * 0.52, 0, 6.29); g.stroke();
+  }
+  g.fillStyle = cssOf(PALETTE.WATER_WAKE, 0.35);
+  g.beginPath(); g.ellipse(cx - W * 0.16, cy - H * 0.18, W * 0.14, H * 0.06, -0.5, 0, 6.29); g.fill();
+}
+
+/** Cast stone with a fine aggregate speckle. */
+function drawStoneCell(g, rect, seed, hex) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  g.fillStyle = cssOf(hex);
+  g.fillRect(X, Y, W, H);
+  for (let i = 0; i < 2200; i++) {
+    const a = 0.03 + rand() * 0.09;
+    g.fillStyle = rand() < 0.5 ? `rgba(255,250,238,${a})` : `rgba(96,86,70,${a})`;
+    g.fillRect(X + rand() * W, Y + rand() * H, 1 + rand() * 2, 1 + rand() * 2);
+  }
+}
+
+/** Bark mulch: coarse dark chips. */
+function drawMulchCell(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  g.fillStyle = cssOf(PALETTE.MULCH);
+  g.fillRect(X, Y, W, H);
+  for (let i = 0; i < 420; i++) {
+    const t = rand();
+    g.fillStyle = t < 0.4 ? cssOf(PALETTE.WOOD_DARK, 0.8)
+      : t < 0.75 ? cssOf(PALETTE.DIRT, 0.55) : cssOf(PALETTE.WOOD_DECK, 0.35);
+    g.save();
+    g.translate(X + rand() * W, Y + rand() * H);
+    g.rotate(rand() * 3.14);
+    g.fillRect(-3 - rand() * 4, -1, 6 + rand() * 8, 2 + rand() * 2);
+    g.restore();
+  }
+}
+
+/**
+ * Bleed opaque colour outward into the transparent margin.
+ *
+ * Alpha-tested foliage on a canvas cleared to rgba(0,0,0,0) gets a black
+ * fringe the moment mipmapping kicks in, because the filter averages the
+ * invisible black pixels in. Dilating the colour (while leaving alpha alone)
+ * is the standard fix and it is the single largest quality win in this file.
+ */
+function dilateAlpha(gctx, size, iterations) {
+  const img = gctx.getImageData(0, 0, size, size);
+  const d = img.data;
+  for (let pass = 0; pass < iterations; pass++) {
+    const src = new Uint8ClampedArray(d);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const o = (y * size + x) * 4;
+        if (src[o + 3] > 8) continue;
+        let r = 0, g2 = 0, b = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = y + dy; if (yy < 0 || yy >= size) continue;
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx; if (xx < 0 || xx >= size) continue;
+            const p = (yy * size + xx) * 4;
+            if (src[p + 3] <= 8 && !(src[p] | src[p + 1] | src[p + 2])) continue;
+            r += src[p]; g2 += src[p + 1]; b += src[p + 2]; n++;
+          }
+        }
+        if (!n) continue;
+        d[o] = r / n; d[o + 1] = g2 / n; d[o + 2] = b / n;
+      }
+    }
+  }
+  gctx.putImageData(img, 0, 0);
+}
+
+let _atlasTex = null;
+
+function atlasTexture() {
+  if (_atlasTex) return _atlasTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = ATLAS;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.clearRect(0, 0, ATLAS, ATLAS);
+
+  drawFrond(g, CELL.frondA, 0x0fa17e, PALETTE.PALM_FROND_LIGHT, PALETTE.PALM_FROND, PALETTE.PALM_FROND_DARK, 0.04);
+  drawFrond(g, CELL.frondB, 0x77c210, PALETTE.PALM_FROND, PALETTE.PALM_FROND_DARK, PALETTE.TREE_CANOPY_DARK, 0.09);
+  drawFan(g, CELL.fanA, 0x31ab77);
+  drawShrub(g, CELL.shrubA, 0x5b2d91);
+  drawSeagrape(g, CELL.seagrape, 0x1188cd);
+  drawGrassTuft(g, CELL.grassTuft, 0x4411aa);
+  drawCoconuts(g, CELL.coconut, 0x9d0a11);
+  drawCanopy(g, CELL.canopyA, 0x2c71b3, PALETTE.TREE_CANOPY, PALETTE.TREE_CANOPY_DARK, PALETTE.TREE_CANOPY_LIGHT, 0, 0);
+  drawCanopy(g, CELL.canopyB, 0x81aa22, PALETTE.HEDGE, PALETTE.TREE_CANOPY_DARK, PALETTE.GRASS_LIGHT, 0, 0);
+  drawCanopy(g, CELL.canopyPink, 0x51fa3b, PALETTE.TREE_CANOPY, PALETTE.TREE_CANOPY_DARK, PALETTE.TREE_CANOPY_LIGHT, PALETTE.FLOWER_MAGENTA, 0.62);
+  drawCanopy(g, CELL.canopyYel, 0xa0be71, PALETTE.TREE_CANOPY, PALETTE.TREE_CANOPY_DARK, PALETTE.GRASS_LIGHT, PALETTE.FLOWER_YELLOW, 0.68);
+
+  drawBark(g, CELL.barkRoyal, 'royal', 0x1a2b3c);
+  drawBark(g, CELL.barkCoco, 'coco', 0x2b3c4d);
+  drawBark(g, CELL.barkFib, 'fib', 0x3c4d5e);
+  drawCrownshaft(g, CELL.crownshaft);
+  drawBark(g, CELL.barkOak, 'oak', 0x4d5e6f);
+  drawWaterCell(g, CELL.waterDisc);
+  drawStoneCell(g, CELL.stoneTex, 0x7711aa, PALETTE.CONCRETE_WARM);
+  drawMulchCell(g, CELL.mulchTex, 0x22ccdd);
+
+  for (const name of SWATCH) {
+    const [X, Y, W, H] = CELL[`sw_${name}`];
+    const hex = SWATCH_HEX[name];
+    g.fillStyle = cssOf(hex);
+    g.fillRect(X, Y, W, H);
+    // A vertical shade ramp so even flat-coloured parts get a little form.
+    const gr = g.createLinearGradient(X, 0, X + W, 0);
+    gr.addColorStop(0, 'rgba(0,0,0,0.14)');
+    gr.addColorStop(0.4, 'rgba(255,255,255,0.10)');
+    gr.addColorStop(1, 'rgba(0,0,0,0.16)');
+    g.fillStyle = gr;
+    g.fillRect(X, Y, W, H);
+  }
+
+  dilateAlpha(g, ATLAS, 4);
+
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.needsUpdate = true;
+  _atlasTex = t;
+  return t;
+}
+
+/** UV rect for a cell, inset so the mip chain cannot pull in a neighbour. */
+function uvOf(name) {
+  const [x, y, w, h] = CELL[name];
+  const p = 2.5;
+  return {
+    u0: (x + p) / ATLAS,
+    u1: (x + w - p) / ATLAS,
+    // Canvas y grows down; CanvasTexture flips, so v is measured from the base.
+    v0: 1 - (y + h - p) / ATLAS,
+    v1: 1 - (y + p) / ATLAS,
+  };
+}
+
+/* ======================================================================== */
+/*  MATERIALS                                                               */
+/* ======================================================================== */
+
+/**
+ * The vertex-shader wind.
+ *
+ * `aWind` >= 0 is foliage: lean and flutter in the horizontal plane, weighted
+ * by how far the vertex is from the trunk and how high it sits.
+ * `aWind` < 0 is water: bob vertically with a small ring ripple instead.
+ * Phase comes from the instance's own world origin, so no two trees in the
+ * city are in step.
+ */
+function installWind(mat, key) {
+  // materials.js caches by (hex, map) — two callers can legitimately land on
+  // the same object, and wrapping onBeforeCompile twice would inject the GLSL
+  // twice and fail to link.
+  if (mat.userData.__natWind) return mat;
+  mat.userData.__natWind = true;
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (shader, renderer) => {
+    if (prev) prev(shader, renderer);
+    shader.uniforms.uNatTime = TIME;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', /* glsl */`
+        #include <common>
+        attribute float aWind;
+        uniform float uNatTime;
+      `)
+      .replace('#include <begin_vertex>', /* glsl */`
+        #include <begin_vertex>
+        {
+          #ifdef USE_INSTANCING
+            vec3 nOrigin = instanceMatrix[3].xyz;
+          #else
+            vec3 nOrigin = modelMatrix[3].xyz;
+          #endif
+          float nPhase = nOrigin.x * 0.19 + nOrigin.z * 0.147;
+          if (aWind >= 0.0) {
+            // Gusts travel across the map as a slow low-frequency envelope, so
+            // the whole avenue leans together instead of each palm buzzing.
+            float gust = 0.55 + 0.45 * sin(uNatTime * 0.21 + nOrigin.x * 0.011 - nOrigin.z * 0.007);
+            float t = uNatTime * 1.15 + nPhase;
+            float s = (sin(t) + 0.38 * sin(t * 2.37 + 1.7)) * aWind * gust;
+            transformed.x += s * 0.42;
+            transformed.z += cos(t * 0.83 + 1.1) * aWind * gust * 0.30;
+            transformed.y -= abs(s) * aWind * 0.06;
+          } else {
+            float w = -aWind;
+            float rr = length(transformed.xz);
+            transformed.y += sin(uNatTime * 2.6 - rr * 2.4 + nPhase) * 0.022 * w
+                           + sin(uNatTime * 1.7 + rr * 1.1) * 0.014 * w;
+          }
+        }
+      `);
+  };
+  mat.customProgramCacheKey = () => key;
+  mat.needsUpdate = true;
+  return mat;
+}
+
+/**
+ * materials.foliage() ships `transparent: true`, which is right for blended
+ * leaves but wrong for us: it pushes 30 instanced meshes into the sorted
+ * transparent queue where they get no early-Z, and with ~2,000 palms on screen
+ * the overdraw dominates the frame. We are pure CUTOUT — alphaTest with a hard
+ * edge — so the opaque queue is both correct and several times faster. The
+ * cache key in materials.js includes our atlas's uuid, so this only ever
+ * touches our own material.
+ */
+function asCutout(m) {
+  m.transparent = false;
+  m.depthWrite = true;
+  m.alphaTest = 0.36;
+  return m;
+}
+
+let _atlasMat = null;
+/** The one material every tree, shrub, planter and fountain in Miami uses. */
+function atlasMaterial() {
+  if (!_atlasMat) {
+    _atlasMat = asCutout(foliage(atlasTexture()));
+    installWind(_atlasMat, 'nature-atlas-v1');
+  }
+  return _atlasMat;
+}
+
+const _tintMats = new Map();
+/** A tinted copy of the atlas material — used for shrub/canopy colour runs. */
+function atlasMaterialTint(hex) {
+  let m = _tintMats.get(hex);
+  if (!m) {
+    m = asCutout(foliage(atlasTexture(), hex));
+    installWind(m, 'nature-atlas-v1');
+    _tintMats.set(hex, m);
+  }
+  return m;
+}
+
+let _pondMat = null;
+/**
+ * Pond / fountain-basin water: animated normal ripple, sun specular, and it
+ * still has to be hole-cuttable because a pond is a ground surface.
+ */
+function pondMaterial() {
+  if (_pondMat) return _pondMat;
+  const m = new THREE.MeshStandardMaterial({
+    color: PALETTE.SEA_SHALLOW,
+    roughness: 0.10,
+    metalness: 0.22,
+    envMapIntensity: 1.9,
+    dithering: true,
+  });
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uNatTime = TIME;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vNatW;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nvNatW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vNatW;\nuniform float uNatTime;')
+      .replace('#include <normal_fragment_maps>', /* glsl */`
+        #include <normal_fragment_maps>
+        {
+          vec2 p = vNatW.xz;
+          float t = uNatTime;
+          float dx = cos(p.x * 2.10 + t * 1.9) * 0.055
+                   + cos((p.x + p.y) * 1.05 - t * 1.2) * 0.045;
+          float dz = cos(p.y * 2.45 - t * 1.5) * 0.055
+                   + cos((p.x - p.y) * 1.25 + t * 0.95) * 0.045;
+          normal = normalize(normal + vec3(dx, 0.0, dz));
+        }
+      `);
+  };
+  applyHoleCut(m);
+  // applyHoleCut stamps a shared cache key; ours must win or three could hand
+  // this material a program compiled without the ripple.
+  m.customProgramCacheKey = () => 'nature-pond-v1';
+  _pondMat = m;
+  return m;
+}
+
+/* ======================================================================== */
+/*  GEOMETRY HELPERS                                                        */
+/* ======================================================================== */
+
+const _m4 = new THREE.Matrix4();
+const _v3 = new THREE.Vector3();
+
+/** Remap a geometry's 0..1 UVs into an atlas cell. */
+function mapUV(geo, rect) {
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, rect.u0 + uv.getX(i) * (rect.u1 - rect.u0), rect.v0 + uv.getY(i) * (rect.v1 - rect.v0));
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
+
+/**
+ * Attach the wind weight.
+ * @param {(x:number,y:number,z:number)=>number} fn returns the per-vertex weight
+ */
+function windAttr(geo, fn) {
+  const p = geo.attributes.position;
+  const a = new Float32Array(p.count);
+  for (let i = 0; i < p.count; i++) a[i] = fn(p.getX(i), p.getY(i), p.getZ(i));
+  geo.setAttribute('aWind', new THREE.BufferAttribute(a, 1));
+  return geo;
+}
+
+/** Bend vertex normals toward a radial direction so card clumps shade round. */
+function radialNormals(geo, cx, cy, cz, k) {
+  const p = geo.attributes.position, n = geo.attributes.normal;
+  for (let i = 0; i < p.count; i++) {
+    const dx = p.getX(i) - cx, dy = p.getY(i) - cy, dz = p.getZ(i) - cz;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    const nx = n.getX(i) + (dx / l - n.getX(i)) * k;
+    const ny = n.getY(i) + (dy / l - n.getY(i)) * k;
+    const nz = n.getZ(i) + (dz / l - n.getZ(i)) * k;
+    const m = Math.hypot(nx, ny, nz) || 1;
+    n.setXYZ(i, nx / m, ny / m, nz / m);
+  }
+  n.needsUpdate = true;
+  return geo;
+}
+
+/** Lift normals toward +Y — foliage undersides should never go black. */
+function liftNormals(geo, k) {
+  const n = geo.attributes.normal;
+  for (let i = 0; i < n.count; i++) {
+    const y = n.getY(i) + (1 - n.getY(i)) * k;
+    const x = n.getX(i) * (1 - k), z = n.getZ(i) * (1 - k);
+    const m = Math.hypot(x, y, z) || 1;
+    n.setXYZ(i, x / m, y / m, z / m);
+  }
+  n.needsUpdate = true;
+  return geo;
+}
+
+/**
+ * Tapered, curved, closed tube — the trunk primitive.
+ * y = 0 at the base. `bend` leans the top toward +x, `sway` swings it in z.
+ */
+function trunkGeo(h, rBot, rTop, cellName, {
+  sides = 6, rings = 5, bend = 0, sway = 0, bulge = 0,
+} = {}) {
+  const pos = [], nor = [], uv = [], idx = [];
+  const rect = uvOf(cellName);
+  for (let i = 0; i <= rings; i++) {
+    const t = i / rings;
+    const y = h * t;
+    // Palms thicken slightly at the base and just under the crown.
+    const r = (rBot + (rTop - rBot) * Math.pow(t, 0.65)) * (1 + bulge * Math.sin(t * Math.PI));
+    const ox = bend * h * t * t;
+    const oz = sway * h * (t * t * 0.9);
+    for (let j = 0; j <= sides; j++) {
+      const a = (j / sides) * Math.PI * 2;
+      const cx = Math.cos(a), cz = Math.sin(a);
+      pos.push(ox + cx * r, y, oz + cz * r);
+      nor.push(cx, 0.12, cz);
+      uv.push(rect.u0 + (j / sides) * (rect.u1 - rect.u0), rect.v0 + t * (rect.v1 - rect.v0));
+    }
+  }
+  const row = sides + 1;
+  for (let i = 0; i < rings; i++) {
+    for (let j = 0; j < sides; j++) {
+      const a = i * row + j, b = a + 1, c = a + row, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  return finishGeo(pos, nor, uv, idx);
+}
+
+/**
+ * One frond: a tapered strip that rises off the crown then droops, built along
+ * +X and then swung into place. Three segments is enough curve to read; four
+ * would double the palm's triangle budget for nothing.
+ */
+function frondGeo(len, wid, cellName, {
+  segs = 3, rise = 0.52, droop = 0.98, roll = 0, alongV = false,
+} = {}) {
+  const pos = [], nor = [], uv = [], idx = [];
+  const rect = uvOf(cellName);
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs;
+    const x = len * t;
+    const y = len * (rise * t - droop * t * t);
+    const hw = wid * 0.5 * (0.42 + 0.58 * Math.sin(Math.PI * Math.min(1, t * 1.02)));
+    // Roll folds the two edges below the rachis, which is what stops a frond
+    // reading as a flat sheet of paper from directly above.
+    const fold = hw * roll;
+    for (let s = -1; s <= 1; s += 2) {
+      pos.push(x, y - fold, s * hw);
+      nor.push(0, 1, 0);
+      if (alongV) {
+        // Fan cells are drawn radiating UP the cell from a hinge on its bottom
+        // edge, so their long axis is v, not u.
+        uv.push(s < 0 ? rect.u0 : rect.u1, rect.v0 + t * (rect.v1 - rect.v0));
+      } else {
+        uv.push(rect.u0 + t * (rect.u1 - rect.u0), s < 0 ? rect.v0 : rect.v1);
+      }
+    }
+  }
+  for (let i = 0; i < segs; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    idx.push(a, c, b, b, c, d);
+  }
+  return finishGeo(pos, nor, uv, idx);
+}
+
+/** A flat quad in the XY plane, origin at bottom centre, facing +Z. */
+function cardGeo(w, h, cellName) {
+  const g = new THREE.PlaneGeometry(w, h);
+  g.translate(0, h / 2, 0);
+  return mapUV(g, uvOf(cellName));
+}
+
+/**
+ * Broadleaf canopy: three crossed vertical cards plus three tilted cards.
+ * The tilted ones matter most — the game camera looks down at 40 degrees, and
+ * a purely vertical card cloud goes paper-thin from up there.
+ */
+function canopyGeo(radius, height, cellName, seedRng) {
+  const parts = [];
+  const cy = height;
+  for (let i = 0; i < 3; i++) {
+    const g = cardGeo(radius * 2.05, radius * 1.75, cellName);
+    g.translate(0, cy - radius * 0.875, 0);
+    g.rotateY((i / 3) * Math.PI + seedRng() * 0.4);
+    parts.push(g);
+  }
+  for (let i = 0; i < 3; i++) {
+    const g = cardGeo(radius * 1.8, radius * 1.6, cellName);
+    g.translate(0, -radius * 0.8, 0);
+    _m4.makeRotationX(-Math.PI / 2 + 0.42 + seedRng() * 0.3);
+    g.applyMatrix4(_m4);
+    const a = (i / 3) * Math.PI * 2 + seedRng();
+    g.translate(Math.cos(a) * radius * 0.38, cy + radius * 0.30, Math.sin(a) * radius * 0.38);
+    parts.push(g);
+  }
+  const merged = BufferGeometryUtils.mergeGeometries(parts, false);
+  radialNormals(merged, 0, cy, 0, 0.72);
+  return merged;
+}
+
+function finishGeo(pos, nor, uv, idx) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  return g;
+}
+
+/** Axis-aligned quad on the ground, with UVs scaled to a world tile size. */
+function tile(w, d, x, z, y, unitsPerTile) {
+  const g = new THREE.PlaneGeometry(w, d, 1, 1);
+  g.rotateX(-Math.PI / 2);
+  g.translate(x, y, z);
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, uv.getX(i) * (w / unitsPerTile), uv.getY(i) * (d / unitsPerTile));
+  }
+  uv.needsUpdate = true;
+  return g;
+}
+
+/** A box with world-scaled UVs, so kerbs and walls do not smear. */
+function box(w, h, d, x, y, z, unitsPerTile = 2) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  const uv = g.attributes.uv;
+  const spans = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+  for (let f = 0; f < 6; f++) {
+    for (let i = 0; i < 4; i++) {
+      const k = f * 4 + i;
+      uv.setXY(k, uv.getX(k) * (spans[f][0] / unitsPerTile), uv.getY(k) * (spans[f][1] / unitsPerTile));
+    }
+  }
+  uv.needsUpdate = true;
+  g.translate(x, y, z);
+  return g;
+}
+
+/** A flat ribbon following a polyline — park paths that actually curve. */
+function ribbon(points, width, y, unitsPerTile) {
+  const pos = [], nor = [], uv = [], idx = [];
+  let run = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const a = points[Math.max(0, i - 1)];
+    const b = points[Math.min(points.length - 1, i + 1)];
+    let dx = b.x - a.x, dz = b.z - a.z;
+    const l = Math.hypot(dx, dz) || 1;
+    dx /= l; dz /= l;
+    if (i > 0) run += Math.hypot(p.x - points[i - 1].x, p.z - points[i - 1].z);
+    const nx = -dz * width * 0.5, nz = dx * width * 0.5;
+    pos.push(p.x - nx, y, p.z - nz); nor.push(0, 1, 0); uv.push(0, run / unitsPerTile);
+    pos.push(p.x + nx, y, p.z + nz); nor.push(0, 1, 0); uv.push(width / unitsPerTile, run / unitsPerTile);
+  }
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    idx.push(a, c, b, b, c, d);
+  }
+  return finishGeo(pos, nor, uv, idx);
+}
+
+/** Flat regular polygon on the ground (fountain bowls, pond edges, medallions). */
+function disc(r, sides, x, y, z, cellName) {
+  const pos = [], nor = [], uv = [], idx = [];
+  const rect = cellName ? uvOf(cellName) : { u0: 0, u1: 1, v0: 0, v1: 1 };
+  pos.push(x, y, z); nor.push(0, 1, 0);
+  uv.push((rect.u0 + rect.u1) / 2, (rect.v0 + rect.v1) / 2);
+  for (let i = 0; i <= sides; i++) {
+    const a = (i / sides) * Math.PI * 2;
+    pos.push(x + Math.cos(a) * r, y, z + Math.sin(a) * r);
+    nor.push(0, 1, 0);
+    uv.push(
+      (rect.u0 + rect.u1) / 2 + Math.cos(a) * (rect.u1 - rect.u0) * 0.5,
+      (rect.v0 + rect.v1) / 2 + Math.sin(a) * (rect.v1 - rect.v0) * 0.5
+    );
+  }
+  for (let i = 1; i <= sides; i++) idx.push(0, i, i + 1);
+  return finishGeo(pos, nor, uv, idx);
+}
+
+/**
+ * Hollow ring wall — fountain and pond rims.
+ * The inner sleeve is left facing outward on purpose: the atlas material is
+ * double-sided, so three flips its normal for the back faces you actually see
+ * from inside the bowl, and that is one less geometry to build.
+ */
+function ringWall(rIn, rOut, h, y, sides, cellName, x = 0, z = 0) {
+  const parts = [];
+  const outer = new THREE.CylinderGeometry(rOut, rOut * 1.02, h, sides, 1, true);
+  const inner = new THREE.CylinderGeometry(rIn, rIn, h, sides, 1, true);
+  const cap = new THREE.RingGeometry(rIn, rOut, sides, 1).rotateX(-Math.PI / 2).translate(0, h / 2, 0);
+  outer.translate(0, h / 2, 0);
+  inner.translate(0, h / 2, 0);
+  for (const g of [outer, inner, cap]) parts.push(mapUV(g, uvOf(cellName)));
+  const m = BufferGeometryUtils.mergeGeometries(parts, false);
+  m.translate(x, y, z);
+  return m;
+}
+
+/* ======================================================================== */
+/*  SPECIES                                                                 */
+/* ======================================================================== */
+
+/**
+ * Palm builder. Everything — trunk, crownshaft, every frond, the coconuts —
+ * merges into ONE geometry so the whole tree is one instanced draw and one
+ * swallowable object.
+ */
+function makePalm(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const H = spec.h;
+  const shaftH = spec.crownshaft ? H * 0.11 : 0;
+  const trunkH = H - shaftH;
+
+  parts.push(trunkGeo(trunkH, spec.rBot, spec.rTop, spec.bark, {
+    sides: spec.sides || 6,
+    rings: spec.rings || 5,
+    bend: spec.bend,
+    sway: spec.sway,
+    bulge: spec.bulge || 0,
+  }));
+
+  const topX = spec.bend * trunkH, topZ = spec.sway * trunkH * 0.9;
+  let crownY = trunkH;
+
+  if (spec.crownshaft) {
+    const cs = trunkGeo(shaftH, spec.rTop * 1.32, spec.rTop * 0.86, 'crownshaft', {
+      sides: spec.sides || 6, rings: 2, bulge: 0.22,
+    });
+    cs.translate(topX, trunkH, topZ);
+    parts.push(cs);
+    crownY = trunkH + shaftH * 0.92;
+  }
+
+  /* The crown. Fronds alternate between two atlas cells so a single crown is
+     already a mix of sunlit and shaded blades. */
+  const n = spec.fronds;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + rng() * 0.35;
+    // Outer ring of fronds hangs low, inner ring points up: a real crown is a
+    // shuttlecock, not a parasol.
+    const inner = i % 3 === 0;
+    const len = spec.frondLen * (inner ? 0.72 : 1) * (0.86 + rng() * 0.3);
+    const pitch = inner ? 0.95 + rng() * 0.4 : spec.pitch + (rng() - 0.5) * 0.45;
+    const cell = spec.cells[i % spec.cells.length];
+    const f = frondGeo(len, len * spec.frondW, cell, {
+      rise: inner ? 0.75 : spec.rise,
+      droop: inner ? 0.7 : spec.droop,
+      roll: 0.30 + rng() * 0.25,
+      alongV: cell === 'fanA',
+    });
+    _m4.makeRotationZ(pitch);
+    f.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    f.applyMatrix4(_m4);
+    f.translate(topX, crownY, topZ);
+    parts.push(f);
+  }
+
+  if (spec.coconuts) {
+    for (let i = 0; i < 2; i++) {
+      const a = rng() * Math.PI * 2;
+      const c = cardGeo(spec.rTop * 4.2, spec.rTop * 5.0, 'coconut');
+      c.translate(0, -spec.rTop * 4.6, 0);
+      _m4.makeRotationY(a);
+      c.applyMatrix4(_m4);
+      c.translate(topX + Math.cos(a) * spec.rTop * 1.2, crownY - spec.rTop * 0.4,
+        topZ + Math.sin(a) * spec.rTop * 1.2);
+      parts.push(c);
+    }
+  }
+
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.28);
+  // Wind: nothing at the base, everything at the frond tips. The radial term
+  // is what makes the fronds flutter faster than the trunk leans.
+  windAttr(geo, (x, y, z) => {
+    const up = Math.min(1, Math.max(0, y / H));
+    const rad = Math.min(1, Math.hypot(x - topX, z - topZ) / Math.max(1, spec.frondLen));
+    return Math.pow(up, 1.9) * (0.55 + 0.85 * rad);
+  });
+  return geo;
+}
+
+/** Broadleaf tree: tapered trunk, a couple of limbs, a card-cloud canopy. */
+function makeTree(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const H = spec.h;
+  const trunkH = H * spec.trunkF;
+
+  parts.push(trunkGeo(trunkH, spec.rBot, spec.rTop, spec.bark, {
+    sides: 6, rings: 4, bend: spec.bend, sway: spec.sway, bulge: 0.05,
+  }));
+
+  /* Two stub limbs lifting out of the fork — cheap, but it is the difference
+     between a tree and a lollipop. */
+  for (let i = 0; i < spec.limbs; i++) {
+    const a = rng() * Math.PI * 2;
+    const l = trunkGeo(H * 0.26, spec.rTop * 0.72, spec.rTop * 0.34, spec.bark, { sides: 5, rings: 2 });
+    _m4.makeRotationZ(0.85 + rng() * 0.35);
+    l.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    l.applyMatrix4(_m4);
+    l.translate(spec.bend * trunkH, trunkH * 0.82, spec.sway * trunkH * 0.9);
+    parts.push(l);
+  }
+
+  const cy = trunkH * 0.96;
+  const c = canopyGeo(spec.canopyR, spec.canopyR * spec.canopyF, spec.cell, rng);
+  c.translate(spec.bend * trunkH, cy, spec.sway * trunkH * 0.9);
+  parts.push(c);
+
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.18);
+  windAttr(geo, (x, y) => {
+    const up = Math.min(1, Math.max(0, y / H));
+    return Math.pow(up, 2.1) * 0.85;
+  });
+  return geo;
+}
+
+/** Low mass: hedge units, shrubs, flower beds, ornamental grass. */
+function makeBush(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const n = spec.cards || 3;
+  for (let i = 0; i < n; i++) {
+    const g = cardGeo(spec.w, spec.h, spec.cell);
+    g.rotateY((i / n) * Math.PI + rng() * 0.3);
+    parts.push(g);
+  }
+  if (spec.top !== false) {
+    const t = cardGeo(spec.w * 0.94, spec.w * 0.94, spec.cell);
+    t.translate(0, -spec.w * 0.47, 0);
+    _m4.makeRotationX(-Math.PI / 2);
+    t.applyMatrix4(_m4);
+    t.translate(0, spec.h * 0.86, 0);
+    parts.push(t);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  radialNormals(geo, 0, spec.h * 0.45, 0, 0.6);
+  liftNormals(geo, 0.35);
+  windAttr(geo, (x, y) => Math.pow(Math.min(1, y / spec.h), 1.6) * 0.45);
+  return geo;
+}
+
+/**
+ * Fountain: octagonal basin, moulded rim, pedestal, upper bowl, and a jet.
+ * The water surfaces carry a NEGATIVE wind weight so the shared shader ripples
+ * them vertically. From street level these are the landmarks of a plaza.
+ */
+function makeFountain(scale, tiers) {
+  const parts = [];
+  // Each part is tagged as it is built — deriving "is this water?" from vertex
+  // height after the merge is guesswork, and guessing wrong makes the stonework
+  // wobble.
+  const push = (g, w) => { windAttr(g, () => w); parts.push(g); };
+  const R = 3.1 * scale;
+  const rimH = 0.62 * scale;
+
+  push(ringWall(R * 0.86, R, rimH, 0, 8, 'stoneTex'), 0);
+  // Basin floor, sunk a little so the rim reads as a lip.
+  push(disc(R * 0.87, 8, 0, rimH * 0.55, 0, 'waterDisc'), -1.0);
+
+  const ped = trunkGeo(rimH * 1.9, R * 0.22, R * 0.16, 'stoneTex', { sides: 8, rings: 2 });
+  ped.translate(0, rimH * 0.5, 0);
+  push(ped, 0);
+
+  let topY = rimH * 2.4;
+  for (let i = 0; i < tiers; i++) {
+    const br = R * (0.46 - i * 0.14);
+    push(ringWall(br * 0.78, br, 0.22 * scale, topY, 8, 'stoneTex'), 0);
+    push(disc(br * 0.79, 8, 0, topY + 0.15 * scale, 0, 'waterDisc'), -0.7);
+    const stem = trunkGeo(0.9 * scale, br * 0.24, br * 0.18, 'stoneTex', { sides: 6, rings: 1 });
+    stem.translate(0, topY + 0.2 * scale, 0);
+    push(stem, 0);
+    topY += 1.1 * scale;
+  }
+
+  /* Jet: a tapered column of water. It gets a positive (foliage) weight so it
+     sways instead of bobbing — a jet leans in the wind, it does not pulse. */
+  const jet = trunkGeo(1.6 * scale, 0.10 * scale, 0.035 * scale, 'sw_white', { sides: 5, rings: 3 });
+  jet.translate(0, topY, 0);
+  windAttr(jet, (x, y) => Math.max(0, (y - topY) / (1.6 * scale)) * 0.5);
+  parts.push(jet);
+  // The bead of spray at the top of the jet.
+  const bead = disc(0.34 * scale, 8, 0, topY + 1.62 * scale, 0, 'sw_white');
+  windAttr(bead, () => 0.55);
+  parts.push(bead);
+
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** Raised plaza planter: a stone box with a shrub mass sitting in it. */
+function makePlanter(w, d, h) {
+  const parts = [];
+  const t = 0.22;
+  parts.push(mapUV(box(w, h, t, 0, h / 2, -d / 2 + t / 2, 1.2), uvOf('stoneTex')));
+  parts.push(mapUV(box(w, h, t, 0, h / 2, d / 2 - t / 2, 1.2), uvOf('stoneTex')));
+  parts.push(mapUV(box(t, h, d - t * 2, -w / 2 + t / 2, h / 2, 0, 1.2), uvOf('stoneTex')));
+  parts.push(mapUV(box(t, h, d - t * 2, w / 2 - t / 2, h / 2, 0, 1.2), uvOf('stoneTex')));
+  parts.push(mapUV(box(w, 0.1, d, 0, h - 0.16, 0, 1.2), uvOf('mulchTex')));
+  // Planting: three crossed cards rising out of the box.
+  const bushH = Math.max(1.1, Math.min(w, d) * 0.95);
+  for (let i = 0; i < 3; i++) {
+    const c = cardGeo(Math.min(w, d) * 1.15, bushH, 'shrubA');
+    c.rotateY((i / 3) * Math.PI + i * 0.2);
+    c.translate(0, h - 0.2, 0);
+    parts.push(c);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.2);
+  windAttr(geo, (x, y) => (y > h ? Math.min(1, (y - h) / bushH) * 0.4 : 0));
+  return geo;
+}
+
+/** Shade pergola: four posts, a header beam, slatted top. */
+function makePergola(w, d, h) {
+  const parts = [];
+  const p = 0.16;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      parts.push(mapUV(box(p, h, p, sx * (w / 2 - p), h / 2, sz * (d / 2 - p), 1), uvOf('sw_wood')));
+    }
+  }
+  parts.push(mapUV(box(w, 0.18, p * 1.4, 0, h, -d / 2 + p, 1), uvOf('sw_wood')));
+  parts.push(mapUV(box(w, 0.18, p * 1.4, 0, h, d / 2 - p, 1), uvOf('sw_wood')));
+  const slats = Math.max(4, Math.round(w / 0.75));
+  for (let i = 0; i < slats; i++) {
+    const x = -w / 2 + (i + 0.5) * (w / slats);
+    parts.push(mapUV(box(0.13, 0.16, d, x, h + 0.16, 0, 1), uvOf('sw_wood')));
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, () => 0);
+  return geo;
+}
+
+/** Abstract public art: three stacked, rotated slabs. Tinted per instance. */
+function makeSculpture(seed) {
+  const rng = makeRNG(seed);
+  const parts = [];
+  let y = 0;
+  parts.push(box(2.6, 0.4, 2.6, 0, 0.2, 0, 1));
+  y = 0.4;
+  for (let i = 0; i < 3; i++) {
+    const w = 2.1 - i * 0.42, h = 1.5 + rng() * 1.6, d = 0.85 - i * 0.14;
+    const g = box(w, h, d, 0, h / 2, 0, 1);
+    g.rotateY(rng() * Math.PI);
+    g.translate((rng() - 0.5) * 0.4, y, (rng() - 0.5) * 0.4);
+    parts.push(g);
+    y += h * 0.86;
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** Bandshell: a quarter-barrel acoustic shell over a stage. */
+function makeBandshell() {
+  const parts = [];
+  const W = 13, D = 8, H = 7.4;
+  parts.push(mapUV(box(W + 2.4, 0.9, D + 2.0, 0, 0.45, 0, 2), uvOf('stoneTex')));
+  const segs = 9;
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI, a1 = ((i + 1) / segs) * Math.PI;
+    const am = (a0 + a1) / 2;
+    const th = (a1 - a0) * (W / 2) * 1.06;
+    const g = box(th, 0.36, D * 0.94, 0, 0, 0, 2);
+    g.rotateZ(-(am - Math.PI / 2));
+    g.translate(Math.cos(am) * (W / 2), 0.9 + Math.sin(am) * H * 0.78, -D * 0.18);
+    parts.push(mapUV(g, uvOf('sw_cream')));
+  }
+  // Back wall closing the shell.
+  parts.push(mapUV(box(W, H * 0.72, 0.4, 0, 0.9 + H * 0.36, -D * 0.62, 2), uvOf('stoneTex')));
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, () => 0);
+  return geo;
+}
+
+/** Basketball hoop: post, arm, backboard, ring. */
+function makeHoop() {
+  const parts = [];
+  parts.push(mapUV(box(0.18, 3.6, 0.18, 0, 1.8, 0, 1), uvOf('sw_steel')));
+  parts.push(mapUV(box(1.1, 0.14, 0.14, 0.55, 3.55, 0, 1), uvOf('sw_steel')));
+  parts.push(mapUV(box(0.08, 1.05, 1.75, 1.12, 3.35, 0, 1), uvOf('sw_white')));
+  parts.push(mapUV(box(0.5, 0.07, 0.5, 1.35, 3.05, 0, 1), uvOf('sw_coral')));
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, () => 0);
+  return geo;
+}
+
+/** Playground climbing frame + slide. Bright, chunky, obviously a toy. */
+function makePlayground() {
+  const parts = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      parts.push(mapUV(box(0.16, 2.4, 0.16, sx * 1.3, 1.2, sz * 1.1, 1), uvOf('sw_aqua')));
+    }
+  }
+  parts.push(mapUV(box(2.9, 0.18, 2.4, 0, 1.6, 0, 1), uvOf('sw_sun')));
+  parts.push(mapUV(box(2.9, 0.5, 0.14, 0, 2.1, -1.1, 1), uvOf('sw_coral')));
+  const slide = box(0.9, 0.14, 3.4, 0, 0, 0, 1);
+  slide.rotateX(0.55);
+  slide.translate(1.9, 1.05, 0.9);
+  parts.push(mapUV(slide, uvOf('sw_pink')));
+  // A-frame swing beside it.
+  for (const sx of [-1, 1]) {
+    const l = box(0.14, 2.6, 0.14, 0, 1.3, 0, 1);
+    l.rotateZ(sx * 0.22);
+    l.translate(sx * 1.9 - 3.6, 0, 0);
+    parts.push(mapUV(l, uvOf('sw_teal')));
+  }
+  parts.push(mapUV(box(4.0, 0.16, 0.16, -3.6, 2.55, 0, 1), uvOf('sw_teal')));
+  for (const sx of [-1, 1]) {
+    parts.push(mapUV(box(0.05, 1.5, 0.05, -3.6 + sx * 0.7, 1.8, 0, 1), uvOf('sw_steel')));
+    parts.push(mapUV(box(0.5, 0.09, 0.22, -3.6 + sx * 0.7, 1.05, 0, 1), uvOf('sw_sun')));
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, () => 0);
+  return geo;
+}
+
+/** Flag pole with a stiffened banner — the banner catches the wind shader. */
+function makeFlagpole(cell) {
+  const parts = [];
+  const H = 9.5;
+  parts.push(mapUV(box(0.7, 0.3, 0.7, 0, 0.15, 0, 1), uvOf('stoneTex')));
+  parts.push(trunkGeo(H, 0.11, 0.06, 'sw_steel', { sides: 5, rings: 2 }));
+  const flag = cardGeo(2.4, 1.5, cell);
+  flag.translate(1.2, 0, 0);
+  flag.translate(0, H - 1.9, 0);
+  parts.push(flag);
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, (x, y) => (y > H - 2.1 ? Math.min(1, x / 2.4) * 0.9 : 0));
+  return geo;
+}
+
+/* ======================================================================== */
+/*  SPECIES TABLE                                                           */
+/* ======================================================================== */
+
+/**
+ * One entry per instanced pool. `h` is the nominal height in metres at scale 1
+ * — every scale multiplier below is relative to that, so the metric sanity in
+ * the art bible (palm ~10 m) holds.
+ */
+const SPECIES = {
+  royalA: {
+    label: 'Royal Palm', tier: TIER.LARGE, h: 17.5, rad: 1.5, cap: 700, clear: 2.8,
+    debris: PALETTE.PALM_FROND,
+    geo: () => makePalm({
+      seed: 11, h: 17.5, rBot: 0.40, rTop: 0.30, bark: 'barkRoyal', crownshaft: true,
+      bend: 0.012, sway: -0.008, bulge: 0.10, fronds: 10, frondLen: 4.3, frondW: 0.48,
+      pitch: -0.24, rise: 0.50, droop: 1.02, cells: ['frondA', 'frondB'],
+    }),
+  },
+  royalB: {
+    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.4, cap: 700, clear: 2.6,
+    debris: PALETTE.PALM_FROND,
+    geo: () => makePalm({
+      seed: 23, h: 13.5, rBot: 0.36, rTop: 0.27, bark: 'barkRoyal', crownshaft: true,
+      bend: -0.020, sway: 0.014, bulge: 0.14, fronds: 9, frondLen: 3.8, frondW: 0.50,
+      pitch: -0.10, rise: 0.58, droop: 1.10, cells: ['frondB', 'frondA'],
+    }),
+  },
+  coconutA: {
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 12.0, rad: 1.5, cap: 700, clear: 2.7,
+    debris: PALETTE.PALM_FROND,
+    geo: () => makePalm({
+      seed: 37, h: 12.0, rBot: 0.34, rTop: 0.22, bark: 'barkCoco', crownshaft: false,
+      bend: 0.085, sway: 0.030, fronds: 9, frondLen: 4.1, frondW: 0.46,
+      pitch: -0.30, rise: 0.44, droop: 1.16, coconuts: true, cells: ['frondB', 'frondA'],
+    }),
+  },
+  coconutB: {
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 9.2, rad: 1.4, cap: 600, clear: 2.5,
+    debris: PALETTE.PALM_FROND,
+    geo: () => makePalm({
+      seed: 41, h: 9.2, rBot: 0.32, rTop: 0.21, bark: 'barkCoco', crownshaft: false,
+      bend: -0.115, sway: -0.045, fronds: 8, frondLen: 3.6, frondW: 0.50,
+      pitch: -0.42, rise: 0.38, droop: 1.22, coconuts: true, cells: ['frondA', 'frondB'],
+    }),
+  },
+  sabal: {
+    label: 'Sabal Palm', tier: TIER.LARGE, h: 9.8, rad: 1.2, cap: 700, clear: 2.2,
+    debris: PALETTE.PALM_FROND,
+    geo: () => makePalm({
+      seed: 53, h: 9.8, rBot: 0.28, rTop: 0.24, bark: 'barkFib', crownshaft: false,
+      bend: 0.018, sway: 0.010, fronds: 11, frondLen: 2.3, frondW: 1.15,
+      pitch: 0.24, rise: 0.62, droop: 0.86, cells: ['fanA'],
+    }),
+  },
+  fanShort: {
+    label: 'Fan Palm', tier: TIER.MEDIUM, h: 4.4, rad: 1.4, cap: 600, clear: 2.0,
+    debris: PALETTE.PALM_FROND,
+    geo: () => makePalm({
+      seed: 67, h: 4.4, rBot: 0.36, rTop: 0.32, bark: 'barkFib', crownshaft: false,
+      bend: 0, sway: 0, fronds: 12, frondLen: 2.5, frondW: 1.20,
+      pitch: 0.10, rise: 0.55, droop: 0.90, cells: ['fanA'],
+    }),
+  },
+  banyan: {
+    label: 'Banyan Tree', tier: TIER.LARGE, h: 13.0, rad: 2.6, cap: 400, clear: 4.2,
+    debris: PALETTE.TREE_CANOPY,
+    geo: () => makeTree({
+      seed: 71, h: 13.0, trunkF: 0.42, rBot: 0.95, rTop: 0.55, bark: 'barkOak',
+      bend: 0.02, sway: -0.02, limbs: 3, canopyR: 6.4, canopyF: 0.92, cell: 'canopyA',
+    }),
+  },
+  liveOak: {
+    label: 'Live Oak', tier: TIER.LARGE, h: 10.5, rad: 2.1, cap: 450, clear: 3.6,
+    debris: PALETTE.TREE_CANOPY,
+    geo: () => makeTree({
+      seed: 83, h: 10.5, trunkF: 0.46, rBot: 0.60, rTop: 0.36, bark: 'barkOak',
+      bend: -0.03, sway: 0.02, limbs: 2, canopyR: 4.7, canopyF: 1.0, cell: 'canopyB',
+    }),
+  },
+  tabebuia: {
+    label: 'Tabebuia', tier: TIER.LARGE, h: 8.2, rad: 1.7, cap: 400, clear: 3.0,
+    debris: PALETTE.FLOWER_YELLOW,
+    geo: () => makeTree({
+      seed: 97, h: 8.2, trunkF: 0.52, rBot: 0.36, rTop: 0.22, bark: 'barkOak',
+      bend: 0.05, sway: 0.03, limbs: 2, canopyR: 3.5, canopyF: 0.86, cell: 'canopyYel',
+    }),
+  },
+  bougain: {
+    label: 'Bougainvillea', tier: TIER.MEDIUM, h: 4.6, rad: 1.5, cap: 500, clear: 2.4,
+    debris: PALETTE.FLOWER_MAGENTA,
+    geo: () => makeTree({
+      seed: 101, h: 4.6, trunkF: 0.38, rBot: 0.22, rTop: 0.13, bark: 'barkOak',
+      bend: -0.06, sway: 0.05, limbs: 2, canopyR: 2.4, canopyF: 0.94, cell: 'canopyPink',
+    }),
+  },
+  seagrapeT: {
+    label: 'Sea Grape', tier: TIER.MEDIUM, h: 5.0, rad: 1.9, cap: 450, clear: 2.8,
+    debris: PALETTE.TREE_CANOPY,
+    geo: () => makeTree({
+      seed: 113, h: 5.0, trunkF: 0.34, rBot: 0.30, rTop: 0.19, bark: 'barkOak',
+      bend: 0.09, sway: -0.07, limbs: 3, canopyR: 3.1, canopyF: 0.74, cell: 'seagrape',
+    }),
+  },
+  mangrove: {
+    label: 'Mangrove', tier: TIER.MEDIUM, h: 4.2, rad: 1.8, cap: 400, clear: 2.6,
+    debris: PALETTE.TREE_CANOPY_DARK,
+    geo: () => makeTree({
+      seed: 127, h: 4.2, trunkF: 0.44, rBot: 0.40, rTop: 0.16, bark: 'barkFib',
+      bend: 0.12, sway: 0.10, limbs: 4, canopyR: 2.6, canopyF: 0.70, cell: 'canopyB',
+    }),
+  },
+
+  hedge: {
+    label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 3000, clear: 0.0,
+    debris: PALETTE.HEDGE, noShadow: false,
+    geo: () => makeBush({ seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2 }),
+  },
+  shrub: {
+    label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2600, clear: 0.7,
+    debris: PALETTE.HEDGE,
+    geo: () => makeBush({ seed: 137, w: 1.9, h: 1.5, cell: 'shrubA', cards: 3 }),
+  },
+  flowerPink: {
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 1600, clear: 0.6,
+    debris: PALETTE.FLOWER_PINK,
+    geo: () => makeBush({ seed: 149, w: 2.2, h: 0.95, cell: 'canopyPink', cards: 2 }),
+  },
+  flowerYellow: {
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 1600, clear: 0.6,
+    debris: PALETTE.FLOWER_YELLOW,
+    geo: () => makeBush({ seed: 151, w: 2.2, h: 0.95, cell: 'canopyYel', cards: 2 }),
+  },
+  ornGrass: {
+    label: 'Ornamental Grass', tier: TIER.TINY, h: 1.15, rad: 0.6, cap: 2200, clear: 0.5,
+    debris: PALETTE.GRASS_DRY,
+    geo: () => makeBush({ seed: 157, w: 1.5, h: 1.15, cell: 'grassTuft', cards: 3, top: false }),
+  },
+
+  planterS: {
+    label: 'Planter', tier: TIER.MEDIUM, h: 2.0, rad: 1.0, cap: 700, clear: 1.3,
+    debris: PALETTE.PLANTER,
+    geo: () => makePlanter(2.0, 2.0, 0.85),
+  },
+  planterL: {
+    label: 'Raised Planter', tier: TIER.MEDIUM, h: 2.6, rad: 2.4, cap: 500, clear: 2.6,
+    debris: PALETTE.PLANTER,
+    geo: () => makePlanter(5.0, 2.2, 1.05),
+  },
+  pergola: {
+    label: 'Shade Structure', tier: TIER.XLARGE, h: 3.2, rad: 3.4, cap: 120, clear: 3.6,
+    debris: PALETTE.WOOD_DECK,
+    geo: () => makePergola(6.4, 4.2, 3.0),
+  },
+  fountainS: {
+    label: 'Fountain', tier: TIER.XLARGE, h: 3.4, rad: 3.2, cap: 90, clear: 3.6,
+    debris: PALETTE.WATER_POOL,
+    geo: () => makeFountain(1.0, 1),
+  },
+  fountainL: {
+    label: 'Grand Fountain', tier: TIER.HUGE, h: 6.0, rad: 5.2, cap: 40, clear: 5.6,
+    debris: PALETTE.WATER_POOL,
+    geo: () => makeFountain(1.7, 2),
+  },
+  bandshell: {
+    label: 'Bandshell', tier: TIER.HUGE, h: 8.4, rad: 7.5, cap: 20, clear: 8.5,
+    debris: PALETTE.CONCRETE_WARM,
+    geo: () => makeBandshell(),
+  },
+  playground: {
+    label: 'Playground', tier: TIER.XLARGE, h: 2.7, rad: 4.0, cap: 40, clear: 4.5,
+    debris: PALETTE.FABRIC_AQUA,
+    geo: () => makePlayground(),
+  },
+  hoop: {
+    label: 'Basketball Hoop', tier: TIER.MEDIUM, h: 3.6, rad: 0.6, cap: 60, clear: 0.9,
+    debris: PALETTE.STEEL,
+    geo: () => makeHoop(),
+  },
+  flagUS: {
+    label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 90, clear: 1.2,
+    debris: PALETTE.STEEL,
+    geo: () => makeFlagpole('sw_coral'),
+  },
+  flagCity: {
+    label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 90, clear: 1.2,
+    debris: PALETTE.STEEL,
+    geo: () => makeFlagpole('sw_aqua'),
+  },
+};
+
+/** Shrub-type pools get a colour run so a hedge line is not one flat green. */
+const TINTS = {
+  hedge: [0xffffff, 0xe6f0da, 0xd8ead2],
+  shrub: [0xffffff, 0xeaf6dc, 0xd6e8cc],
+};
+
+const PALMS = ['royalA', 'royalB', 'coconutA', 'coconutB', 'sabal', 'fanShort'];
+const SHADE = ['banyan', 'liveOak', 'tabebuia', 'bougain'];
+
+/* ======================================================================== */
+/*  MERGE BUCKETS                                                           */
+/* ======================================================================== */
+
+/**
+ * Every static ground surface in every park and plaza in the city ends up in
+ * one of these, and each becomes exactly one mesh. `matFn` is lazy so a bucket
+ * nobody fills costs nothing, not even a texture generation.
+ */
+const BUCKET_MATS = {
+  lawnA: () => ground({ map: Textures.grass(), roughness: 0.98 }),
+  // The mowing stripe. Same texture, ~14% darker — mowers lay the blades in
+  // opposite directions and that is exactly what you see from the air.
+  lawnB: () => ground({ map: Textures.grass(), color: 0xdae6c6, roughness: 0.98 }),
+  plazaBase: () => ground({
+    map: Textures.paving(512, PALETTE.PLAZA, 'rgba(150,140,120,0.5)', 4), roughness: 0.9,
+  }),
+  plazaInlay: () => ground({
+    map: Textures.paving(512, PALETTE.PLAZA_ALT, 'rgba(132,120,100,0.55)', 10), roughness: 0.86,
+  }),
+  path: () => ground({
+    map: Textures.paving(512, PALETTE.BRICK_PAVER, 'rgba(112,68,48,0.55)', 14), roughness: 0.92,
+  }),
+  mulch: () => ground({ map: Textures.sand(), color: 0x8a6a4c, roughness: 1.0 }),
+  sandPit: () => ground({ map: Textures.sand(), roughness: 1.0 }),
+  courtHard: () => ground({ color: PALETTE.PATINA, roughness: 0.82 }),
+  courtClay: () => ground({ color: PALETTE.TERRACOTTA, roughness: 0.95 }),
+  courtLine: () => ground({ color: PALETTE.ROAD_LINE, roughness: 0.7 }),
+  stone: () => ground({ map: Textures.concrete(512, PALETTE.CONCRETE_WARM), roughness: 0.9 }),
+  kerb: () => ground({ color: PALETTE.CURB, roughness: 0.88 }),
+  deck: () => ground({ map: Textures.wood(512, PALETTE.WOOD_DECK, 8), roughness: 0.82 }),
+  pond: () => pondMaterial(),
+};
+
+class Buckets {
+  constructor() {
+    /** @type {Map<string, THREE.BufferGeometry[]>} */
+    this.map = new Map();
+  }
+
+  add(key, geo) {
+    let a = this.map.get(key);
+    if (!a) { a = []; this.map.set(key, a); }
+    a.push(geo);
+    return geo;
+  }
+
+  flush(ctx) {
+    let calls = 0, tris = 0;
+    for (const [key, geos] of this.map) {
+      if (!geos.length) continue;
+      const merged = BufferGeometryUtils.mergeGeometries(geos, false);
+      if (!merged) continue;
+      const m = new THREE.Mesh(merged, BUCKET_MATS[key]());
+      m.name = `nature-${key}`;
+      m.receiveShadow = true;
+      // Ground planes casting shadows onto themselves is pure acne; the only
+      // bucket with real height is `stone`, and it earns its shadow.
+      m.castShadow = key === 'stone';
+      ctx.addDecor(m, 'nature');
+      calls++;
+      tris += (merged.index ? merged.index.count : merged.attributes.position.count) / 3;
+    }
+    return { calls, tris };
+  }
+}
+
+/* ======================================================================== */
+/*  PLACEMENT                                                               */
+/* ======================================================================== */
+
+const _factories = {};
+function factoryFor(key, tintHex) {
+  const fk = tintHex === undefined ? key : `${key}|${tintHex}`;
+  if (!_factories[fk]) {
+    _factories[fk] = () => ({
+      geometry: SPECIES[key].geo(),
+      material: tintHex === undefined ? atlasMaterial() : atlasMaterialTint(tintHex),
+    });
+  }
+  return _factories[fk];
+}
+
+const stats = { trees: 0, palms: 0, bushes: 0, features: 0, instances: 0 };
+
+/**
+ * Place one instanced species. Returns the Consumable, or null if the ground
+ * was already claimed by a building or another plant.
+ */
+function plant(ctx, key, x, z, rot, scale, opts = {}) {
+  const def = SPECIES[key];
+  const clear = opts.clear ?? def.clear;
+  if (clear > 0) {
+    // `force` skips the read but still writes. Buildings claim a SQUARE of
+    // occupancy cells sized to their footprint radius, which on a 40 m block
+    // swallows the pavement strip as well — so a street tree that is
+    // geometrically fine would be rejected. The kerb strip is ours by
+    // construction, so we claim it and let props.js work around us.
+    if (!opts.force && !ctx.isFree(x, z, clear)) return null;
+    ctx.occupy(x, z, opts.force ? Math.min(clear, 1.7) : clear);
+  }
+  const tints = TINTS[key];
+  const tint = tints ? tints[opts.tintIndex !== undefined
+    ? opts.tintIndex % tints.length : 0] : undefined;
+  const poolKey = tint === undefined ? `nat-${key}` : `nat-${key}-${tint.toString(16)}`;
+  const c = ctx.addInstanced(poolKey, factoryFor(key, tint), {
+    position: _v3.set(x, ctx.Y_WALK + (opts.y || 0), z),
+    rotationY: rot,
+    scale,
+    tier: opts.tier || def.tier,
+    radius: def.rad * scale,
+    height: def.h * scale,
+    label: def.label,
+    kind: key,
+    capacity: def.cap,
+    castShadow: true,
+    receiveShadow: false,
+    debrisColor: def.debris,
+    decor: opts.decor,
+  });
+  stats.instances++;
+  if (PALMS.includes(key)) stats.palms++;
+  else if (SHADE.includes(key) || key === 'seagrapeT' || key === 'mangrove') stats.trees++;
+  else stats.bushes++;
+  return c;
+}
+
+/** Circular tree pit / mulch ring under a street tree. Grounds it visually. */
+function treePit(B, x, z, r, y) {
+  B.add('mulch', disc(r, 8, x, y, z, null));
+}
+
+/* -------------------------------------------------------------- medians --- */
+
+/**
+ * Boulevard median PLANTING.
+ *
+ * streets.js owns the median surface, its kerb rings and the low hedge spine
+ * (it says so in its own comment). What it leaves us is the thing that makes
+ * Brickell Ave read as Brickell Ave from the menu-hero camera: a continuous
+ * line of royal palms marching down the middle of the city, with colour at
+ * their feet. Soil sits at y=0.142, just under Y_WALK.
+ */
+function buildMedians(ctx) {
+  const { layout } = ctx;
+  const S = WORLD.SIZE;
+
+  /** A median may not run over water, and a bridge deck is 1.2 m above us. */
+  const clearAt = (x, z) => {
+    if (layout.isWater(x, z)) return false;
+    for (const br of layout.bridges) {
+      if (Math.abs(x - br.x) < br.width / 2 + 4 && Math.abs(z - br.z) < br.length / 2 + 4) return false;
+    }
+    return true;
+  };
+
+  for (const road of layout.medians) {
+    if (road.axis !== 'x') continue;              // all three are north/south
+    const half = Math.max(2.6, road.medianW * 0.5 - 0.6);
+    const rng = makeRNG(Math.round(road.pos * 977) ^ 0x3b1f);
+
+    // Break the strip at every cross street so the island does not pave over
+    // the junctions.
+    const cuts = [-S];
+    for (const rz of layout.roadsZ) { cuts.push(rz.pos - rz.half - 3, rz.pos + rz.half + 3); }
+    cuts.push(S);
+    cuts.sort((a, b) => a - b);
+
+    /** @type {{z0:number,z1:number}[]} */
+    const runs = [];
+    for (let i = 0; i < cuts.length - 1; i += 2) {
+      // Walk the segment in 5 m steps and keep only the contiguous dry runs;
+      // the river crossing sits inside a single 170 m segment, so testing the
+      // midpoint alone would happily bridge it.
+      let start = null;
+      for (let z = cuts[i]; z <= cuts[i + 1] + 0.01; z += 5) {
+        const zz = Math.min(z, cuts[i + 1]);
+        if (clearAt(road.pos, zz)) {
+          if (start === null) start = zz;
+        } else if (start !== null) {
+          runs.push({ z0: start, z1: zz - 5 }); start = null;
+        }
+      }
+      if (start !== null) runs.push({ z0: start, z1: cuts[i + 1] });
+    }
+
+    // Keep off the hedge spine streets.js runs down the centreline.
+    const spine = Math.min(1.05, half - 0.75);
+    const lane = (s) => road.pos + s * (spine + 0.55 + rng() * Math.max(0.2, half - spine - 1.4));
+
+    for (const run of runs) {
+      const z0 = run.z0 + 5, z1 = run.z1 - 5;
+      if (z1 - z0 < 12) continue;
+
+      const step = 12 + rng() * 5;
+      for (let z = z0; z < z1; z += step) {
+        // Palms rise straight out of the hedge spine — that stacked silhouette
+        // is exactly what the real boulevard looks like.
+        const key = rng.chance(0.66) ? (rng.chance(0.55) ? 'royalA' : 'royalB')
+          : rng.chance(0.6) ? 'sabal' : 'coconutA';
+        plant(ctx, key, road.pos + (rng() - 0.5) * 0.5, z, rng() * 6.283,
+          0.92 + rng() * 0.26, { y: -0.012, clear: 2.0 });
+        if (rng.chance(0.8)) {
+          plant(ctx, rng.chance(0.5) ? 'flowerPink' : 'flowerYellow',
+            lane(rng.sign()), z + step * 0.5,
+            rng() * 6.283, 0.8 + rng() * 0.35, { y: -0.012, clear: 0.5 });
+        }
+        if (rng.chance(0.6)) {
+          plant(ctx, 'ornGrass', lane(rng.sign()), z + step * 0.26,
+            rng() * 6.283, 0.75 + rng() * 0.45, { y: -0.012, clear: 0.4 });
+        }
+      }
+    }
+  }
+}
+
+/* --------------------------------------------------------- street trees --- */
+
+/**
+ * Street trees along a block's public frontages.
+ *
+ * Spacing is by street class, not random: a real street-tree line is a
+ * RHYTHM, and scattering them is what makes procedural cities look like
+ * someone spilled the trees. Boulevards get palms, quiet streets get shade.
+ */
+function buildStreetTrees(ctx, B, b, rng) {
+  // Sit in the grass verge streets.js lays 1.55-3.05 m behind the kerb.
+  // Buildings fill 70-82% of a parcel, so this is also the only reliably empty
+  // ground; on a small lot the gap is barely a metre, hence the scaling term.
+  const inset = Math.max(1.75, Math.min(2.35, Math.min(b.w, b.d) * 0.06));
+  const grand = b.onSpine || b.onBoulevard;
+
+  for (const fr of b.frontageStreets) {
+    const cls = fr.road.cls;
+    const spacing = cls === ROAD_CLASS.BOULEVARD ? 11.5
+      : cls === ROAD_CLASS.AVENUE ? 14.5 : 18.5;
+    const horiz = fr.side === 'n' || fr.side === 's';
+    const len = horiz ? b.w : b.d;
+    if (len < spacing * 0.9) continue;
+    const n = Math.max(1, Math.floor((len - 5) / spacing));
+    const gap = (len - 5) / n;
+
+    // Give the whole run one species so the line reads as a planting scheme.
+    const palmy = grand ? rng.chance(0.82) : rng.chance(0.42);
+    const key = palmy
+      ? rng.weighted([['royalA', 30], ['royalB', 24], ['coconutA', 18], ['sabal', 18], ['coconutB', 10]])
+      : rng.weighted([['liveOak', 34], ['banyan', 18], ['tabebuia', 26], ['bougain', 22]]);
+
+    for (let i = 0; i <= n; i++) {
+      const t = -len / 2 + 2.5 + gap * i;
+      let x, z;
+      if (fr.side === 'n') { x = b.x + t; z = b.z - b.d / 2 + inset; }
+      else if (fr.side === 's') { x = b.x + t; z = b.z + b.d / 2 - inset; }
+      else if (fr.side === 'w') { x = b.x - b.w / 2 + inset; z = b.z + t; }
+      else { x = b.x + b.w / 2 - inset; z = b.z + t; }
+
+      const c = plant(ctx, key, x, z, rng() * 6.283, 0.86 + rng() * 0.3, { force: true });
+      if (!c) continue;
+      treePit(B, x, z, 1.05, ctx.Y_WALK + 0.02);
+      // Under-planting at the base of every third tree.
+      if (rng.chance(0.34)) {
+        plant(ctx, 'ornGrass', x + (rng() - 0.5) * 1.3, z + (rng() - 0.5) * 1.3,
+          rng() * 6.283, 0.7 + rng() * 0.4, { clear: 0.35, force: true });
+      }
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- parks --- */
+
+/** Mown lawn with alternating stripes, filling a rectangle. */
+function lawn(B, x0, z0, x1, z1, y, alongX, stripeW) {
+  const w = x1 - x0, d = z1 - z0;
+  if (w < 0.5 || d < 0.5) return;
+  const len = alongX ? d : w;
+  const n = Math.max(1, Math.round(len / stripeW));
+  const sw = len / n;
+  for (let i = 0; i < n; i++) {
+    const key = i % 2 ? 'lawnB' : 'lawnA';
+    if (alongX) {
+      B.add(key, tile(w, sw, (x0 + x1) / 2, z0 + sw * (i + 0.5), y, 8));
+    } else {
+      B.add(key, tile(sw, d, x0 + sw * (i + 0.5), (z0 + z1) / 2, y, 8));
+    }
+  }
+}
+
+/** Painted court with line markings and a chain-link-free open edge. */
+function court(B, x, z, w, d, y, kind, rot) {
+  const surf = kind === 'clay' ? 'courtClay' : 'courtHard';
+  const rotQuad = (gw, gd, gx, gz, gy) => {
+    const g = tile(gw, gd, 0, 0, gy, 4);
+    g.rotateY(rot);
+    g.translate(x + gx * Math.cos(rot) - gz * Math.sin(rot), 0, z + gx * Math.sin(rot) + gz * Math.cos(rot));
+    return g;
+  };
+  B.add(surf, rotQuad(w, d, 0, 0, y));
+  const L = 0.14;
+  const line = (gw, gd, gx, gz) => B.add('courtLine', rotQuad(gw, gd, gx, gz, y + 0.012));
+  line(w - 1.6, L, 0, -(d - 1.6) / 2);
+  line(w - 1.6, L, 0, (d - 1.6) / 2);
+  line(L, d - 1.6, -(w - 1.6) / 2, 0);
+  line(L, d - 1.6, (w - 1.6) / 2, 0);
+  line(L, d - 1.6, 0, 0);                       // halfway / net line
+  if (kind === 'clay') {
+    line(w * 0.5, L, 0, -d * 0.16);
+    line(w * 0.5, L, 0, d * 0.16);
+  } else {
+    // Two key rectangles + a centre circle stand-in.
+    line(w * 0.22, L, -(w * 0.5 - w * 0.11), -d * 0.15);
+    line(w * 0.22, L, -(w * 0.5 - w * 0.11), d * 0.15);
+    line(w * 0.22, L, (w * 0.5 - w * 0.11), -d * 0.15);
+    line(w * 0.22, L, (w * 0.5 - w * 0.11), d * 0.15);
+  }
+}
+
+/**
+ * A park block. Not a lawn — a lawn is the defect this file exists to fix.
+ * Every park gets: striped turf, a path loop, a hedge frontage, at least one
+ * bed, a canopy layer and one hero feature sized to the parcel.
+ */
+function parkBlock(ctx, B, b, rng) {
+  const y = ctx.Y_WALK + 0.015;
+  // Leave the sidewalk band that streets.js already paved showing all the way
+  // round: a lawn that runs to the kerb reads as a green rectangle dropped on
+  // the map rather than as a park with a footpath around it.
+  const edge = Math.min(3.0, Math.max(1.2, b.sidewalk * 0.55));
+  const hw = b.w / 2 - edge, hd = b.d / 2 - edge;
+  const x0 = b.x - hw, x1 = b.x + hw, z0 = b.z - hd, z1 = b.z + hd;
+
+  lawn(B, x0, z0, x1, z1, y, b.w >= b.d, 4.2);
+  // A kerb line where the turf meets the paving — contact, not a floating edge.
+  B.add('kerb', box(hw * 2 + 0.36, 0.20, 0.18, b.x, y + 0.10, z0, 1));
+  B.add('kerb', box(hw * 2 + 0.36, 0.20, 0.18, b.x, y + 0.10, z1, 1));
+  B.add('kerb', box(0.18, 0.20, hd * 2, x0, y + 0.10, b.z, 1));
+  B.add('kerb', box(0.18, 0.20, hd * 2, x1, y + 0.10, b.z, 1));
+
+  /* --- path loop -------------------------------------------------------- */
+  const pin = Math.min(4.5, Math.min(hw, hd) * 0.42);
+  const py = y + 0.03;
+  const pw = b.streetLife > 0.55 ? 2.8 : 2.2;
+  if (Math.min(b.w, b.d) > 20) {
+    const px0 = x0 + pin, px1 = x1 - pin, pz0 = z0 + pin, pz1 = z1 - pin;
+    // A slightly bowed loop reads as a designed park, an exact rectangle reads
+    // as a spreadsheet.
+    const bow = Math.min(2.2, Math.min(hw, hd) * 0.14);
+    B.add('path', ribbon([
+      { x: px0, z: pz0 }, { x: (px0 + px1) / 2, z: pz0 - bow }, { x: px1, z: pz0 },
+      { x: px1 + bow, z: (pz0 + pz1) / 2 }, { x: px1, z: pz1 },
+      { x: (px0 + px1) / 2, z: pz1 + bow }, { x: px0, z: pz1 },
+      { x: px0 - bow, z: (pz0 + pz1) / 2 }, { x: px0, z: pz0 },
+    ], pw, py, 3));
+    // A spur out to the street on the frontage side.
+    const fr = b.frontageStreets[0];
+    if (fr) {
+      const s = fr.side;
+      const a = s === 'n' ? { x: b.x, z: pz0 } : s === 's' ? { x: b.x, z: pz1 }
+        : s === 'w' ? { x: px0, z: b.z } : { x: px1, z: b.z };
+      const c = s === 'n' ? { x: b.x, z: z0 } : s === 's' ? { x: b.x, z: z1 }
+        : s === 'w' ? { x: x0, z: b.z } : { x: x1, z: b.z };
+      B.add('path', ribbon([a, c], pw, py, 3));
+    }
+  } else {
+    B.add('path', ribbon([{ x: x0, z: b.z }, { x: x1, z: b.z }], pw, py, 3));
+  }
+
+  /* --- hedge frontage + low wall --------------------------------------- */
+  const walled = rng.chance(0.45);
+  for (const fr of b.frontageStreets) {
+    const horiz = fr.side === 'n' || fr.side === 's';
+    const len = (horiz ? b.w : b.d) - 3;
+    if (len < 6) continue;
+    const n = Math.max(1, Math.floor(len / 3.2));
+    for (let i = 0; i < n; i++) {
+      const t = -len / 2 + (i + 0.5) * (len / n);
+      let hx, hz, rot;
+      if (fr.side === 'n') { hx = b.x + t; hz = z0 + 0.9; rot = 0; }
+      else if (fr.side === 's') { hx = b.x + t; hz = z1 - 0.9; rot = 0; }
+      else if (fr.side === 'w') { hx = x0 + 0.9; hz = b.z + t; rot = Math.PI / 2; }
+      else { hx = x1 - 0.9; hz = b.z + t; rot = Math.PI / 2; }
+      plant(ctx, 'hedge', hx, hz, rot, 0.92 + rng() * 0.2,
+        { clear: 0, tintIndex: i, y: walled ? 0.34 : 0 });
+    }
+    if (walled) {
+      const wy = ctx.Y_WALK;
+      if (horiz) {
+        B.add('stone', box(len + 1.2, 0.42, 0.5, b.x, wy + 0.21,
+          fr.side === 'n' ? z0 + 0.35 : z1 - 0.35, 1.5));
+      } else {
+        B.add('stone', box(0.5, 0.42, len + 1.2,
+          fr.side === 'w' ? x0 + 0.35 : x1 - 0.35, wy + 0.21, b.z, 1.5));
+      }
+    }
+  }
+
+  /* --- flower beds ------------------------------------------------------ */
+  const beds = 1 + rng.int(0, 2);
+  for (let i = 0; i < beds; i++) {
+    const bw = 3.4 + rng() * 4.0, bd = 2.4 + rng() * 3.0;
+    const bx = b.x + (rng() - 0.5) * Math.max(0, b.w - bw - 8);
+    const bz = b.z + (rng() - 0.5) * Math.max(0, b.d - bd - 8);
+    if (!ctx.isFree(bx, bz, Math.max(bw, bd) * 0.5)) continue;
+    B.add('mulch', tile(bw, bd, bx, bz, y + 0.035, 3));
+    B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz - bd / 2, 1));
+    B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz + bd / 2, 1));
+    B.add('kerb', box(0.22, 0.22, bd, bx - bw / 2, y + 0.11, bz, 1));
+    B.add('kerb', box(0.22, 0.22, bd, bx + bw / 2, y + 0.11, bz, 1));
+    const key = rng.chance(0.5) ? 'flowerPink' : 'flowerYellow';
+    const cols = Math.max(2, Math.round(bw / 1.5)), rows = Math.max(1, Math.round(bd / 1.5));
+    for (let cx = 0; cx < cols; cx++) {
+      for (let cz = 0; cz < rows; cz++) {
+        plant(ctx, key,
+          bx - bw / 2 + (cx + 0.5) * (bw / cols),
+          bz - bd / 2 + (cz + 0.5) * (bd / rows),
+          rng() * 6.283, 0.75 + rng() * 0.35, { clear: 0 });
+      }
+    }
+  }
+
+  /* --- canopy ----------------------------------------------------------- */
+  const treeN = Math.max(3, Math.round(b.area / 105));
+  for (let i = 0; i < treeN; i++) {
+    const tx = b.x + (rng() - 0.5) * b.w * 0.86;
+    const tz = b.z + (rng() - 0.5) * b.d * 0.86;
+    const key = b.bayfront
+      ? rng.weighted([['royalA', 22], ['coconutA', 22], ['seagrapeT', 26], ['sabal', 16], ['banyan', 14]])
+      : rng.weighted([['banyan', 20], ['liveOak', 22], ['royalA', 16], ['royalB', 12],
+        ['tabebuia', 14], ['bougain', 10], ['sabal', 6]]);
+    plant(ctx, key, tx, tz, rng() * 6.283, 0.85 + rng() * 0.35);
+  }
+  const shrubN = Math.max(2, Math.round(b.area / 220));
+  for (let i = 0; i < shrubN; i++) {
+    plant(ctx, rng.chance(0.62) ? 'shrub' : 'ornGrass',
+      b.x + (rng() - 0.5) * b.w * 0.88, b.z + (rng() - 0.5) * b.d * 0.88,
+      rng() * 6.283, 0.8 + rng() * 0.45, { tintIndex: i });
+  }
+
+  /* --- one hero feature ------------------------------------------------- */
+  parkFeature(ctx, B, b, rng, y);
+}
+
+/** The thing that makes a given park memorable. Sized to the parcel. */
+function parkFeature(ctx, B, b, rng, y) {
+  const small = Math.min(b.w, b.d);
+  const cx = b.x + (rng() - 0.5) * b.w * 0.16;
+  const cz = b.z + (rng() - 0.5) * b.d * 0.16;
+  const roll = rng();
+
+  if (small > 44 && b.area > 2600 && roll < 0.22) {
+    /* Pond with a fountain in it. */
+    const pr = Math.min(11, small * 0.24);
+    B.add('pond', disc(pr, 22, cx, y + 0.04, cz, null));
+    B.add('kerb', ringWall(pr, pr + 0.5, 0.34, y, 22, 'stoneTex', cx, cz));
+    ctx.occupy(cx, cz, pr + 1);
+    plant(ctx, 'fountainL', cx, cz, rng() * 6.283, 0.9 + rng() * 0.25, { clear: 0, y: 0.05 });
+    for (let i = 0; i < 10; i++) {
+      const a = rng() * 6.283, d = pr + 2.2 + rng() * 3;
+      plant(ctx, rng.chance(0.5) ? 'ornGrass' : 'shrub',
+        cx + Math.cos(a) * d, cz + Math.sin(a) * d, rng() * 6.283, 0.85 + rng() * 0.4, { tintIndex: i });
+    }
+    stats.features++;
+  } else if (small > 34 && roll < 0.42) {
+    /* Sports court. */
+    const kind = rng.chance(0.55) ? 'hard' : 'clay';
+    const rot = b.w >= b.d ? 0 : Math.PI / 2;
+    const cw = Math.min(26, b.w * 0.62), cd = Math.min(15, b.d * 0.62);
+    court(B, cx, cz, Math.max(cw, cd), Math.min(cw, cd), y + 0.055, kind, rot);
+    ctx.occupy(cx, cz, Math.max(cw, cd) * 0.5);
+    if (kind === 'hard') {
+      const half = Math.max(cw, cd) * 0.5 + 0.6;
+      plant(ctx, 'hoop', cx - Math.cos(rot) * half, cz - Math.sin(rot) * half, rot + Math.PI, 1, { clear: 0 });
+      plant(ctx, 'hoop', cx + Math.cos(rot) * half, cz + Math.sin(rot) * half, rot, 1, { clear: 0 });
+    }
+    stats.features++;
+  } else if (small > 26 && roll < 0.60) {
+    /* Playground on sand. */
+    const pw = Math.min(16, b.w * 0.5), pd = Math.min(12, b.d * 0.5);
+    B.add('sandPit', tile(pw, pd, cx, cz, y + 0.055, 5));
+    B.add('kerb', box(pw + 0.4, 0.26, 0.3, cx, y + 0.13, cz - pd / 2, 1));
+    B.add('kerb', box(pw + 0.4, 0.26, 0.3, cx, y + 0.13, cz + pd / 2, 1));
+    B.add('kerb', box(0.3, 0.26, pd, cx - pw / 2, y + 0.13, cz, 1));
+    B.add('kerb', box(0.3, 0.26, pd, cx + pw / 2, y + 0.13, cz, 1));
+    ctx.occupy(cx, cz, Math.max(pw, pd) * 0.5);
+    plant(ctx, 'playground', cx + 1.2, cz, rng.chance(0.5) ? 0 : Math.PI, 1, { clear: 0 });
+    stats.features++;
+  } else if (small > 40 && roll < 0.72) {
+    /* Bandshell facing an arc of amphitheatre steps. */
+    plant(ctx, 'bandshell', cx, cz - b.d * 0.22, 0, 0.9 + rng() * 0.2, { clear: 0 });
+    for (let i = 0; i < 4; i++) {
+      const r = 9 + i * 2.4;
+      B.add('stone', box(r * 1.5, 0.42 * (i + 1), 1.9, cx, y + 0.21 * (i + 1), cz + b.d * 0.02 + i * 2.2, 2));
+    }
+    ctx.occupy(cx, cz, Math.min(b.w, b.d) * 0.42);
+    stats.features++;
+  } else if (roll < 0.86) {
+    /* A small fountain on a paved apron. */
+    B.add('plazaBase', tile(Math.min(14, b.w * 0.5), Math.min(14, b.d * 0.5), cx, cz, y + 0.055, 6));
+    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 0.9 + rng() * 0.3, { clear: 0 });
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * 6.283 + 0.7;
+      plant(ctx, 'planterS', cx + Math.cos(a) * 5.4, cz + Math.sin(a) * 5.4, a, 1, { clear: 1.2 });
+    }
+    stats.features++;
+  } else {
+    /* Public art on a plinth, ringed with grass. */
+    B.add('plazaInlay', disc(5.2, 16, cx, y + 0.055, cz, null));
+    placeSculpture(ctx, cx, cz, rng);
+    stats.features++;
+  }
+}
+
+/* --------------------------------------------------------------- plazas --- */
+
+/**
+ * A civic plaza. Patterned paving is the whole point: a plaza that is one flat
+ * cream rectangle is the defect the project lead flagged, and pattern costs
+ * nothing because it merges into the same two meshes as every other plaza.
+ */
+function plazaBlock(ctx, B, b, rng) {
+  const y = ctx.Y_WALK + 0.015;
+  const hw = b.w / 2 - 0.5, hd = b.d / 2 - 0.5;
+
+  B.add('plazaBase', tile(hw * 2, hd * 2, b.x, b.z, y, 5.5));
+
+  /* Inlay: a border band plus a centre medallion, in the finer paving. */
+  const band = 2.4;
+  const iy = y + 0.03;
+  B.add('plazaInlay', tile(hw * 2, band, b.x, b.z - hd + band / 2, iy, 2.2));
+  B.add('plazaInlay', tile(hw * 2, band, b.x, b.z + hd - band / 2, iy, 2.2));
+  B.add('plazaInlay', tile(band, hd * 2 - band * 2, b.x - hw + band / 2, b.z, iy, 2.2));
+  B.add('plazaInlay', tile(band, hd * 2 - band * 2, b.x + hw - band / 2, b.z, iy, 2.2));
+
+  const style = rng.int(0, 2);
+  const medR = Math.min(hw, hd) * 0.52;
+  if (style === 0) {
+    B.add('plazaInlay', disc(medR, 20, b.x, iy, b.z, null));
+    B.add('plazaBase', disc(medR * 0.62, 20, b.x, iy + 0.012, b.z, null));
+  } else if (style === 1) {
+    // A chequer of accent squares — reads beautifully from the 3/4 camera.
+    const cells = 5;
+    const cw = (hw * 2 - band * 2) / cells, cd = (hd * 2 - band * 2) / cells;
+    for (let i = 0; i < cells; i++) {
+      for (let j = 0; j < cells; j++) {
+        if ((i + j) % 2) continue;
+        B.add('plazaInlay', tile(cw * 0.9, cd * 0.9,
+          b.x - hw + band + (i + 0.5) * cw, b.z - hd + band + (j + 0.5) * cd, iy, 2.2));
+      }
+    }
+  } else {
+    // Diagonal ribbons across the square. A band at perpendicular offset o
+    // inside a square of half-size H is 2*(H*sqrt2 - |o|) long; overrun that
+    // and the inlay spills onto the roadway.
+    const Hh = Math.min(hw, hd);
+    for (let i = -2; i <= 2; i++) {
+      const o = i * 4.6;
+      const len = 2 * (Hh * 1.414 - Math.abs(o)) - 1.4;
+      if (len < 4) continue;
+      const g = tile(len, 1.9, 0, o, iy, 2.2);
+      g.rotateY(Math.PI * 0.25);
+      g.translate(b.x, 0, b.z);
+      B.add('plazaInlay', g);
+    }
+  }
+
+  /* --- an allée of palms, because a plaza wants shade lines -------------- */
+  const alongX = b.w >= b.d;
+  const runLen = (alongX ? b.w : b.d) - 8;
+  const off = (alongX ? hd : hw) * 0.62;
+  if (runLen > 12) {
+    const n = Math.max(2, Math.round(runLen / 8.5));
+    const key = rng.chance(0.6) ? 'royalA' : 'sabal';
+    for (let s = -1; s <= 1; s += 2) {
+      for (let i = 0; i <= n; i++) {
+        const t = -runLen / 2 + (runLen / n) * i;
+        const px = alongX ? b.x + t : b.x + s * off;
+        const pz = alongX ? b.z + s * off : b.z + t;
+        if (plant(ctx, key, px, pz, rng() * 6.283, 0.92 + rng() * 0.2, { clear: 2.2 })) {
+          B.add('plazaInlay', disc(1.15, 8, px, y + 0.045, pz, null));
+        }
+      }
+    }
+  }
+
+  /* --- furniture -------------------------------------------------------- */
+  const cx = b.x, cz = b.z;
+  const roll = rng();
+  if (Math.min(b.w, b.d) > 26 && roll < 0.42) {
+    plant(ctx, 'fountainL', cx, cz, rng() * 6.283, 1.0, { clear: 0 });
+    stats.features++;
+  } else if (roll < 0.72) {
+    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 1.0, { clear: 0 });
+    stats.features++;
+  } else {
+    placeSculpture(ctx, cx, cz, rng);
+    stats.features++;
+  }
+
+  /* Seating steps against one edge — plazas are for sitting on. */
+  if (Math.min(b.w, b.d) > 22 && rng.chance(0.55)) {
+    const sx = b.x, sz = b.z + (rng.chance(0.5) ? -1 : 1) * (hd - 5.5);
+    for (let i = 0; i < 3; i++) {
+      B.add('stone', box(Math.min(18, b.w * 0.5), 0.4 * (i + 1), 1.5,
+        sx, ctx.Y_WALK + 0.2 * (i + 1), sz + i * 1.4, 2));
+    }
+  }
+
+  /* Raised planters around the edges. */
+  const pn = Math.max(2, Math.round((b.w + b.d) / 22));
+  for (let i = 0; i < pn; i++) {
+    const a = (i / pn) * 6.283 + rng() * 0.4;
+    const px = b.x + Math.cos(a) * hw * 0.74;
+    const pz = b.z + Math.sin(a) * hd * 0.74;
+    plant(ctx, rng.chance(0.4) ? 'planterL' : 'planterS', px, pz,
+      Math.abs(Math.cos(a)) > 0.5 ? Math.PI / 2 : 0, 1, {});
+  }
+
+  if (rng.chance(0.4) && Math.min(b.w, b.d) > 20) {
+    plant(ctx, 'pergola', b.x + (rng() - 0.5) * hw, b.z + (rng() - 0.5) * hd, rng.chance(0.5) ? 0 : Math.PI / 2, 1, {});
+  }
+  if (b.landmark && Math.min(b.w, b.d) > 18) {
+    for (let i = -1; i <= 1; i++) {
+      plant(ctx, i === 0 ? 'flagUS' : 'flagCity',
+        b.x + i * 3.2, b.z - hd * 0.66, 0, 1, { clear: 1.0 });
+    }
+  }
+}
+
+function placeSculpture(ctx, x, z, rng) {
+  const hex = rng.pick([
+    PALETTE.ACCENT_HOT, PALETTE.ACCENT_SUN, PALETTE.ACCENT_AQUA,
+    PALETTE.STUCCO_CORAL, PALETTE.ACCENT_LILAC, PALETTE.PATINA,
+  ]);
+  if (!ctx.isFree(x, z, 2.6)) return null;
+  ctx.occupy(x, z, 2.6);
+  const c = ctx.addInstanced('nat-sculpture', () => ({
+    geometry: makeSculpture(0x5c17),
+    material: painted(0xffffff, 0.46, 0.10),
+  }), {
+    position: _v3.set(x, ctx.Y_WALK, z),
+    rotationY: rng() * 6.283,
+    scale: 0.9 + rng() * 0.5,
+    hex,
+    tier: TIER.XLARGE,
+    radius: 1.6,
+    height: 5.4,
+    label: 'Public Art',
+    kind: 'sculpture',
+    capacity: 90,
+    castShadow: true,
+    debrisColor: hex,
+  });
+  stats.instances++;
+  return c;
+}
+
+/* ---------------------------------------------------- water's edge etc. --- */
+
+/**
+ * Promenade / dock apron / riverwalk planting.
+ *
+ * These blocks sit on the seawall, so they get the coastal palette: sea
+ * grapes and mangroves at the edge, a palm line down the walk, and timber
+ * decking rather than turf where it is a dock.
+ */
+function waterfrontBlock(ctx, B, b, rng) {
+  const y = ctx.Y_WALK + 0.015;
+  const hw = b.w / 2 - 0.5, hd = b.d / 2 - 0.5;
+  const dock = b.subtype === 'dock' || b.zone === ZONE.MARINA;
+
+  B.add(dock ? 'deck' : 'plazaBase', tile(hw * 2, hd * 2, b.x, b.z, y, dock ? 4 : 5.5));
+  if (!dock) {
+    B.add('plazaInlay', tile(hw * 2, 2.0, b.x, b.z - hd + 1.0, y + 0.03, 2.2));
+    B.add('plazaInlay', tile(hw * 2, 2.0, b.x, b.z + hd - 1.0, y + 0.03, 2.2));
+  }
+
+  // The bay is east, so the seaward edge is +x. Plant the walk on the inland
+  // side and let the coastal scrub hold the edge.
+  const walkX = b.x - hw * 0.45;
+  const n = Math.max(1, Math.round((hd * 2) / 9));
+  for (let i = 0; i <= n; i++) {
+    const pz = b.z - hd + (hd * 2 / n) * i;
+    const key = rng.weighted([['royalA', 34], ['coconutA', 30], ['royalB', 20], ['sabal', 16]]);
+    if (plant(ctx, key, walkX, pz, rng() * 6.283, 0.9 + rng() * 0.28)) {
+      B.add('plazaInlay', disc(1.15, 8, walkX, y + 0.045, pz, null));
+    }
+  }
+  const edgeX = b.x + hw * 0.72;
+  const en = Math.max(2, Math.round((hd * 2) / 5.5));
+  for (let i = 0; i < en; i++) {
+    const pz = b.z - hd + (hd * 2 / en) * (i + 0.5);
+    plant(ctx, rng.weighted([['seagrapeT', 44], ['mangrove', 30], ['shrub', 26]]),
+      edgeX + (rng() - 0.5) * 2.4, pz, rng() * 6.283, 0.85 + rng() * 0.4, { tintIndex: i });
+  }
+  // Planted terraces stepping down to the water.
+  if (b.w > 26 && rng.chance(0.6)) {
+    for (let i = 0; i < 2; i++) {
+      B.add('stone', box(1.6, 0.36 * (i + 1), hd * 2 * 0.9,
+        b.x + hw * 0.42 + i * 1.7, ctx.Y_WALK + 0.18 * (i + 1), b.z, 2));
+    }
+  }
+  if (rng.chance(0.5)) plant(ctx, 'pergola', b.x, b.z, 0, 1, {});
+}
+
+/* ------------------------------------------------------------ built lots -- */
+
+/**
+ * Everything that is not open space still gets planting: street trees on the
+ * frontage, and a strip of shrubs in the setback so the sidewalk edge is
+ * never a bare cream band.
+ */
+function builtBlock(ctx, B, b, rng) {
+  buildStreetTrees(ctx, B, b, rng);
+
+  // Foundation planting along the busiest frontage.
+  const fr = b.frontageStreets[0];
+  if (!fr || b.streetLife < 0.22) return;
+  const horiz = fr.side === 'n' || fr.side === 's';
+  const len = (horiz ? b.w : b.d) - 6;
+  if (len < 8) return;
+  // Sit between the street trees and the building line. Scaled off the parcel
+  // so a 20 m lot does not get a hedge growing through its own shopfront.
+  const inset = Math.max(2.3, Math.min(b.sidewalk * 0.8, Math.min(b.w, b.d) * 0.5 * 0.15));
+  const n = Math.floor(len / 3.4);
+  for (let i = 0; i < n; i++) {
+    const t = -len / 2 + (i + 0.5) * (len / n);
+    let px, pz, rot;
+    if (fr.side === 'n') { px = b.x + t; pz = b.z - b.d / 2 + inset; rot = 0; }
+    else if (fr.side === 's') { px = b.x + t; pz = b.z + b.d / 2 - inset; rot = 0; }
+    else if (fr.side === 'w') { px = b.x - b.w / 2 + inset; pz = b.z + t; rot = Math.PI / 2; }
+    else { px = b.x + b.w / 2 - inset; pz = b.z + t; rot = Math.PI / 2; }
+    if (rng.chance(0.62)) {
+      plant(ctx, 'hedge', px, pz, rot, 0.85 + rng() * 0.2, { clear: 1.2, tintIndex: i, force: true });
+    } else {
+      plant(ctx, rng.chance(0.5) ? 'shrub' : 'ornGrass', px, pz, rng() * 6.283,
+        0.8 + rng() * 0.4, { clear: 1.0, tintIndex: i, force: true });
+    }
+  }
+}
+
+/* ======================================================================== */
+/*  ENTRY POINT                                                             */
+/* ======================================================================== */
 
 export function buildNature(ctx) {
   const { layout } = ctx;
-  const group = ctx.group('nature');
+  const B = new Buckets();
 
-  const grassMat = ground({
-    map: Textures.grass(),
-    roughnessMap: Textures.roughness(256, 220, 0.2),
-    roughness: 0.98,
-  });
-  const plazaMat = ground({
-    map: Textures.paving(512, '#e8e2d4', 'rgba(160,152,138,0.45)', 5),
-    roughness: 0.9,
-  });
+  stats.trees = 0; stats.palms = 0; stats.bushes = 0;
+  stats.features = 0; stats.instances = 0;
 
-  const frondMat = foliage(Textures.frond());
-  const trunkMat = solid({ color: PALETTE.PALM_TRUNK, roughness: 0.9 });
+  buildMedians(ctx);
 
   for (const b of layout.blocks) {
-    const r = makeRNG(b.seed ^ 0x51ab);
-    if (b.zone === ZONE.PARK) {
-      const g = new THREE.Mesh(
-        new THREE.PlaneGeometry(b.w * 0.98, b.d * 0.98).rotateX(-Math.PI / 2),
-        grassMat
-      );
-      const uv = g.geometry.attributes.uv;
-      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * b.w / 8, uv.getY(i) * b.d / 8);
-      g.position.set(b.x, ctx.Y_WALK + 0.02, b.z);
-      g.receiveShadow = true;
-      ctx.addDecor(g, 'nature');
-      scatterPalms(ctx, b, r, trunkMat, frondMat, 7);
-    } else if (b.zone === ZONE.PLAZA) {
-      const g = new THREE.Mesh(
-        new THREE.PlaneGeometry(b.w * 0.98, b.d * 0.98).rotateX(-Math.PI / 2),
-        plazaMat
-      );
-      const uv = g.geometry.attributes.uv;
-      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * b.w / 6, uv.getY(i) * b.d / 6);
-      g.position.set(b.x, ctx.Y_WALK + 0.02, b.z);
-      g.receiveShadow = true;
-      ctx.addDecor(g, 'nature');
-      scatterPalms(ctx, b, r, trunkMat, frondMat, 4);
-    } else {
-      // street palms along the block edge
-      scatterPalms(ctx, b, r, trunkMat, frondMat, 3, true);
+    const rng = makeRNG(b.seed ^ 0x51ab);
+    const openWater = b.bayfront || b.subtype === 'dock' || b.zone === ZONE.MARINA;
+    switch (b.zone) {
+      case ZONE.PARK:
+        // A bayfront "park" that is really the promenade wants the coastal
+        // treatment, not a lawn on the seawall.
+        if (b.subtype === 'promenade' || b.subtype === 'dock') waterfrontBlock(ctx, B, b, rng);
+        else parkBlock(ctx, B, b, rng);
+        break;
+      case ZONE.PLAZA:
+        if (openWater) waterfrontBlock(ctx, B, b, rng);
+        else plazaBlock(ctx, B, b, rng);
+        break;
+      case ZONE.MARINA:
+        // Nobody else builds on a marina apron, so it would otherwise render
+        // as a bare grey void — see the project-lead defect list.
+        waterfrontBlock(ctx, B, b, rng);
+        break;
+      default:
+        builtBlock(ctx, B, b, rng);
+        break;
     }
   }
-}
 
-function scatterPalms(ctx, b, r, trunkMat, frondMat, count, edgeOnly = false) {
-  for (let i = 0; i < count; i++) {
-    let x, z;
-    if (edgeOnly) {
-      const side = r.int(0, 3);
-      const t = 0.15 + r() * 0.7;
-      if (side === 0) { x = b.x - b.w / 2 + b.w * t; z = b.z - b.d / 2 + 2.2; }
-      else if (side === 1) { x = b.x - b.w / 2 + b.w * t; z = b.z + b.d / 2 - 2.2; }
-      else if (side === 2) { x = b.x - b.w / 2 + 2.2; z = b.z - b.d / 2 + b.d * t; }
-      else { x = b.x + b.w / 2 - 2.2; z = b.z - b.d / 2 + b.d * t; }
-    } else {
-      x = b.x + (r() - 0.5) * b.w * 0.82;
-      z = b.z + (r() - 0.5) * b.d * 0.82;
-    }
-    if (!ctx.isFree(x, z, 2.4)) continue;
-    ctx.occupy(x, z, 2.4);
+  const merged = B.flush(ctx);
 
-    const g = new THREE.Group();
-    g.position.set(x, ctx.Y_WALK, z);
-    const s = 0.82 + r() * 0.5;
-    g.scale.setScalar(s);
-    g.rotation.y = r() * Math.PI * 2;
-
-    const trunk = new THREE.Mesh(palmGeometry(), trunkMat);
-    trunk.castShadow = true;
-    g.add(trunk);
-
-    const nf = 7 + r.int(0, 3);
-    for (let f = 0; f < nf; f++) {
-      const a = (f / nf) * Math.PI * 2 + r() * 0.4;
-      const card = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 2.6), frondMat);
-      card.position.set(Math.cos(a) * 1.9 + Math.sin(2.1) * 0.55, 9.1, Math.sin(a) * 1.9);
-      card.rotation.set(-0.42 - r() * 0.3, -a + Math.PI, 0);
-      card.castShadow = true;
-      g.add(card);
-    }
-
-    ctx.addMesh(g, {
-      group: 'nature',
-      position: new THREE.Vector3(x, 0, z),
-      radius: 1.5 * s,
-      height: 10 * s,
-      tier: TIER.LARGE,
-      kind: 'palm',
-      label: 'Palm Tree',
-      debrisColor: PALETTE.PALM_FROND,
-    });
-  }
+  console.info(
+    `[nature] ${stats.palms} palms + ${stats.trees} trees + ${stats.bushes} shrubs/beds, `
+    + `${stats.features} park features | ${stats.instances} instances in `
+    + `${Object.keys(_factories).length + 1} pools + ${merged.calls} merged meshes `
+    + `(${Math.round(merged.tris / 1000)}k static tris)`
+  );
 }

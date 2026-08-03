@@ -99,30 +99,72 @@ if (unknown.length) {
 
 const report = { url, viewport: { w: W, h: H }, shots: [], errors: [] };
 
-for (const name of presets) {
-  await page.evaluate(
-    ([n, keepUI, keepBots, settle, extra]) => {
-      window.DEV.shot(n, { showUI: keepUI, clearBots: !keepBots });
-      if (keepUI) window.DEV.hideUI(false);
-      if (extra) {
-        // eslint-disable-next-line no-eval
-        (0, eval)(extra);
-      }
-      window.DEV.render(settle);
-      return true;
-    },
-    [name, KEEP_UI, KEEP_BOTS, SETTLE, EXTRA]
-  );
-  // A couple of real animation frames so anything time-based has settled.
-  await page.waitForTimeout(220);
-  await page.evaluate((n) => window.DEV.render(n), 4);
+const DEV_RETRIES = 8;
 
-  const file = join(OUT, `${name}.png`);
-  await page.screenshot({ path: file, timeout: 180000 });
-  const stats = await page.evaluate('window.DEV.stats()');
-  const note = await page.evaluate((n) => window.DEV.PRESETS[n].note, name);
-  report.shots.push({ preset: name, file, note, stats });
-  log(`✓ ${name.padEnd(20)} -> ${file}   [${stats.drawCalls} calls, r=${stats.playerRadius}]`);
+/**
+ * Run something against window.DEV, surviving a page reload.
+ *
+ * Several agents work this tree at once and every file they save makes Vite
+ * full-reload the page. A reload mid-run wipes window.DEV, and the next
+ * evaluate died with "Cannot read properties of undefined" — which looks
+ * exactly like a code bug in whatever module was last touched, and had people
+ * chasing ghosts. Re-wait for the harness and replay the step instead. The
+ * reload also rebuilds the world, so the step must be replayed from the
+ * preset, not resumed; that is why the caller passes the whole shot sequence.
+ */
+async function withDev(fn, what) {
+  for (let attempt = 0; attempt < DEV_RETRIES; attempt++) {
+    try {
+      await page.waitForFunction('!!window.DEV', null, { timeout: 180000 });
+      return await fn();
+    } catch (e) {
+      const gone = /window\.DEV|Cannot read properties of undefined|Execution context was destroyed|Target closed/.test(
+        String(e && e.message)
+      );
+      if (!gone || attempt === DEV_RETRIES - 1) throw e;
+      log(`  … page reloaded during ${what}; retrying (${attempt + 1}/${DEV_RETRIES - 1})`);
+      // Back off: during a save storm several reloads land in a row, and
+      // retrying instantly just races the next one.
+      await page.waitForTimeout(700 + attempt * 600);
+    }
+  }
+  return undefined;
+}
+
+for (const name of presets) {
+  const shot = await withDev(async () => {
+    await page.evaluate(
+      ([n, keepUI, keepBots, settle, extra]) => {
+        window.DEV.shot(n, { showUI: keepUI, clearBots: !keepBots });
+        if (keepUI) window.DEV.hideUI(false);
+        if (extra) {
+          // eslint-disable-next-line no-eval
+          (0, eval)(extra);
+        }
+        window.DEV.render(settle);
+        return true;
+      },
+      [name, KEEP_UI, KEEP_BOTS, SETTLE, EXTRA]
+    );
+    // A couple of real animation frames so anything time-based has settled.
+    await page.waitForTimeout(220);
+    // The braces matter. Every DEV method returns `this` for chaining, and
+    // playwright serialises whatever an evaluate resolves to — so returning
+    // DEV drags the entire game object graph across the bridge and dies with
+    // "object reference chain is too long" once the scene gets deep enough.
+    await page.evaluate((n) => { window.DEV.render(n); }, 4);
+
+    const file = join(OUT, `${name}.png`);
+    await page.screenshot({ path: file, timeout: 180000 });
+    // Read stats before anything can reload us, so the row always matches the
+    // frame that was just captured.
+    const stats = await page.evaluate('window.DEV.stats()');
+    const note = await page.evaluate((n) => window.DEV.PRESETS[n].note, name);
+    return { preset: name, file, note, stats };
+  }, name);
+
+  report.shots.push(shot);
+  log(`✓ ${name.padEnd(20)} -> ${shot.file}   [${shot.stats.drawCalls} calls, r=${shot.stats.playerRadius}]`);
 }
 
 report.errors = [...pageErrors, ...consoleErrors];

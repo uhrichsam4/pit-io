@@ -1,0 +1,53 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0c1620}canvas{display:block;width:100vw;height:100vh}
+</style></head><body><canvas id="c"></canvas><script type="module">
+import * as THREE from 'three';
+import { Engine } from '/src/core/engine.js';
+import { buildEnvironment } from '/src/core/materials.js';
+import { buildLayout } from '/src/world/cityLayout.js';
+import { buildStreets, Y_WALK } from '/src/world/streets.js';
+import { buildBuildings } from '/src/world/buildings.js';
+import { TIER } from '/src/config.js';
+
+const eng = new Engine(document.getElementById('c'));
+buildEnvironment(eng.renderer, eng.scene);
+const layout = buildLayout(20260803);
+const groups = {};
+let nBuild = 0, nMesh = 0, nTri = 0;
+const ctx = {
+  scene: eng.scene, layout, Y_WALK, TIER,
+  rng: Math.random,
+  group(n){ let g=groups[n]; if(!g){g=new THREE.Group(); g.name=n; eng.scene.add(g); groups[n]=g;} return g; },
+  occupy(){}, isFree(){ return true; },
+  addMesh(o, opts){ (opts.parent||ctx.group('misc')).add(o); nBuild++;
+    o.traverse(n=>{ if(!n.isMesh) return; nMesh++; const g=n.geometry;
+      nTri += (g.index?g.index.count:g.attributes.position.count)/3; }); return null; },
+  addDecor(o){ ctx.group('decor').add(o); return o; },
+  addInstanced(){ return null; },
+};
+buildStreets(ctx);
+const t0 = performance.now();
+buildBuildings(ctx);
+const buildMs = Math.round(performance.now() - t0);
+
+function cam(c){
+  const pitch = THREE.MathUtils.degToRad(c.pitch), yaw = THREE.MathUtils.degToRad(c.yaw);
+  const y = Math.sin(pitch)*c.dist, h = Math.cos(pitch)*c.dist;
+  eng._camTarget.set(c.x,0,c.z); eng._dist = c.dist;
+  eng.camera.position.set(c.x+Math.sin(yaw)*h, y, c.z+Math.cos(yaw)*h);
+  eng.camera.lookAt(c.x,0,c.z);
+  eng._setShadowExtent(THREE.MathUtils.clamp(58 + c.dist*1.35, 70, 360));
+  eng.sun.target.position.set(c.x,0,c.z);
+  eng.sun.position.set(c.x+eng.sunDir.x*320, eng.sunDir.y*320, c.z+eng.sunDir.z*320);
+  eng.sun.target.updateMatrixWorld();
+}
+window.BLD = {
+  stats(){ const i = eng.renderer.info;
+    return { buildings:nBuild, meshes:nMesh, tris:Math.round(nTri), buildMs,
+             drawCalls:i.render.calls, triangles:i.render.triangles }; },
+  shot(c, n=4){ cam(c); for(let k=0;k<n;k++) eng.render(1/30); },
+};
+cam({x:110,z:270,dist:430,pitch:30,yaw:48});
+eng.render(1/30);
+window.BLD_READY = true;
+</script></body></html>
