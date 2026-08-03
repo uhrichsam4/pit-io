@@ -47,12 +47,22 @@
  */
 
 import * as THREE from 'three';
-import { TIER, PALETTE } from '../config.js';
+import { TIER, PALETTE, WORLD } from '../config.js';
 import { makeRNG } from '../core/rng.js';
 import { solid } from '../core/materials.js';
 import { ZONE } from './cityLayout.js';
 
-/** Global dial for tuning density against the triangle budget. */
+/**
+ * ONE KNOB FOR THE WHOLE MODULE.
+ *
+ * 1.0 puts ~14.9k props on the map (the art bible asks for 9k-16k) and costs
+ * ~795k geometry triangles / ~1.04M rendered once the shadow pass is counted.
+ * Every spacing and every area-based count below divides by this, so if the
+ * project needs the triangles back, 0.75 lands around 11k props and ~600k
+ * triangles without changing how anything looks up close. Draw calls do not
+ * move: this module is one InstancedMesh per prop type, ~59 total, whatever
+ * the density.
+ */
 const DENSITY = 1.0;
 
 const TAU = Math.PI * 2;
@@ -75,8 +85,11 @@ function lin(hex) {
  * Contact occlusion ramp. The bottom half-metre of every prop is darkened so it
  * bites into the pavement even when the shadow map cannot resolve it.
  */
-const AO_H = 0.55;
-const AO_MIN = 0.68;
+// Kept shallow on purpose: a 0.6 m planter is *entirely* inside the ramp, and
+// at the first-pass strength (0.55 m / 0.68) every low prop read as muddy brown
+// instead of the bone/pastel it is authored as.
+const AO_H = 0.40;
+const AO_MIN = 0.78;
 function aoAt(y) {
   const t = y <= 0 ? 0 : y >= AO_H ? 1 : y / AO_H;
   return AO_MIN + (1 - AO_MIN) * (t * t * (3 - 2 * t));
@@ -393,15 +406,15 @@ const P = PALETTE;
 /* -- litter / kerbside ---------------------------------------------------- */
 
 function gCone(m) {
-  m.tube(0, 0, [[0, 0.30], [0.07, 0.15], [0.34, 0.105], [0.46, 0.086], [0.72, 0.028]], 7, {
+  m.tube(0, 0, [[0, 0.30], [0.08, 0.145], [0.42, 0.092], [0.72, 0.028]], 7, {
     capTop: true,
-    cols: [P.CONE_ORANGE, P.CONE_ORANGE, P.CONE_STRIPE, P.CONE_ORANGE],
+    cols: [P.CONE_ORANGE, P.CONE_STRIPE, P.CONE_ORANGE],
   });
 }
 
 function gBollard(m) {
-  m.tube(0, 0, [[0, 0.155], [0.07, 0.125], [0.84, 0.118], [0.95, 0.072]], 6, {
-    capTop: true, cols: [P.BOLLARD_DARK, P.BOLLARD_DARK, P.CHROME],
+  m.tube(0, 0, [[0, 0.155], [0.08, 0.122], [0.95, 0.078]], 6, {
+    capTop: true, cols: [P.BOLLARD_DARK, P.CHROME],
   });
 }
 
@@ -412,12 +425,10 @@ function gBollardStone(m) {
 }
 
 function gHydrant(m) {
-  m.tube(0, 0, [[0, 0.24], [0.06, 0.155], [0.56, 0.155], [0.62, 0.19]], 6, {
-    cols: [P.HYDRANT_RED, P.HYDRANT_RED, P.HYDRANT_RED],
+  m.tube(0, 0, [[0, 0.24], [0.07, 0.155], [0.62, 0.19]], 6, {
+    cols: [P.HYDRANT_RED, P.HYDRANT_RED],
   });
   m.tube(0, 0, [[0.62, 0.19], [0.80, 0.085]], 6, { capTop: true, cols: [P.HYDRANT_YELLOW] });
-  m.col(P.HYDRANT_YELLOW);
-  m.beam(-0.14, 0.36, 0, -0.27, 0.36, 0, 0.14, 0.14);
 }
 
 function gUplighter(m) {
@@ -438,9 +449,7 @@ function gBinMuni(m) {
   m.tube(0, 0, [[0, 0.34], [0.09, 0.33], [0.78, 0.37]], 6, {
     cols: [P.BENCH_METAL, P.BIN_GREEN],
   });
-  m.tube(0, 0, [[0.78, 0.41], [0.88, 0.40], [1.00, 0.24]], 6, {
-    capTop: true, cols: [P.BENCH_METAL, P.BENCH_METAL],
-  });
+  m.tube(0, 0, [[0.80, 0.41], [1.00, 0.24]], 6, { capTop: true, cols: [P.BENCH_METAL] });
 }
 
 /** Wheelie bin — body left near-white so the instance hex sets the colour. */
@@ -469,7 +478,6 @@ function gBenchSlat(m) {
   for (const s of [-1, 1]) {
     m.beam(s * 0.86, 0.0, 0.24, s * 0.86, 0.46, 0.22, 0.08, 0.08, false);
     m.beam(s * 0.86, 0.0, -0.22, s * 0.86, 0.50, -0.22, 0.08, 0.08, false);
-    m.beam(s * 0.86, 0.46, 0.24, s * 0.86, 0.48, -0.22, 0.07, 0.07, false);
   }
 }
 
@@ -601,7 +609,7 @@ function gMailbox(m) {
 function gParkingMeter(m) {
   m.col(P.PARKING_METER);
   m.tube(0, 0, [[0, 0.16], [0.05, 0.13], [1.02, 0.075]], 5, { cols: [P.STEEL_DARK, P.PARKING_METER] });
-  m.prism(0, 0, [[1.02, 0.30, 0.24], [1.42, 0.32, 0.26], [1.48, 0.26, 0.20]]);
+  m.prism(0, 0, [[1.02, 0.30, 0.24], [1.46, 0.28, 0.22]]);
   m.col(P.NEON_AQUA).prism(0, 0.135, [[1.16, 0.20, 0.02], [1.34, 0.20, 0.02]]);
 }
 
@@ -656,15 +664,19 @@ function gDogStation(m) {
 /** Clipped shrub. Two rings, six sides: round enough, 28 triangles. */
 function shrub(m, x, y, z, r, hex, segs = 6) {
   m.col(hex);
-  m.tube(x, z, [[y, r * 0.74], [y + r * 0.80, r], [y + r * 1.9, r * 0.34]], segs, { capTop: true });
+  // Three rings, not two: the extra one is what turns a faceted cone into a
+  // clipped dome. At 5 segments the silhouette read as a glass gem.
+  m.tube(x, z, [
+    [y, r * 0.70], [y + r * 0.62, r], [y + r * 1.42, r * 0.82], [y + r * 1.94, r * 0.26],
+  ], segs, { capTop: true });
 }
 
 function gPlanterRound(m) {
-  m.col(P.PLANTER).tube(0, 0, [[0, 0.54], [0.06, 0.51], [0.66, 0.62]], 7, {
+  m.col(P.PLANTER).tube(0, 0, [[0, 0.54], [0.06, 0.51], [0.66, 0.62]], 6, {
     cols: [P.PLANTER_DARK, P.PLANTER],
   });
-  m.col(P.MULCH).tube(0, 0, [[0.62, 0.55], [0.65, 0.52]], 7, { capTop: true });
-  shrub(m, 0, 0.60, 0, 0.44, P.HEDGE, 6);
+  m.col(P.MULCH).plate(0, 0.63, 0, 0.94, 0.94);
+  shrub(m, 0, 0.58, 0, 0.46, P.HEDGE, 6);
 }
 
 function gPlanterSquare(m) {
@@ -672,7 +684,7 @@ function gPlanterSquare(m) {
     [0, 1.02, 1.02], [0.07, 0.96, 0.96], [0.72, 1.10, 1.10],
   ], { cols: [P.PLANTER_DARK, P.PLANTER], capTop: false });
   m.col(P.MULCH).plate(0, 0.68, 0, 1.02, 1.02);
-  shrub(m, 0, 0.64, 0, 0.42, P.HEDGE_LIGHT, 6);
+  shrub(m, 0, 0.62, 0, 0.46, P.HEDGE_LIGHT, 5);
 }
 
 function gPlanterTrough(m) {
@@ -680,23 +692,30 @@ function gPlanterTrough(m) {
     [0, 1.84, 0.60], [0.06, 1.78, 0.54], [0.58, 1.92, 0.68],
   ], { cols: [P.PLANTER_DARK, P.PLANTER], capTop: false });
   m.col(P.MULCH).plate(0, 0.54, 0, 1.82, 0.58);
-  shrub(m, -0.48, 0.50, 0, 0.32, P.HEDGE, 5);
-  shrub(m, 0.44, 0.50, 0, 0.30, P.HEDGE_LIGHT, 5);
+  shrub(m, -0.46, 0.48, 0, 0.36, P.HEDGE, 5);
+  shrub(m, 0.46, 0.48, 0, 0.34, P.HEDGE_LIGHT, 5);
+  // Flower heads sit ON the foliage, not instead of it — a whole shrub painted
+  // hot pink reads as a plastic cone, which is what the first pass looked like.
   m.col(P.FLOWER_PINK);
-  m.tube(0, 0.10, [[0.52, 0.20], [0.80, 0.10]], 5, { capTop: true });
+  m.tube(0.46, 0, [[0.92, 0.16], [1.02, 0.07]], 5, { capTop: true });
 }
 
 function gPottedPalm(m) {
-  m.col(P.TERRACOTTA).tube(0, 0, [[0, 0.38], [0.05, 0.36], [0.62, 0.47]], 6, {
+  m.col(P.TERRACOTTA).tube(0, 0, [[0, 0.32], [0.06, 0.29], [0.74, 0.40]], 6, {
     cols: [P.BRICK_DARK, P.TERRACOTTA],
   });
-  m.col(P.MULCH).tube(0, 0, [[0.58, 0.42], [0.61, 0.40]], 6, { capTop: true });
-  m.col(P.PALM_TRUNK).tube(0, 0, [[0.58, 0.10], [1.46, 0.07]], 5, { capTop: false });
-  // Five fronds as flat tapered beams — cheaper than alpha cards, never pops.
+  m.col(P.MULCH).plate(0, 0.72, 0, 0.62, 0.62);
+  m.col(P.PALM_TRUNK).tube(0, 0, [[0.70, 0.085], [1.62, 0.062]], 5, { capTop: false });
+  /* Fronds rise then DROOP. A flat radial star reads as a lily pad from the
+     game's overhead camera — that is exactly what the first pass looked like.
+     Keep the spread under 1.5 m or a doorway palm eats the whole pavement. */
+  m.col(P.PALM_FROND_DARK);
+  m.tube(0, 0, [[1.58, 0.16], [1.86, 0.09]], 5, { capTop: true });
   for (let k = 0; k < 5; k++) {
-    const a = (k / 5) * TAU + 0.4;
+    const a = (k / 5) * TAU + 0.55;
+    const cx = Math.cos(a), cz = Math.sin(a);
     m.col(k % 2 ? P.PALM_FROND : P.PALM_FROND_DARK);
-    m.beam(0, 1.46, 0, Math.cos(a) * 1.24, 1.52, Math.sin(a) * 1.24, 0.34, 0.04, false);
+    m.beam(0, 1.82, 0, cx * 0.80, 1.30, cz * 0.80, 0.30, 0.05, false);
   }
 }
 
@@ -720,8 +739,9 @@ function gCafeChair(m) {
   m.prism(0, 0, [[0.42, 0.46, 0.44], [0.47, 0.44, 0.42]]);
   m.board(0, 0.44, 0.47, -0.20, 0.90, -0.24, 0.06);
   m.col(0xe2ddd0);
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    m.beam(sx * 0.18, 0, sz * 0.17, sx * 0.21, 0.44, sz * 0.20, 0.045, 0.045, false);
+  // Two hoop frames rather than four legs: same silhouette, half the triangles.
+  for (const sx of [-1, 1]) {
+    m.board(sx * 0.20, 0.06, 0, -0.18, 0.44, -0.20, 0.36);
   }
 }
 
@@ -788,13 +808,12 @@ function wheelX(m, z, y, x, r, t, segs = 7) {
 function gBicycle(m) {
   // Wheels lie in the XY plane, so the bike points along +x; the placer turns it.
   m.col(P.TYRE);
-  wheelZ(m, -0.55, 0.34, 0.34, 0.05);
-  wheelZ(m, 0.55, 0.34, 0.34, 0.05);
+  wheelZ(m, -0.55, 0.34, 0.34, 0.05, 7);
+  wheelZ(m, 0.55, 0.34, 0.34, 0.05, 7);
   m.col(0xf2f2f2);
   m.beam(-0.55, 0.34, 0, -0.05, 0.62, 0, 0.05, 0.05, false);
   m.beam(-0.05, 0.62, 0, 0.42, 0.90, 0, 0.05, 0.05, false);
   m.beam(-0.05, 0.62, 0, 0.18, 0.36, 0, 0.05, 0.05, false);
-  m.beam(0.18, 0.36, 0, 0.55, 0.34, 0, 0.05, 0.05, false);
   m.beam(0.42, 0.90, 0, 0.55, 0.34, 0, 0.05, 0.05, false);
   m.col(P.SIGN_DARK);
   m.beam(-0.10, 0.68, -0.09, -0.10, 0.68, 0.09, 0.20, 0.07);
@@ -813,15 +832,13 @@ function gBikeRack(m) {
 
 function gScooter(m) {
   m.col(P.TYRE);
-  wheelZ(m, -0.48, 0.13, 0.13, 0.05, 6);
-  wheelZ(m, 0.42, 0.13, 0.13, 0.05, 6);
+  wheelZ(m, -0.48, 0.13, 0.13, 0.05, 5);
+  wheelZ(m, 0.42, 0.13, 0.13, 0.05, 5);
   m.col(0xf4f4f4);
   m.prism(-0.03, 0, [[0.14, 0.86, 0.17], [0.22, 0.80, 0.15]]);
   m.beam(0.42, 0.16, 0, 0.50, 1.00, 0, 0.055, 0.055, false);
   m.col(P.SIGN_DARK);
   m.beam(0.50, 1.00, -0.22, 0.50, 1.00, 0.22, 0.05, 0.05, false);
-  m.col(P.NEON_AQUA);
-  m.prism(-0.03, 0, [[0.225, 0.42, 0.12], [0.235, 0.42, 0.12]]);
 }
 
 /* -- lighting ------------------------------------------------------------- */
@@ -829,7 +846,7 @@ function gScooter(m) {
 function gLampModern(m) {
   // The arm reaches along +z, i.e. outward over the carriageway once the
   // placer has turned the post to face the street.
-  m.col(P.STEEL_DARK).tube(0, 0, [[0, 0.24], [0.16, 0.20], [0.22, 0.145]], 7, { capTop: false });
+  m.col(P.STEEL_DARK).tube(0, 0, [[0, 0.24], [0.20, 0.145]], 6, { capTop: false });
   m.col(P.LAMP_POST).tube(0, 0, [[0.22, 0.135], [6.60, 0.085]], 7, { capTop: false });
   m.col(P.LAMP_POST);
   m.beam(0, 6.56, 0, 0, 6.94, 0.34, 0.10, 0.10, false);
@@ -845,14 +862,14 @@ function globe(m, x, z, y, r, segs = 6) {
 
 function gLampDeco(m) {
   m.col(P.BENCH_METAL);
-  m.prism(0, 0, [[0, 0.44, 0.44], [0.10, 0.36, 0.36], [0.44, 0.26, 0.26]]);
-  m.tube(0, 0, [[0.44, 0.115], [4.36, 0.085]], 6, { capTop: false });
-  m.beam(-0.60, 4.44, 0, 0.60, 4.44, 0, 0.08, 0.08);
+  m.prism(0, 0, [[0, 0.44, 0.44], [0.44, 0.26, 0.26]]);
+  m.tube(0, 0, [[0.44, 0.115], [4.36, 0.085]], 5, { capTop: false });
+  m.beam(-0.60, 4.44, 0, 0.60, 4.44, 0, 0.08, 0.08, false);
   for (const s of [-1, 1]) {
     m.col(P.BENCH_METAL);
     m.beam(s * 0.60, 4.42, 0, s * 0.60, 4.62, 0, 0.07, 0.07, false);
     m.col(P.LAMP_GLOW);
-    globe(m, s * 0.60, 0, 4.62, 0.21, 6);
+    globe(m, s * 0.60, 0, 4.62, 0.22, 5);
   }
 }
 
@@ -1087,9 +1104,9 @@ const DEFS = {
   cleat: { g: gMooringCleat, tier: T.TINY, r: 0.22, h: 0.25, label: 'Mooring Cleat', debris: P.STEEL_DARK },
 
   /* bins ----------------------------------------------------------------- */
-  binMuni: { g: gBinMuni, tier: T.SMALL, r: 0.40, h: 1.00, label: 'Litter Bin', shadow: true, debris: P.BIN_GREEN },
+  binMuni: { g: gBinMuni, tier: T.SMALL, r: 0.40, h: 1.00, label: 'Litter Bin', debris: P.BIN_GREEN },
   binWheelie: {
-    g: gBinWheelie, tier: T.SMALL, r: 0.34, h: 1.06, label: 'Wheelie Bin', shadow: true,
+    g: gBinWheelie, tier: T.SMALL, r: 0.34, h: 1.06, label: 'Wheelie Bin',
     tint: [P.BIN_GREEN, P.BIN_BLUE, P.BIN_GREY, P.BIN_GREEN, P.BIN_BLUE], debris: P.BIN_GREEN,
   },
   binMesh: { g: gBinMesh, tier: T.SMALL, r: 0.28, h: 0.88, label: 'Wire Bin', debris: P.BENCH_METAL },
@@ -1102,30 +1119,30 @@ const DEFS = {
   lounger: { g: gLounger, tier: T.MEDIUM, r: 1.00, h: 0.90, label: 'Sun Lounger', shadow: true, debris: 0xf2f2f2 },
 
   /* signage -------------------------------------------------------------- */
-  signStop: { g: gSignStop, tier: T.SMALL, r: 0.24, h: 2.70, label: 'Stop Sign', shadow: true, debris: P.HYDRANT_RED },
-  signNoEntry: { g: gSignNoEntry, tier: T.SMALL, r: 0.22, h: 2.60, label: 'No Entry Sign', shadow: true, debris: P.HYDRANT_RED },
-  signOneWay: { g: gSignOneWay, tier: T.SMALL, r: 0.28, h: 2.50, label: 'One Way Sign', shadow: true, debris: P.SIGN_DARK },
-  signParking: { g: gSignParking, tier: T.SMALL, r: 0.22, h: 2.60, label: 'Parking Sign', shadow: true, debris: P.SIGN_BLUE },
-  signStreet: { g: gSignStreet, tier: T.SMALL, r: 0.34, h: 2.90, label: 'Street Sign', shadow: true, debris: P.SIGN_GREEN },
+  signStop: { g: gSignStop, tier: T.SMALL, r: 0.24, h: 2.70, label: 'Stop Sign', debris: P.HYDRANT_RED },
+  signNoEntry: { g: gSignNoEntry, tier: T.SMALL, r: 0.22, h: 2.60, label: 'No Entry Sign', debris: P.HYDRANT_RED },
+  signOneWay: { g: gSignOneWay, tier: T.SMALL, r: 0.28, h: 2.50, label: 'One Way Sign', debris: P.SIGN_DARK },
+  signParking: { g: gSignParking, tier: T.SMALL, r: 0.22, h: 2.60, label: 'Parking Sign', debris: P.SIGN_BLUE },
+  signStreet: { g: gSignStreet, tier: T.SMALL, r: 0.34, h: 2.90, label: 'Street Sign', debris: P.SIGN_GREEN },
   sandwichBoard: { g: gSandwichBoard, tier: T.SMALL, r: 0.42, h: 0.95, label: 'Sandwich Board', debris: P.SIGN_DARK },
-  valetStand: { g: gValetStand, tier: T.SMALL, r: 0.40, h: 1.46, label: 'Valet Stand', shadow: true, debris: P.SIGN_DARK },
+  valetStand: { g: gValetStand, tier: T.SMALL, r: 0.40, h: 1.46, label: 'Valet Stand', debris: P.SIGN_DARK },
   stanchion: { g: gStanchion, tier: T.SMALL, r: 0.18, h: 1.02, label: 'Rope Post', debris: P.CHROME },
 
   /* kerb machines --------------------------------------------------------- */
-  mailbox: { g: gMailbox, tier: T.SMALL, r: 0.40, h: 1.20, label: 'Mailbox', shadow: true, tint: [P.MAILBOX, P.MAILBOX, 0x2f6fb0], debris: P.MAILBOX },
-  meter: { g: gParkingMeter, tier: T.SMALL, r: 0.20, h: 1.48, label: 'Parking Meter', shadow: true, debris: P.PARKING_METER },
-  newsBox: { g: gNewsBox, tier: T.SMALL, r: 0.32, h: 1.10, label: 'Newspaper Box', shadow: true, tint: [P.NEWSSTAND, P.SIGN_BLUE, P.ACCENT_SUN, P.BIN_GREEN], debris: P.NEWSSTAND },
-  utilityBox: { g: gUtilityBox, tier: T.SMALL, r: 0.50, h: 1.32, label: 'Utility Cabinet', shadow: true, debris: P.ALUMINIUM },
+  mailbox: { g: gMailbox, tier: T.SMALL, r: 0.40, h: 1.20, label: 'Mailbox', tint: [P.MAILBOX, P.MAILBOX, 0x2f6fb0], debris: P.MAILBOX },
+  meter: { g: gParkingMeter, tier: T.SMALL, r: 0.20, h: 1.48, label: 'Parking Meter', debris: P.PARKING_METER },
+  newsBox: { g: gNewsBox, tier: T.SMALL, r: 0.32, h: 1.10, label: 'Newspaper Box', tint: [P.NEWSSTAND, P.SIGN_BLUE, P.ACCENT_SUN, P.BIN_GREEN], debris: P.NEWSSTAND },
+  utilityBox: { g: gUtilityBox, tier: T.SMALL, r: 0.50, h: 1.32, label: 'Utility Cabinet', debris: P.ALUMINIUM },
   atmKiosk: { g: gAtmKiosk, tier: T.MEDIUM, r: 0.60, h: 2.22, label: 'ATM Kiosk', shadow: true, debris: 0xf0ece2 },
-  phoneKiosk: { g: gPhoneKiosk, tier: T.MEDIUM, r: 0.38, h: 2.40, label: 'Charging Kiosk', shadow: true, debris: P.STEEL_DARK },
+  phoneKiosk: { g: gPhoneKiosk, tier: T.MEDIUM, r: 0.38, h: 2.40, label: 'Charging Kiosk', debris: P.STEEL_DARK },
   fountain: { g: gDrinkFountain, tier: T.SMALL, r: 0.28, h: 1.12, label: 'Drinking Fountain', debris: P.PRECAST },
   dogStation: { g: gDogStation, tier: T.SMALL, r: 0.22, h: 1.56, label: 'Dog Waste Station', debris: P.BIN_GREEN },
 
   /* planting -------------------------------------------------------------- */
-  planterRound: { g: gPlanterRound, tier: T.SMALL, r: 0.62, h: 1.45, label: 'Planter', shadow: true, debris: P.PLANTER },
-  planterSquare: { g: gPlanterSquare, tier: T.SMALL, r: 0.78, h: 1.45, label: 'Planter', shadow: true, debris: P.PLANTER },
+  planterRound: { g: gPlanterRound, tier: T.SMALL, r: 0.62, h: 1.45, label: 'Planter', debris: P.PLANTER },
+  planterSquare: { g: gPlanterSquare, tier: T.SMALL, r: 0.78, h: 1.45, label: 'Planter', debris: P.PLANTER },
   planterTrough: { g: gPlanterTrough, tier: T.SMALL, r: 1.00, h: 1.10, label: 'Flower Trough', shadow: true, debris: P.PLANTER },
-  pottedPalm: { g: gPottedPalm, tier: T.MEDIUM, r: 0.80, h: 1.90, label: 'Potted Palm', shadow: true, debris: P.PALM_FROND },
+  pottedPalm: { g: gPottedPalm, tier: T.MEDIUM, r: 0.80, h: 1.90, label: 'Potted Palm', debris: P.PALM_FROND },
   // Hangs off a Deco lamp bracket, hence the y offset.
   hangBasket: { g: gHangBasket, tier: T.TINY, r: 0.34, h: 0.80, y: 3.86, label: 'Flower Basket', debris: P.FLOWER_MAGENTA },
 
@@ -1141,13 +1158,13 @@ const DEFS = {
     g: gBeachParasol, tier: T.MEDIUM, r: 1.45, h: 2.44, label: 'Beach Parasol', shadow: true,
     tint: [P.FABRIC_SUN, P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_WHITE], debris: P.FABRIC_SUN,
   },
-  heater: { g: gPatioHeater, tier: T.MEDIUM, r: 0.62, h: 2.10, label: 'Patio Heater', shadow: true, debris: P.ALUMINIUM },
+  heater: { g: gPatioHeater, tier: T.MEDIUM, r: 0.62, h: 2.10, label: 'Patio Heater', debris: P.ALUMINIUM },
   stringPole: { g: gStringPole, tier: T.MEDIUM, r: 0.26, h: 3.30, label: 'String-Light Pole', shadow: true, debris: P.WOOD_DARK },
 
   /* micromobility --------------------------------------------------------- */
-  bicycle: { g: gBicycle, tier: T.MEDIUM, r: 0.75, h: 1.05, label: 'Bicycle', shadow: true, tint: [0xf2f2f2, P.CAR_TEAL, P.CAR_CORAL, P.CAR_YELLOW, P.CAR_MINT], debris: P.STEEL },
+  bicycle: { g: gBicycle, tier: T.MEDIUM, r: 0.75, h: 1.05, label: 'Bicycle', tint: [0xf2f2f2, P.CAR_TEAL, P.CAR_CORAL, P.CAR_YELLOW, P.CAR_MINT], debris: P.STEEL },
   bikeRack: { g: gBikeRack, tier: T.SMALL, r: 0.48, h: 0.75, label: 'Bike Rack', debris: P.STEEL },
-  scooter: { g: gScooter, tier: T.MEDIUM, r: 0.52, h: 1.05, label: 'E-Scooter', shadow: true, tint: [0xf4f4f4, P.NEON_AQUA, P.ACCENT_HOT, P.CAR_LIME], debris: P.NEON_AQUA },
+  scooter: { g: gScooter, tier: T.MEDIUM, r: 0.52, h: 1.05, label: 'E-Scooter', tint: [0xf4f4f4, P.NEON_AQUA, P.ACCENT_HOT, P.CAR_LIME], debris: P.NEON_AQUA },
 
   /* lighting -------------------------------------------------------------- */
   lampModern: { g: gLampModern, tier: T.MEDIUM, r: 0.30, h: 7.00, label: 'Street Light', shadow: true, debris: P.LAMP_POST },
@@ -1163,9 +1180,9 @@ const DEFS = {
 
   /* construction ---------------------------------------------------------- */
   jersey: { g: gJersey, tier: T.MEDIUM, r: 1.05, h: 0.80, label: 'Jersey Barrier', shadow: true, crumbles: true, debris: P.PRECAST },
-  waterBarrier: { g: gWaterBarrier, tier: T.SMALL, r: 0.36, h: 1.02, label: 'Water Barrier', shadow: true, tint: [0xffffff, P.BARRIER_ORANGE, 0xffffff], debris: P.BARRIER_ORANGE },
-  aframe: { g: gAframe, tier: T.SMALL, r: 0.60, h: 1.05, label: 'Barricade', shadow: true, debris: P.BARRIER_ORANGE },
-  barrel: { g: gTrafficBarrel, tier: T.SMALL, r: 0.36, h: 0.92, label: 'Traffic Barrel', shadow: true, debris: P.BARRIER_ORANGE },
+  waterBarrier: { g: gWaterBarrier, tier: T.SMALL, r: 0.36, h: 1.02, label: 'Water Barrier', tint: [0xffffff, P.BARRIER_ORANGE, 0xffffff], debris: P.BARRIER_ORANGE },
+  aframe: { g: gAframe, tier: T.SMALL, r: 0.60, h: 1.05, label: 'Barricade', debris: P.BARRIER_ORANGE },
+  barrel: { g: gTrafficBarrel, tier: T.SMALL, r: 0.36, h: 0.92, label: 'Traffic Barrel', debris: P.BARRIER_ORANGE },
   crate: { g: gCrate, tier: T.SMALL, r: 0.56, h: 0.68, label: 'Crate', debris: P.WOOD_DECK },
   pallet: { g: gPallet, tier: T.SMALL, r: 0.75, h: 0.48, label: 'Pallet Stack', debris: P.WOOD_LIGHT },
   scaffold: { g: gScaffold, tier: T.MEDIUM, r: 0.75, h: 1.96, label: 'Scaffold Tower', shadow: true, debris: P.SCAFFOLD },
@@ -1215,6 +1232,7 @@ class Placer {
     this.ctx = ctx;
     this.rng = makeRNG(0x5eed_1a7 ^ (ctx.layout.seed | 0));
     this.items = [];
+    this.tried = 0;
     this.cell = 1.6;
     this.grid = new Map();
   }
@@ -1254,27 +1272,36 @@ class Placer {
   }
 
   /**
+   * @param {number} [claimR] ground footprint to test and reserve. Defaults to
+   *   the prop's own radius; pass 0 for things that legitimately share a
+   *   footprint with something already placed (an umbrella through a café
+   *   table, a basket hanging off a lamp bracket).
    * @returns {boolean} placed
    */
-  put(key, x, z, rot = 0, scale = 1, hex = null) {
+  put(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
     const d = DEFS[key];
     if (!d) return false;
-    const rr = d.r * scale + 0.16;
-    if (!this.free(x, z, rr)) return false;
-    this.claim(x, z, rr);
-    this.items.push({ key, x, z, rot, scale, hex });
+    this.tried++;
+    if (claimR !== 0) {
+      const rr = (claimR < 0 ? d.r * scale : claimR) + 0.10;
+      if (!this.free(x, z, rr)) return false;
+      this.claim(x, z, rr);
+    }
+    this.items.push({ key, x, z, rot, scale, hex, dy });
     return true;
   }
 
   /** Soft-hint variant: nudge off anything the shared grid already knows about. */
-  putSoft(key, x, z, rot = 0, scale = 1, hex = null) {
+  putSoft(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, dy = 0) {
     const r = this.rng;
     for (let t = 0; t < 3; t++) {
       const jx = t === 0 ? 0 : (r() - 0.5) * 5.0;
       const jz = t === 0 ? 0 : (r() - 0.5) * 5.0;
-      if (this.ctx.isFree(x + jx, z + jz, 0)) return this.put(key, x + jx, z + jz, rot, scale, hex);
+      if (this.ctx.isFree(x + jx, z + jz, 0)) {
+        return this.put(key, x + jx, z + jz, rot, scale, hex, claimR, dy);
+      }
     }
-    return this.put(key, x, z, rot, scale, hex);
+    return this.put(key, x, z, rot, scale, hex, claimR, dy);
   }
 
   emit() {
@@ -1288,7 +1315,7 @@ class Placer {
       const d = DEFS[it.key];
       const hex = d.tint ? (it.hex ?? d.tint[Math.floor(r() * d.tint.length)]) : null;
       ctx.addInstanced(it.key, factoryFor(it.key), {
-        position: new THREE.Vector3(it.x, ctx.Y_WALK + (d.y || 0), it.z),
+        position: new THREE.Vector3(it.x, ctx.Y_WALK + (d.y || 0) + (it.dy || 0), it.z),
         rotationY: it.rot,
         scale: it.scale,
         hex,
@@ -1313,7 +1340,8 @@ class Placer {
     }
     console.info(
       `[props] ${counts.size} pools / ${this.items.length} instances / ` +
-      `${(tris / 1000).toFixed(0)}k tris`
+      `${(tris / 1000).toFixed(0)}k tris / ` +
+      `${((this.items.length / this.tried) * 100).toFixed(0)}% of ${this.tried} attempts placed`
     );
     return { pools: counts.size, instances: this.items.length, tris };
   }
@@ -1331,7 +1359,58 @@ export function buildProps(ctx) {
       console.error('[props] block failed', b.x, b.z, e);
     }
   }
+  dressMedians(pl, ctx.layout, makeRNG(0x3d1a97));
   pl.emit();
+}
+
+/**
+ * Landscaped medians. Brickell Ave and Biscayne Blvd are boulevards with a
+ * planted island down the middle, and a rhythm of Deco twin-globe posts along
+ * it is the single most recognisable thing about them from the air. It also
+ * fixes a gameplay problem: the starting camera frames a junction, and without
+ * this the whole middle of the frame is bare asphalt with nothing to eat.
+ *
+ * The island surface streets.js builds sits at y = 0.142, 13 mm below Y_WALK.
+ */
+const MEDIAN_DY = -0.013;
+
+function dressMedians(pl, layout, rng) {
+  const S = WORLD.SIZE;
+  for (const road of layout.medians) {
+    const alongX = road.axis === 'z';               // constant z, runs along x
+    const cross = alongX ? layout.roadsX : layout.roadsZ;
+    const lo = alongX ? -S + 30 : -S + 30;
+    const hi = alongX ? WORLD.BAY_EDGE - 30 : S - 30;
+    const inner = Math.max(0.6, (road.medianW || 7) * 0.5 - 1.5);
+
+    let sinceLamp = 12;
+    for (let t = lo; t < hi; t += 4.0 + rng() * 2.5) {
+      // Stay out of the junction boxes and the painted nose tapers.
+      let clear = true;
+      for (const c of cross) {
+        if (Math.abs(t - c.pos) < c.half + 13) { clear = false; break; }
+      }
+      if (!clear) continue;
+      const x = alongX ? t : road.pos;
+      const z = alongX ? road.pos : t;
+      if (layout.isWater(x, z)) continue;
+
+      sinceLamp += 4.0;
+      const rotAlong = alongX ? Math.PI / 2 : 0;
+      if (sinceLamp > 25) {
+        if (pl.putSoft('lampDeco', x, z, rotAlong, 1, null, -1, MEDIAN_DY)) sinceLamp = 0;
+        continue;
+      }
+      const off = (rng() - 0.5) * inner;
+      const px = alongX ? x : road.pos + off;
+      const pz = alongX ? road.pos + off : z;
+      const key = rng.weighted([
+        ['uplighter', 8], ['planterRound', 4], ['bollardStone', 3],
+        ['planterTrough', 3], ['binMesh', 1],
+      ]);
+      pl.put(key, px, pz, rotAlong, 1, null, -1, MEDIAN_DY);
+    }
+  }
 }
 
 function dressBlock(pl, b, r) {
@@ -1349,12 +1428,17 @@ function dressBlock(pl, b, r) {
   const sides = ['n', 's', 'w', 'e'].filter((s) => b.edges[s]);
   if (!sides.length) sides.push(b.frontage);
 
+  // Site hoarding goes down BEFORE the ordinary kerb furniture: it is a
+  // continuous line and the first pass, which ran it last, lost most of it to
+  // bins and planters that had already claimed the kerb band.
+  if (Z === ZONE.CONSTRUCTION) constructionYard(pl, b, r, band);
+
   for (const s of sides) kerbRun(pl, b, s, r, band, life);
   if (!open && band > 2.3) for (const s of sides) facadeRun(pl, b, s, r, band, life);
   cornerDressing(pl, b, r);
 
   switch (Z) {
-    case ZONE.CONSTRUCTION: constructionYard(pl, b, r, band); break;
+    case ZONE.CONSTRUCTION: break;   // already dressed, above the kerb run
     case ZONE.PARK: parkFurniture(pl, b, r); break;
     case ZONE.PLAZA: plazaFurniture(pl, b, r); break;
     case ZONE.MARINA: marinaApron(pl, b, r); break;
@@ -1365,22 +1449,57 @@ function dressBlock(pl, b, r) {
     case ZONE.LANDMARK: towerForecourt(pl, b, r, band); break;
     default: break;
   }
-  if (b.bayfront && !open) beachFront(pl, b, r);
+  if (b.bayfront && Z !== ZONE.PARK) beachFront(pl, b, r);
 }
 
 /* ------------------------------------------------------------ kerb line -- */
 
+/**
+ * What tends to stand next to what. Pairing is most of the difference between
+ * "scattered props" and "a street somebody maintains".
+ */
+const COMPANION = {
+  benchSlat: ['binMuni', 'binMesh', 'planterRound'],
+  benchConcrete: ['binMuni', 'planterSquare'],
+  benchBackless: ['binMesh', 'dogStation'],
+  binMuni: ['newsBox', 'cone'],
+  binWheelie: ['binWheelie', 'crate'],
+  planterRound: ['planterRound', 'bollard'],
+  planterSquare: ['planterSquare', 'benchSlat'],
+  planterTrough: ['planterRound'],
+  signStop: ['bollard', 'hydrant'],
+  signStreet: ['meter', 'newsBox'],
+  meter: ['meter', 'bollard'],
+  newsBox: ['newsBox', 'binMesh'],
+  hydrant: ['bollard'],
+  bollard: ['bollard', 'bollard'],
+  bollardStone: ['bollardStone'],
+  cone: ['cone', 'cone'],
+  hotdogStand: ['binMesh', 'crate'],
+  foodCart: ['binMesh', 'crate', 'sandwichBoard'],
+  cafeTable: ['cafeChair'],
+  utilityBox: ['bollard'],
+  crate: ['crate', 'pallet'],
+  pottedPalm: ['pottedPalm'],
+  displayRack: ['produceCrate', 'sandwichBoard'],
+  produceCrate: ['produceCrate', 'crate'],
+  mailbox: ['newsBox'],
+  atmKiosk: ['bollard'],
+  phoneKiosk: ['binMesh'],
+};
+
 /** Weighted kerbside vocabulary for a block. */
 function kerbTable(b) {
   const t = [
-    ['bollard', 9], ['binMuni', 6], ['binWheelie', 4], ['planterRound', 6],
+    ['bollard', 7], ['binMuni', 6], ['binWheelie', 4], ['planterRound', 6],
     ['planterSquare', 4], ['benchSlat', 5], ['signStreet', 3], ['signParking', 3],
     ['hydrant', 3], ['meter', 5], ['newsBox', 3], ['utilityBox', 2], ['cone', 2],
+    ['signOneWay', 3],
     ['bikeRack', 3], ['scooter', 3], ['bicycle', 2], ['mailbox', 2],
   ];
   if (b.streetLife > 0.5) {
     t.push(['planterTrough', 5], ['binMesh', 3], ['phoneKiosk', 1], ['atmKiosk', 1],
-      ['pottedPalm', 4], ['stanchion', 2], ['hotdogStand', 1]);
+      ['pottedPalm', 2], ['stanchion', 2], ['hotdogStand', 1]);
   }
   if (b.streetLife < 0.3) {
     t.push(['bollardStone', 4], ['crate', 2], ['pallet', 1]);
@@ -1393,24 +1512,29 @@ function kerbRun(pl, b, s, r, band, life) {
   const len = edgeLen(b, s);
   if (len < 11) return;
   const rot = SIDE_ROT[s];
-  const inMin = 0.95;
-  const inMax = Math.max(1.25, band - 0.55);
+  /* Two distinct lines — a kerb line and a facade line (see facadeRun) with
+     clear walking room between — is what makes a pavement read as a pavement
+     from above. Scattering across the full band just looks like litter. */
+  const inMin = 0.85;
+  const inMax = Math.min(2.5, Math.max(1.15, band - 0.5));
 
   /* Lamp posts on an even cadence. An irregular lamp rhythm is one of the
      loudest "procedural city" tells, so this one is deliberately metronomic. */
-  const gap = b.onBoulevard ? 22 : b.onSpine ? 25 : 31;
+  const gap = b.onBoulevard ? 29 : b.onSpine ? 33 : 42;
   const kind = (b.onSpine || b.onBoulevard)
     ? (life > 0.45 ? 'lampDeco' : 'lampModern')
     : (life > 0.3 ? 'lampModern' : 'lampPark');
   for (let u = 4 + r() * 6; u < len - 4; u += gap) {
     const p = edgePt(b, s, u, 1.35);
     if (pl.put(kind, p.x, p.z, rot)) {
-      // Deco posts on a busy spine carry hanging baskets; modern ones don't.
-      if (kind === 'lampDeco' && r.chance(0.55)) {
-        pl.put('hangBasket', p.x + Math.sin(rot + 1.57) * 0.62, p.z + Math.cos(rot + 1.57) * 0.62, rot, 1);
+      // Deco posts carry hanging baskets off both bracket ends. They hang at
+      // 3.9 m, so they reserve no ground (claim 0).
+      if (kind === 'lampDeco' && r.chance(0.45)) {
+        const q = edgePt(b, s, u + 0.6, 1.35);
+        pl.put('hangBasket', q.x, q.z, rot, 1, null, 0);
       }
       if (r.chance(0.3)) {
-        const q = edgePt(b, s, u + 1.5, 0.85);
+        const q = edgePt(b, s, u + 1.6, 0.8);
         pl.put('uplighter', q.x, q.z, rot);
       }
     }
@@ -1430,21 +1554,44 @@ function kerbRun(pl, b, s, r, band, life) {
 
   /* General furniture run. Spacing tightens hard with street life, which is
      what makes a spine feel crowded and a back lot feel empty. */
-  const base = (5.6 - 3.1 * life) / DENSITY;
+  const base = (8.2 - 4.2 * life) / DENSITY;
   const table = kerbTable(b);
-  for (let u = 3.0 + r() * 2.5; u < len - 3.0; u += base * (0.68 + r() * 0.8)) {
+  for (let u = 2.4 + r() * 2.0; u < len - 2.4; u += base * (0.72 + r() * 0.7)) {
     const inset = inMin + r() * Math.max(0.25, inMax - inMin);
     const p = edgePt(b, s, u, inset);
     const key = r.weighted(table);
     const jitter = (r() - 0.5) * 0.3;
     if (key === 'scooter') { scooterRow(pl, b, s, u, inset, rot, r); continue; }
     if (key === 'bikeRack') { bikeCluster(pl, b, s, u, inset, rot, r); continue; }
-    pl.putSoft(key, p.x, p.z, rot + jitter);
+    if (!pl.putSoft(key, p.x, p.z, rot + jitter)) continue;
+    // Companions: real street furniture arrives in pairs — a bin beside the
+    // bench, a second planter beside the first, litter beside the cart.
+    if (COMPANION[key] && r.chance(0.36)) {
+      const q = edgePt(b, s, u + 1.5 + r() * 0.9, inset + (r() - 0.5) * 0.5);
+      pl.put(r.pick(COMPANION[key]), q.x, q.z, rot + (r() - 0.5) * 0.4);
+    }
+  }
+
+  /* Mid-pavement line. Without it a 7 m sidewalk is a kerb line, a facade line
+     and four metres of nothing in between, which reads as an empty plaza from
+     the game camera. */
+  if (band > 3.6) {
+    const midIn = band * 0.55;
+    for (let u = 5 + r() * 4; u < len - 4; u += ((15.5 - 6.5 * life) / DENSITY) * (0.7 + r() * 0.8)) {
+      const p = edgePt(b, s, u, midIn + (r() - 0.5) * 0.7);
+      const key = r.weighted([
+        ['benchSlat', 8], ['planterSquare', 7], ['planterTrough', 5], ['binMuni', 4],
+        ['pottedPalm', 2], ['bollardStone', 4], ['cafeTable', life > 0.5 ? 6 : 1],
+        ['picnicTable', 2], ['stanchion', 2], ['lampPark', 3],
+      ]);
+      if (key === 'cafeTable') { cafeCluster(pl, p.x, p.z, rot, r, 1); continue; }
+      pl.putSoft(key, p.x, p.z, rot + (r() - 0.5) * 0.5);
+    }
   }
 
   /* Parking meters march along the kerb wherever cars park — regular, close in. */
-  if (life > 0.34 && !b.onSpine && r.chance(0.45)) {
-    for (let u = 6 + r() * 4; u < len - 5; u += 7.2) {
+  if (life > 0.34 && !b.onSpine && r.chance(0.30)) {
+    for (let u = 6 + r() * 4; u < len - 5; u += 9.6) {
       const p = edgePt(b, s, u, 1.0);
       pl.put('meter', p.x, p.z, rot);
     }
@@ -1484,17 +1631,22 @@ function facadeRun(pl, b, s, r, band, life) {
   if (len < 14) return;
   const rot = SIDE_ROT[s];
   const inset = band - 0.35;
-  const step = 6.5 - 3.0 * life;
+  const step = (9.4 - 4.6 * life) / DENSITY;
   const shoppy = b.zone === ZONE.RETAIL || b.zone === ZONE.LOWRISE;
   const table = shoppy
-    ? [['sandwichBoard', 7], ['produceCrate', 6], ['displayRack', 5], ['pottedPalm', 6],
+    ? [['sandwichBoard', 7], ['produceCrate', 6], ['displayRack', 5], ['pottedPalm', 3],
       ['binWheelie', 4], ['cafeChair', 3], ['crate', 3], ['planterTrough', 3], ['heater', 2]]
-    : [['pottedPalm', 6], ['planterSquare', 5], ['benchSlat', 4], ['binWheelie', 3],
+    : [['pottedPalm', 3], ['planterSquare', 6], ['benchSlat', 5], ['binWheelie', 3],
       ['bollardStone', 4], ['utilityBox', 2], ['sandwichBoard', 2]];
 
-  for (let u = 4 + r() * 3; u < len - 4; u += step * (0.7 + r() * 0.9)) {
-    const p = edgePt(b, s, u, inset);
-    pl.putSoft(r.weighted(table), p.x, p.z, rot + (r() - 0.5) * 0.4);
+  for (let u = 3 + r() * 3; u < len - 3; u += step * (0.72 + r() * 0.8)) {
+    const p = edgePt(b, s, u, inset + (r() - 0.5) * 0.5);
+    const key = r.weighted(table);
+    if (!pl.putSoft(key, p.x, p.z, rot + (r() - 0.5) * 0.4)) continue;
+    if (COMPANION[key] && r.chance(0.32)) {
+      const q = edgePt(b, s, u + 1.3 + r() * 0.8, inset - 0.3 - r() * 0.6);
+      pl.put(r.pick(COMPANION[key]), q.x, q.z, rot + (r() - 0.5) * 0.5);
+    }
   }
 }
 
@@ -1534,15 +1686,18 @@ function cafeCluster(pl, x, z, rot, r, n = 1) {
     const seats = 3 + r.int(0, 1);
     for (let k = 0; k < seats; k++) {
       const a = (k / seats) * TAU + r() * 0.5;
-      pl.put('cafeChair', cx + Math.cos(a) * 1.15, cz + Math.sin(a) * 1.15, -a - Math.PI / 2);
+      const sx = cx + Math.cos(a) * 1.15, sz = cz + Math.sin(a) * 1.15;
+      // Face the table: local +z maps to (sin rotY, cos rotY).
+      pl.put('cafeChair', sx, sz, Math.atan2(-Math.cos(a), -Math.sin(a)));
     }
-    if (r.chance(0.5)) pl.put('umbrella', cx, cz, r() * TAU);
+    // The pole goes through the table, so it claims no ground of its own.
+    if (r.chance(0.5)) pl.put('umbrella', cx, cz, r() * TAU, 1, null, 0);
   }
 }
 
 function retailTerrace(pl, b, r, band) {
   const life = b.streetLife;
-  const nClusters = Math.round(1 + life * 4 + r() * 1.6);
+  const nClusters = Math.round((1 + life * 4 + r() * 1.6) * DENSITY);
   const s = b.frontage;
   const len = edgeLen(b, s);
   const rot = SIDE_ROT[s];
@@ -1581,10 +1736,10 @@ function towerForecourt(pl, b, r, band) {
   const mid = len / 2 + (r() - 0.5) * len * 0.2;
   // Flanking potted palms + a rope line either side of the door.
   for (const sgn of [-1, 1]) {
-    for (let k = 0; k < 2; k++) {
-      const p = edgePt(b, s, mid + sgn * (2.4 + k * 2.2), Math.max(1.8, band * 0.6));
-      pl.put('pottedPalm', p.x, p.z, rot);
-    }
+    const p = edgePt(b, s, mid + sgn * 2.4, Math.max(1.8, band * 0.6));
+    pl.put('pottedPalm', p.x, p.z, rot);
+    const q = edgePt(b, s, mid + sgn * 4.6, Math.max(1.8, band * 0.6));
+    pl.put('planterSquare', q.x, q.z, rot);
   }
   if (r.chance(0.55)) {
     const p = edgePt(b, s, mid + 3.6, 1.6);
@@ -1603,7 +1758,7 @@ function towerForecourt(pl, b, r, band) {
 }
 
 function plazaFurniture(pl, b, r) {
-  const n = Math.round((b.w * b.d) / 190);
+  const n = Math.round((b.w * b.d) / 115 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.82;
     const z = b.z + (r() - 0.5) * b.d * 0.82;
@@ -1627,7 +1782,7 @@ function plazaFurniture(pl, b, r) {
 }
 
 function parkFurniture(pl, b, r) {
-  const n = Math.round((b.w * b.d) / 240);
+  const n = Math.round((b.w * b.d) / 150 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.84;
     const z = b.z + (r() - 0.5) * b.d * 0.84;
@@ -1639,7 +1794,7 @@ function parkFurniture(pl, b, r) {
     pl.putSoft(key, x, z, r() * TAU);
   }
   // Picnic groves: tables come in twos and threes around a shady spot.
-  const groves = 1 + r.int(0, 2);
+  const groves = 2 + r.int(0, 2);
   for (let g = 0; g < groves; g++) {
     const gx = b.x + (r() - 0.5) * b.w * 0.6;
     const gz = b.z + (r() - 0.5) * b.d * 0.6;
@@ -1651,7 +1806,7 @@ function parkFurniture(pl, b, r) {
 }
 
 function marinaApron(pl, b, r) {
-  const n = Math.round((b.w * b.d) / 260);
+  const n = Math.round((b.w * b.d) / 165 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.86;
     const z = b.z + (r() - 0.5) * b.d * 0.86;
@@ -1669,23 +1824,30 @@ function marinaApron(pl, b, r) {
 }
 
 function beachFront(pl, b, r) {
-  // Promenade furniture on the seaward strip: loungers and parasols in rows.
-  const x0 = b.x + b.w / 2 - 3.4;
+  // Promenade furniture on the seaward strip: loungers in pairs under a shared
+  // parasol, and mooring cleats along the seawall itself.
+  const x0 = b.x + b.w / 2 - 3.6;
   const rows = 1 + r.int(0, 1);
   for (let row = 0; row < rows; row++) {
-    const x = x0 - row * 3.1;
-    for (let u = 3; u < b.d - 3; u += 2.9) {
-      if (!r.chance(0.62)) continue;
+    const x = x0 - row * 3.2;
+    for (let u = 3; u < b.d - 3; u += 3.4) {
+      if (!r.chance(0.66)) continue;
       const z = b.z - b.d / 2 + u;
-      pl.put('lounger', x, z, Math.PI / 2 + (r() - 0.5) * 0.2);
-      if (r.chance(0.34)) pl.put('parasol', x - 1.5, z + 0.6, 0);
+      const placed = pl.put('lounger', x, z, Math.PI / 2 + (r() - 0.5) * 0.2);
+      if (placed && r.chance(0.7)) pl.put('lounger', x, z + 1.35, Math.PI / 2 + (r() - 0.5) * 0.2);
+      // The canopy is meant to overhang the loungers, so it only reserves its
+      // pole — claiming its full 1.45 m radius rejected every single one.
+      if (placed && r.chance(0.6)) pl.put('parasol', x - 1.7, z + 0.7, 0, 1, null, 0.35);
     }
+  }
+  for (let u = 2.5; u < b.d - 2.5; u += 5.5) {
+    pl.put('cleat', b.x + b.w / 2 - 1.1, b.z - b.d / 2 + u, 0);
   }
 }
 
 function lotFurniture(pl, b, r, band) {
   // A garage forecourt: kerb protection, cabinets and a few cones.
-  const n = Math.round((b.w + b.d) / 12);
+  const n = Math.round((b.w + b.d) / 8 * DENSITY);
   for (let i = 0; i < n; i++) {
     const s = r.pick(['n', 's', 'w', 'e']);
     const u = 3 + r() * Math.max(1, edgeLen(b, s) - 6);
@@ -1717,8 +1879,35 @@ function constructionYard(pl, b, r, band) {
     }
   }
 
+  /* Lane closure. A site with no works in the road in front of it is the
+     giveaway that the hoarding is scenery; it is also the only thing that puts
+     anything edible in the middle of a 34 m boulevard. */
+  const fr = b.frontageStreets && b.frontageStreets[0];
+  if (fr && r.chance(0.8)) {
+    const road = fr.road;
+    const side = fr.side;
+    const alongX = side === 'n' || side === 's';
+    const kerb = alongX
+      ? (side === 'n' ? b.z - b.d / 2 : b.z + b.d / 2)
+      : (side === 'w' ? b.x - b.w / 2 : b.x + b.w / 2);
+    const outward = (side === 'n' || side === 'w') ? -1 : 1;
+    const len = alongX ? b.w : b.d;
+    const u0 = (alongX ? b.x : b.z) - len / 2 + 4 + r() * (len - 16);
+    // A taper out to 3.6 m then a straight run — standard cone taper.
+    for (let k = 0; k < 12; k++) {
+      const t = u0 + k * 1.9;
+      const depth = 0.9 + Math.min(3.6, k * 0.62);
+      const cx = alongX ? t : kerb + outward * depth;
+      const cz = alongX ? kerb + outward * depth : t;
+      pl.put(k % 5 === 4 ? 'barrel' : 'cone', cx, cz, 0, 1, null, -1, -0.155);
+    }
+    const ex = alongX ? u0 - 1.6 : kerb + outward * 1.2;
+    const ez = alongX ? kerb + outward * 1.2 : u0 - 1.6;
+    pl.put('aframe', ex, ez, alongX ? 0 : Math.PI / 2, 1, null, -1, -0.155);
+  }
+
   /* Site yard: material stacks, welfare units, scaffolding. */
-  const n = Math.round((b.w * b.d) / 200);
+  const n = Math.round((b.w * b.d) / 145 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.78;
     const z = b.z + (r() - 0.5) * b.d * 0.78;

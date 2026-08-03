@@ -19,7 +19,9 @@
  *   3. MERGE EVERYTHING STATIC.  Lawns, paths, plaza paving, kerbs, court
  *      markings, steps and walls for all 216 blocks collapse into ~15 meshes.
  *
- * Total cost of this module: ~45 draw calls for the entire city.
+ * Measured cost of this module for the whole city: 47 draw calls, 318k
+ * triangles, ~5,000 instances. The Group-of-meshes version it replaced cost
+ * about 3,300 draw calls on its own.
  *
  * ---------------------------------------------------------------------------
  * WIND
@@ -381,11 +383,14 @@ function drawCoconuts(g, rect, seed) {
 function drawBark(g, rect, kind, seed) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
+  // Warm, mid-value barks. Authored light they blow out under the 3.5x key and
+  // the palms turn into white poles — which is exactly what happened the first
+  // time round.
   const spec = {
-    royal: { base: 0xbfb8a8, dark: 0x8e8878, light: 0xdcd6c6 },
-    coco: { base: PALETTE.PALM_TRUNK, dark: PALETTE.PALM_TRUNK_DARK, light: 0xc7a67c },
-    fib: { base: 0x9a7c54, dark: 0x6a5334, light: 0xbb9a68 },
-    oak: { base: 0x9c8b74, dark: 0x63563f, light: 0xbcac93 },
+    royal: { base: 0xa89a84, dark: 0x796d5c, light: 0xc6bba6 },
+    coco: { base: PALETTE.PALM_TRUNK_DARK, dark: 0x5c462d, light: PALETTE.PALM_TRUNK },
+    fib: { base: 0x8a6e49, dark: 0x5b4629, light: 0xa98a5c },
+    oak: { base: 0x8e7d66, dark: 0x574a35, light: 0xa89881 },
   }[kind];
 
   g.fillStyle = cssOf(spec.base);
@@ -726,6 +731,10 @@ function pondMaterial() {
     metalness: 0.22,
     envMapIntensity: 1.9,
     dithering: true,
+    // Same depth-layer scheme as BUCKET_MATS — see `layer`.
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -8,
   });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uNatTime = TIME;
@@ -976,8 +985,11 @@ function ribbon(points, width, y, unitsPerTile) {
     pos.push(p.x + nx, y, p.z + nz); nor.push(0, 1, 0); uv.push(width / unitsPerTile, run / unitsPerTile);
   }
   for (let i = 0; i < points.length - 1; i++) {
+    // Wind counter-clockwise seen from +Y. Get this backwards and the ribbon is
+    // a perfectly correct, perfectly invisible back face on a FrontSide
+    // material — which is exactly how every park path vanished.
     const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
-    idx.push(a, c, b, b, c, d);
+    idx.push(a, b, c, b, d, c);
   }
   return finishGeo(pos, nor, uv, idx);
 }
@@ -997,7 +1009,9 @@ function disc(r, sides, x, y, z, cellName) {
       (rect.v0 + rect.v1) / 2 + Math.sin(a) * (rect.v1 - rect.v0) * 0.5
     );
   }
-  for (let i = 1; i <= sides; i++) idx.push(0, i, i + 1);
+  // Reversed for the same reason as `ribbon`: +angle runs clockwise when you
+  // look down the +Y axis, so the naive fan faces the ground.
+  for (let i = 1; i <= sides; i++) idx.push(0, i + 1, i);
   return finishGeo(pos, nor, uv, idx);
 }
 
@@ -1368,58 +1382,65 @@ function makeFlagpole(cell) {
  * the art bible (palm ~10 m) holds.
  */
 const SPECIES = {
+  /*
+   * PROPORTION NOTE. A botanically correct royal palm is a 15 m pole with a
+   * 6 m tuft, and at game distance that renders as a telegraph pole. The art
+   * bible calls for chunky, confident, readable shapes and puts a palm at
+   * ~10 m, so every species below is stockier and much more crowned than the
+   * real thing: crown spread runs 70-90% of total height.
+   */
   royalA: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 17.5, rad: 1.5, cap: 700, clear: 2.8,
+    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 700, clear: 2.8,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
-      seed: 11, h: 17.5, rBot: 0.40, rTop: 0.30, bark: 'barkRoyal', crownshaft: true,
-      bend: 0.012, sway: -0.008, bulge: 0.10, fronds: 10, frondLen: 4.3, frondW: 0.48,
-      pitch: -0.24, rise: 0.50, droop: 1.02, cells: ['frondA', 'frondB'],
+      seed: 11, h: 13.5, rBot: 0.55, rTop: 0.42, bark: 'barkRoyal', crownshaft: true,
+      bend: 0.014, sway: -0.010, bulge: 0.12, fronds: 13, frondLen: 5.3, frondW: 0.50,
+      pitch: 0.34, rise: 0.44, droop: 0.98, cells: ['frondA', 'frondB'],
     }),
   },
   royalB: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.4, cap: 700, clear: 2.6,
+    label: 'Royal Palm', tier: TIER.LARGE, h: 10.4, rad: 1.6, cap: 700, clear: 2.6,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
-      seed: 23, h: 13.5, rBot: 0.36, rTop: 0.27, bark: 'barkRoyal', crownshaft: true,
-      bend: -0.020, sway: 0.014, bulge: 0.14, fronds: 9, frondLen: 3.8, frondW: 0.50,
-      pitch: -0.10, rise: 0.58, droop: 1.10, cells: ['frondB', 'frondA'],
+      seed: 23, h: 10.4, rBot: 0.50, rTop: 0.40, bark: 'barkRoyal', crownshaft: true,
+      bend: -0.026, sway: 0.018, bulge: 0.16, fronds: 12, frondLen: 4.5, frondW: 0.54,
+      pitch: 0.42, rise: 0.48, droop: 1.02, cells: ['frondB', 'frondA'],
     }),
   },
   coconutA: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 12.0, rad: 1.5, cap: 700, clear: 2.7,
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 10.6, rad: 1.7, cap: 700, clear: 2.7,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
-      seed: 37, h: 12.0, rBot: 0.34, rTop: 0.22, bark: 'barkCoco', crownshaft: false,
-      bend: 0.085, sway: 0.030, fronds: 9, frondLen: 4.1, frondW: 0.46,
-      pitch: -0.30, rise: 0.44, droop: 1.16, coconuts: true, cells: ['frondB', 'frondA'],
+      seed: 37, h: 10.6, rBot: 0.48, rTop: 0.34, bark: 'barkCoco', crownshaft: false,
+      bend: 0.10, sway: 0.036, fronds: 11, frondLen: 4.9, frondW: 0.50,
+      pitch: 0.10, rise: 0.40, droop: 1.10, coconuts: true, cells: ['frondB', 'frondA'],
     }),
   },
   coconutB: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 9.2, rad: 1.4, cap: 600, clear: 2.5,
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 8.0, rad: 1.6, cap: 600, clear: 2.5,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
-      seed: 41, h: 9.2, rBot: 0.32, rTop: 0.21, bark: 'barkCoco', crownshaft: false,
-      bend: -0.115, sway: -0.045, fronds: 8, frondLen: 3.6, frondW: 0.50,
-      pitch: -0.42, rise: 0.38, droop: 1.22, coconuts: true, cells: ['frondA', 'frondB'],
+      seed: 41, h: 8.0, rBot: 0.46, rTop: 0.32, bark: 'barkCoco', crownshaft: false,
+      bend: -0.135, sway: -0.052, fronds: 10, frondLen: 4.2, frondW: 0.56,
+      pitch: -0.05, rise: 0.36, droop: 1.16, coconuts: true, cells: ['frondA', 'frondB'],
     }),
   },
   sabal: {
-    label: 'Sabal Palm', tier: TIER.LARGE, h: 9.8, rad: 1.2, cap: 700, clear: 2.2,
+    label: 'Sabal Palm', tier: TIER.LARGE, h: 8.4, rad: 1.5, cap: 700, clear: 2.4,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
-      seed: 53, h: 9.8, rBot: 0.28, rTop: 0.24, bark: 'barkFib', crownshaft: false,
-      bend: 0.018, sway: 0.010, fronds: 11, frondLen: 2.3, frondW: 1.15,
-      pitch: 0.24, rise: 0.62, droop: 0.86, cells: ['fanA'],
+      seed: 53, h: 8.4, rBot: 0.40, rTop: 0.35, bark: 'barkFib', crownshaft: false,
+      bend: 0.022, sway: 0.012, fronds: 14, frondLen: 3.1, frondW: 1.25,
+      pitch: 0.34, rise: 0.58, droop: 0.80, cells: ['fanA'],
     }),
   },
   fanShort: {
-    label: 'Fan Palm', tier: TIER.MEDIUM, h: 4.4, rad: 1.4, cap: 600, clear: 2.0,
+    label: 'Fan Palm', tier: TIER.MEDIUM, h: 3.6, rad: 1.7, cap: 600, clear: 2.0,
     debris: PALETTE.PALM_FROND,
     geo: () => makePalm({
-      seed: 67, h: 4.4, rBot: 0.36, rTop: 0.32, bark: 'barkFib', crownshaft: false,
-      bend: 0, sway: 0, fronds: 12, frondLen: 2.5, frondW: 1.20,
-      pitch: 0.10, rise: 0.55, droop: 0.90, cells: ['fanA'],
+      seed: 67, h: 3.6, rBot: 0.48, rTop: 0.44, bark: 'barkFib', crownshaft: false,
+      bend: 0, sway: 0, fronds: 15, frondLen: 2.9, frondW: 1.30,
+      pitch: 0.18, rise: 0.52, droop: 0.84, cells: ['fanA'],
     }),
   },
   banyan: {
@@ -1567,28 +1588,57 @@ const SHADE = ['banyan', 'liveOak', 'tabebuia', 'bougain'];
  * one of these, and each becomes exactly one mesh. `matFn` is lazy so a bucket
  * nobody fills costs nothing, not even a texture generation.
  */
+/**
+ * Ground surfaces stack by POLYGON OFFSET, not by height.
+ *
+ * streets.js paves every block with a sidewalk slab drawn at
+ * polygonOffsetFactor -1. At a 40-degree camera 60 m out, one offset unit is
+ * worth about 5 cm of depth on a near-horizontal plane — far more than the
+ * 1.5 cm we sit above it — so a park lawn placed only by y quietly loses the
+ * depth test and the whole park renders as bare pavement. (It did.) Everything
+ * here therefore claims an explicit layer above the sidewalk's, matching the
+ * scheme streets.js already uses: 1 sidewalk, 5 road markings, 7 ironwork.
+ */
+function layer(params, depth) {
+  return ground({
+    ...params,
+    polygonOffset: true,
+    polygonOffsetFactor: -depth,
+    polygonOffsetUnits: -depth * 2,
+  });
+}
+
 const BUCKET_MATS = {
-  lawnA: () => ground({ map: Textures.grass(), roughness: 0.98 }),
+  lawnA: () => layer({ map: Textures.grass(), roughness: 0.98 }, 3),
   // The mowing stripe. Same texture, ~14% darker — mowers lay the blades in
   // opposite directions and that is exactly what you see from the air.
-  lawnB: () => ground({ map: Textures.grass(), color: 0xdae6c6, roughness: 0.98 }),
-  plazaBase: () => ground({
+  lawnB: () => layer({ map: Textures.grass(), color: 0xdae6c6, roughness: 0.98 }, 3),
+  plazaBase: () => layer({
     map: Textures.paving(512, PALETTE.PLAZA, 'rgba(150,140,120,0.5)', 4), roughness: 0.9,
-  }),
-  plazaInlay: () => ground({
-    map: Textures.paving(512, PALETTE.PLAZA_ALT, 'rgba(132,120,100,0.55)', 10), roughness: 0.86,
-  }),
-  path: () => ground({
+  }, 3),
+  plazaInlay: () => layer({
+    map: Textures.paving(512, PALETTE.PLAZA_ALT, 'rgba(120,106,84,0.7)', 10), roughness: 0.86,
+  }, 4),
+  // The pattern only reads if the accent genuinely contrasts. An 8% darker
+  // cream on cream is invisible from the game camera — which is precisely why
+  // the plazas looked like empty slabs. Terracotta paver, same family as the
+  // crossing aprons streets.js lays, so the city stays coherent.
+  plazaAccent: () => layer({
+    map: Textures.paving(512, PALETTE.BRICK_PAVER, 'rgba(108,62,42,0.6)', 8), roughness: 0.9,
+  }, 4),
+  path: () => layer({
     map: Textures.paving(512, PALETTE.BRICK_PAVER, 'rgba(112,68,48,0.55)', 14), roughness: 0.92,
-  }),
-  mulch: () => ground({ map: Textures.sand(), color: 0x8a6a4c, roughness: 1.0 }),
-  sandPit: () => ground({ map: Textures.sand(), roughness: 1.0 }),
-  courtHard: () => ground({ color: PALETTE.PATINA, roughness: 0.82 }),
-  courtClay: () => ground({ color: PALETTE.TERRACOTTA, roughness: 0.95 }),
-  courtLine: () => ground({ color: PALETTE.ROAD_LINE, roughness: 0.7 }),
-  stone: () => ground({ map: Textures.concrete(512, PALETTE.CONCRETE_WARM), roughness: 0.9 }),
-  kerb: () => ground({ color: PALETTE.CURB, roughness: 0.88 }),
-  deck: () => ground({ map: Textures.wood(512, PALETTE.WOOD_DECK, 8), roughness: 0.82 }),
+  }, 4),
+  mulch: () => layer({ map: Textures.sand(), color: 0x8a6a4c, roughness: 1.0 }, 4),
+  sandPit: () => layer({ map: Textures.sand(), roughness: 1.0 }, 4),
+  courtHard: () => layer({ color: PALETTE.PATINA, roughness: 0.82 }, 4),
+  courtClay: () => layer({ color: PALETTE.TERRACOTTA, roughness: 0.95 }, 4),
+  courtLine: () => layer({ color: PALETTE.ROAD_LINE, roughness: 0.7 }, 6),
+  // Boxes and steps: they have real height, so they only need enough offset to
+  // win where their base face is coplanar with the pavement.
+  stone: () => layer({ map: Textures.concrete(512, PALETTE.CONCRETE_WARM), roughness: 0.9 }, 2),
+  kerb: () => layer({ color: PALETTE.CURB, roughness: 0.88 }, 2),
+  deck: () => layer({ map: Textures.wood(512, PALETTE.WOOD_DECK, 8), roughness: 0.82 }, 3),
   pond: () => pondMaterial(),
 };
 
@@ -1792,8 +1842,8 @@ function buildStreetTrees(ctx, B, b, rng) {
 
   for (const fr of b.frontageStreets) {
     const cls = fr.road.cls;
-    const spacing = cls === ROAD_CLASS.BOULEVARD ? 11.5
-      : cls === ROAD_CLASS.AVENUE ? 14.5 : 18.5;
+    const spacing = cls === ROAD_CLASS.BOULEVARD ? 10.5
+      : cls === ROAD_CLASS.AVENUE ? 13.0 : 16.0;
     const horiz = fr.side === 'n' || fr.side === 's';
     const len = horiz ? b.w : b.d;
     if (len < spacing * 0.9) continue;
@@ -1953,6 +2003,12 @@ function parkBlock(ctx, B, b, rng) {
     }
   }
 
+  /* --- one hero feature ------------------------------------------------- */
+  // BEFORE the beds and the canopy scatter: the feature needs 5-9 m of clear
+  // ground, and whatever runs first wins the occupancy grid. Running it last is
+  // how every bandshell, court and pond in the city ended up rejected.
+  parkFeature(ctx, B, b, rng, y);
+
   /* --- flower beds ------------------------------------------------------ */
   const beds = 1 + rng.int(0, 2);
   for (let i = 0; i < beds; i++) {
@@ -1960,6 +2016,8 @@ function parkBlock(ctx, B, b, rng) {
     const bx = b.x + (rng() - 0.5) * Math.max(0, b.w - bw - 8);
     const bz = b.z + (rng() - 0.5) * Math.max(0, b.d - bd - 8);
     if (!ctx.isFree(bx, bz, Math.max(bw, bd) * 0.5)) continue;
+    // Claim it, or props.js drops a traffic cone in the middle of the petunias.
+    ctx.occupy(bx, bz, Math.max(bw, bd) * 0.45);
     B.add('mulch', tile(bw, bd, bx, bz, y + 0.035, 3));
     B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz - bd / 2, 1));
     B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz + bd / 2, 1));
@@ -1978,7 +2036,7 @@ function parkBlock(ctx, B, b, rng) {
   }
 
   /* --- canopy ----------------------------------------------------------- */
-  const treeN = Math.max(3, Math.round(b.area / 105));
+  const treeN = Math.max(4, Math.round(b.area / 68));
   for (let i = 0; i < treeN; i++) {
     const tx = b.x + (rng() - 0.5) * b.w * 0.86;
     const tz = b.z + (rng() - 0.5) * b.d * 0.86;
@@ -1988,15 +2046,12 @@ function parkBlock(ctx, B, b, rng) {
         ['tabebuia', 14], ['bougain', 10], ['sabal', 6]]);
     plant(ctx, key, tx, tz, rng() * 6.283, 0.85 + rng() * 0.35);
   }
-  const shrubN = Math.max(2, Math.round(b.area / 220));
+  const shrubN = Math.max(3, Math.round(b.area / 160));
   for (let i = 0; i < shrubN; i++) {
     plant(ctx, rng.chance(0.62) ? 'shrub' : 'ornGrass',
       b.x + (rng() - 0.5) * b.w * 0.88, b.z + (rng() - 0.5) * b.d * 0.88,
       rng() * 6.283, 0.8 + rng() * 0.45, { tintIndex: i });
   }
-
-  /* --- one hero feature ------------------------------------------------- */
-  parkFeature(ctx, B, b, rng, y);
 }
 
 /** The thing that makes a given park memorable. Sized to the parcel. */
@@ -2006,9 +2061,9 @@ function parkFeature(ctx, B, b, rng, y) {
   const cz = b.z + (rng() - 0.5) * b.d * 0.16;
   const roll = rng();
 
-  if (small > 44 && b.area > 2600 && roll < 0.22) {
+  if (small > 30 && b.area > 1500 && roll < 0.30) {
     /* Pond with a fountain in it. */
-    const pr = Math.min(11, small * 0.24);
+    const pr = Math.max(4.5, Math.min(11, small * 0.26));
     B.add('pond', disc(pr, 22, cx, y + 0.04, cz, null));
     B.add('kerb', ringWall(pr, pr + 0.5, 0.34, y, 22, 'stoneTex', cx, cz));
     ctx.occupy(cx, cz, pr + 1);
@@ -2019,11 +2074,11 @@ function parkFeature(ctx, B, b, rng, y) {
         cx + Math.cos(a) * d, cz + Math.sin(a) * d, rng() * 6.283, 0.85 + rng() * 0.4, { tintIndex: i });
     }
     stats.features++;
-  } else if (small > 34 && roll < 0.42) {
+  } else if (small > 24 && roll < 0.46) {
     /* Sports court. */
     const kind = rng.chance(0.55) ? 'hard' : 'clay';
     const rot = b.w >= b.d ? 0 : Math.PI / 2;
-    const cw = Math.min(26, b.w * 0.62), cd = Math.min(15, b.d * 0.62);
+    const cw = Math.min(26, b.w * 0.66), cd = Math.min(15, b.d * 0.66);
     court(B, cx, cz, Math.max(cw, cd), Math.min(cw, cd), y + 0.055, kind, rot);
     ctx.occupy(cx, cz, Math.max(cw, cd) * 0.5);
     if (kind === 'hard') {
@@ -2032,7 +2087,7 @@ function parkFeature(ctx, B, b, rng, y) {
       plant(ctx, 'hoop', cx + Math.cos(rot) * half, cz + Math.sin(rot) * half, rot, 1, { clear: 0 });
     }
     stats.features++;
-  } else if (small > 26 && roll < 0.60) {
+  } else if (small > 20 && roll < 0.62) {
     /* Playground on sand. */
     const pw = Math.min(16, b.w * 0.5), pd = Math.min(12, b.d * 0.5);
     B.add('sandPit', tile(pw, pd, cx, cz, y + 0.055, 5));
@@ -2043,28 +2098,42 @@ function parkFeature(ctx, B, b, rng, y) {
     ctx.occupy(cx, cz, Math.max(pw, pd) * 0.5);
     plant(ctx, 'playground', cx + 1.2, cz, rng.chance(0.5) ? 0 : Math.PI, 1, { clear: 0 });
     stats.features++;
-  } else if (small > 40 && roll < 0.72) {
+  } else if (small > 34 && roll < 0.74) {
     /* Bandshell facing an arc of amphitheatre steps. */
-    plant(ctx, 'bandshell', cx, cz - b.d * 0.22, 0, 0.9 + rng() * 0.2, { clear: 0 });
+    plant(ctx, 'bandshell', cx, cz - b.d * 0.24, 0, 0.9 + rng() * 0.2, { clear: 0 });
     for (let i = 0; i < 4; i++) {
       const r = 9 + i * 2.4;
       B.add('stone', box(r * 1.5, 0.42 * (i + 1), 1.9, cx, y + 0.21 * (i + 1), cz + b.d * 0.02 + i * 2.2, 2));
     }
-    ctx.occupy(cx, cz, Math.min(b.w, b.d) * 0.42);
+    ctx.occupy(cx, cz, Math.min(b.w, b.d) * 0.40);
     stats.features++;
-  } else if (roll < 0.86) {
-    /* A small fountain on a paved apron. */
-    B.add('plazaBase', tile(Math.min(14, b.w * 0.5), Math.min(14, b.d * 0.5), cx, cz, y + 0.055, 6));
-    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 0.9 + rng() * 0.3, { clear: 0 });
+  } else if (roll < 0.88) {
+    /* A small fountain on a paved apron, ringed with planters and a pergola. */
+    const aw = Math.min(16, b.w * 0.52), ad = Math.min(16, b.d * 0.52);
+    B.add('plazaBase', tile(aw, ad, cx, cz, y + 0.055, 6));
+    B.add('plazaAccent', tile(aw, 1.6, cx, cz - ad / 2 + 0.8, y + 0.07, 2));
+    B.add('plazaAccent', tile(aw, 1.6, cx, cz + ad / 2 - 0.8, y + 0.07, 2));
+    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 1.0 + rng() * 0.3, { clear: 0 });
+    ctx.occupy(cx, cz, 4.0);
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * 6.283 + 0.7;
-      plant(ctx, 'planterS', cx + Math.cos(a) * 5.4, cz + Math.sin(a) * 5.4, a, 1, { clear: 1.2 });
+      plant(ctx, 'planterS', cx + Math.cos(a) * 5.6, cz + Math.sin(a) * 5.6, a, 1,
+        { clear: 1.1, force: true });
+    }
+    if (rng.chance(0.4) && aw > 12) {
+      plant(ctx, 'pergola', cx + aw * 0.34, cz, Math.PI / 2, 1, { clear: 2.5, force: true });
     }
     stats.features++;
   } else {
-    /* Public art on a plinth, ringed with grass. */
+    /* Public art on a plinth, ringed with paving. */
     B.add('plazaInlay', disc(5.2, 16, cx, y + 0.055, cz, null));
-    placeSculpture(ctx, cx, cz, rng);
+    B.add('plazaAccent', disc(6.0, 16, cx, y + 0.05, cz, null));
+    placeSculpture(ctx, cx, cz, rng, true);
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * 6.283 + 0.4;
+      plant(ctx, 'fanShort', cx + Math.cos(a) * 4.6, cz + Math.sin(a) * 4.6, a, 1,
+        { clear: 1.4, force: true });
+    }
     stats.features++;
   }
 }
@@ -2082,28 +2151,41 @@ function plazaBlock(ctx, B, b, rng) {
 
   B.add('plazaBase', tile(hw * 2, hd * 2, b.x, b.z, y, 5.5));
 
-  /* Inlay: a border band plus a centre medallion, in the finer paving. */
+  /* Border band in the terracotta paver, then a pattern inside it. */
   const band = 2.4;
   const iy = y + 0.03;
-  B.add('plazaInlay', tile(hw * 2, band, b.x, b.z - hd + band / 2, iy, 2.2));
-  B.add('plazaInlay', tile(hw * 2, band, b.x, b.z + hd - band / 2, iy, 2.2));
-  B.add('plazaInlay', tile(band, hd * 2 - band * 2, b.x - hw + band / 2, b.z, iy, 2.2));
-  B.add('plazaInlay', tile(band, hd * 2 - band * 2, b.x + hw - band / 2, b.z, iy, 2.2));
+  B.add('plazaAccent', tile(hw * 2, band, b.x, b.z - hd + band / 2, iy, 2.0));
+  B.add('plazaAccent', tile(hw * 2, band, b.x, b.z + hd - band / 2, iy, 2.0));
+  B.add('plazaAccent', tile(band, hd * 2 - band * 2, b.x - hw + band / 2, b.z, iy, 2.0));
+  B.add('plazaAccent', tile(band, hd * 2 - band * 2, b.x + hw - band / 2, b.z, iy, 2.0));
 
   const style = rng.int(0, 2);
-  const medR = Math.min(hw, hd) * 0.52;
+  const medR = Math.min(hw, hd) * 0.55;
   if (style === 0) {
-    B.add('plazaInlay', disc(medR, 20, b.x, iy, b.z, null));
-    B.add('plazaBase', disc(medR * 0.62, 20, b.x, iy + 0.012, b.z, null));
+    // Concentric medallion: accent ring, cream field, accent bullseye.
+    B.add('plazaAccent', disc(medR, 22, b.x, iy, b.z, null));
+    B.add('plazaInlay', disc(medR * 0.74, 22, b.x, iy + 0.012, b.z, null));
+    B.add('plazaAccent', disc(medR * 0.30, 18, b.x, iy + 0.024, b.z, null));
+    for (let i = 0; i < 8; i++) {
+      // Radial spokes out of the medallion — this is what stops a plaza
+      // reading as a slab with a circle painted on it.
+      const a = (i / 8) * 6.283 + 0.39;
+      const l = Math.min(hw, hd) - medR - band - 0.5;
+      if (l < 2) break;
+      const g = tile(l, 1.5, medR + l / 2, 0, iy, 2.0);
+      g.rotateY(-a);
+      g.translate(b.x, 0, b.z);
+      B.add('plazaAccent', g);
+    }
   } else if (style === 1) {
     // A chequer of accent squares — reads beautifully from the 3/4 camera.
-    const cells = 5;
+    const cells = Math.max(3, Math.min(6, Math.round(Math.min(hw, hd) / 4)));
     const cw = (hw * 2 - band * 2) / cells, cd = (hd * 2 - band * 2) / cells;
     for (let i = 0; i < cells; i++) {
       for (let j = 0; j < cells; j++) {
         if ((i + j) % 2) continue;
-        B.add('plazaInlay', tile(cw * 0.9, cd * 0.9,
-          b.x - hw + band + (i + 0.5) * cw, b.z - hd + band + (j + 0.5) * cd, iy, 2.2));
+        B.add(i % 2 ? 'plazaAccent' : 'plazaInlay', tile(cw * 0.92, cd * 0.92,
+          b.x - hw + band + (i + 0.5) * cw, b.z - hd + band + (j + 0.5) * cd, iy, 2.0));
       }
     }
   } else {
@@ -2111,14 +2193,65 @@ function plazaBlock(ctx, B, b, rng) {
     // inside a square of half-size H is 2*(H*sqrt2 - |o|) long; overrun that
     // and the inlay spills onto the roadway.
     const Hh = Math.min(hw, hd);
-    for (let i = -2; i <= 2; i++) {
-      const o = i * 4.6;
+    for (let i = -3; i <= 3; i++) {
+      const o = i * 4.2;
       const len = 2 * (Hh * 1.414 - Math.abs(o)) - 1.4;
       if (len < 4) continue;
-      const g = tile(len, 1.9, 0, o, iy, 2.2);
+      const g = tile(len, 2.2, 0, o, iy, 2.0);
       g.rotateY(Math.PI * 0.25);
       g.translate(b.x, 0, b.z);
-      B.add('plazaInlay', g);
+      B.add(i % 2 ? 'plazaInlay' : 'plazaAccent', g);
+    }
+  }
+
+  /* --- the centrepiece, claimed first ----------------------------------- */
+  const cx = b.x, cz = b.z;
+  const small = Math.min(b.w, b.d);
+
+  if (b.landmark && /Amphitheatre|Amphitheater/i.test(b.landmark) && small > 26) {
+    /* The hand-placed hero: a bandshell facing a bowl of stepped seating. */
+    plant(ctx, 'bandshell', cx, cz - hd * 0.52, 0, 1.15, { clear: 0 });
+    for (let i = 0; i < 6; i++) {
+      const w = Math.min(b.w * 0.86, 20 + i * 4.5);
+      B.add('stone', box(w, 0.44 * (i + 1), 2.0, cx, ctx.Y_WALK + 0.22 * (i + 1),
+        cz - hd * 0.20 + i * 2.3, 2));
+    }
+    ctx.occupy(cx, cz, small * 0.44);
+  } else if (small > 25) {
+    plant(ctx, 'fountainL', cx, cz, rng() * 6.283, 1.0 + rng() * 0.25, { clear: 0 });
+    ctx.occupy(cx, cz, 6.0);
+  } else if (rng.chance(0.72)) {
+    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 1.05 + rng() * 0.3, { clear: 0 });
+    ctx.occupy(cx, cz, 4.0);
+  } else {
+    placeSculpture(ctx, cx, cz, rng, true);
+  }
+  stats.features++;
+
+  /* --- green panels ----------------------------------------------------- */
+  // A plaza with no turf at all is a car park with pattern on it. Two kerbed
+  // lawn panels break the paving up and give the palms something to stand in.
+  if (Math.min(b.w, b.d) > 19) {
+    const panels = Math.min(4, Math.max(2, Math.round((b.w * b.d) / 700)));
+    for (let i = 0; i < panels; i++) {
+      const a = (i / panels) * 6.283 + 0.8;
+      const gw = Math.min(hw * 0.6, 7.5 + rng() * 4);
+      const gd = Math.min(hd * 0.6, 5.5 + rng() * 4);
+      const gx = b.x + Math.cos(a) * (hw - gw / 2 - band - 0.8);
+      const gz = b.z + Math.sin(a) * (hd - gd / 2 - band - 0.8);
+      if (gw < 3 || gd < 3) continue;
+      B.add('lawnA', tile(gw, gd, gx, gz, y + 0.055, 8));
+      B.add('kerb', box(gw + 0.34, 0.30, 0.3, gx, y + 0.145, gz - gd / 2, 1));
+      B.add('kerb', box(gw + 0.34, 0.30, 0.3, gx, y + 0.145, gz + gd / 2, 1));
+      B.add('kerb', box(0.3, 0.30, gd, gx - gw / 2, y + 0.145, gz, 1));
+      B.add('kerb', box(0.3, 0.30, gd, gx + gw / 2, y + 0.145, gz, 1));
+      plant(ctx, rng.chance(0.55) ? 'liveOak' : 'bougain', gx, gz,
+        rng() * 6.283, 0.8 + rng() * 0.3, { clear: 1.6, y: 0.06 });
+      for (let k = 0; k < 3; k++) {
+        plant(ctx, rng.chance(0.5) ? 'shrub' : 'ornGrass',
+          gx + (rng() - 0.5) * gw * 0.7, gz + (rng() - 0.5) * gd * 0.7,
+          rng() * 6.283, 0.75 + rng() * 0.4, { clear: 0.7, y: 0.06, tintIndex: k });
+      }
     }
   }
 
@@ -2141,56 +2274,59 @@ function plazaBlock(ctx, B, b, rng) {
     }
   }
 
-  /* --- furniture -------------------------------------------------------- */
-  const cx = b.x, cz = b.z;
-  const roll = rng();
-  if (Math.min(b.w, b.d) > 26 && roll < 0.42) {
-    plant(ctx, 'fountainL', cx, cz, rng() * 6.283, 1.0, { clear: 0 });
-    stats.features++;
-  } else if (roll < 0.72) {
-    plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 1.0, { clear: 0 });
-    stats.features++;
-  } else {
-    placeSculpture(ctx, cx, cz, rng);
-    stats.features++;
-  }
-
   /* Seating steps against one edge — plazas are for sitting on. */
-  if (Math.min(b.w, b.d) > 22 && rng.chance(0.55)) {
-    const sx = b.x, sz = b.z + (rng.chance(0.5) ? -1 : 1) * (hd - 5.5);
+  if (small > 20 && rng.chance(0.7)) {
+    const along = b.w >= b.d;
+    const sgn = rng.chance(0.5) ? -1 : 1;
+    const runL = Math.min(20, (along ? b.w : b.d) * 0.55);
     for (let i = 0; i < 3; i++) {
-      B.add('stone', box(Math.min(18, b.w * 0.5), 0.4 * (i + 1), 1.5,
-        sx, ctx.Y_WALK + 0.2 * (i + 1), sz + i * 1.4, 2));
+      const off = (along ? hd : hw) - 5.5 + i * 1.4;
+      if (along) {
+        B.add('stone', box(runL, 0.4 * (i + 1), 1.5, b.x, ctx.Y_WALK + 0.2 * (i + 1), b.z + sgn * off, 2));
+      } else {
+        B.add('stone', box(1.5, 0.4 * (i + 1), runL, b.x + sgn * off, ctx.Y_WALK + 0.2 * (i + 1), b.z, 2));
+      }
     }
   }
 
-  /* Raised planters around the edges. */
-  const pn = Math.max(2, Math.round((b.w + b.d) / 22));
+  /* Raised planters around the edges. Forced: a plaza has no building on it,
+     so the only thing occupancy can be objecting to is our own planting, and a
+     planter tucked beside a palm is exactly what a plaza looks like. */
+  const pn = Math.max(3, Math.round((b.w + b.d) / 16));
   for (let i = 0; i < pn; i++) {
     const a = (i / pn) * 6.283 + rng() * 0.4;
-    const px = b.x + Math.cos(a) * hw * 0.74;
-    const pz = b.z + Math.sin(a) * hd * 0.74;
+    const px = b.x + Math.cos(a) * hw * 0.76;
+    const pz = b.z + Math.sin(a) * hd * 0.76;
     plant(ctx, rng.chance(0.4) ? 'planterL' : 'planterS', px, pz,
-      Math.abs(Math.cos(a)) > 0.5 ? Math.PI / 2 : 0, 1, {});
+      Math.abs(Math.cos(a)) > 0.5 ? Math.PI / 2 : 0, 1, { clear: 1.0, force: true });
   }
 
-  if (rng.chance(0.4) && Math.min(b.w, b.d) > 20) {
-    plant(ctx, 'pergola', b.x + (rng() - 0.5) * hw, b.z + (rng() - 0.5) * hd, rng.chance(0.5) ? 0 : Math.PI / 2, 1, {});
+  /* A run of short fan palms in the border band — chunky ground-level mass. */
+  const fn = Math.max(2, Math.round((b.w + b.d) / 20));
+  for (let i = 0; i < fn; i++) {
+    const a = (i / fn) * 6.283 + 0.5;
+    plant(ctx, 'fanShort', b.x + Math.cos(a) * hw * 0.55, b.z + Math.sin(a) * hd * 0.55,
+      rng() * 6.283, 0.9 + rng() * 0.3, { clear: 1.5, force: true });
   }
-  if (b.landmark && Math.min(b.w, b.d) > 18) {
+
+  if (rng.chance(0.5) && small > 20) {
+    plant(ctx, 'pergola', b.x + (rng() - 0.5) * hw * 0.9, b.z + (rng() - 0.5) * hd * 0.9,
+      rng.chance(0.5) ? 0 : Math.PI / 2, 1, { clear: 2.6, force: true });
+  }
+  if (b.landmark && small > 18) {
     for (let i = -1; i <= 1; i++) {
       plant(ctx, i === 0 ? 'flagUS' : 'flagCity',
-        b.x + i * 3.2, b.z - hd * 0.66, 0, 1, { clear: 1.0 });
+        b.x + i * 3.2, b.z - hd * 0.72, 0, 1, { clear: 1.0, force: true });
     }
   }
 }
 
-function placeSculpture(ctx, x, z, rng) {
+function placeSculpture(ctx, x, z, rng, force = false) {
   const hex = rng.pick([
     PALETTE.ACCENT_HOT, PALETTE.ACCENT_SUN, PALETTE.ACCENT_AQUA,
     PALETTE.STUCCO_CORAL, PALETTE.ACCENT_LILAC, PALETTE.PATINA,
   ]);
-  if (!ctx.isFree(x, z, 2.6)) return null;
+  if (!force && !ctx.isFree(x, z, 2.6)) return null;
   ctx.occupy(x, z, 2.6);
   const c = ctx.addInstanced('nat-sculpture', () => ({
     geometry: makeSculpture(0x5c17),
@@ -2229,36 +2365,61 @@ function waterfrontBlock(ctx, B, b, rng) {
 
   B.add(dock ? 'deck' : 'plazaBase', tile(hw * 2, hd * 2, b.x, b.z, y, dock ? 4 : 5.5));
   if (!dock) {
-    B.add('plazaInlay', tile(hw * 2, 2.0, b.x, b.z - hd + 1.0, y + 0.03, 2.2));
-    B.add('plazaInlay', tile(hw * 2, 2.0, b.x, b.z + hd - 1.0, y + 0.03, 2.2));
+    // A terracotta ribbon running the length of the walk, the way the real
+    // Baywalk is banded. It also gives the promenade a direction.
+    B.add('plazaAccent', tile(hw * 2, 2.2, b.x, b.z - hd + 1.1, y + 0.03, 2.0));
+    B.add('plazaAccent', tile(hw * 2, 2.2, b.x, b.z + hd - 1.1, y + 0.03, 2.0));
+    B.add('plazaAccent', tile(2.4, hd * 2 - 4.4, b.x - hw * 0.16, b.z, y + 0.03, 2.0));
   }
 
   // The bay is east, so the seaward edge is +x. Plant the walk on the inland
   // side and let the coastal scrub hold the edge.
-  const walkX = b.x - hw * 0.45;
-  const n = Math.max(1, Math.round((hd * 2) / 9));
+  const walkX = b.x - hw * 0.52;
+  const n = Math.max(1, Math.round((hd * 2) / 8));
   for (let i = 0; i <= n; i++) {
     const pz = b.z - hd + (hd * 2 / n) * i;
     const key = rng.weighted([['royalA', 34], ['coconutA', 30], ['royalB', 20], ['sabal', 16]]);
-    if (plant(ctx, key, walkX, pz, rng() * 6.283, 0.9 + rng() * 0.28)) {
-      B.add('plazaInlay', disc(1.15, 8, walkX, y + 0.045, pz, null));
+    if (plant(ctx, key, walkX, pz, rng() * 6.283, 0.92 + rng() * 0.28, { force: true })) {
+      B.add('plazaInlay', disc(1.2, 8, walkX, y + 0.045, pz, null));
     }
   }
-  const edgeX = b.x + hw * 0.72;
-  const en = Math.max(2, Math.round((hd * 2) / 5.5));
+
+  /* A turf strip between the walk and the paving — the promenade is a park,
+     not an apron, and an unbroken cream slab is the defect being fixed here. */
+  if (hw > 5 && !dock) {
+    const gw = Math.min(6.5, hw * 0.5);
+    const gx = b.x + hw * 0.30;
+    B.add('lawnA', tile(gw, hd * 2 - 5.0, gx, b.z, y + 0.05, 8));
+    B.add('kerb', box(0.28, 0.28, hd * 2 - 5.0, gx - gw / 2, y + 0.14, b.z, 1));
+    B.add('kerb', box(0.28, 0.28, hd * 2 - 5.0, gx + gw / 2, y + 0.14, b.z, 1));
+  }
+
+  const edgeX = b.x + hw * 0.78;
+  const en = Math.max(2, Math.round((hd * 2) / 5.0));
   for (let i = 0; i < en; i++) {
     const pz = b.z - hd + (hd * 2 / en) * (i + 0.5);
-    plant(ctx, rng.weighted([['seagrapeT', 44], ['mangrove', 30], ['shrub', 26]]),
-      edgeX + (rng() - 0.5) * 2.4, pz, rng() * 6.283, 0.85 + rng() * 0.4, { tintIndex: i });
+    plant(ctx, rng.weighted([['seagrapeT', 40], ['mangrove', 28], ['shrub', 20], ['ornGrass', 12]]),
+      edgeX + (rng() - 0.5) * 2.0, pz, rng() * 6.283, 0.85 + rng() * 0.4,
+      { tintIndex: i, force: true });
   }
   // Planted terraces stepping down to the water.
-  if (b.w > 26 && rng.chance(0.6)) {
+  if (b.w > 26 && rng.chance(0.7)) {
     for (let i = 0; i < 2; i++) {
       B.add('stone', box(1.6, 0.36 * (i + 1), hd * 2 * 0.9,
-        b.x + hw * 0.42 + i * 1.7, ctx.Y_WALK + 0.18 * (i + 1), b.z, 2));
+        b.x + hw * 0.52 + i * 1.7, ctx.Y_WALK + 0.18 * (i + 1), b.z, 2));
     }
   }
-  if (rng.chance(0.5)) plant(ctx, 'pergola', b.x, b.z, 0, 1, {});
+
+  /* Furniture: shade, colour and a landmark every few blocks. */
+  const pn = Math.max(2, Math.round(hd * 2 / 14));
+  for (let i = 0; i < pn; i++) {
+    const pz = b.z - hd + (hd * 2 / pn) * (i + 0.5);
+    plant(ctx, rng.chance(0.45) ? 'planterL' : 'planterS', b.x - hw * 0.1, pz,
+      Math.PI / 2, 1, { clear: 1.4 });
+  }
+  if (rng.chance(0.55)) plant(ctx, 'pergola', b.x - hw * 0.2, b.z, Math.PI / 2, 1, {});
+  if (rng.chance(0.45)) plant(ctx, 'fountainS', b.x - hw * 0.1, b.z + hd * 0.45, rng() * 6.283, 1.1, {});
+  if (rng.chance(0.35)) placeSculpture(ctx, b.x - hw * 0.1, b.z - hd * 0.45, rng);
 }
 
 /* ------------------------------------------------------------ built lots -- */
@@ -2312,16 +2473,18 @@ export function buildNature(ctx) {
 
   for (const b of layout.blocks) {
     const rng = makeRNG(b.seed ^ 0x51ab);
-    const openWater = b.bayfront || b.subtype === 'dock' || b.zone === ZONE.MARINA;
+    // `bayfront` reaches 58 m inland, so it is not on its own a reason to
+    // treat a block as seawall — only the promenade and dock bands are.
+    const onWater = b.subtype === 'promenade' || b.subtype === 'dock';
     switch (b.zone) {
       case ZONE.PARK:
         // A bayfront "park" that is really the promenade wants the coastal
         // treatment, not a lawn on the seawall.
-        if (b.subtype === 'promenade' || b.subtype === 'dock') waterfrontBlock(ctx, B, b, rng);
+        if (onWater) waterfrontBlock(ctx, B, b, rng);
         else parkBlock(ctx, B, b, rng);
         break;
       case ZONE.PLAZA:
-        if (openWater) waterfrontBlock(ctx, B, b, rng);
+        if (onWater) waterfrontBlock(ctx, B, b, rng);
         else plazaBlock(ctx, B, b, rng);
         break;
       case ZONE.MARINA:

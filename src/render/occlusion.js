@@ -11,15 +11,20 @@
  * --------------------
  * Not alpha blending. Turning `transparent` on and off per frame forces shader
  * recompiles and drags every faded building into the sorted transparent pass,
- * where it z-fights with its own faces. Instead we use **alpha-hash / stochastic
- * transparency**: an ordered Bayer dither compares against the fade value and
- * discards fragments. It stays in the opaque pass, needs no sorting, costs one
- * texture-free instruction, and — because SMAA and the temporal jitter of a
- * moving camera smear the dither — reads as a clean translucency.
+ * where it z-fights with its own faces. Instead we use **alpha-hash /
+ * stochastic transparency**: an interleaved-gradient-noise threshold discards
+ * fragments. It stays in the opaque pass, needs no sorting, and costs one
+ * texture-free instruction.
  *
- * On top of that a Fresnel rim is boosted as the object fades, so the edges of
- * the building stay solid while the middle dissolves. That is what keeps the
- * shape legible.
+ * Two things keep it from reading as "broken render":
+ *   - a Fresnel rim is held near-solid as the object fades, so the silhouette
+ *     and edges of the building stay legible — you always know what you are
+ *     underneath;
+ *   - the dissolve is TWO-LEVEL. The body only goes to ~40% translucent, while
+ *     a soft disc centred on the hole's screen position opens all the way. A
+ *     close tower can cover half the frame, and dissolving all of it uniformly
+ *     turns the whole screen to speckle; opening a window exactly where the
+ *     player is looking reads as a deliberate x-ray instead.
  *
  * PER-OBJECT FADE WITH SHARED MATERIALS
  * -------------------------------------
@@ -39,29 +44,29 @@
 
 import * as THREE from 'three';
 
-/** 4x4 ordered Bayer matrix, normalised. Cheap and stable under motion. */
-const BAYER = /* glsl */ `
-  float ocBayer(vec2 p) {
-    int x = int(mod(p.x, 4.0));
-    int y = int(mod(p.y, 4.0));
-    int i = x + y * 4;
-    // 4x4 ordered dither, unrolled: WebGL1-safe and branch-cheap.
-    float m[16];
-    m[0]=0.0;   m[1]=8.0;   m[2]=2.0;   m[3]=10.0;
-    m[4]=12.0;  m[5]=4.0;   m[6]=14.0;  m[7]=6.0;
-    m[8]=3.0;   m[9]=11.0;  m[10]=1.0;  m[11]=9.0;
-    m[12]=15.0; m[13]=7.0;  m[14]=13.0; m[15]=5.0;
-    float v = 0.0;
-    for (int k = 0; k < 16; k++) { if (k == i) { v = m[k]; break; } }
-    return (v + 0.5) / 16.0;
+/**
+ * Interleaved-gradient noise rather than an ordered Bayer matrix.
+ *
+ * A 4x4 Bayer threshold at 1:1 produces a coarse, obviously structured checker
+ * that reads as "broken render" across a large surface — and an occluding tower
+ * at street level can cover half the frame. IGN is a single fract() but its
+ * pattern is fine-grained and non-repeating enough that the eye integrates it
+ * as translucency instead of resolving the dots.
+ */
+const DITHER = /* glsl */ `
+  float ocDither(vec2 p) {
+    return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
   }
 `;
 
 const PARS_FRAG = /* glsl */ `
-  uniform float uOccFade;      // 1 = solid, 0 = fully dissolved
+  uniform float uOccFade;        // 1 = solid, 0 = fully dissolved (per object)
+  uniform vec2  uOccCenter;      // player hole, in screen pixels
+  uniform float uOccRadius;      // hole's on-screen radius, in pixels
+  uniform vec2  uOccResolution;
   varying vec3 vOccViewPos;
   varying vec3 vOccViewNormal;
-  ${BAYER}
+  ${DITHER}
 `;
 
 const PARS_VERT = /* glsl */ `
@@ -83,22 +88,45 @@ const FRAG_BODY = /* glsl */ `
   if (uOccFade < 0.999) {
     vec3 V = normalize(-vOccViewPos);
     float fres = 1.0 - abs(dot(normalize(vOccViewNormal), V));
-    float rim = smoothstep(0.42, 0.95, fres);
+    float rim = smoothstep(0.34, 0.95, fres);
 
-    // The rim keeps a much higher effective opacity than the body.
-    float keep = mix(uOccFade, 1.0, rim * 0.85);
-    // Never let it go fully invisible: a ghost at 12% still reads as mass.
-    keep = max(keep, 0.12 + rim * 0.5);
+    // Two levels of transparency, which is what stops a close tower turning the
+    // whole screen into speckle:
+    //   body   the object as a whole goes translucent, so you can still read
+    //          that you are underneath it and what shape it is
+    //   window a soft disc centred on the hole opens much further, so the thing
+    //          the player actually needs to see is unambiguous
+    float d = distance(gl_FragCoord.xy, uOccCenter);
+    float window = 1.0 - smoothstep(uOccRadius * 0.85, uOccRadius * 2.3, d);
 
-    if (ocBayer(gl_FragCoord.xy) > keep) discard;
+    float bodyKeep = mix(1.0, max(uOccFade, 0.40), 1.0);
+    float holeKeep = uOccFade;
+    float keep = mix(bodyKeep, holeKeep, window);
 
-    // Cool the ghost slightly and lift the rim, so a faded tower looks
-    // deliberately x-rayed rather than just broken.
-    float ghost = 1.0 - uOccFade;
-    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.35 + vec3(0.10, 0.16, 0.22), ghost * 0.55);
-    diffuseColor.rgb += vec3(0.35, 0.60, 0.85) * rim * ghost * 0.55;
+    // Edges stay solid at any fade level — that is what preserves the outline.
+    keep = mix(keep, 1.0, rim * 0.82);
+
+    if (ocDither(gl_FragCoord.xy) > keep) discard;
+
+    // Cool the surviving fragments and lift the rim so a faded tower reads as
+    // deliberately x-rayed rather than as a rendering fault.
+    float ghost = (1.0 - uOccFade) * mix(0.45, 1.0, window);
+    diffuseColor.rgb = mix(diffuseColor.rgb,
+                           diffuseColor.rgb * 1.30 + vec3(0.08, 0.14, 0.20),
+                           ghost * 0.5);
+    diffuseColor.rgb += vec3(0.30, 0.55, 0.85) * rim * ghost * 0.55;
   }
 `;
+
+/**
+ * The x-ray window: where the player's hole is on screen, and how big. Shared
+ * by every patched material because the value is the same for all of them.
+ */
+export const sharedWindow = {
+  uOccCenter: { value: new THREE.Vector2(-1e4, -1e4) },
+  uOccRadius: { value: 60 },
+  uOccResolution: { value: new THREE.Vector2(1, 1) },
+};
 
 /**
  * Patch a material so it can be faded. Idempotent.
@@ -121,6 +149,12 @@ export function applyOcclusionFade(material) {
       // A clone may already have been asked to fade before its first compile.
       value: this.userData.__occPending ?? 1,
     };
+    // The window uniforms are identical for every object, so they can be shared
+    // objects — three's per-material upload skipping is harmless when the value
+    // never differs between draws.
+    shader.uniforms.uOccCenter = sharedWindow.uOccCenter;
+    shader.uniforms.uOccRadius = sharedWindow.uOccRadius;
+    shader.uniforms.uOccResolution = sharedWindow.uOccResolution;
     this.userData.occUniform = shader.uniforms.uOccFade;
 
     shader.vertexShader = shader.vertexShader
@@ -134,7 +168,7 @@ export function applyOcclusionFade(material) {
 
   const prevKey = material.customProgramCacheKey;
   material.customProgramCacheKey = () =>
-    `${prevKey ? prevKey.call(material) : ''}|occfade-v2`;
+    `${prevKey ? prevKey.call(material) : ''}|occfade-v3`;
   material.needsUpdate = true;
   return material;
 }
@@ -162,6 +196,8 @@ function cloneFadeMaterial(src) {
   return m;
 }
 
+const _proj = new THREE.Vector3();
+const _edge = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _dir = new THREE.Vector3();
@@ -178,7 +214,7 @@ export class OcclusionSystem {
   constructor(camera, opts = {}) {
     this.camera = camera;
     /** Opacity a fully-occluding object settles at. */
-    this.minFade = opts.minFade ?? 0.16;
+    this.minFade = opts.minFade ?? 0.10;
     /** Seconds to fade out / back in. Out is faster — responsiveness wins. */
     this.fadeOutRate = opts.fadeOutRate ?? 9.0;
     this.fadeInRate = opts.fadeInRate ?? 4.0;
@@ -281,6 +317,28 @@ export class OcclusionSystem {
    * @param {THREE.Vector3} holePos world position of the player's hole
    * @param {number} holeRadius
    */
+  /**
+   * Project the hole to screen space so the shader knows where to open its
+   * window. Called every frame regardless of whether anything is occluding.
+   * @param {number} w drawing-buffer width in pixels
+   * @param {number} h drawing-buffer height in pixels
+   */
+  updateWindow(holePos, holeRadius, w, h) {
+    sharedWindow.uOccResolution.value.set(w, h);
+    _proj.copy(holePos).project(this.camera);
+    const cx = (_proj.x * 0.5 + 0.5) * w;
+    const cy = (_proj.y * 0.5 + 0.5) * h; // gl_FragCoord origin is bottom-left
+    sharedWindow.uOccCenter.value.set(cx, cy);
+
+    // Radius in pixels: project a point one hole-radius to the side and measure.
+    _edge.copy(holePos);
+    _edge.x += holeRadius;
+    _edge.project(this.camera);
+    const ex = (_edge.x * 0.5 + 0.5) * w;
+    const ey = (_edge.y * 0.5 + 0.5) * h;
+    sharedWindow.uOccRadius.value = Math.max(28, Math.hypot(ex - cx, ey - cy));
+  }
+
   update(dt, holePos, holeRadius) {
     if (!this._enabled || this.candidates.length === 0) return;
 

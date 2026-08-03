@@ -74,28 +74,38 @@ const Y_MARK = 0.018;
 const Y_IRON = 0.024;
 export const Y_WALK = 0.155;
 
-/** Kerb reveal above the carriageway, and the width of the gutter pan. */
-const GUTTER_W = 0.34;
+/**
+ * Width of the concrete gutter pan. Two facing kerbs must fit inside the
+ * narrowest gap cityLayout produces between parcels (a 0.8 m party-wall seam),
+ * so this can never exceed 0.4.
+ */
+const GUTTER_W = 0.36;
 
 /**
  * The kerb + sidewalk cross-section, measured as an inset from the block edge.
  * Negative = out over the asphalt. `c` is a vertex-colour multiplier on the
- * paving albedo: the nose is pushed bright because a chamfer that catches the
- * sun is the single thing that makes a kerb read as concrete rather than paint.
+ * paving albedo.
+ *
+ * The VALUE spread across the profile is doing the real work. From the game's
+ * 40-degree camera a kerb is about four pixels wide, so it cannot be read as a
+ * shape — it has to be read as a value sequence: dark asphalt, light gutter
+ * pan, one dark line where the face is in shadow, a bright chamfered nose, then
+ * paving. Flatten those numbers and the kerb disappears, which is exactly how
+ * the previous four-thin-boxes version looked.
  */
 const PROFILE = [
-  { o: -GUTTER_W, y: 0.016, c: 0.88 },   // outer lip of the gutter pan
-  { o: -0.14, y: 0.008, c: 0.80 },       // channel invert — water runs here
-  { o: -0.01, y: 0.038, c: 0.93 },       // toe of the kerb
-  { o: 0.04, y: 0.120, c: 0.82 },        // battered face, mostly in shadow
-  { o: 0.11, y: 0.182, c: 1.12 },        // chamfered nose — the sunlit highlight
-  { o: 0.19, y: 0.192, c: 1.04 },        // kerb top
-  { o: 0.34, y: Y_WALK, c: 0.97 },       // back of kerb
-  { o: 1.75, y: Y_WALK, c: 1.0 },        // front of the walking zone (ramp run)
+  { o: -GUTTER_W, y: 0.016, c: 0.82 },   // outer lip of the gutter pan
+  { o: -0.17, y: 0.006, c: 0.70 },       // channel invert — water runs here
+  { o: -0.01, y: 0.040, c: 0.88 },       // toe of the kerb
+  { o: 0.05, y: 0.128, c: 0.60 },        // battered face, deep in its own shadow
+  { o: 0.13, y: 0.192, c: 1.22 },        // chamfered nose — the sunlit highlight
+  { o: 0.30, y: 0.202, c: 1.10 },        // kerb top
+  { o: 0.46, y: Y_WALK, c: 0.94 },       // back of kerb
+  { o: 1.90, y: Y_WALK, c: 1.0 },        // front of the walking zone (ramp run)
   { o: 0, y: Y_WALK, c: 1.0 },           // building line — `o` filled per block
 ];
 /** Same stations, dropped flush for a kerb ramp. */
-const PROFILE_DROP = [0.016, 0.008, 0.030, 0.038, 0.050, 0.056, 0.062, Y_WALK, Y_WALK];
+const PROFILE_DROP = [0.016, 0.006, 0.030, 0.040, 0.052, 0.058, 0.064, Y_WALK, Y_WALK];
 
 const RAMP_A = 1.2;      // ramp starts this far from the block corner
 const RAMP_B = 4.9;      // ...and ends here. Matches the zebra corridor below.
@@ -162,19 +172,38 @@ class Surf {
     }
   }
 
+  /**
+   * Quad that must end up facing UP whatever order the caller had its corners
+   * in. Every swept profile in this file walks its edge in a different
+   * direction, and getting one of them backwards silently back-face-culls a
+   * whole block of pavement — so the orientation is enforced here instead of
+   * being a per-call invariant nobody can check by eye.
+   */
+  quadUp(a, b, c, d, col) {
+    const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+    if (ny < 0) this.quad(d, c, b, a, col);
+    else this.quad(a, b, c, d, col);
+  }
+
   /** Axis-aligned horizontal rectangle. */
   rect(x0, x1, z0, z1, y, col) {
     if (x1 - x0 < 1e-4 || z1 - z0 < 1e-4) return;
     this.quad([x0, y, z0], [x0, y, z1], [x1, y, z1], [x1, y, z0], col);
   }
 
-  /** Convex polygon (fan) on a horizontal plane. `pts` = [[x,z], ...] CCW. */
+  /** Convex polygon on a horizontal plane, always up-facing. `pts` = [[x,z]]. */
   polyY(pts, y, col) {
-    for (let i = 1; i < pts.length - 1; i++) {
+    let area = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      area += a[0] * b[1] - b[0] * a[1];
+    }
+    const p = area > 0 ? pts : [...pts].reverse();
+    for (let i = 1; i < p.length - 1; i++) {
       this.tri(
-        [pts[0][0], y, pts[0][1]],
-        [pts[i][0], y, pts[i][1]],
-        [pts[i + 1][0], y, pts[i + 1][1]],
+        [p[0][0], y, p[0][1]],
+        [p[i + 1][0], y, p[i + 1][1]],
+        [p[i][0], y, p[i][1]],
         col
       );
     }
@@ -281,8 +310,11 @@ export function buildStreets(ctx) {
   const net = new RoadNetwork(layout);
   ctx.roads = net;
 
-  const LAND_X0 = -S - 40, LAND_X1 = BAY;
-  const LAND_Z0 = -S - 40, LAND_Z1 = S + 40;
+  // Only a narrow apron past the last block: the base plane is what shows when
+  // nothing else claims the ground, and a wide skirt of it around the map is a
+  // big empty flat in the menu-hero frame.
+  const LAND_X0 = -S - 16, LAND_X1 = BAY;
+  const LAND_Z0 = -S - 16, LAND_Z1 = S + 16;
 
   const land = new Surf(5.0);
   const bed = new Surf(20);
@@ -325,13 +357,15 @@ export function buildStreets(ctx) {
       ];
     };
 
-    const bankLine = [];        // for the bulkhead sweep
+    // NB: no bulkhead wall is built along this bank. water.js extracts the same
+    // coastline from the same predicate and stands a continuous seawall with
+    // bollards on it, so a wall here would be a second one in exactly the same
+    // place — duplicate geometry and a guaranteed z-fight.
     for (let i = 0; i < cols.length - 1; i++) {
       const xa = cols[i], xb = cols[i + 1];
       if (xb - xa < 1e-4) continue;
       const [ta, ba] = bank(xa);
       const [tb, bb] = bank(xb);
-      bankLine.push({ x: xa, top: ta, bot: ba });
 
       // Trapezoid land north and south of the channel: keeping the two z edges
       // independent is what makes the bank read as a curve rather than a
@@ -366,38 +400,6 @@ export function buildStreets(ctx) {
     for (const p of layout.waterPolys) {
       bed.rect(p.x0, p.x1, p.z0, p.z1, Y_BED, 1.0);
     }
-
-    /* Bulkhead: a low concrete wall along both banks. Without it the 32 cm
-       step from the land plane down to the water plane shows as a sliver of
-       background at any grazing camera angle. */
-    for (let i = 0; i < bankLine.length - 1; i++) {
-      const a = bankLine[i], b = bankLine[i + 1];
-      if (b.x - a.x > 12) continue;                 // skip the map-edge jump
-      wallRun(a.x, a.top, b.x, b.top, 1);
-      wallRun(a.x, a.bot, b.x, b.bot, -1);
-    }
-    for (const p of layout.waterPolys) {
-      wallRun(p.x0, p.z0, p.x1, p.z0, 1);
-      wallRun(p.x0, p.z1, p.x1, p.z1, -1);
-      wallRunZ(p.x0, p.z0, p.z1);
-    }
-  }
-
-  /** Bulkhead segment along x, `side` = which way the land is (+1 = -z side). */
-  function wallRun(x0, z0, x1, z1, side) {
-    const TOP = 0.42, BOT = -1.9, T = 0.5;
-    const o = side * T;
-    struct.quad(
-      [x0, TOP, z0], [x0, BOT, z0], [x1, BOT, z1], [x1, TOP, z1], 0.98, true
-    );
-    struct.quad(
-      [x0, TOP, z0 - o], [x0, TOP, z0], [x1, TOP, z1], [x1, TOP, z1 - o], 1.06
-    );
-  }
-  function wallRunZ(x, z0, z1) {
-    const TOP = 0.42, BOT = -1.9;
-    struct.quad([x, TOP, z1], [x, BOT, z1], [x, BOT, z0], [x, TOP, z0], 0.96, true);
-    struct.quad([x - 0.5, TOP, z0], [x - 0.5, TOP, z1], [x, TOP, z1], [x, TOP, z0], 1.06);
   }
 
   /* ================================================== 2. carriageway === */
@@ -416,33 +418,85 @@ export function buildStreets(ctx) {
   const junctionSpansX = layout.roadsZ.map((c) => [c.pos - c.half, c.pos + c.half]);
   const junctionSpansZ = layout.roadsX.map((c) => [c.pos - c.half, c.pos + c.half]);
 
-  /** Runs of open carriageway: dry, off the junctions, off the bridge decks. */
-  function carriagewayRuns(r) {
-    const lo = r.axis === 'x' ? -S - 30 : -S - 30;
-    const hi = r.axis === 'x' ? S + 30 : BAY;
-    let runs = dryRuns(layout, r, lo, hi);
-    for (const [a, b] of (r.axis === 'x' ? junctionSpansX : junctionSpansZ)) runs = cut(runs, a, b);
-    for (const br of layout.bridges) {
+  /* --------------------------------------------------------- bridges ---- */
+  /**
+   * Deck height and approach-ramp length are a CONTRACT, not a style choice:
+   * vehicles.js pins traffic to `1.2 * clamp((half + 7 - |d|) / 7)` inside each
+   * bridge AABB. Change either number here and every car on the crossing either
+   * floats a metre over the deck or drives through it.
+   */
+  const DECK_Y = 1.2;
+  const DECK_RAMP = 7;
+
+  /** Along-axis extent of a bridge, clamped so a ramp never lands on a road. */
+  const bridgeSpans = layout.bridges.map((br) => {
+    const alongZ = br.length >= br.width;
+    const half = (alongZ ? br.length : br.width) / 2;
+    const c = alongZ ? br.z : br.x;
+    const perp = alongZ ? layout.roadsZ : layout.roadsX;
+    let lo = c - half, hi = c + half;
+    for (const r of perp) {
+      const a = r.pos - r.half, b = r.pos + r.half;
+      if (b <= c && b > lo) lo = b;
+      if (a >= c && a < hi) hi = a;
+    }
+    let freeLo = 1e4, freeHi = 1e4;
+    for (const r of perp) {
+      const a = r.pos - r.half, b = r.pos + r.half;
+      if (b <= lo) freeLo = Math.min(freeLo, lo - b);
+      if (a >= hi) freeHi = Math.min(freeHi, a - hi);
+    }
+    return {
+      br, alongZ, lo, hi,
+      rampLo: Math.min(DECK_RAMP, freeLo),
+      rampHi: Math.min(DECK_RAMP, freeHi),
+      cross: alongZ ? br.x : br.z,
+      halfW: br.width / 2,
+    };
+  });
+
+  /** Remove every bridge (plus its ramps) from a road's runs. */
+  function cutBridges(r, runs) {
+    for (const s of bridgeSpans) {
       if (r.axis === 'x') {
-        if (Math.abs(br.x - r.pos) > br.width * 0.5) continue;
-        runs = cut(runs, br.z - br.length / 2, br.z + br.length / 2);
-      } else {
-        if (Math.abs(br.z - r.pos) > br.length * 0.5) continue;
-        runs = cut(runs, br.x - br.width / 2, br.x + br.width / 2);
-      }
+        if (!s.alongZ || Math.abs(s.cross - r.pos) > s.halfW) continue;
+      } else if (s.alongZ || Math.abs(s.cross - r.pos) > s.halfW) continue;
+      runs = cut(runs, s.lo - s.rampLo, s.hi + s.rampHi);
     }
     return runs;
   }
 
-  /** Runs of paint: same, but paint carries straight over a bridge deck. */
-  function paintRuns(r) {
-    const lo = -S - 30;
+  /** Runs of open carriageway: dry, off the junctions, off the bridge decks. */
+  function carriagewayRuns(r) {
     const hi = r.axis === 'x' ? S + 30 : BAY;
-    let runs = dryRuns(layout, r, lo, hi);
+    let runs = dryRuns(layout, r, -S - 30, hi);
+    for (const [a, b] of (r.axis === 'x' ? junctionSpansX : junctionSpansZ)) runs = cut(runs, a, b);
+    return cutBridges(r, runs);
+  }
+
+  /** Runs of paint. The bridge deck paints itself, at deck height. */
+  function paintRuns(r) {
+    const hi = r.axis === 'x' ? S + 30 : BAY;
+    let runs = dryRuns(layout, r, -S - 30, hi);
     for (const [a, b] of (r.axis === 'x' ? junctionSpansX : junctionSpansZ)) {
       runs = cut(runs, a - 6.5, b + 6.5);
     }
-    return runs;
+    return cutBridges(r, runs);
+  }
+
+  /**
+   * Bus-lane bed. Unlike paint this is cut only at the junction box itself:
+   * a coloured lane that stops 6.5 m short of every crossing turns into a row
+   * of loose orange rectangles, which is the exact failure the crosswalks were
+   * just rebuilt to avoid.
+   */
+  function tintRuns(r) {
+    const hi = r.axis === 'x' ? S + 30 : BAY;
+    let runs = dryRuns(layout, r, -S - 30, hi);
+    for (const [a, b] of (r.axis === 'x' ? junctionSpansX : junctionSpansZ)) {
+      runs = cut(runs, a - 0.4, b + 0.4);
+    }
+    return cutBridges(r, runs);
   }
 
   for (const r of layout.roadsX) {
@@ -468,9 +522,12 @@ export function buildStreets(ctx) {
   }
 
   /* --- the diagonal transit cut ----------------------------------------- */
+  // Emitted into the ALLEY layer on purpose: it crosses every road it meets,
+  // and the alley layer's polygon offset sits between the base land and the
+  // carriageway, so the roads always win the overlap at any view distance.
   for (const d of layout.diagonals) {
     const nx = d.nx * d.half, nz = d.nz * d.half;
-    road.quad(
+    alley.quad(
       [d.ax - nx, Y_DIAG, d.az - nz], [d.ax + nx, Y_DIAG, d.az + nz],
       [d.bx + nx, Y_DIAG, d.bz + nz], [d.bx - nx, Y_DIAG, d.bz - nz], 1.0
     );
@@ -490,11 +547,23 @@ export function buildStreets(ctx) {
 
   /* ================================================== 3. lane marking === */
 
+  /**
+   * Deterministic 0..1 hash. Used to fade paint: a city where every dash is
+   * exactly the same brightness reads as a stencil, and the high-contrast
+   * white is also what makes distant sub-pixel lines fringe under the lens
+   * aberration in the grade.
+   */
+  const fade = (a, b) => {
+    const s = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+    return 0.82 + (s - Math.floor(s)) * 0.18;
+  };
+
   /** One dashed run of paint along a road's free axis. */
   function dashRun(r, cross, a, b, w, dash, gap, surf, col) {
     for (let t = a; t < b - dash; t += dash + gap) {
-      if (r.axis === 'x') surf.rect(cross - w / 2, cross + w / 2, t, t + dash, Y_MARK, col);
-      else surf.rect(t, t + dash, cross - w / 2, cross + w / 2, Y_MARK, col);
+      const c = col * fade(t, cross);
+      if (r.axis === 'x') surf.rect(cross - w / 2, cross + w / 2, t, t + dash, Y_MARK, c);
+      else surf.rect(t, t + dash, cross - w / 2, cross + w / 2, Y_MARK, c);
     }
   }
   function solidRun(r, cross, a, b, w, surf, col) {
@@ -512,22 +581,42 @@ export function buildStreets(ctx) {
         for (let k = 1; k < P.lanes; k++) {
           dashRun(r, r.pos + s * (P.inner + k * LANE_W), a, b, 0.22, 3.0, 6.0, white, 1.0);
         }
-        // Bus lane: solid white edge plus the terracotta bed.
-        if (P.bus) {
-          solidRun(r, r.pos + s * P.busEdge, a, b, 0.26, white, 1.0);
-          const c0 = P.busEdge + 0.13, c1 = P.busEdge + LANE_W;
-          if (r.axis === 'x') busl.rect(r.pos + Math.min(s * c0, s * c1), r.pos + Math.max(s * c0, s * c1), a, b, Y_TINT, 1.0);
-          else busl.rect(a, b, r.pos + Math.min(s * c0, s * c1), r.pos + Math.max(s * c0, s * c1), Y_TINT, 1.0);
-        }
+        // Bus lane: solid white edge (the bed itself is laid separately so it
+        // can run continuously through the crossing approach).
+        if (P.bus) solidRun(r, r.pos + s * P.busEdge, a, b, 0.26, white, 1.0);
         // Kerbside parking: a bay line plus a tick every car length, so the
         // bays line up with where vehicles.js actually parks.
         const bayLine = r.half - P.park;
-        solidRun(r, r.pos + s * bayLine, a, b, 0.20, white, 0.92);
+        solidRun(r, r.pos + s * bayLine, a, b, 0.24, white, 0.90);
         for (let t = Math.ceil(a / 6.6) * 6.6; t < b; t += 6.6) {
-          const t0 = t - 0.09, t1 = t + 0.09;
+          const t0 = t - 0.11, t1 = t + 0.11;
           const e0 = bayLine, e1 = Math.min(r.half - 0.25, bayLine + 1.6);
-          if (r.axis === 'x') white.rect(r.pos + Math.min(s * e0, s * e1), r.pos + Math.max(s * e0, s * e1), t0, t1, Y_MARK, 0.92);
-          else white.rect(t0, t1, r.pos + Math.min(s * e0, s * e1), r.pos + Math.max(s * e0, s * e1), Y_MARK, 0.92);
+          const c = 0.9 * fade(t, bayLine);
+          if (r.axis === 'x') white.rect(r.pos + Math.min(s * e0, s * e1), r.pos + Math.max(s * e0, s * e1), t0, t1, Y_MARK, c);
+          else white.rect(t0, t1, r.pos + Math.min(s * e0, s * e1), r.pos + Math.max(s * e0, s * e1), Y_MARK, c);
+        }
+
+        /* Tyre polish. Two wear tracks per lane, broken into uneven lengths so
+           they read as sheen on the asphalt rather than another painted line.
+           Only ~5% brighter — any more and it becomes a marking. */
+        for (let k = 0; k < P.lanes; k++) {
+          const lc = P.inner + (k + 0.5) * LANE_W;
+          for (const tr of [-0.86, 0.86]) {
+            const c0 = lc + tr - 0.48, c1 = lc + tr + 0.48;
+            let t = a;
+            while (t < b - 6) {
+              const len = 14 + fade(t, k) * 40;
+              const end = Math.min(b, t + len);
+              if (fade(t + 3, lc) > 0.87) {
+                const g = 1.0 + (fade(t, lc + 5) - 0.82) * 0.34;
+                const lo = r.pos + Math.min(s * c0, s * c1);
+                const hi = r.pos + Math.max(s * c0, s * c1);
+                if (r.axis === 'x') patch.rect(lo, hi, t, end, Y_PATCH, g);
+                else patch.rect(t, end, lo, hi, Y_PATCH, g);
+              }
+              t = end + 3 + fade(t, 7) * 9;
+            }
+          }
         }
       }
       // Centre line. A median already separates the directions, so a road with
@@ -543,7 +632,56 @@ export function buildStreets(ctx) {
     }
   }
 
+  /* --- utility trenches: a resurfaced band right across the carriageway --- */
+  for (const r of [...layout.roadsX, ...layout.roadsZ]) {
+    for (const [a, b] of tintRuns(r)) {
+      for (let t = a + 20; t < b - 20; t += 95 + fade(t, r.pos) * 130) {
+        const w = 1.3 + fade(t, 3) * 1.9;
+        const tone = fade(t, 11) > 0.9 ? 1.09 : 0.91;
+        if (r.axis === 'x') patch.rect(r.pos - r.half + 0.4, r.pos + r.half - 0.4, t, t + w, Y_PATCH, tone);
+        else patch.rect(t, t + w, r.pos - r.half + 0.4, r.pos + r.half - 0.4, Y_PATCH, tone);
+      }
+    }
+  }
+
+  /* --- bus-lane beds, laid continuously between junction boxes ---------- */
+  for (const r of [...layout.roadsX, ...layout.roadsZ]) {
+    const P = lanePlan(r);
+    if (!P.bus) continue;
+    for (const [a, b] of tintRuns(r)) {
+      if (b - a < 2) continue;
+      for (const s of [-1, 1]) {
+        const c0 = P.busEdge + 0.15, c1 = P.busEdge + LANE_W;
+        const lo = r.pos + Math.min(s * c0, s * c1);
+        const hi = r.pos + Math.max(s * c0, s * c1);
+        if (r.axis === 'x') busl.rect(lo, hi, a, b, Y_TINT, 1.0);
+        else busl.rect(a, b, lo, hi, Y_TINT, 1.0);
+      }
+    }
+  }
+
   /* ============================================ 4. junctions + zebras === */
+
+  /**
+   * Clear carriageway between this road's edge and the next parallel road's
+   * edge, in direction `s`. Some of the grid gets down to a 20 m gap, and
+   * without this two neighbouring junctions stamp overlapping zebras into the
+   * same 20 m — coplanar, in the same mesh, guaranteed to z-fight.
+   */
+  function freeGap(list, idx, s) {
+    const r = list[idx];
+    let best = 1e4;
+    for (let i = 0; i < list.length; i++) {
+      if (i === idx) continue;
+      const o = list[i];
+      const d = s > 0 ? (o.pos - o.half) - (r.pos + r.half)
+        : (r.pos - r.half) - (o.pos + o.half);
+      if (d >= 0 && d < best) best = d;
+    }
+    return best;
+  }
+  const NEED_ZEBRA = CROSS_GAP + CROSS_W + 0.8;
+  const NEED_STOP = CROSS_GAP + CROSS_W + STOP_SET + STOP_BAR + 0.4;
 
   for (const ix of net.intersections) {
     const rx = layout.roadsX[ix.ri];
@@ -556,26 +694,30 @@ export function buildStreets(ctx) {
     const sidesZ = major ? [-1, 1] : [rng.sign()];
 
     for (const s of sidesX) {
+      const gap = freeGap(layout.roadsZ, ix.rj, s);
+      if (gap < NEED_ZEBRA) continue;
       // Crossing the N/S road, north or south of the box.
       const zc = rz.pos + s * (rz.half + CROSS_GAP + CROSS_W / 2);
       zebra(rx.pos - rx.half, rx.pos + rx.half, zc, 'x');
-      stopBar(rx, rz, s, 'x');
+      if (gap >= NEED_STOP) stopBar(rx, rz, s, 'x');
     }
     for (const s of sidesZ) {
+      const gap = freeGap(layout.roadsX, ix.ri, s);
+      if (gap < NEED_ZEBRA) continue;
       const xc = rx.pos + s * (rx.half + CROSS_GAP + CROSS_W / 2);
       zebra(rz.pos - rz.half, rz.pos + rz.half, xc, 'z');
-      stopBar(rz, rx, s, 'z');
+      if (gap >= NEED_STOP) stopBar(rz, rx, s, 'z');
     }
 
     /* Junction wear: real intersections are a patchwork of utility cuts and
        overlay, and the polish where every tyre in the city turns. Kept inside
        +-10% albedo so it reads as surface history, not dirt. */
     const jr = makeRNG((ix.id * 2654435761) >>> 0);
-    for (let i = 0; i < 3; i++) {
-      const w = ix.halfX * (0.3 + jr() * 0.55), d = ix.halfZ * (0.3 + jr() * 0.55);
+    for (let i = 0; i < 4; i++) {
+      const w = ix.halfX * (0.28 + jr() * 0.58), d = ix.halfZ * (0.28 + jr() * 0.58);
       const cx = ix.x + (jr() - 0.5) * (ix.halfX * 2 - w);
       const cz = ix.z + (jr() - 0.5) * (ix.halfZ * 2 - d);
-      patch.rect(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, Y_PATCH, 0.90 + jr() * 0.19);
+      patch.rect(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, Y_PATCH, 0.875 + jr() * 0.26);
     }
     // Oil shadow at the stop line. An octagon, because a rectangle of stain
     // announces itself as a decal.
@@ -601,8 +743,8 @@ export function buildStreets(ctx) {
 
     // Turn arrows in every approach lane.
     for (const s of [-1, 1]) {
-      approachArrows(rx, rz, s, 'x');
-      approachArrows(rz, rx, s, 'z');
+      if (freeGap(layout.roadsZ, ix.rj, s) > NEED_STOP + 8) approachArrows(rx, rz, s, 'x');
+      if (freeGap(layout.roadsX, ix.ri, s) > NEED_STOP + 8) approachArrows(rz, rx, s, 'z');
     }
   }
 
@@ -644,51 +786,43 @@ export function buildStreets(ctx) {
     const P = lanePlan(r);
     const dir = -s;
     const rightSign = axis === 'x' ? (dir > 0 ? -1 : 1) : (dir > 0 ? 1 : -1);
-    const base = cr.half + CROSS_GAP + CROSS_W + STOP_SET + STOP_BAR + 4.6;
-    if (base > 26) return;
+    const base = cr.half + CROSS_GAP + CROSS_W + STOP_SET + STOP_BAR + 4.8;
+    const c = cr.pos + s * base;
     for (let k = 0; k < P.lanes; k++) {
       const lat = P.inner + (k + 0.5) * LANE_W;
       const cx0 = r.pos + rightSign * lat;
-      const c = cr.pos + s * base;
-      // Kerb lane may turn right, the median lane left, the rest go ahead.
+      // k = 0 is the lane against the centreline/median, so that is the left
+      // turn; the outermost lane is the kerb lane and turns right.
       let kind = 'ahead';
-      if (k === 0 && P.lanes > 1) kind = 'right';
-      else if (k === P.lanes - 1 && P.lanes > 1) kind = 'left';
+      if (P.lanes > 1 && k === 0) kind = 'left';
+      else if (P.lanes > 1 && k === P.lanes - 1) kind = 'right';
       // Heading: the vehicle travels toward the junction, i.e. in -s.
       let rot;
       if (axis === 'x') rot = dir > 0 ? 0 : Math.PI;
       else rot = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
       const px = axis === 'x' ? cx0 : c;
       const pz = axis === 'x' ? c : cx0;
-      // Mirror the turn side for lanes on the far half of a two-way road.
-      const flip = rightSign < 0 ? -1 : 1;
-      arrow(px, pz, rot, kind, axis === 'x' ? flip : flip);
+      if (layout.isWater(px, pz)) continue;
+      arrow(px, pz, rot, kind);
       stat.arrows++;
     }
   }
 
-  /** Painted arrow: 4.4 m long, chunky enough to read from 60 m up. */
-  function arrow(px, pz, rot, kind, flip) {
+  /**
+   * Painted arrow, 4.4 m long — chunky, because a scale-accurate 15 cm stroke
+   * is a sub-pixel shimmer from the game camera.
+   * Local frame: +u is the direction of travel, +v is the driver's left.
+   */
+  function arrow(px, pz, rot, kind) {
     const cs = Math.cos(rot), sn = Math.sin(rot);
-    // local (u = forward, v = left of travel) -> world
-    const P = (u, v) => {
-      const vv = v * flip;
-      // rot 0 => forward +z ; rot PI/2 => forward +x
-      return [px + vv * cs + u * sn, pz + u * cs - vv * sn];
-    };
+    const P = (u, v) => [px + v * cs + u * sn, pz + u * cs - v * sn];
     const poly = (pts) => white.polyY(pts.map(([u, v]) => P(u, v)), Y_MARK, 1.0);
-    // shaft
-    poly([[-2.2, -0.24], [1.0, -0.24], [1.0, 0.24], [-2.2, 0.24]]);
-    if (kind === 'ahead') {
-      poly([[1.0, -0.72], [2.2, 0], [1.0, 0.72]]);
-      poly([[1.0, -0.24], [1.0, 0.24], [1.0, 0.24], [1.0, -0.24]]);
-    } else {
-      const sgn = kind === 'left' ? 1 : -1;
-      // elbow + head pointing across
-      poly([[0.52, sgn * 0.24], [1.0, sgn * 0.24], [1.0, sgn * 1.15], [0.52, sgn * 1.15]]);
-      poly([[0.28, sgn * 1.15], [1.24, sgn * 1.15], [0.76, sgn * 2.05]]);
-      // and a straight head, because these lanes may also go ahead
-      poly([[1.0, -0.72], [2.2, 0], [1.0, 0.72]]);
+    poly([[-2.2, -0.24], [1.0, -0.24], [1.0, 0.24], [-2.2, 0.24]]);   // shaft
+    poly([[1.0, -0.72], [2.2, 0], [1.0, 0.72]]);                      // head
+    if (kind !== 'ahead') {
+      const sg = kind === 'left' ? 1 : -1;
+      poly([[0.52, sg * 0.24], [1.0, sg * 0.24], [1.0, sg * 1.15], [0.52, sg * 1.15]]);
+      poly([[0.24, sg * 1.15], [1.28, sg * 1.15], [0.76, sg * 2.05]]);
     }
   }
 
@@ -702,15 +836,15 @@ export function buildStreets(ctx) {
     yellow.rect(x0, x0 + w, z0, z1, Y_MARK, 1.0);
     yellow.rect(x1 - w, x1, z0, z1, Y_MARK, 1.0);
     // 45-degree hatch: clip the line x - z = k against the box analytically.
+    // Sparse and thin on purpose — a full-density box junction is correct in
+    // London and a wall of yellow in a bright toy city.
     const kMin = x0 - z1, kMax = x1 - z0;
-    for (let k = kMin; k < kMax; k += 4.2) {
-      const pts = [];
+    for (let k = kMin; k < kMax; k += 6.4) {
       const ax = Math.max(x0, k + z0), az = ax - k;
       const bx = Math.min(x1, k + z1), bz = bx - k;
       if (bx - ax < 0.4) continue;
-      pts.push([ax, az], [bx, bz]);
-      const hw = 0.16;
-      yellow.quad(
+      const hw = 0.13;
+      yellow.quadUp(
         [ax + hw, Y_MARK, az - hw], [bx + hw, Y_MARK, bz - hw],
         [bx - hw, Y_MARK, bz + hw], [ax - hw, Y_MARK, az + hw], 1.0
       );
@@ -760,6 +894,26 @@ export function buildStreets(ctx) {
       stations.sort((p, q) => p.s - q.s);
 
       sweepEdge(e, stations, sw, tone, x0, x1, z0, z1);
+
+      /* Expansion joints across the walking zone every ~6 m. The paving map
+         already carries the 1.2 m slab joints; this is the coarser second
+         rhythm, and having both is what stops a long frontage reading as one
+         extruded ribbon. They live in the marking mesh purely to reuse its
+         polygon offset — the vertex colour turns the paint albedo into a
+         recessed grey line. */
+      if (e.road) {
+        for (let s = 6; s < e.len - 2.5; s += 6) {
+          const p0 = edgePoint(e, s - 0.045, 0.32, x0, x1, z0, z1);
+          const p1 = edgePoint(e, s + 0.045, 0.32, x0, x1, z0, z1);
+          const p2 = edgePoint(e, s + 0.045, sw, x0, x1, z0, z1);
+          const p3 = edgePoint(e, s - 0.045, sw, x0, x1, z0, z1);
+          const jy = Y_WALK + 0.004;
+          white.quadUp(
+            [p0[0], jy, p0[1]], [p1[0], jy, p1[1]],
+            [p2[0], jy, p2[1]], [p3[0], jy, p3[1]], 0.56 * tone
+          );
+        }
+      }
     }
 
     // Planting strip: a continuous green ribbon behind the kerb on the busy
@@ -813,9 +967,10 @@ export function buildStreets(ctx) {
 
     const pt = (i, st) => {
       const o = oAt(i);
-      // Corner stations follow the mitre; interior stations are clamped so a
-      // wide sidewalk cannot fold back on itself near a corner.
-      const s = st.s <= 0 ? o : (st.s >= e.len ? e.len - o : Math.max(st.s, o));
+      // The mitre: corner stations move inward with the profile, and interior
+      // stations are clamped into the same window so a wide sidewalk cannot
+      // fold back on itself and invert a quad near a corner.
+      const s = Math.min(Math.max(st.s, o), Math.max(o, e.len - o));
       const y = yAt(i, st.d);
       const [px, pz] = edgePoint(e, s, o, x0, x1, z0, z1);
       return [px, y, pz];
@@ -830,8 +985,7 @@ export function buildStreets(ctx) {
         const b = pt(i, stations[k + 1]);
         const c = pt(i + 1, stations[k + 1]);
         const d = pt(i + 1, stations[k]);
-        // Wind so the normal comes out +y on the flat parts.
-        walk.quad(a, b, c, d, col);
+        walk.quadUp(a, b, c, d, col);
       }
     }
   }
@@ -847,9 +1001,9 @@ export function buildStreets(ctx) {
       const p1 = edgePoint(e, c, IN0, x0, x1, z0, z1);
       const p2 = edgePoint(e, c, IN1, x0, x1, z0, z1);
       const p3 = edgePoint(e, a, IN1, x0, x1, z0, z1);
-      plant.quad(
-        [p0[0], Y_WALK + 0.005, p0[1]], [p1[0], Y_WALK + 0.005, p1[1]],
-        [p2[0], Y_WALK + 0.005, p2[1]], [p3[0], Y_WALK + 0.005, p3[1]], 1.0
+      const y = Y_WALK + 0.012;
+      plant.quadUp(
+        [p0[0], y, p0[1]], [p1[0], y, p1[1]], [p2[0], y, p2[1]], [p3[0], y, p3[1]], 1.0
       );
     }
   }
@@ -859,13 +1013,47 @@ export function buildStreets(ctx) {
   for (const r of layout.medians) {
     const hw = r.medianW * 0.5;
     let runs = dryRuns(layout, r, r.axis === 'x' ? -S - 30 : -S - 30, r.axis === 'x' ? S + 30 : BAY);
+    // Pulled back past the zebra corridor (junction edge + CROSS_GAP + CROSS_W)
+    // so a raised kerb never lands in the middle of a crossing.
+    const NOSE = CROSS_GAP + CROSS_W + 1.6;
     for (const [a, b] of (r.axis === 'x' ? junctionSpansX : junctionSpansZ)) {
-      runs = cut(runs, a - 7, b + 7);      // pull back for the median nose
+      runs = cut(runs, a - NOSE, b + NOSE);
     }
+    runs = cutBridges(r, runs);             // the deck carries its own paint
     for (const [a, b] of runs) {
-      if (b - a < 8) continue;
+      // Below ~18 m a median with two 3 m noses is a green lozenge marooned in
+      // the middle of the road, not a median. Leave those stretches open.
+      if (b - a < 18) continue;
       medianRun(r, hw, a, b);
+      medianNose(r, hw, a, -1);
+      medianNose(r, hw, b, 1);
       stat.medianM += b - a;
+    }
+  }
+
+  /**
+   * Painted median nose. Where the raised island stops short of a junction the
+   * carriageway is not simply left blank — the taper is hatched out, and that
+   * chevron is what tells you at a glance which side of the island you take.
+   */
+  function medianNose(r, hw, t, dir) {
+    const L = 5.4;
+    const at = (u, c) => (r.axis === 'x' ? [r.pos + c, Y_MARK, t + dir * u] : [t + dir * u, Y_MARK, r.pos + c]);
+    const W = 0.20;
+    // Outline: two converging lines from the nose tip to the island edge.
+    for (const s of [-1, 1]) {
+      const A = at(0, s * 0.35), B = at(L, s * (hw - 0.1));
+      const A2 = at(0, s * 0.35 + W * s), B2 = at(L, s * (hw - 0.1) + W * s);
+      yellow.quadUp(A, B, B2, A2, 1.0);
+    }
+    // Chevrons inside the taper.
+    for (let i = 1; i <= 3; i++) {
+      const u = (i / 4) * L;
+      const c = 0.35 + (hw - 0.45) * (u / L);
+      const A = at(u, -c), B = at(u + 0.9, 0), C = at(u + 0.9 + W * 1.4, 0), D = at(u + W * 1.4, -c);
+      yellow.quadUp(A, B, C, D, 1.0);
+      const E = at(u, c), F = at(u + 0.9, 0), G = at(u + 0.9 + W * 1.4, 0), H = at(u + W * 1.4, c);
+      yellow.quadUp(E, F, G, H, 1.0);
     }
   }
 
@@ -904,8 +1092,7 @@ export function buildStreets(ctx) {
           const B = along(t1, M[i].o + inset(t1), s); B[1] = M[i].y;
           const C = along(t1, M[i + 1].o + inset(t1), s); C[1] = M[i + 1].y;
           const D = along(t0, M[i + 1].o + inset(t0), s); D[1] = M[i + 1].y;
-          if (s > 0) walk.quad(A, B, C, D, col);
-          else walk.quad(D, C, B, A, col);
+          walk.quadUp(A, B, C, D, col);
         }
       }
     }
@@ -918,19 +1105,22 @@ export function buildStreets(ctx) {
       const B = along(t1, 0.55 + inset(t1), -1); B[1] = 0.142;
       const C = along(t1, 0.55 + inset(t1), 1); C[1] = 0.142;
       const D = along(t0, 0.55 + inset(t0), 1); D[1] = 0.142;
-      if (r.axis === 'x') plant.quad(A, B, C, D, 1.0);
-      else plant.quad(D, C, B, A, 1.0);
+      plant.quadUp(A, B, C, D, 1.0);
     }
-    // Hedge spine, chamfered so it never shows a razor edge.
-    const hh = 0.62, hwid = Math.min(1.05, hw - 1.2);
+    // Hedge spine. Two stacked boxes give it a chamfered shoulder, so the top
+    // catches the sun instead of ending in a razor edge.
+    const hh = 0.86, hwid = Math.min(1.15, hw - 1.1);
     if (hwid > 0.3) {
       for (let k = 0; k < ts.length - 1; k++) {
         const t0 = ts[k], t1 = ts[k + 1];
         if (inset(t0) > 0.05 || inset(t1) > 0.05) continue;
+        const inner = hwid * 0.62;
         if (r.axis === 'x') {
-          hedge.box(r.pos - hwid, r.pos + hwid, 0.14, 0.14 + hh, t0, t1, 0.86, 1.1);
+          hedge.box(r.pos - hwid, r.pos + hwid, 0.13, 0.13 + hh * 0.72, t0, t1, 0.84, 1.0);
+          hedge.box(r.pos - inner, r.pos + inner, 0.13 + hh * 0.72, 0.13 + hh, t0 + 0.2, t1 - 0.2, 0.94, 1.16);
         } else {
-          hedge.box(t0, t1, 0.14, 0.14 + hh, r.pos - hwid, r.pos + hwid, 0.86, 1.1);
+          hedge.box(t0, t1, 0.13, 0.13 + hh * 0.72, r.pos - hwid, r.pos + hwid, 0.84, 1.0);
+          hedge.box(t0 + 0.2, t1 - 0.2, 0.13 + hh * 0.72, 0.13 + hh, r.pos - inner, r.pos + inner, 0.94, 1.16);
         }
       }
     }
@@ -976,103 +1166,129 @@ export function buildStreets(ctx) {
 
   /* ===================================================== 8. bridges === */
 
-  for (const br of layout.bridges) {
-    buildBridge(br);
+  for (const s of bridgeSpans) {
+    buildBridge(s);
     stat.bridges++;
   }
 
   /**
-   * A bridge is a deck, a cambered soffit, pilastered parapets, piers into the
-   * channel and a pair of lighting standards.
+   * A river crossing: a raised deck on an approach ramp at each end, a deep
+   * fascia beam, pilastered parapets and lighting standards.
    *
-   * NOTE the deck TOP is dead flat at y=0: vehicles.js pins traffic to y=0.02,
-   * so an arched running surface would bury every car at mid-span. The camber
-   * is carried by the soffit and the parapet line instead, which is where you
-   * read it from a 3/4 camera anyway.
+   * Piers are deliberately NOT built here — water.js already stands two pier
+   * walls with cutwaters under every entry in layout.bridges, and a second set
+   * in the same water would be duplicate geometry fighting itself.
+   *
+   * Balusters are also out: a 60 mm baluster is razor-thin geometry the art
+   * bible forbids, and from a 40-degree camera it aliases into grey fuzz. A
+   * solid parapet with chunky pilasters reads far better at this scale.
    */
-  function buildBridge(br) {
-    const alongZ = br.length >= br.width;
-    const hw = br.width / 2, hl = br.length / 2;
-    const N = 10;
-    const DECK = 1.35;
+  function buildBridge(sp) {
+    const { br, alongZ, lo, hi, rampLo, rampHi, cross, halfW } = sp;
+    const t0 = lo - rampLo, t1 = hi + rampHi;
+    if (t1 - t0 < 6) return;
 
-    const seg = (i) => {
-      const t = i / N;
-      const camber = 0.75 * (1 - (2 * t - 1) * (2 * t - 1));
-      return {
-        p: (alongZ ? br.z - hl + br.length * t : br.x - hw * 0 - (br.width / 2) + br.width * t),
-        camber,
-      };
+    /** Deck height along the bridge — must match vehicles.js deckHeight(). */
+    const yAt = (t) => {
+      const a = rampLo > 0 ? (t - t0) / rampLo : 99;
+      const b = rampHi > 0 ? (t1 - t) / rampHi : 99;
+      return DECK_Y * Math.max(0, Math.min(1, a, b));
     };
 
-    // Deck running surface (asphalt, part of the carriageway mesh).
-    if (alongZ) road.rect(br.x - hw, br.x + hw, br.z - hl, br.z + hl, Y_ROAD, 1.0);
-    else road.rect(br.x - br.width / 2, br.x + br.width / 2, br.z - br.length / 2, br.z + br.length / 2, Y_ROAD, 1.0);
+    // Station list: dense at the ramps where the height changes, coarse across
+    // the span where it does not.
+    const ts = [];
+    const push = (v) => { if (!ts.length || v - ts[ts.length - 1] > 0.05) ts.push(v); };
+    if (rampLo > 0) for (let i = 0; i <= 4; i++) push(t0 + (rampLo * i) / 4);
+    else push(t0);
+    for (let t = lo + 6; t < hi - 3; t += 7) push(t);
+    push(hi);
+    if (rampHi > 0) for (let i = 1; i <= 4; i++) push(hi + (rampHi * i) / 4);
 
-    // Soffit + fascia.
-    for (let i = 0; i < N; i++) {
-      const a = seg(i), b = seg(i + 1);
-      const ya = -DECK + a.camber, yb = -DECK + b.camber;
-      if (alongZ) {
-        // undersides
-        struct.quad([br.x - hw, ya, a.p], [br.x + hw, ya, a.p], [br.x + hw, yb, b.p], [br.x - hw, yb, b.p], 0.72);
-        // fascia beams
-        struct.quad([br.x - hw, 0, a.p], [br.x - hw, ya, a.p], [br.x - hw, yb, b.p], [br.x - hw, 0, b.p], 0.9, true);
-        struct.quad([br.x + hw, ya, a.p], [br.x + hw, 0, a.p], [br.x + hw, 0, b.p], [br.x + hw, yb, b.p], 0.9, true);
-      } else {
-        struct.quad([a.p, ya, br.z - br.length / 2], [a.p, ya, br.z + br.length / 2], [b.p, yb, br.z + br.length / 2], [b.p, yb, br.z - br.length / 2], 0.72);
-      }
-    }
-
-    // Parapets. Solid wall with pilasters — balusters at this scale would be
-    // razor-thin geometry, which the art bible forbids.
+    const P = (t, c, y) => (alongZ ? [cross + c, y, t] : [t, y, cross + c]);
+    const SOFFIT = 0.30;                 // just clear of water.js's surface
     const PAR_H = 1.05;
-    const wallAt = (s) => {
-      if (alongZ) {
-        struct.box(br.x + s * hw - 0.42, br.x + s * hw + 0.06, 0, PAR_H, br.z - hl, br.z + hl, 0.96, 1.08);
+
+    for (let k = 0; k < ts.length - 1; k++) {
+      const a = ts[k], b = ts[k + 1];
+      const ya = yAt(a), yb = yAt(b);
+
+      // Running surface, in the carriageway mesh so it shares the asphalt.
+      road.quadUp(P(a, -halfW, ya), P(a, halfW, ya), P(b, halfW, yb), P(b, -halfW, yb), 1.0);
+
+      // Fascia beams and the soffit, only where the deck is actually raised.
+      if (ya > SOFFIT + 0.2 || yb > SOFFIT + 0.2) {
+        const sa = Math.min(SOFFIT, ya - 0.2), sb = Math.min(SOFFIT, yb - 0.2);
+        for (const s of [-1, 1]) {
+          const A = P(a, s * halfW, yAt(a)), B = P(a, s * halfW, sa);
+          const C = P(b, s * halfW, sb), D = P(b, s * halfW, yAt(b));
+          if (s > 0) struct.quad(A, B, C, D, 0.94, true);
+          else struct.quad(D, C, B, A, 0.94, true);
+        }
+        struct.quad(P(a, halfW, sa), P(a, -halfW, sa), P(b, -halfW, sb), P(b, halfW, sb), 0.70);
       } else {
-        struct.box(br.x - br.width / 2, br.x + br.width / 2, 0, PAR_H, br.z + s * (br.length / 2) - 0.42, br.z + s * (br.length / 2) + 0.06, 0.96, 1.08);
+        // Ramp foot: a low embankment wall down to the ground.
+        for (const s of [-1, 1]) {
+          const A = P(a, s * halfW, ya), B = P(a, s * halfW, Y_BASE);
+          const C = P(b, s * halfW, Y_BASE), D = P(b, s * halfW, yb);
+          if (s > 0) struct.quad(A, B, C, D, 0.94, true);
+          else struct.quad(D, C, B, A, 0.94, true);
+        }
       }
-    };
-    wallAt(-1); wallAt(1);
-    const span = alongZ ? br.length : br.width;
-    const np = Math.max(2, Math.round(span / 9));
-    for (let i = 0; i <= np; i++) {
-      const t = i / np;
-      const camber = 0.28 * (1 - (2 * t - 1) * (2 * t - 1));
+
+      // Parapet wall, riding the deck.
       for (const s of [-1, 1]) {
-        if (alongZ) {
-          const z = br.z - hl + br.length * t;
-          struct.box(br.x + s * hw - 0.55, br.x + s * hw + 0.18, 0, PAR_H + 0.30 + camber, z - 0.42, z + 0.42, 1.0, 1.14);
-        } else {
-          const x = br.x - br.width / 2 + br.width * t;
-          struct.box(x - 0.42, x + 0.42, 0, PAR_H + 0.30 + camber, br.z + s * (br.length / 2) - 0.55, br.z + s * (br.length / 2) + 0.18, 1.0, 1.14);
+        const c0 = s * halfW, c1 = s * (halfW - 0.46);
+        const lo2 = Math.min(c0, c1), hi2 = Math.max(c0, c1);
+        if (alongZ) struct.box(cross + lo2, cross + hi2, Math.min(ya, yb), Math.max(ya, yb) + PAR_H, a, b, 0.96, 1.10);
+        else struct.box(a, b, Math.min(ya, yb), Math.max(ya, yb) + PAR_H, cross + lo2, cross + hi2, 0.96, 1.10);
+      }
+
+      /* Deck paint. Painted here rather than by the marking pass because the
+         deck is 1.2 m up and the marking pass works at y = 0.018. */
+      const my = (ya + yb) / 2 + 0.02;
+      const mid = (a + b) / 2;
+      if (b - a > 1.2) {
+        for (const s of [-1, 1]) {
+          const c = s * 0.26;
+          if (alongZ) yellow.rect(cross + Math.min(c, c + 0.2), cross + Math.max(c, c + 0.2), a, b, my, 1.0);
+          else yellow.rect(a, b, cross + Math.min(c, c + 0.2), cross + Math.max(c, c + 0.2), my, 1.0);
+        }
+      }
+      if (fade(mid, cross) > 0.9) {
+        for (const s of [-1, 1]) {
+          for (let k2 = 1; k2 <= 2; k2++) {
+            const c = s * k2 * LANE_W;
+            if (Math.abs(c) > halfW - 2) continue;
+            if (alongZ) white.rect(cross + c - 0.11, cross + c + 0.11, a, b, my, 0.95);
+            else white.rect(a, b, cross + c - 0.11, cross + c + 0.11, my, 0.95);
+          }
         }
       }
     }
 
-    // Piers into the channel.
-    const piers = Math.max(1, Math.round(span / 26));
-    for (let i = 1; i <= piers; i++) {
-      const t = i / (piers + 1);
-      if (alongZ) {
-        const z = br.z - hl + br.length * t;
-        struct.box(br.x - hw * 0.62, br.x + hw * 0.62, -6.5, -DECK + 0.15, z - 1.5, z + 1.5, 0.8, 0.9);
-      } else {
-        const x = br.x - br.width / 2 + br.width * t;
-        struct.box(x - 1.5, x + 1.5, -6.5, -DECK + 0.15, br.z - br.length * 0.3, br.z + br.length * 0.3, 0.8, 0.9);
+    // Pilasters and lighting standards, spaced along the raised span only.
+    const np = Math.max(2, Math.round((hi - lo) / 11));
+    for (let i = 0; i <= np; i++) {
+      const t = lo + ((hi - lo) * i) / np;
+      const y = yAt(t);
+      for (const s of [-1, 1]) {
+        const c0 = s * (halfW + 0.16), c1 = s * (halfW - 0.60);
+        const clo = Math.min(c0, c1), chi = Math.max(c0, c1);
+        if (alongZ) struct.box(cross + clo, cross + chi, y, y + PAR_H + 0.34, t - 0.44, t + 0.44, 1.0, 1.16);
+        else struct.box(t - 0.44, t + 0.44, y, y + PAR_H + 0.34, cross + clo, cross + chi, 1.0, 1.16);
       }
     }
-
-    // Lighting standards on the parapet.
-    const lamps = Math.max(2, Math.round(span / 22));
+    const lamps = Math.max(2, Math.round((hi - lo) / 24));
     for (let i = 0; i < lamps; i++) {
-      const t = (i + 0.5) / lamps;
+      const t = lo + ((hi - lo) * (i + 0.5)) / lamps;
+      const y = yAt(t) + PAR_H;
       for (const s of [-1, 1]) {
-        const lx = alongZ ? br.x + s * (hw - 0.2) : br.x - br.width / 2 + br.width * t;
-        const lz = alongZ ? br.z - hl + br.length * t : br.z + s * (br.length / 2 - 0.2);
-        lampPole.box(lx - 0.11, lx + 0.11, PAR_H, PAR_H + 4.4, lz - 0.11, lz + 0.11, 0.9, 1.0);
-        lampGlow.box(lx - 0.34, lx + 0.34, PAR_H + 4.4, PAR_H + 4.7, lz - 0.26, lz + 0.26, 1.0, 1.0);
+        const c = s * (halfW - 0.26);
+        const lx = alongZ ? cross + c : t;
+        const lz = alongZ ? t : cross + c;
+        lampPole.box(lx - 0.12, lx + 0.12, y, y + 4.6, lz - 0.12, lz + 0.12, 0.9, 1.0);
+        lampGlow.box(lx - 0.36, lx + 0.36, y + 4.6, y + 4.94, lz - 0.28, lz + 0.28, 1.0, 1.0);
       }
     }
   }
@@ -1100,16 +1316,18 @@ export function buildStreets(ctx) {
   addMesh(group, alley, layer({
     map: Textures.paving(512, PALETTE.CONCRETE_DARK, 'rgba(104,94,80,0.62)', 2),
     roughness: 1.0,
-  }, 1), 'alleys');
+  }, 0.5), 'alleys');
 
   addMesh(group, patch, layer({
     map: asphaltMap, roughness: 1.0, vertexColors: true,
   }, 2), 'road-wear');
 
-  // Bus-lane paint: PALETTE.TERRACOTTA knocked back so it reads as worn paint
-  // on asphalt rather than a red carpet. Flat albedo (paint IS flat) with the
-  // road's own normal map so the surface relief carries straight through.
-  const busColor = new THREE.Color(PALETTE.TERRACOTTA).multiplyScalar(0.52);
+  // Bus-lane paint: PALETTE.TERRACOTTA mixed most of the way back into the
+  // asphalt, so it reads as a tinted lane rather than a red carpet. Flat albedo
+  // (paint IS flat) with the road's own normal map so the relief carries
+  // straight through and the lane still looks like tarmac.
+  const busColor = new THREE.Color(PALETTE.ASPHALT)
+    .lerp(new THREE.Color(PALETTE.TERRACOTTA), 0.42);
   addMesh(group, busl, layer({
     color: busColor,
     normalMap: asphaltNormal,
@@ -1118,26 +1336,28 @@ export function buildStreets(ctx) {
     roughness: 1.0,
   }, 3), 'bus-lanes');
 
+  // Paint receives shadow: a zebra that stays bright white inside a tower's
+  // shadow is the loudest possible "these are decals" tell.
   addMesh(group, white, layer({
-    color: PALETTE.ROAD_LINE, roughness: 0.86, vertexColors: true,
-  }, 5), 'markings-white', false);
+    color: PALETTE.ROAD_LINE, roughness: 0.88, vertexColors: true,
+  }, 5), 'markings-white');
 
   addMesh(group, yellow, layer({
-    color: PALETTE.ROAD_LINE_YELLOW, roughness: 0.86, vertexColors: true,
-  }, 5), 'markings-yellow', false);
+    color: PALETTE.ROAD_LINE_YELLOW, roughness: 0.88, vertexColors: true,
+  }, 5), 'markings-yellow');
 
   addMesh(group, walk, layer({
     map: Textures.paving(512, PALETTE.SIDEWALK, 'rgba(150,142,126,0.5)', 4),
     roughness: 0.94, vertexColors: true,
   }, 1), 'sidewalks');
 
-  addMesh(group, plant, ground({
+  addMesh(group, plant, layer({
     map: Textures.grass(), roughness: 0.95,
-  }), 'planting');
+  }, 2), 'planting');
 
   addMesh(group, iron, layer({
     color: PALETTE.ROOF_TAR, roughness: 0.62, metalness: 0.25, vertexColors: true,
-  }, 7), 'road-ironwork', false);
+  }, 7), 'road-ironwork');
 
   const hedgeMesh = addMesh(group, hedge, solid({
     color: PALETTE.HEDGE, roughness: 0.9, vertexColors: true,

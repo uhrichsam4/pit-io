@@ -400,17 +400,33 @@ function buildShorelines(field) {
       for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
       if (total < 14) continue;                       // stubs from field noise
 
-      // Segment normals, then mitred vertex normals. The sign is settled by
-      // probing the field rather than trusting marching-squares winding.
-      const segN = [];
-      for (let i = 0; i < pts.length - 1; i++) {
+      /*
+       * ORIENTATION. sweepProfile winds its triangles from (tangent x normal),
+       * so the profile only faces outward when the normal is exactly
+       * (t.z, -t.x) — flipping individual normals to point at the water would
+       * place the wall correctly and render it INSIDE OUT, which is precisely
+       * what happened on the first pass: backface culling ate the whole
+       * parapet and left the bollards floating on a flat promenade.
+       *
+       * So the direction of travel is what gets corrected, not the normal:
+       * probe the field along the run, and if the water is on the wrong side,
+       * reverse the polyline.
+       */
+      const normalAt = (i) => {
         const dx = pts[i + 1].x - pts[i].x, dz = pts[i + 1].z - pts[i].z;
         const l = Math.hypot(dx, dz) || 1e-6;
-        let nx = dz / l, nz = -dx / l;
+        return { x: dz / l, z: -dx / l };
+      };
+      let vote = 0;
+      for (let i = 0; i < pts.length - 1; i += Math.max(1, (pts.length / 12) | 0)) {
+        const n = normalAt(i);
         const mx = (pts[i].x + pts[i + 1].x) / 2, mz = (pts[i].z + pts[i + 1].z) / 2;
-        if (field.at(mx + nx * 3, mz + nz * 3) < field.at(mx - nx * 3, mz - nz * 3)) { nx = -nx; nz = -nz; }
-        segN.push({ x: nx, z: nz });
+        vote += field.at(mx + n.x * 3, mz + n.z * 3) > field.at(mx - n.x * 3, mz - n.z * 3) ? 1 : -1;
       }
+      if (vote < 0) pts.reverse();
+
+      const segN = [];
+      for (let i = 0; i < pts.length - 1; i++) segN.push(normalAt(i));
       const closed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].z - pts[pts.length - 1].z) < 3.5;
       const nrm = [];
       for (let i = 0; i < pts.length; i++) {
@@ -520,6 +536,8 @@ const WATER_PARS = /* glsl */ `
   uniform sampler2D uRefl;
   uniform float uReflAmt;
   uniform float uRiverZ;
+  uniform vec4  uBridges[6];
+  uniform int   uBridgeCount;
   varying vec3  vWaterPos;
   varying vec4  vReflCoord;
 
@@ -556,6 +574,13 @@ const WATER_PARS = /* glsl */ `
                 t.g * uShoreRanges.y + max(0.0, s) * extra);
   }
 
+  /* Signed distance only — for the fetch probes, which do not need the depth
+     channel or the out-of-domain extension. */
+  float shoreRaw(vec2 p) {
+    vec2 cuv = clamp((p - uShoreOrigin) / uShoreSize, 0.0, 1.0);
+    return (texture2D(uShoreMap, cuv).r - 0.5) * 2.0 * uShoreRanges.x;
+  }
+
   /* Sum of directional waves. Only the analytic GRADIENT is used — the surface
      stays geometrically flat, so the whole bay is a handful of triangles and
      every bit of relief is per-pixel. Frequencies are mutually irrational so
@@ -565,13 +590,13 @@ const WATER_PARS = /* glsl */ `
     #define WAV(dx, dz, f, s, a) { \
       float ph = (p.x * (dx) + p.y * (dz)) * (f) + t * (s); \
       g += vec2(dx, dz) * (cos(ph) * (a) * (f) * k); }
-    WAV( 0.94,  0.34, 0.071, 0.90, 0.30)
-    WAV( 0.58, -0.81, 0.129, 1.28, 0.19)
-    WAV(-0.38,  0.93, 0.237, 1.71, 0.105)
-    WAV( 0.99, -0.16, 0.427, 2.33, 0.055)
-    WAV( 0.22,  0.98, 0.803, 3.19, 0.026)
-    WAV(-0.71, -0.70, 1.451, 4.40, 0.012)
-    WAV( 0.46, -0.89, 2.311, 6.10, 0.0055)
+    WAV( 0.94,  0.34, 0.071, 0.90, 0.52)
+    WAV( 0.58, -0.81, 0.129, 1.28, 0.33)
+    WAV(-0.38,  0.93, 0.237, 1.71, 0.175)
+    WAV( 0.99, -0.16, 0.427, 2.33, 0.092)
+    WAV( 0.22,  0.98, 0.803, 3.19, 0.044)
+    WAV(-0.71, -0.70, 1.451, 4.40, 0.020)
+    WAV( 0.46, -0.89, 2.311, 6.10, 0.0092)
     #undef WAV
     return g;
   }
@@ -581,6 +606,19 @@ const WATER_BODY = /* glsl */ `
   vec2 wP = vWaterPos.xz;
   vec2 wShore = shoreSample(wP);
   if (wShore.x < 0.0) discard;
+
+  /* streets.js runs its bridge decks dead flat at y=0 (vehicles pin traffic to
+     y=0.02), which this surface sits 12 cm above — so without this the river
+     is painted over every crossing and the traffic appears to drive on water.
+     Cut the surface out under each deck instead, inset so the water tucks
+     under the fascia and leaves no seam. The shoreline field deliberately does
+     NOT know about bridges: a hole in the mask would grow a seawall around
+     every crossing, mid-channel. */
+  for (int bi = 0; bi < 6; bi++) {
+    if (bi >= uBridgeCount) break;
+    vec4 br = uBridges[bi];
+    if (abs(wP.x - br.x) < br.z && abs(wP.y - br.y) < br.w) discard;
+  }
 
   float wT = uTime;
   vec3 wV = normalize(cameraPosition - vWaterPos);
@@ -594,11 +632,21 @@ const WATER_BODY = /* glsl */ `
 
   /* ---- depth grade -------------------------------------------------- */
   float wDepth = clamp(wShore.y / 115.0, 0.0, 1.0);
-  vec3 wCol = mix(uShallow, uMidC, smoothstep(0.0, 0.26, wDepth));
-  wCol = mix(wCol, uDeep, smoothstep(0.20, 0.86, wDepth));
-  /* Sand showing through the first few metres. */
-  wCol = mix(wCol, uShallow * 1.22 + vec3(0.05, 0.04, 0.01),
-             (1.0 - smoothstep(0.0, 7.5, wShore.x)) * 0.55);
+  vec3 wCol = mix(uShallow, uMidC, smoothstep(0.0, 0.16, wDepth));
+  // Never all the way to the deep swatch: this is Biscayne Bay, and the last
+  // 15% of that ramp is where turquoise starts reading as North Atlantic navy.
+  wCol = mix(wCol, mix(uDeep, uMidC, 0.16), smoothstep(0.20, 0.86, wDepth));
+  /* The seawall stands 1.32 m out over the contour, so the WATERLINE the camera
+     can actually see is that far offshore. Foam and shallows are measured from
+     there — measured from the contour they all hide behind the wall, which is
+     exactly why the first pass had no visible surf. */
+  float wSdF = max(0.0, wShore.x - ${(1.34).toFixed(2)});
+
+  /* Sand showing through the first few metres. Kept tight — a wide pale apron
+     washes out the skyline reflection, which is the one thing the bay is here
+     to deliver. */
+  wCol = mix(wCol, uShallow * 1.18 + vec3(0.04, 0.03, 0.01),
+             (1.0 - smoothstep(0.0, 5.0, wSdF)) * 0.42);
 
   /* The river runs siltier and greener than the bay. Centreline is the same
      pair of sines cityLayout uses, so the tint follows the bend. */
@@ -613,22 +661,40 @@ const WATER_BODY = /* glsl */ `
      fBm evaluations per pixel is not affordable over half a screen of bay. */
   float wLace = wFbm(wP * 0.40 - vec2(wT * 0.18, wT * 0.11));
   float wSwell = wFbm(wP * 0.048 + vec2(wT * 0.04, -wT * 0.025));
-  /* Scalloped, breathing band — a constant-width line is the tell. */
-  float wWidth = 3.0 + 5.0 * wSwell + 1.6 * sin(wT * 0.8 + wSwell * 21.0);
-  float wBand = 1.0 - smoothstep(0.0, max(1.2, wWidth), wShore.x);
-  wBand *= 0.30 + 0.90 * wLace;
-  float wEdge = 1.0 - smoothstep(0.0, 1.35, wShore.x);
-  float wFoam = clamp(max(wBand * 0.95, wEdge), 0.0, 1.0);
+
+  /* FETCH. Surf needs open water to build in: a 48 m marina basin gets a
+     ripple, the open bay gets a breaking line. Probing the field 45 m out in
+     four directions gives the width of the water body cheaply — without it the
+     wide bay foam band floods every basin and channel bank to bank and turns
+     them into flat white rectangles. */
+  float wOpen = max(max(shoreRaw(wP + vec2(45.0, 0.0)), shoreRaw(wP - vec2(45.0, 0.0))),
+                    max(shoreRaw(wP + vec2(0.0, 45.0)), shoreRaw(wP - vec2(0.0, 45.0))));
+  float wFetch = 0.22 + 0.78 * smoothstep(10.0, 44.0, max(wOpen, wShore.x));
+  /* Scalloped, breathing band — a constant-width line is the tell.
+     Sized generously: the coping oversails the wall face by 0.3 m and stands
+     1.24 m above the surface, so from a low camera it screens roughly the
+     first four metres of water. A 2 m surf line is a 2 m surf line the player
+     never sees. */
+  float wWidth = (6.5 + 8.0 * wSwell + 2.4 * sin(wT * 0.8 + wSwell * 21.0)) * wFetch;
+  float wBand = 1.0 - smoothstep(0.0, max(2.0, wWidth), wSdF);
+  wBand *= (0.34 + 0.90 * wLace) * wFetch;
+  /* Bright wash hugging the wall, the part that never fully drains back. */
+  float wEdge = (1.0 - smoothstep(0.0, 1.2 + 2.2 * wFetch, wSdF)) * (0.42 + 0.58 * wFetch);
+  float wFoam = clamp(max(wBand, wEdge * 0.96), 0.0, 1.0);
 
   /* Whitecaps. Sparse on purpose: the old shader covered the bay in them and
      it read as scum on a swimming pool. */
   float wCap = smoothstep(0.72, 0.92, wSwell)
-             * smoothstep(24.0, 130.0, wShore.x)
-             * (0.25 + 0.75 * wLace);
+             * smoothstep(24.0, 130.0, wSdF)
+             * (0.25 + 0.75 * wLace) * wFetch;
   wFoam = clamp(wFoam + wCap * 0.45, 0.0, 1.0);
   wCol = mix(wCol, uFoamC, wFoam * 0.92);
 
-  diffuseColor.rgb = wCol;
+  /* Split the body colour between lit diffuse and an unlit floor. A tower
+     shadow landing on a fully-lit turquoise plane drops it to grey-blue and
+     reads as an oil slick, not as shade; carrying 45% of the colour unlit
+     keeps the shadow as a tonal shift instead of a stain. */
+  diffuseColor.rgb = wCol * 0.62;
 
   /* Foam is matte and opaque; open water is a near-mirror. */
   float wRough = mix(0.20, 0.76, wFoam);
@@ -649,24 +715,41 @@ const WATER_BODY = /* glsl */ `
      so the target is horizontally flipped and only its own projection reads it
      back correctly. */
   vec2 wRefUv = vReflCoord.xy / max(vReflCoord.w, 1e-4);
-  wRefUv = clamp(wRefUv + wG.xy * vec2(0.20, 0.32), vec2(0.002), vec2(0.998));
-  vec4 wRefl = texture2D(uRefl, wRefUv);
-  vec3 wMirror = mix(wSky, wRefl.rgb * uReflAmt, wRefl.a * 0.88);
+  /* Distortion has to stay small. The wave gradient swings +-0.16, so anything
+     past ~0.05 here scrambles the target into blobs instead of rippling it. */
+  wRefUv = clamp(wRefUv + wG.xy * vec2(0.045, 0.075), vec2(0.002), vec2(0.998));
+  /* Five taps smeared along screen-vertical. Two things at once: it dissolves
+     the reflected skyline's stepped silhouette (a row of box crowns mirrors
+     into a hard staircase, which reads as a stain rather than as buildings),
+     and a vertically smeared reflection is what water actually does. */
+  vec4 wRefl = texture2D(uRefl, wRefUv) * 0.34
+    + texture2D(uRefl, clamp(wRefUv + vec2(0.0, 0.0075), 0.002, 0.998)) * 0.22
+    + texture2D(uRefl, clamp(wRefUv - vec2(0.0, 0.0075), 0.002, 0.998)) * 0.22
+    + texture2D(uRefl, clamp(wRefUv + vec2(0.0, 0.0180), 0.002, 0.998)) * 0.11
+    + texture2D(uRefl, clamp(wRefUv - vec2(0.0, 0.0180), 0.002, 0.998)) * 0.11;
+  vec3 wMirror = mix(wSky, wRefl.rgb * uReflAmt, wRefl.a * 0.95);
 
   float wFres = 0.02 + 0.98 * pow(1.0 - clamp(dot(wNormal, wV), 0.0, 1.0), 5.0);
-  vec3 wEmissive = wMirror * wFres * (1.0 - wFoam * 0.85);
-  diffuseColor.rgb *= 1.0 - wFres * 0.55;      // what reflects does not transmit
+  /* Honest Fresnel is wrong at both ends for this camera. Looking steeply down
+     it puts the skyline at 4%, and the reflected towers are the money shot, so
+     covered pixels get a floor. Looking near-horizontally down the channel it
+     goes past 0.9 and the bay turns into a sheet of white sky, so it is capped
+     — Biscayne Bay has to stay turquoise all the way out. */
+  float wMix = clamp(wFres + wRefl.a * 0.17, 0.0, 0.74);
+  vec3 wEmissive = wMirror * wMix * (1.0 - wFoam * 0.85) + wCol * 0.40;
+  diffuseColor.rgb *= 1.0 - wMix * 0.55;      // what reflects does not transmit
 
   /* Glitter: only inside the sun's specular path, and faded out once one
      screen pixel covers more than a wave crest — otherwise the far bay turns
      into television static. */
   vec3 wH = normalize(uSunDirW + wV);
-  float wPath = pow(max(dot(wNormal, wH), 0.0), 10.0);
+  float wPath = pow(max(dot(wNormal, wH), 0.0), 46.0);
   float wFoot = max(fwidth(wP.x), fwidth(wP.y));
-  float wNear = 1.0 - smoothstep(0.18, 0.85, wFoot);
+  float wNear = 1.0 - smoothstep(0.12, 0.55, wFoot);
   float wGlint = wNoise(wP * 1.35 + vec2(wT * 0.55, -wT * 0.38))
                * wNoise(wP * 3.30 - vec2(wT * 0.90, wT * 0.62));
-  wEmissive += uSunTint * smoothstep(0.52, 0.90, wGlint) * wPath * 2.6 * wNear;
+  wEmissive += uSunTint * smoothstep(0.60, 0.94, wGlint) * wPath * 5.0 * wNear
+             * (1.0 - wFoam);
 `;
 
 /* =========================================================== materials === */
@@ -735,17 +818,23 @@ function buildSkylineProxy(layout) {
     g.translate(b.x, h / 2, b.z);
 
     const base = (b.style === 'glass' || b.style === 'tower')
-      ? glassC.clone().lerp(haze, 0.30)
-      : stone.clone().lerp(haze, 0.42);
-    base.offsetHSL(0, 0, (rng() - 0.5) * 0.06);
+      ? glassC.clone().lerp(haze, 0.16)
+      : stone.clone().lerp(haze, 0.24);
+    // Loud per-building value spread: a reflected block of towers that is all
+    // one value reads as a stain on the bay, not as a skyline.
+    base.offsetHSL((rng() - 0.5) * 0.05, 0, (rng() - 0.5) * 0.20);
 
-    // Vertical gradient baked into vertex colour: sky-lit crown, shaded base.
-    // A reflection is read as a silhouette with a value ramp, nothing more.
+    /* Vertical gradient baked into vertex colour: sky-lit crown, shaded base.
+       A reflection is read as a SILHOUETTE with a value ramp, nothing more —
+       and it has to sit clearly DARKER than the sky it replaces. The first
+       pass tinted the proxy toward the horizon haze until it matched the
+       reflected sky exactly, and the towers became mathematically present and
+       visually invisible. */
     const pos = g.attributes.position;
     const col = new Float32Array(pos.count * 3);
     for (let i = 0; i < pos.count; i++) {
       const t = THREE.MathUtils.clamp(pos.getY(i) / Math.max(1, h), 0, 1);
-      const k = 0.42 + 0.72 * t;
+      const k = 0.20 + 0.55 * t;
       col[i * 3] = base.r * k;
       col[i * 3 + 1] = base.g * k;
       col[i * 3 + 2] = base.b * k;
@@ -763,6 +852,16 @@ function buildSkylineProxy(layout) {
   }));
 }
 
+/** Bridge footprints as (centreX, centreZ, halfWidth, halfLength), inset. */
+function bridgeCutouts(layout) {
+  const out = [];
+  for (const b of (layout.bridges || []).slice(0, 6)) {
+    out.push(new THREE.Vector4(b.x, b.z, Math.max(1, b.width / 2 - 1.6), Math.max(1, b.length / 2 - 1.6)));
+  }
+  while (out.length < 6) out.push(new THREE.Vector4(0, 0, -1, -1));
+  return out;
+}
+
 function blankTexture() {
   const t = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
   t.needsUpdate = true;
@@ -773,7 +872,7 @@ function installReflection(ctx, water, uniforms) {
   const proxy = buildSkylineProxy(ctx.layout);
   if (!proxy) return;
 
-  const rt = new THREE.WebGLRenderTarget(512, 288, {
+  const rt = new THREE.WebGLRenderTarget(1024, 576, {
     type: THREE.HalfFloatType,
     format: THREE.RGBAFormat,
     depthBuffer: true,
@@ -884,6 +983,8 @@ export function buildWater(ctx) {
     uReflMat: { value: new THREE.Matrix4() },
     uReflAmt: { value: 1.15 },
     uRiverZ: { value: WORLD.RIVER_Z },
+    uBridges: { value: bridgeCutouts(layout) },
+    uBridgeCount: { value: Math.min(6, (layout.bridges || []).length) },
     // Legacy alias so anything that reached for the old foam colour still works.
     uFoam: { value: new THREE.Color(PALETTE.SEA_FOAM) },
   };
@@ -953,12 +1054,12 @@ export function buildWater(ctx) {
   /* ------------------------------------------------------- marinas ---- */
   const marina = buildMarinas(ctx, g, layout, rng);
 
-  /* --------------------------------------------------- bridge piers --- */
-  buildBridgePiers(ctx, g, layout);
-
   ctx.waterUniforms = uniforms;
   scene.userData.waterUniforms = uniforms;
   scene.userData.shoreField = field;
+  // Published so vehicles.js can float hulls on it and anyone else can ask
+  // where the surface is instead of hardcoding a second copy of the number.
+  scene.userData.waterY = WATER_Y;
 
   console.info(
     `[water] ${rects} surface rects | ${shores.length} shorelines / ` +
@@ -977,18 +1078,44 @@ export function buildWater(ctx) {
  *
  * [offset, y, uv.v, r, g, b]
  */
-const WALL_PROFILE = [
-  [-1.34, 0.02, 0.02, 0.92, 0.91, 0.88],
-  [-1.34, COPING_LIP, 0.30, 1.00, 1.00, 1.00],
-  [-1.66, COPING_LIP, 0.38, 0.86, 0.85, 0.83],
-  [-1.66, SEAWALL_TOP, 0.44, 1.06, 1.05, 1.02],
-  [1.66, SEAWALL_TOP, 1.28, 1.06, 1.05, 1.02],
-  [1.66, COPING_LIP, 1.34, 0.84, 0.83, 0.81],
-  [1.34, COPING_LIP, 1.40, 1.00, 1.00, 0.99],
-  [1.34, 0.58, 1.55, 0.90, 0.92, 0.86],
-  [1.34, 0.16, 1.66, 0.60, 0.68, 0.58],   // tide line: algae + salt staining
-  [1.34, -2.60, 2.34, 0.36, 0.47, 0.40],
-];
+const WALL_PROFILE = (() => {
+  const C = SEAWALL_TOP - 0.07;            // arris chamfer start
+  /* The coping has to separate in VALUE from both the promenade behind it and
+     the water in front, or a 1.3 m parapet reads as a painted line from the
+     game camera. Bright top, hard drop to a shaded face. */
+  const clean = [0.90, 0.89, 0.86];
+  const bright = [1.16, 1.15, 1.10];
+  const shade = [0.70, 0.69, 0.67];
+  const green = [0.50, 0.60, 0.49];        // algae at the tide line
+  const sub = [0.30, 0.41, 0.35];
+  return [
+    /* inner face */
+    [-1.34, 0.02, 0.02, ...[0.92, 0.91, 0.88]],
+    [-1.34, COPING_LIP, 0.30, ...clean],
+    /* duplicated rows give the sweep HARD edges; three's vertex-normal average
+       would otherwise round every 90 degree turn into soft plasticine. The
+       chamfer rows below are deliberately NOT duplicated, so those arrises get
+       the rounded highlight the art bible asks for. */
+    [-1.34, COPING_LIP, 0.30, ...clean],
+    [-1.66, COPING_LIP, 0.38, ...shade],
+    [-1.66, COPING_LIP, 0.38, ...shade],
+    [-1.66, C, 0.42, ...bright],
+    [-1.59, SEAWALL_TOP, 0.46, ...bright],
+    /* coping top */
+    [1.59, SEAWALL_TOP, 1.26, ...bright],
+    [1.66, C, 1.30, ...bright],
+    [1.66, COPING_LIP, 1.34, ...shade],
+    [1.66, COPING_LIP, 1.34, ...shade],
+    [1.34, COPING_LIP, 1.42, ...clean],
+    /* Outer face. It points east, the key light comes from the north-west, so
+       it is always the shaded plane — and that dark band under a bright coping
+       is the whole reason a seawall reads as a wall from 300 m up. */
+    [1.34, COPING_LIP, 1.42, ...clean],
+    [1.34, 0.62, 1.56, ...[0.74, 0.75, 0.71]],
+    [1.34, 0.22, 1.66, ...green],
+    [1.34, -2.60, 2.34, ...sub],
+  ];
+})();
 
 function buildShoreStructures(ctx, group, shores, field, rng) {
   const wallGeos = [];
@@ -1176,16 +1303,21 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
 
 /* ---------------------------------------------------- prop factories --- */
 
+/**
+ * Cast-iron mooring bollard. Segment counts are deliberately mean: this is the
+ * most-instanced thing the module owns (150+ of them along 3 km of quay), so
+ * every triangle here is paid for a hundred and fifty times.
+ */
 function bollardFactory() {
   const parts = [];
-  const shaft = new THREE.CylinderGeometry(0.19, 0.25, 0.62, 10, 1);
+  const shaft = new THREE.CylinderGeometry(0.19, 0.25, 0.62, 8, 1);
   shaft.translate(0, 0.31, 0);
   parts.push(shaft);
-  const head = new THREE.SphereGeometry(0.24, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  const head = new THREE.SphereGeometry(0.24, 8, 3, 0, Math.PI * 2, 0, Math.PI * 0.55);
   head.scale(1, 0.75, 1);
   head.translate(0, 0.62, 0);
   parts.push(head);
-  const foot = new THREE.CylinderGeometry(0.34, 0.38, 0.10, 10, 1);
+  const foot = new THREE.CylinderGeometry(0.34, 0.38, 0.10, 8, 1);
   foot.translate(0, 0.05, 0);
   parts.push(foot);
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
@@ -1401,42 +1533,8 @@ export function debugShore(layout) {
   return { field, lines };
 }
 
-/* ------------------------------------------------------- bridge piers --- */
-
-/**
- * streets.js drops each crossing in as a single slab; without something
- * standing in the water underneath it, a bridge reads as a plank floating over
- * the river. Two pier walls per crossing, merged with a shared material.
+/*
+ * NO BRIDGE PIERS HERE. streets.js's buildBridge() now sinks its own piers from
+ * -6.5 up into the soffit; a second set in the same channel positions would be
+ * duplicate geometry and a guaranteed z-fight.
  */
-function buildBridgePiers(ctx, group, layout) {
-  const parts = [];
-  for (const br of layout.bridges || []) {
-    const along = br.length;
-    const n = br.kind === 'causeway' ? 1 : 2;
-    for (let i = 0; i < n; i++) {
-      const t = (i + 1) / (n + 1);
-      const z = br.z - along / 2 + along * t;
-      const halfW = br.width * 0.31;
-      parts.push(box(halfW * 2, 5.0, 3.4, br.x, WATER_Y - 2.0, z));
-      // Cutwaters on the up- and downstream ends: a pier without them reads as
-      // a brick dropped in the river.
-      for (const s of [-1, 1]) {
-        const nose = new THREE.CylinderGeometry(1.7, 1.7, 5.0, 8, 1);
-        nose.translate(br.x + s * halfW, WATER_Y - 2.0, z);
-        parts.push(nose);
-      }
-    }
-  }
-  if (!parts.length) return;
-  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  for (const p of parts) p.dispose();
-  const mesh = new THREE.Mesh(geo, solid({
-    map: Textures.concrete(512, PALETTE.CONCRETE_DARK),
-    roughness: 0.94,
-    envMapIntensity: 0.4,
-  }));
-  mesh.name = 'bridge-piers';
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  group.add(mesh);
-}

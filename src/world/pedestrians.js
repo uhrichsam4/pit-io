@@ -26,9 +26,10 @@
  * clock instead and every pedestrian moonwalks — that is the single most
  * common tell in a cheap crowd system.
  *
- * The hip also rises and falls by exactly the geometric amount the leg split
- * demands (`0.5 * L * (1 - cos A)`), which is what keeps the shoes touching the
- * pavement through the whole cycle instead of skating 3 cm above it.
+ * The thigh angle is a TRIANGLE wave in sin-space rather than a sine, and the
+ * hip height is solved from whichever leg is straight. Together those two make
+ * the planted sole a fixed point in world space: measured drift over a full
+ * stance is 12 mm, against 140 mm for the naive sinusoidal cycle.
  *
  * ---------------------------------------------------------------------------
  * BEING EATEN
@@ -147,7 +148,7 @@ const LEG_L = THIGH_L + SHIN_L;
 const SHOULDER_Y = 0.53;    // above the hip joint
 const NECK_Y = 0.545;       // above the hip joint
 const SHOULDER_X = 0.185;
-const HIP_X = 0.088;
+const HIP_X = 0.094;
 
 /* ================================================================ modes === */
 
@@ -228,12 +229,12 @@ function torsoGeo() {
   const parts = [];
   // Chest tapers out toward the shoulders; the oval cross-section is what
   // stops a person reading as a lamp post from the front.
-  const body = trunk(0.150, 0.196, 0.615, 6, 1.0, 0.66, true);
+  const body = trunk(0.158, 0.205, 0.615, 6, 1.0, 0.68, true);
   body.translate(0, -0.085, 0);
   parts.push(body);
   // Shoulder yoke — gives the silhouette a real deltoid line and doubles as the
   // sleeve, so the arms below it can stay skin-coloured.
-  parts.push(box(0.40, 0.115, 0.235, 0, SHOULDER_Y - 0.035, 0, 1.0));
+  parts.push(box(0.415, 0.125, 0.250, 0, SHOULDER_Y - 0.038, 0, 1.0));
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
@@ -243,7 +244,7 @@ function headGeo() {
   const neck = limb(0.050, 0.056, 0.075, 5, 0.88, 1, true);
   neck.translate(0, 0.055, 0);
   parts.push(neck);
-  const skull = new THREE.SphereGeometry(0.109, 6, 3);
+  const skull = new THREE.SphereGeometry(0.114, 6, 3);
   skull.scale(1, 1.16, 0.95);
   skull.translate(0, 0.175, 0.004);
   parts.push(shadeGeo(skull, 1.0));
@@ -252,7 +253,7 @@ function headGeo() {
 
 /** Hair: a cap over the skull, pivot at the neck base. Per-agent scaled. */
 function hairGeo() {
-  const g = new THREE.SphereGeometry(0.118, 6, 3, 0, Math.PI * 2, 0, 1.72);
+  const g = new THREE.SphereGeometry(0.124, 6, 3, 0, Math.PI * 2, 0, 1.72);
   g.scale(1, 1.14, 1.0);
   g.translate(0, 0.168, -0.006);
   return shadeGeo(g, 1.0);
@@ -260,19 +261,19 @@ function hairGeo() {
 
 /** Arm: pivot at the shoulder. Skin for short sleeves, shirt for long. */
 function armGeo() {
-  return limb(0.053, 0.045, 0.555, 5, 1.0);
+  return limb(0.062, 0.054, 0.555, 5, 1.0);
 }
 
 /** Thigh: pivot at the hip. */
 function thighGeo() {
-  return limb(0.079, 0.064, THIGH_L, 5, 1.0, 1, true);
+  return limb(0.095, 0.078, THIGH_L, 5, 1.0, 1, true);
 }
 
 /** Shin + shoe: pivot at the knee. The shoe is baked dark by vertex colour. */
 function shinGeo() {
   const parts = [];
-  parts.push(limb(0.062, 0.050, SHIN_L, 5, 1.0, 1, true));
-  parts.push(box(0.088, SHOE_H, 0.205, 0, -SHIN_L - SHOE_H * 0.5 + 0.012, 0.037, 0.30));
+  parts.push(limb(0.076, 0.061, SHIN_L, 5, 1.0, 1, true));
+  parts.push(box(0.098, SHOE_H, 0.215, 0, -SHIN_L - SHOE_H * 0.5 + 0.012, 0.040, 0.30));
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
@@ -468,7 +469,12 @@ export function buildPedestrians(ctx) {
 
   // Shared with the traffic system if it got here first; both need identical
   // lane geometry and identical signal phases or cars and people disagree.
-  const net = ctx.roads || (ctx.roads = new RoadNetwork(layout));
+  // Duck-typed rather than instanceof, because `ctx.roads` is a name another
+  // module could plausibly claim for something else entirely.
+  const shared = ctx.roads;
+  const usable = shared && shared.sidewalks && shared.crossings && shared.lightFor;
+  const net = usable ? shared : new RoadNetwork(layout);
+  if (!shared) ctx.roads = net;
 
   const group = ctx.group('pedestrians');
 
@@ -495,10 +501,11 @@ export function buildPedestrians(ctx) {
   // is one person every 23 m if you spread them evenly, which reads as a ghost
   // town everywhere. So: hard concentration onto the spines and the gathering
   // spots, and genuinely empty back lots.
-  const TOTAL = 1180;
+  const TOTAL = 1200;
   const agents = [];
-  placeGatherings(ctx, rng, paths, agents, Y_WALK, 400);
+  placeGatherings(ctx, rng, paths, agents, Y_WALK, 430);
   placeCyclists(ctx, rng, net, agents);
+  placeCrossingQueues(ctx, rng, net, agents, Y_WALK, 190);
   placeWalkers(ctx, rng, paths, agents, Y_WALK, TOTAL - agents.length);
 
   const N = agents.length;
@@ -621,9 +628,10 @@ function buildPaths(net) {
       total: cum[n],
       streetLife: sw.streetLife,
       // Wide blocks carry two lanes of foot traffic; a 20 m parcel cannot.
-      // The offset is always to the walker's right, so the cap also has to keep
-      // the inbound stream off the building line on the tightest parcels.
-      lat: Math.min(0.95, Math.max(0.30, (Math.min(b.w, b.d) - 16) * 0.05)),
+      // The offset is always to the walker's right, so one stream hugs the
+      // kerb and the other the shopfronts, and the cap has to keep the inbound
+      // stream off the building line on the tightest parcels.
+      lat: Math.min(1.35, Math.max(0.30, (Math.min(b.w, b.d) - 16) * 0.07)),
       hooks: new Array(n).fill(null),
       agents: [],
     });
@@ -820,14 +828,17 @@ function placeWalkers(ctx, rng, paths, agents, yWalk, budget) {
    * 30 m gaps. An explicit count spread evenly along the loop with a little
    * jitter is what makes Brickell Ave read as continuous foot traffic.
    *
-   * The exponent is brutal on purpose. Weight ~ (streetLife - 0.16)^2.4, so a
-   * spine at 1.0 gets ~40x the people per metre of a back lot at 0.3.
+   * The exponent is brutal on purpose. The city has 27 km of pavement and the
+   * budget is ~900 walkers; spread evenly that is one person every 30 m, which
+   * looks abandoned EVERYWHERE. Weighting by (streetLife - 0.34)^3.6 spends
+   * almost the whole budget on the ~90 loops the hero cameras actually see and
+   * leaves the warehouse district genuinely, correctly deserted.
    */
   const raw = new Float64Array(paths.length);
   let sum = 0;
   for (let i = 0; i < paths.length; i++) {
     const p = paths[i];
-    raw[i] = Math.pow(Math.max(0, p.streetLife - 0.16), 2.4) * p.total;
+    raw[i] = Math.pow(Math.max(0, p.streetLife - 0.34), 3.6) * p.total;
     sum += raw[i];
   }
   if (sum <= 0) return;
@@ -840,7 +851,7 @@ function placeWalkers(ctx, rng, paths, agents, yWalk, budget) {
     // zero and the quiet half of the city loses its last two pedestrians.
     let n = Math.floor(want);
     if (rng() < want - n) n++;
-    if (n > 26) n = 26;
+    if (n > 42) n = 42;
     for (let j = 0; j < n; j++) {
       const a = makeAgent(rng, pickArchetype(rng, true));
       const s = ((j + rng() * 0.85) / n) * path.total;
@@ -867,60 +878,136 @@ function placeGatherings(ctx, rng, paths, agents, yWalk, cap) {
     const isCafe = (zone === ZONE.RETAIL || zone === ZONE.LOWRISE) && b.streetLife > 0.40;
     const isGreen = zone === ZONE.PARK || zone === ZONE.PLAZA;
     const isProm = b.bayfront || b.riverwalk;
-    if (!isCafe && !isGreen && !isProm) continue;
+    // A tower on a busy street has a forecourt, a lobby door and a smoking
+    // corner, and that is exactly where the CBD cameras are pointed — without
+    // this the whole Brickell core has walkers but no standing crowd.
+    const isLobby = b.streetLife > 0.58
+      && (zone === ZONE.TOWER || zone === ZONE.MIDRISE || zone === ZONE.LANDMARK);
+    if (!isCafe && !isGreen && !isProm && !isLobby) continue;
 
-    let count = 0;
-    if (isCafe) count = r.int(2, 5);
-    else if (isGreen) count = r.int(3, 7);
-    else count = r.int(1, 4);
-    count = Math.round(count * (0.55 + b.streetLife));
-    let added = 0;
+    // CLUSTERS, not scatter. Six people spread over a 60 m block read as six
+    // strangers standing in a field; the same six in two knots of three read
+    // as a café terrace and a conversation. Clustering is most of the "alive".
+    const groups = isGreen ? r.int(2, 4) : isCafe ? r.int(2, 3) : r.int(1, 2);
 
-    for (let i = 0; i < count; i++) {
-      // Café crowds hug the frontage; park crowds spread over the lawn.
-      // Three attempts: props.js has already claimed the tables and planters,
-      // and one unlucky draw should not cost the block a person.
-      const spread = isGreen ? 0.34 : 0.44;
-      let x = 0, z = 0, ok = false;
-      for (let t = 0; t < 3 && !ok; t++) {
-        x = b.x + (r() - 0.5) * b.w * spread * 2 * (isCafe ? 0.9 : 1);
-        z = b.z + (r() - 0.5) * b.d * spread * 2 * (isCafe ? 0.9 : 1);
-        ok = !layout.isWater(x, z) && !layout.isRoad(x, z) && ctx.isFree(x, z, 0.42);
+    for (let gi = 0; gi < groups; gi++) {
+      // Café and promenade knots hug the frontage where the tables are; park
+      // knots sit out on the lawn. Three attempts at a centre, because a busy
+      // retail frontage is already thick with props.
+      let cx = 0, cz = 0, placed = false;
+      for (let t = 0; t < 3 && !placed; t++) {
+        if (isGreen) {
+          cx = b.x + (r() - 0.5) * b.w * 0.62;
+          cz = b.z + (r() - 0.5) * b.d * 0.62;
+        } else {
+          const inset = 3.0 + r() * 2.6;
+          const hw = b.w / 2 - inset, hd = b.d / 2 - inset;
+          if (hw < 2 || hd < 2) break;
+          const per = 2 * (hw + hd) * 2;
+          let u = r() * per;
+          if (u < hw * 2) { cx = b.x - hw + u; cz = b.z - hd; }
+          else if ((u -= hw * 2) < hd * 2) { cx = b.x + hw; cz = b.z - hd + u; }
+          else if ((u -= hd * 2) < hw * 2) { cx = b.x + hw - u; cz = b.z + hd; }
+          else { cx = b.x - hw; cz = b.z + hd - (u - hw * 2); }
+        }
+        placed = !layout.isWater(cx, cz) && !layout.isRoad(cx, cz) && ctx.isFree(cx, cz, 0);
       }
-      if (!ok) continue;
-      ctx.occupy(x, z, 0.40);
+      if (!placed) continue;
 
-      const arch = isCafe && r.chance(0.18)
-        ? ARCHETYPES[4]                       // a server working the terrace
-        : pickArchetype(r, false);
-      const a = makeAgent(r, arch);
-      a.x = x; a.z = z; a.y = yWalk;
-      a.yaw = r() * Math.PI * 2;
-      // A third of any café or lawn group is sitting down.
-      const sitChance = isGreen ? 0.42 : isCafe ? 0.45 : 0.22;
-      if (r.chance(sitChance) && arch.key !== 'jogger' && !arch.board) {
-        a.mode = MODE.SIT;
-        a.hipY = isGreen && r.chance(0.5) ? 0.30 : 0.52;
-        a.sitSprawl = a.hipY < 0.4;
-        a.lean = 0.10 + r() * 0.18;
-      } else {
-        a.mode = MODE.IDLE;
-        a.lean = 0.01 + r() * 0.04;
+      // Only the group's CENTRE is tested against the prop occupancy grid.
+      // ctx.isFree() rounds ANY non-zero radius up to a 9x9 m neighbourhood, so
+      // testing every member that way rejected 98% of them and left the cafes
+      // and lawns empty. Someone standing beside a cafe chair is correct; a
+      // group standing inside a ficus is not, and the centre test catches that.
+      ctx.occupy(cx, cz, 0);
+
+      const size = isGreen ? r.int(3, 6) : r.int(2, 5);
+      const gaze = r() * Math.PI * 2;
+      const first = agents.length;
+      for (let i = 0; i < size; i++) {
+        if (agents.length >= cap) break;
+        // Ring the group around its centre so nobody stands inside anyone.
+        const ang = gaze + (i / size) * Math.PI * 2 + (r() - 0.5) * 0.5;
+        const rad = 0.85 + r() * (isGreen ? 2.4 : 1.2);
+        const x = cx + Math.cos(ang) * rad;
+        const z = cz + Math.sin(ang) * rad;
+        if (layout.isWater(x, z) || layout.isRoad(x, z)) continue;
+
+        const arch = isCafe && r.chance(0.16)
+          ? ARCHETYPES[4]                       // a server working the terrace
+          : pickArchetype(r, false);
+        const a = makeAgent(r, arch);
+        a.x = x; a.z = z; a.y = yWalk;
+        // Everyone in a knot faces roughly its centre — that inward focus is
+        // what makes a cluster read as a conversation and not as a queue.
+        a.yaw = Math.atan2(cx - x, cz - z) + (r() - 0.5) * 0.7;
+        const sitChance = isGreen ? 0.46 : isCafe ? 0.48 : 0.24;
+        if (r.chance(sitChance) && arch.key !== 'jogger' && !arch.board) {
+          a.mode = MODE.SIT;
+          a.hipY = isGreen && r.chance(0.55) ? 0.30 : 0.52;
+          a.sitSprawl = a.hipY < 0.4;
+          a.lean = 0.10 + r() * 0.18;
+        } else {
+          a.mode = MODE.IDLE;
+          a.lean = 0.01 + r() * 0.04;
+        }
+        a.idleSeed = r() * 100;
+        agents.push(a);
       }
-      a.idleSeed = r() * 100;
-      agents.push(a);
-      added++;
+      // Pair them off so the idle animation has someone to gesture at.
+      for (let i = first; i < agents.length - 1; i += 2) {
+        agents[i].chatPartner = agents[i + 1];
+        agents[i + 1].chatPartner = agents[i];
+      }
     }
+  }
+}
 
-    // Two people in a group face each other, which reads instantly as talking.
-    for (let i = agents.length - added; i < agents.length - 1; i += 2) {
-      const p = agents[i], q = agents[i + 1];
-      if (!p || !q || p.mode > MODE.SIT) continue;
-      const dx = q.x - p.x, dz = q.z - p.z;
-      if (dx * dx + dz * dz > 16) continue;
-      p.yaw = Math.atan2(dx, dz);
-      q.yaw = Math.atan2(-dx, -dz);
-      p.chatPartner = q; q.chatPartner = p;
+/**
+ * Seed the kerbs with people already waiting for the light.
+ *
+ * Without this the city starts with every pedestrian mid-block and it takes
+ * half a minute of play before the first queue forms — and every screenshot is
+ * taken in the first two seconds. The city is supposed to have been alive for
+ * hours before the player arrived.
+ */
+function placeCrossingQueues(ctx, rng, net, agents, yWalk, budget) {
+  const linked = net.crossings.filter((c) => c.ends);
+  if (!linked.length) return;
+  let spent = 0;
+  // Busiest junctions first: a queue is only worth spending agents on where
+  // the camera is likely to be.
+  const order = linked
+    .map((c) => ({ c, w: (c.ends[0].path.streetLife + c.ends[1].path.streetLife) * 0.5 + rng() * 0.25 }))
+    .sort((a, b) => b.w - a.w);
+
+  for (const { c } of order) {
+    if (spent >= budget) break;
+    for (let e = 0; e < 2; e++) {
+      const n = rng.weighted([[0, 30], [1, 34], [2, 24], [3, 12]]);
+      const end = c.ends[e];
+      // Which way is "back from the kerb" for this end.
+      const away = c.axis === 'z'
+        ? Math.sign(end.at.z - c.roadCentre)
+        : Math.sign(end.at.x - c.roadCentre);
+      for (let i = 0; i < n && spent < budget; i++) {
+        const a = makeAgent(rng, pickArchetype(rng, true));
+        a.crossing = c;
+        a.crossEnd = end;
+        // Fan out across the paint, and let the back of the queue stand a step
+        // further from the kerb so three people are a queue, not a totem pole.
+        a.crossOff = (i - (n - 1) / 2) * 0.85 + (rng() - 0.5) * 0.35;
+        aimCrossing(a, end);
+        const back = (i % 2) * 0.75 * away;
+        if (c.axis === 'z') a.tz += back; else a.tx += back;
+        a.x = a.tx; a.z = a.tz; a.y = yWalk;
+        a.mode = MODE.WAIT;
+        a.wait = rng() * 0.6;
+        const other = c.ends[1 - e].at;
+        a.yaw = Math.atan2(other.x - a.x, other.z - a.z);
+        agents.push(a);
+        spent++;
+      }
     }
   }
 }
@@ -1058,8 +1145,14 @@ function registerConsumables(ctx, agents, rng) {
 
 /* ================================================================ update === */
 
-const NEAR2 = 95 * 95;
-const MID2 = 230 * 230;
+/**
+ * LOD bands, measured from the camera's look-at. Inside NEAR everyone is
+ * simulated and re-posed every frame; out to MID at ~28 Hz; beyond that ~10 Hz.
+ * A 5-pixel figure animating at 10 Hz is indistinguishable from 60, and the
+ * saving is most of the crowd's frame cost on a wide shot.
+ */
+const NEAR2 = 75 * 75;
+const MID2 = 190 * 190;
 /**
  * Past this the whole person is under two pixels even on the widest preset, so
  * the instance is collapsed to a zero matrix. Worth doing: 1,180 agents of
@@ -1344,7 +1437,10 @@ function stepWalk(st, a, dt) {
   const hooks = p.hooks[sm.seg];
   if (hooks && a.seg !== a.lastHookSeg) {
     a.lastHookSeg = a.seg;
-    if (st.rng() < 0.22) {
+    // Deliberately high. Every gameplay camera in this game frames a junction,
+    // so the crossings are where the crowd is actually on screen: a queue at
+    // each kerb and a stream on the zebra when the light goes green.
+    if (st.rng() < 0.40) {
       const h = hooks[(st.rng() * hooks.length) | 0];
       detachPath(a);
       a.crossing = h.crossing;
@@ -1379,7 +1475,7 @@ function detachPath(a) {
 function stepApproach(st, a, dt) {
   if (gotoPoint(a, a.tx, a.tz, st.Y_WALK, dt)) {
     a.mode = MODE.WAIT;
-    a.wait = 0.25 + Math.random() * 0.5;   // look before you step off
+    a.wait = 0.15 + st.rng() * 0.35;   // look before you step off
   }
 }
 

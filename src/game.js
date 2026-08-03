@@ -23,6 +23,9 @@ import { HUD } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
 import { NetClient, readNetConfig } from './net/client.js';
 
+/** Scratch, so the per-frame window update allocates nothing. */
+const _bufSize = new THREE.Vector2();
+
 export class Game {
   constructor(canvas, uiRoot) {
     this.engine = new Engine(canvas);
@@ -444,6 +447,17 @@ export class Game {
       this.hud.root.style.opacity = '1';
     } else if (this.hud) {
       this.hud.root.style.opacity = phase === PHASE.RESULTS ? '0.25' : '0';
+    }
+
+    // The shader opens its x-ray window at the hole's screen position, so it
+    // must be projected with the camera matrices this frame will actually draw
+    // with — hence here, after the camera block, and in drawing-buffer pixels
+    // (gl_FragCoord) rather than CSS pixels.
+    if (this.occlusion && this.player) {
+      const db = this.engine.renderer.getDrawingBufferSize(_bufSize);
+      this.occlusion.updateWindow(
+        this.player.position, this.player.displayRadius, db.x, db.y
+      );
     }
 
     this.engine.render(dt);

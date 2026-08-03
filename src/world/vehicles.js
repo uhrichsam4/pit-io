@@ -61,8 +61,10 @@ const BAND = {
 };
 /** [roughness, metalness] per band. */
 const BAND_MR = [
-  [0.34, 0.30], [0.10, 0.62], [0.95, 0.00], [0.20, 0.92],
-  [0.62, 0.02], [0.14, 0.06], [0.26, 0.06], [0.74, 0.10],
+  // Paint keeps metalness low: a metallic clear-coat scales diffuse by
+  // (1 - metalness), and Miami wants punchy colour, not dark colour.
+  [0.30, 0.14], [0.10, 0.58], [0.95, 0.00], [0.20, 0.92],
+  [0.62, 0.02], [0.13, 0.05], [0.24, 0.04], [0.74, 0.08],
 ];
 
 let _bandTex = null;
@@ -179,7 +181,7 @@ function paletteFor(v) {
     dark: 0x23262a,
     seat: 0x3a3c40,
     hull: v.hull ?? PALETTE.HULL_WHITE,
-    deck: v.deck ?? PALETTE.DECK_TEAK,
+    deck: v.deck ?? PALETTE.TEAK,
     sail: PALETTE.SAIL,
     steel: PALETTE.STEEL,
     blue: v.blue ?? PALETTE.POLICE_BLUE,
@@ -462,17 +464,14 @@ function faceY(sh, x, y, z, w, d, role) {
     [x + hx, yy, z - hz], [x - hx, yy, z - hz], role, [0, 1, 0]);
 }
 
-function wheels4(sh, wx, zF, zR, r, w, seg = 7) {
+function wheels4(sh, wx, zF, zR, r, w, seg = 6) {
   wheel(sh, wx, r, zF, r, w, seg); wheel(sh, -wx, r, zF, r, w, seg);
   wheel(sh, wx, r, zR, r, w, seg); wheel(sh, -wx, r, zR, r, w, seg);
 }
 
 /** Wing mirrors on stalks — a tiny silhouette cue that reads instantly. */
 function mirrors(sh, x, y, z) {
-  for (const s of [-1, 1]) {
-    box(sh, s * (x - 0.06), y, z, 0.12, 0.045, 0.05, ROLE.DARK);
-    box(sh, s * (x + 0.06), y + 0.01, z, 0.10, 0.13, 0.06, ROLE.DARK);
-  }
+  for (const s of [-1, 1]) box(sh, s * (x + 0.05), y, z, 0.20, 0.13, 0.06, ROLE.DARK);
 }
 
 /** Head/tail lamps, indicators, grille and number plates for a road car. */
@@ -492,27 +491,27 @@ function carLamps(sh, o) {
 
 function sedan(sh) {
   sweep(sh, SEC.OCT, [
-    { z: -2.31, w: 1.62, h: 0.72, y0: 0.32 },
-    { z: -1.74, w: 1.84, h: 0.80, y0: 0.26 },
-    { z: 1.28, w: 1.84, h: 0.80, y0: 0.26 },
-    { z: 2.31, w: 1.60, h: 0.68, y0: 0.30 },
+    { z: -2.31, w: 1.62, h: 0.70, y0: 0.38 },
+    { z: -1.74, w: 1.84, h: 0.76, y0: 0.33 },
+    { z: 1.28, w: 1.84, h: 0.76, y0: 0.33 },
+    { z: 2.31, w: 1.60, h: 0.66, y0: 0.36 },
   ], { edgeRoles: OCT_SILL, capStart: ROLE.BODY_LO, capEnd: ROLE.BODY_LO });
   sweep(sh, SEC.CABIN, [
-    { z: -1.40, w: 1.58, h: 0.46, y0: 1.02, rake: 0.42 },
-    { z: -0.10, w: 1.70, h: 0.50, y0: 1.02 },
-    { z: 1.00, w: 1.54, h: 0.44, y0: 1.02, rake: -0.48 },
+    { z: -1.40, w: 1.58, h: 0.46, y0: 1.06, rake: 0.42 },
+    { z: -0.10, w: 1.70, h: 0.50, y0: 1.06 },
+    { z: 1.00, w: 1.54, h: 0.44, y0: 1.06, rake: -0.48 },
   ], { edgeRoles: CABIN_ROLES, skip: new Set([0]), capStart: ROLE.GLASS, capEnd: ROLE.GLASS });
-  wheels4(sh, 0.79, 1.42, -1.42, 0.33, 0.24);
+  wheels4(sh, 0.86, 1.45, -1.45, 0.36, 0.26);
   carLamps(sh, { zF: 2.31, zR: -2.31, yH: 0.72, yT: 0.78, dx: 0.56 });
   mirrors(sh, 0.95, 1.06, 0.66);
 }
 
 function suv(sh) {
   sweep(sh, SEC.OCT, [
-    { z: -2.42, w: 1.74, h: 0.98, y0: 0.40 },
-    { z: -1.80, w: 1.96, h: 1.04, y0: 0.34 },
-    { z: 1.40, w: 1.96, h: 1.04, y0: 0.34 },
-    { z: 2.42, w: 1.76, h: 0.94, y0: 0.38 },
+    { z: -2.42, w: 1.74, h: 0.94, y0: 0.46 },
+    { z: -1.80, w: 1.96, h: 1.00, y0: 0.41 },
+    { z: 1.40, w: 1.96, h: 1.00, y0: 0.41 },
+    { z: 2.42, w: 1.76, h: 0.90, y0: 0.45 },
   ], { edgeRoles: OCT_SILL, capStart: ROLE.BODY_LO, capEnd: ROLE.BODY_LO });
   sweep(sh, SEC.CABIN, [
     { z: -1.94, w: 1.72, h: 0.60, y0: 1.34, rake: 0.16 },
@@ -521,24 +520,24 @@ function suv(sh) {
   ], { edgeRoles: CABIN_ROLES, skip: new Set([0]), capStart: ROLE.GLASS, capEnd: ROLE.GLASS });
   // Roof rails: the one detail that separates an SUV from a tall hatchback.
   for (const s of [-1, 1]) box(sh, s * 0.66, 2.00, -0.4, 0.07, 0.07, 2.5, ROLE.DARK);
-  wheels4(sh, 0.85, 1.52, -1.52, 0.38, 0.27);
+  wheels4(sh, 0.93, 1.55, -1.55, 0.42, 0.30);
   carLamps(sh, { zF: 2.42, zR: -2.42, yH: 1.02, yT: 1.16, dx: 0.62, wL: 0.46, yG: 0.72, wG: 1.14, yP: 0.52 });
   mirrors(sh, 1.02, 1.40, 0.76);
 }
 
 function hatchback(sh) {
   sweep(sh, SEC.OCT, [
-    { z: -1.98, w: 1.60, h: 0.86, y0: 0.32 },
-    { z: -1.44, w: 1.76, h: 0.88, y0: 0.28 },
-    { z: 1.10, w: 1.76, h: 0.84, y0: 0.28 },
-    { z: 1.98, w: 1.56, h: 0.66, y0: 0.30 },
+    { z: -1.98, w: 1.60, h: 0.82, y0: 0.38 },
+    { z: -1.44, w: 1.76, h: 0.84, y0: 0.34 },
+    { z: 1.10, w: 1.76, h: 0.80, y0: 0.34 },
+    { z: 1.98, w: 1.56, h: 0.62, y0: 0.36 },
   ], { edgeRoles: OCT_SILL, capStart: ROLE.BODY_LO, capEnd: ROLE.BODY_LO });
   sweep(sh, SEC.CABIN, [
     { z: -1.86, w: 1.54, h: 0.44, y0: 1.14, rake: -0.30 },
     { z: -0.30, w: 1.66, h: 0.48, y0: 1.14 },
     { z: 0.86, w: 1.50, h: 0.42, y0: 1.12, rake: -0.44 },
   ], { edgeRoles: CABIN_ROLES, skip: new Set([0]), capStart: ROLE.GLASS, capEnd: ROLE.GLASS });
-  wheels4(sh, 0.76, 1.24, -1.24, 0.32, 0.23);
+  wheels4(sh, 0.84, 1.28, -1.28, 0.35, 0.25);
   carLamps(sh, { zF: 1.98, zR: -1.98, yH: 0.76, yT: 0.94, dx: 0.54, wL: 0.36, wG: 0.9, yP: 0.46 });
   mirrors(sh, 0.92, 1.16, 0.50);
 }
@@ -546,10 +545,10 @@ function hatchback(sh) {
 function pickup(sh) {
   // Cab + separate bed: the step between them is the whole silhouette.
   sweep(sh, SEC.OCT, [
-    { z: -2.72, w: 1.86, h: 0.92, y0: 0.46 },
-    { z: -0.30, w: 2.02, h: 0.98, y0: 0.42 },
-    { z: 1.86, w: 2.02, h: 1.06, y0: 0.42 },
-    { z: 2.72, w: 1.84, h: 0.98, y0: 0.44 },
+    { z: -2.72, w: 1.86, h: 0.88, y0: 0.54 },
+    { z: -0.30, w: 2.02, h: 0.94, y0: 0.50 },
+    { z: 1.86, w: 2.02, h: 1.02, y0: 0.50 },
+    { z: 2.72, w: 1.84, h: 0.94, y0: 0.52 },
   ], { edgeRoles: OCT_SILL, capStart: ROLE.BODY_LO, capEnd: ROLE.BODY_LO });
   sweep(sh, SEC.CABIN, [
     { z: -0.30, w: 1.80, h: 0.66, y0: 1.40, rake: 0.10 },
@@ -557,21 +556,21 @@ function pickup(sh) {
     { z: 1.36, w: 1.70, h: 0.58, y0: 1.40, rake: -0.40 },
   ], { edgeRoles: CABIN_ROLES, skip: new Set([0]), capStart: ROLE.GLASS, capEnd: ROLE.GLASS });
   // Bed walls + tailgate.
-  for (const s of [-1, 1]) chamfer(sh, s * 0.94, 1.24, -1.55, 0.14, 0.44, 2.28, 0.05, ROLE.BODY);
-  chamfer(sh, 0, 1.24, -2.66, 1.94, 0.44, 0.14, 0.05, ROLE.BODY);
+  for (const s of [-1, 1]) box(sh, s * 0.94, 1.24, -1.55, 0.14, 0.44, 2.28, ROLE.BODY);
+  box(sh, 0, 1.24, -2.66, 1.94, 0.44, 0.14, ROLE.BODY);
   faceY(sh, 0, 1.40, -1.55, 1.74, 2.24, ROLE.DARK);
-  wheels4(sh, 0.88, 1.72, -1.74, 0.41, 0.30);
+  wheels4(sh, 0.97, 1.75, -1.78, 0.46, 0.33);
   carLamps(sh, { zF: 2.72, zR: -2.72, yH: 1.08, yT: 1.24, dx: 0.66, wL: 0.44, yG: 0.78, wG: 1.2, yP: 0.58 });
   mirrors(sh, 1.08, 1.46, 0.58);
 }
 
 function sports(sh) {
   sweep(sh, SEC.OCT, [
-    { z: -2.21, w: 1.72, h: 0.60, y0: 0.34 },
-    { z: -1.30, w: 1.92, h: 0.68, y0: 0.26 },
-    { z: 0.60, w: 1.92, h: 0.62, y0: 0.24 },
-    { z: 1.60, w: 1.80, h: 0.48, y0: 0.24 },
-    { z: 2.21, w: 1.60, h: 0.38, y0: 0.24 },
+    { z: -2.21, w: 1.72, h: 0.56, y0: 0.40 },
+    { z: -1.30, w: 1.92, h: 0.64, y0: 0.32 },
+    { z: 0.60, w: 1.92, h: 0.58, y0: 0.30 },
+    { z: 1.60, w: 1.80, h: 0.44, y0: 0.30 },
+    { z: 2.21, w: 1.60, h: 0.34, y0: 0.30 },
   ], { edgeRoles: OCT_SILL, capStart: ROLE.BODY_LO, capEnd: ROLE.BODY_LO });
   // Fastback: the cabin trails all the way to the tail in one line.
   sweep(sh, SEC.CABIN, [
@@ -580,17 +579,17 @@ function sports(sh) {
     { z: 0.62, w: 1.62, h: 0.34, y0: 0.86, rake: -0.62 },
   ], { edgeRoles: CABIN_ROLES, skip: new Set([0]), capStart: ROLE.BODY, capEnd: ROLE.GLASS });
   chamfer(sh, 0, 1.16, -2.02, 1.44, 0.06, 0.34, 0.03, ROLE.BODY_LO);  // ducktail spoiler
-  wheels4(sh, 0.83, 1.36, -1.36, 0.35, 0.30);
+  wheels4(sh, 0.91, 1.38, -1.38, 0.38, 0.32);
   carLamps(sh, { zF: 2.21, zR: -2.21, yH: 0.60, yT: 0.72, dx: 0.60, wL: 0.40, hL: 0.11, yG: 0.40, wG: 1.1, yP: 0.38 });
   mirrors(sh, 0.99, 0.96, 0.44);
 }
 
 function convertible(sh) {
   sweep(sh, SEC.OCT, [
-    { z: -2.17, w: 1.62, h: 0.74, y0: 0.32 },
-    { z: -1.50, w: 1.84, h: 0.82, y0: 0.26 },
-    { z: 1.10, w: 1.84, h: 0.80, y0: 0.26 },
-    { z: 2.17, w: 1.58, h: 0.62, y0: 0.28 },
+    { z: -2.17, w: 1.62, h: 0.72, y0: 0.38 },
+    { z: -1.50, w: 1.84, h: 0.78, y0: 0.33 },
+    { z: 1.10, w: 1.84, h: 0.76, y0: 0.33 },
+    { z: 2.17, w: 1.58, h: 0.58, y0: 0.35 },
   ], { edgeRoles: OCT_SILL, capStart: ROLE.BODY_LO, capEnd: ROLE.BODY_LO });
   // Open cockpit: a sunk tub, two headrests and a raked screen.
   faceY(sh, 0, 1.04, -0.30, 1.48, 1.70, ROLE.SEAT);
@@ -601,7 +600,7 @@ function convertible(sh) {
   for (const s of [-1, 1]) {
     box(sh, s * 0.73, 1.26, zw - 0.15, 0.05, 0.42, 0.34, ROLE.CHROME);
   }
-  wheels4(sh, 0.79, 1.34, -1.34, 0.34, 0.25);
+  wheels4(sh, 0.87, 1.36, -1.36, 0.37, 0.27);
   carLamps(sh, { zF: 2.17, zR: -2.17, yH: 0.70, yT: 0.78, dx: 0.56, wL: 0.38, yP: 0.44 });
   mirrors(sh, 0.95, 1.06, 0.52);
 }
@@ -637,7 +636,7 @@ function deliveryVan(sh) {
   // Cab glazing only — the load box behind it is solid panel.
   for (const s of [-1, 1]) faceX(sh, s * 1.03, 1.66, 1.00, 1.00, 0.62, ROLE.GLASS, s);
   chamfer(sh, 0, 0.42, 2.62, 1.90, 0.30, 0.30, 0.07, ROLE.BODY_LO);
-  wheels4(sh, 0.88, 1.66, -1.94, 0.39, 0.28);
+  wheels4(sh, 0.98, 1.70, -1.98, 0.43, 0.30);
   carLamps(sh, { zF: 2.95, zR: -2.95, yH: 0.78, yT: 1.30, dx: 0.70, wL: 0.34, yG: 0.50, wG: 1.1, yP: 0.42 });
   mirrors(sh, 1.10, 1.86, 1.62);
 }
@@ -656,8 +655,8 @@ function boxTruck(sh) {
   faceX(sh, 1.20, 2.05, -1.55, 5.10, 1.90, ROLE.ACCENT, 1);
   faceX(sh, -1.20, 2.05, -1.55, 5.10, 1.90, ROLE.ACCENT, -1);
   chamfer(sh, 0, 0.62, -1.55, 2.30, 0.30, 5.30, 0.06, ROLE.DARK);
-  wheels4(sh, 1.00, 2.70, -2.10, 0.50, 0.32);
-  wheel(sh, 1.00, 0.50, -3.10, 0.50, 0.32, 7); wheel(sh, -1.00, 0.50, -3.10, 0.50, 0.32, 7);
+  wheels4(sh, 1.13, 2.70, -2.10, 0.54, 0.34);
+  wheel(sh, 1.13, 0.54, -3.10, 0.54, 0.34, 6); wheel(sh, -1.13, 0.54, -3.10, 0.54, 0.34, 6);
   carLamps(sh, { zF: 3.90, zR: -4.28, yH: 0.86, yT: 1.00, dx: 0.80, wL: 0.40, yG: 0.52, wG: 1.3, yP: 0.48 });
   mirrors(sh, 1.22, 2.30, 3.30);
 }
@@ -756,8 +755,8 @@ function cityBus(sh) {
   }
   chamfer(sh, 0, 3.30, 1.2, 1.30, 0.26, 2.20, 0.08, ROLE.WHITE);   // roof AC pod
   chamfer(sh, 0, 0.42, 0, 2.36, 0.34, 11.0, 0.06, ROLE.DARK);
-  wheels4(sh, 1.10, 4.10, -3.40, 0.52, 0.34);
-  wheel(sh, 1.10, 0.52, -4.55, 0.52, 0.34, 7); wheel(sh, -1.10, 0.52, -4.55, 0.52, 0.34, 7);
+  wheels4(sh, 1.22, 4.10, -3.40, 0.56, 0.36);
+  wheel(sh, 1.22, 0.56, -4.55, 0.56, 0.36, 6); wheel(sh, -1.22, 0.56, -4.55, 0.56, 0.36, 6);
   carLamps(sh, { zF: 5.80, zR: -5.80, yH: 0.80, yT: 1.00, dx: 0.90, wL: 0.40, grille: false, yP: 0.48 });
   mirrors(sh, 1.34, 2.70, 5.40);
 }
@@ -770,8 +769,8 @@ function articBus(sh) {
     { z: 8.90, w: 2.36, h: 2.86, y0: 0.32, rake: -0.14 },
   ], { edgeRoles: COACH_ROLES, capStart: false, capEnd: ROLE.GLASS });
   // Concertina joint: a narrower ribbed section is what sells "articulated".
-  for (let i = 0; i < 5; i++) {
-    chamfer(sh, 0, 1.74, -0.70 - i * 0.24, 2.30 - (i % 2) * 0.12, 2.70, 0.16, 0.05, ROLE.DARK);
+  for (let i = 0; i < 6; i++) {
+    chamfer(sh, 0, 1.74, -0.66 - i * 0.22, 2.30 - (i % 2) * 0.12, 2.70, 0.21, 0.05, ROLE.DARK);
   }
   sweep(sh, SEC.COACH, [
     { z: -8.90, w: 2.36, h: 2.88, y0: 0.34, rake: 0.12 },
@@ -788,8 +787,8 @@ function articBus(sh) {
   faceZ(sh, 0, 3.02, 8.92, 1.70, 0.30, ROLE.DARK, 1);
   chamfer(sh, 0, 0.42, 3.6, 2.34, 0.34, 10.4, 0.06, ROLE.DARK);
   chamfer(sh, 0, 0.42, -5.4, 2.34, 0.34, 7.0, 0.06, ROLE.DARK);
-  wheels4(sh, 1.10, 7.20, 1.10, 0.52, 0.34);
-  wheel(sh, 1.10, 0.52, -6.60, 0.52, 0.34, 7); wheel(sh, -1.10, 0.52, -6.60, 0.52, 0.34, 7);
+  wheels4(sh, 1.22, 7.20, 1.10, 0.56, 0.36);
+  wheel(sh, 1.22, 0.56, -6.60, 0.56, 0.36, 6); wheel(sh, -1.22, 0.56, -6.60, 0.56, 0.36, 6);
   carLamps(sh, { zF: 8.95, zR: -8.95, yH: 0.80, yT: 1.00, dx: 0.90, wL: 0.40, grille: false, yP: 0.48 });
   mirrors(sh, 1.34, 2.70, 8.50);
 }
@@ -805,7 +804,7 @@ function shuttleBus(sh) {
   faceX(sh, 1.12, 1.44, 1.60, 1.00, 1.70, ROLE.GLASS, 1);
   chamfer(sh, 0, 2.86, -1.40, 1.50, 0.30, 2.40, 0.08, ROLE.WHITE);   // roof luggage pod
   chamfer(sh, 0, 0.42, 0, 2.06, 0.32, 6.6, 0.06, ROLE.DARK);
-  wheels4(sh, 0.96, 2.30, -2.20, 0.44, 0.30);
+  wheels4(sh, 1.07, 2.30, -2.20, 0.48, 0.32);
   carLamps(sh, { zF: 3.60, zR: -3.60, yH: 0.80, yT: 1.02, dx: 0.76, wL: 0.36, yG: 0.52, wG: 1.2, yP: 0.46 });
   mirrors(sh, 1.18, 2.24, 3.20);
 }
@@ -826,7 +825,7 @@ function ambulance(sh) {
   chamfer(sh, 0, 2.82, 1.10, 1.40, 0.18, 0.34, 0.05, ROLE.RED);      // light bar
   faceZ(sh, 0, 1.10, -3.46, 1.60, 1.40, ROLE.DARK, -1);              // rear doors
   chamfer(sh, 0, 0.50, 0, 2.10, 0.30, 5.9, 0.06, ROLE.DARK);
-  wheels4(sh, 0.94, 1.90, -1.90, 0.42, 0.28);
+  wheels4(sh, 1.06, 1.90, -1.90, 0.46, 0.30);
   carLamps(sh, { zF: 3.20, zR: -3.48, yH: 0.86, yT: 1.06, dx: 0.72, wL: 0.36, yG: 0.54, wG: 1.1, yP: 0.48 });
   mirrors(sh, 1.14, 2.06, 2.60);
 }
@@ -867,7 +866,7 @@ function bicycle(sh) {
 
 /* ===================================================== shape: boats ==== */
 
-const HULL_ROLES = { 5: ROLE.DECK };
+const HULL_ROLES = { 5: ROLE.WHITE };
 
 /**
  * Boats are modelled with y = 0 at the waterline, so the placement code can
@@ -902,7 +901,7 @@ function motorYacht(sh) {
       box(sh, s * (1.9 - i * 0.32), 1.02, 3.6 + i * 0.85, 0.05, 0.52, 0.05, ROLE.CHROME);
     }
   }
-  faceY(sh, 0, 0.62, 4.40, 2.20, 3.20, ROLE.DECK);
+  faceY(sh, 0, 0.62, -4.40, 2.10, 2.60, ROLE.DECK);      // cockpit sole
 }
 
 function sailBoat(sh) {
@@ -917,7 +916,7 @@ function sailBoat(sh) {
   // Coachroof + cockpit.
   chamfer(sh, 0, 0.86, 0.90, 1.90, 0.50, 3.40, 0.16, ROLE.WHITE);
   for (const s of [-1, 1]) faceX(sh, s * 0.96, 0.90, 0.90, 2.80, 0.26, ROLE.GLASS, s);
-  faceY(sh, 0, 0.58, -2.20, 1.50, 2.60, ROLE.DECK);
+  faceY(sh, 0, 0.58, -2.60, 1.30, 2.10, ROLE.DECK);
   // Mast, boom and a furled main — a bare pole reads as a broken boat.
   cyl(sh, 0, 6.20, 0.60, 0.09, 0.07, 11.2, 6, 'y', ROLE.CHROME);
   cyl(sh, 0, 1.70, -1.20, 0.07, 0.07, 3.40, 6, 'z', ROLE.CHROME);
@@ -943,7 +942,7 @@ function waterTaxi(sh) {
   chamfer(sh, 0, 1.10, 2.30, 1.70, 1.00, 1.30, 0.12, ROLE.WHITE);
   faceZ(sh, 0, 1.30, 2.96, 1.30, 0.52, ROLE.GLASS, 1);
   for (const z of [0.60, -0.90, -2.40]) chamfer(sh, 0, 0.80, z, 2.10, 0.14, 0.44, 0.05, ROLE.DECK);
-  faceY(sh, 0, 0.58, -0.6, 2.20, 5.6, ROLE.DECK);
+  faceY(sh, 0, 0.58, -0.6, 2.10, 5.4, ROLE.SEAT);
 }
 
 function skiff(sh) {
@@ -957,7 +956,7 @@ function skiff(sh) {
   box(sh, 0, 1.18, 0.30, 0.60, 0.06, 0.06, ROLE.CHROME);
   chamfer(sh, 0, 0.78, -1.90, 0.44, 0.70, 0.36, 0.08, ROLE.DARK);   // outboard
   cyl(sh, 0, 0.20, -2.10, 0.11, 0.11, 0.50, 6, 'y', ROLE.DARK);
-  for (const z of [-0.70, 1.00]) chamfer(sh, 0, 0.50, z, 1.55, 0.10, 0.34, 0.04, ROLE.DECK);
+  for (const z of [-0.70, 1.00]) chamfer(sh, 0, 0.50, z, 1.55, 0.10, 0.34, 0.04, ROLE.SEAT);
 }
 
 function sportFisher(sh) {
@@ -972,7 +971,7 @@ function sportFisher(sh) {
   chamfer(sh, 0, 1.20, 1.30, 3.10, 1.20, 4.00, 0.20, ROLE.WHITE);
   faceZ(sh, 0, 1.42, 3.32, 2.40, 0.72, ROLE.GLASS, 1);
   for (const s of [-1, 1]) faceX(sh, s * 1.56, 1.42, 1.30, 3.40, 0.66, ROLE.GLASS, s);
-  faceY(sh, 0, 0.62, -3.40, 2.90, 4.20, ROLE.DECK);
+  faceY(sh, 0, 0.62, -3.60, 2.30, 3.00, ROLE.DECK);
   // Tuna tower — the unmistakable sportfisher silhouette.
   for (const s of [-1, 1]) {
     box(sh, s * 1.05, 2.80, 1.30, 0.09, 2.00, 0.09, ROLE.CHROME);
@@ -1008,7 +1007,7 @@ function cruiseShip(sh) {
   faceZ(sh, 0, 16.4, 10.22, 5.8, 1.20, ROLE.GLASS, 1);
   cyl(sh, 0, 18.0, -6.0, 2.1, 1.8, 5.6, 10, 'y', ROLE.ACCENT);      // funnel
   cyl(sh, 0, 21.0, -6.0, 1.8, 1.7, 0.5, 10, 'y', ROLE.DARK);
-  faceY(sh, 0, 13.2, -14.0, 6.0, 9.0, ROLE.DECK);
+  faceY(sh, 0, 13.2, -14.0, 5.4, 8.0, ROLE.BLUE);        // pool deck
 }
 
 /* ================================================ shape: machinery ===== */
@@ -1122,7 +1121,7 @@ function scissorLift(sh) {
     for (const s of [-1, 1]) {
       for (const d of [-1, 1]) {
         const sh2 = new Shape();
-        chamfer(sh2, 0, 0, 0, 0.10, 0.20, 2.30, 0.03, ROLE.STEEL);
+        box(sh2, 0, 0, 0, 0.10, 0.20, 2.30, ROLE.STEEL);
         const ang = d * 0.55, c = Math.cos(ang), sn = Math.sin(ang);
         for (let i = 0; i < sh2.p.length; i += 3) {
           const py = sh2.p[i + 1], pz = sh2.p[i + 2];
@@ -1199,58 +1198,76 @@ function variantGeometry(key, spec) {
   return g;
 }
 
+/**
+ * Triangles per shape and the resulting fleet cost. Exported so the geometry
+ * budget can be checked without booting a renderer:
+ *   node -e "import('./src/world/vehicles.js').then(m=>console.log(m.vehicleShapeStats()))"
+ */
+export function vehicleShapeStats() {
+  const out = {};
+  let total = 0;
+  for (const k of Object.keys(SHAPE_FN)) {
+    const t = getShape(k).count / 3;
+    out[k] = t;
+    total += t;
+  }
+  out._total = total;
+  return out;
+}
+
 const P = PALETTE;
 const plain = (list) => list.map((c) => ({ paint: c }));
 
 /**
- * radius/height feed the swallow physics; len feeds car-following. `road`
- * marks what may be spawned into traffic, `kerb` what may park at a kerb.
+ * radius/height feed the swallow physics; len feeds car-following. Which
+ * vehicles appear where is decided by the ROAD_MIX / KERB_MIX / LOT_MIX tables
+ * below, not by a flag here.
  */
 const FLEET = {
-  sedan: { tier: 'LARGE', r: 1.6, h: 1.5, len: 4.7, cap: 180, label: 'Sedan', road: 1, kerb: 1,
-    paints: plain([P.CAR_WHITE, P.CAR_SILVER, P.CAR_GRAPHITE, P.CAR_RED, P.CAR_BLUE, P.CAR_NAVY]) },
-  suv: { tier: 'LARGE', r: 1.7, h: 1.85, len: 4.9, cap: 150, label: 'SUV', road: 1, kerb: 1,
+  sedan: { tier: 'LARGE', r: 1.6, h: 1.5, len: 4.7, cap: 180, label: 'Sedan',
+    paints: plain([P.CAR_WHITE, P.CAR_SILVER, P.CAR_RED, P.CAR_BLUE, P.CAR_CORAL, P.CAR_GRAPHITE]) },
+  suv: { tier: 'LARGE', r: 1.7, h: 1.85, len: 4.9, cap: 150, label: 'SUV',
     paints: plain([P.CAR_BLACK, P.CAR_WHITE, P.CAR_SILVER, P.CAR_GREEN, P.CAR_ORANGE]) },
-  hatchback: { tier: 'LARGE', r: 1.4, h: 1.6, len: 4.0, cap: 130, label: 'Hatchback', road: 1, kerb: 1,
+  hatchback: { tier: 'LARGE', r: 1.4, h: 1.6, len: 4.0, cap: 130, label: 'Hatchback',
     paints: plain([P.CAR_LIME, P.CAR_TEAL, P.CAR_YELLOW, P.CAR_WHITE]) },
-  pickup: { tier: 'LARGE', r: 1.8, h: 1.9, len: 5.5, cap: 95, label: 'Pickup', road: 1, kerb: 1,
+  pickup: { tier: 'LARGE', r: 1.8, h: 1.9, len: 5.5, cap: 95, label: 'Pickup',
     paints: plain([P.CAR_CORAL, P.CAR_GRAPHITE, P.CAR_WHITE]) },
-  sports: { tier: 'LARGE', r: 1.5, h: 1.25, len: 4.5, cap: 75, label: 'Sports Car', road: 1, kerb: 1,
+  sports: { tier: 'LARGE', r: 1.5, h: 1.25, len: 4.5, cap: 75, label: 'Sports Car',
     paints: plain([P.CAR_RED, P.CAR_PINK, P.CAR_MINT]) },
-  convertible: { tier: 'LARGE', r: 1.5, h: 1.35, len: 4.4, cap: 60, label: 'Convertible', road: 1, kerb: 1,
+  convertible: { tier: 'LARGE', r: 1.5, h: 1.35, len: 4.4, cap: 60, label: 'Convertible',
     paints: plain([P.CAR_PURPLE, P.CAR_WHITE]) },
-  taxi: { tier: 'LARGE', r: 1.6, h: 1.7, len: 4.7, cap: 170, label: 'Taxi', road: 1, kerb: 1,
+  taxi: { tier: 'LARGE', r: 1.6, h: 1.7, len: 4.7, cap: 170, label: 'Taxi',
     paints: [{ paint: P.TAXI_YELLOW, accent: 0x24262b, paintLo: darken(P.TAXI_YELLOW, 0.72) }] },
-  police: { tier: 'LARGE', r: 1.7, h: 1.9, len: 4.9, cap: 50, label: 'Police Car', road: 1, kerb: 1,
+  police: { tier: 'LARGE', r: 1.7, h: 1.9, len: 4.9, cap: 50, label: 'Police Car',
     paints: [{ paint: P.CAR_WHITE, blue: P.POLICE_BLUE, red: P.CAR_RED }] },
-  deliveryVan: { tier: 'LARGE', r: 2.0, h: 2.6, len: 6.0, cap: 110, label: 'Delivery Van', road: 1, kerb: 1,
+  deliveryVan: { tier: 'LARGE', r: 2.0, h: 2.6, len: 6.0, cap: 110, label: 'Delivery Van',
     paints: [
       { paint: P.TRUCK_WHITE, accent: P.NEON_PINK }, { paint: P.CAR_TEAL, accent: P.FABRIC_WHITE },
       { paint: P.BRICK, accent: P.STUCCO_CREAM }, { paint: P.BUS_BLUE, accent: P.FABRIC_WHITE }] },
-  boxTruck: { tier: 'XLARGE', r: 2.5, h: 3.3, len: 8.6, cap: 60, label: 'Box Truck', road: 1, kerb: 1,
+  boxTruck: { tier: 'XLARGE', r: 2.5, h: 3.3, len: 8.6, cap: 60, label: 'Box Truck',
     paints: [
       { paint: P.CAR_BLUE, white: P.TRUCK_WHITE, accent: P.FABRIC_SKY },
       { paint: P.CAR_GRAPHITE, white: P.TRUCK_WHITE, accent: P.FABRIC_CORAL }] },
-  flatbed: { tier: 'XLARGE', r: 2.4, h: 2.8, len: 8.4, cap: 40, label: 'Flatbed Truck', road: 1, kerb: 1,
+  flatbed: { tier: 'XLARGE', r: 2.4, h: 2.8, len: 8.4, cap: 40, label: 'Flatbed Truck',
     paints: [{ paint: P.CAR_NAVY }, { paint: P.TRUCK_WHITE }] },
-  garbageTruck: { tier: 'XLARGE', r: 2.6, h: 3.3, len: 9.0, cap: 24, label: 'Garbage Truck', road: 1, kerb: 1,
+  garbageTruck: { tier: 'XLARGE', r: 2.6, h: 3.3, len: 9.0, cap: 24, label: 'Garbage Truck',
     paints: [{ paint: P.BIN_GREEN, paintLo: darken(P.BIN_GREEN, 0.7) }] },
-  cementMixer: { tier: 'XLARGE', r: 2.6, h: 3.6, len: 8.8, cap: 34, label: 'Cement Mixer', road: 1, kerb: 0,
+  cementMixer: { tier: 'XLARGE', r: 2.6, h: 3.6, len: 8.8, cap: 34, label: 'Cement Mixer',
     paints: [{ paint: P.CAR_ORANGE, paintLo: darken(P.CAR_ORANGE, 0.7) }] },
-  cityBus: { tier: 'XLARGE', r: 3.2, h: 3.4, len: 11.8, cap: 70, label: 'City Bus', road: 1, kerb: 0,
+  cityBus: { tier: 'XLARGE', r: 3.2, h: 3.4, len: 11.8, cap: 70, label: 'City Bus',
     paints: [
       { paint: P.BUS_WHITE, accent: P.BUS_BLUE, roof: P.BUS_WHITE },
       { paint: P.BUS_BLUE, accent: P.FABRIC_SUN, roof: P.BUS_WHITE },
       { paint: P.CAR_GREEN, accent: P.FABRIC_WHITE, roof: P.BUS_WHITE }] },
-  articBus: { tier: 'XLARGE', r: 4.4, h: 3.4, len: 18.2, cap: 16, label: 'Articulated Bus', road: 1, kerb: 0,
+  articBus: { tier: 'XLARGE', r: 4.4, h: 3.4, len: 18.2, cap: 16, label: 'Articulated Bus',
     paints: [{ paint: P.BUS_WHITE, accent: P.NEON_AQUA, roof: P.BUS_WHITE }] },
-  shuttleBus: { tier: 'XLARGE', r: 2.2, h: 2.9, len: 7.3, cap: 30, label: 'Airport Shuttle', road: 1, kerb: 1,
+  shuttleBus: { tier: 'XLARGE', r: 2.2, h: 2.9, len: 7.3, cap: 30, label: 'Airport Shuttle',
     paints: [{ paint: P.BUS_WHITE, accent: P.FABRIC_SKY, roof: P.BUS_WHITE }] },
-  ambulance: { tier: 'XLARGE', r: 2.1, h: 2.9, len: 6.4, cap: 20, label: 'Ambulance', road: 1, kerb: 1,
+  ambulance: { tier: 'XLARGE', r: 2.1, h: 2.9, len: 6.4, cap: 20, label: 'Ambulance',
     paints: [{ paint: P.TRUCK_WHITE, white: P.TRUCK_WHITE, red: P.CAR_RED }] },
-  scooter: { tier: 'MEDIUM', r: 0.6, h: 1.1, len: 1.9, cap: 110, label: 'Scooter', road: 1, kerb: 1,
+  scooter: { tier: 'MEDIUM', r: 0.6, h: 1.1, len: 1.9, cap: 110, label: 'Scooter',
     paints: plain([P.CAR_TEAL, P.CAR_PINK]) },
-  bicycle: { tier: 'MEDIUM', r: 0.55, h: 1.05, len: 1.8, cap: 150, label: 'Bicycle', road: 0, kerb: 0,
+  bicycle: { tier: 'MEDIUM', r: 0.55, h: 1.05, len: 1.8, cap: 150, label: 'Bicycle',
     paints: plain([P.ACCENT_AQUA, P.CAR_CORAL]) },
 
   /* --- boats: y = 0 is the waterline ---------------------------------- */
@@ -1333,6 +1350,16 @@ const IDM_T = 1.25;       // desired time headway, s
 const IDM_S0 = 2.4;       // standstill gap, m
 const BRAKE_MAX = 9.0;
 
+/**
+ * Extra setback on top of RoadNetwork's `stopX`/`stopZ`.
+ *
+ * The network puts its stop line 2.6 m out from the junction box, but
+ * streets.js paints the zebra from 1.1 m to 4.7 m out and the stop bar at
+ * ~6.1 m. Braking to the network's line parks a queue on top of the crossing,
+ * which looks broken and stands the cars where the pedestrians are.
+ */
+const STOP_SETBACK = 4.0;
+
 /** Bridge decks sit 1.2 m proud of the carriageway; ramp on over 7 m. */
 function deckHeight(bridges, x, z) {
   let y = 0;
@@ -1361,6 +1388,8 @@ class Traffic {
     this.byLaneId = new Map();
     this.pending = [];
     this.vehicles = [];
+    /** Segment starts that sit on the map boundary — the only safe respawns. */
+    this.entries = [];
     this._p = { x: 0, z: 0 };
     this._q = new THREE.Quaternion();
     this._e = new THREE.Euler();
@@ -1393,9 +1422,19 @@ class Traffic {
       }
       if (run && run.hi - run.lo > 50) segs.push(run);
       if (!segs.length) continue;
-      const info = { lane, segs, list: [], opposing: null };
+      // A segment that stops short of the lane's limit ends at water, not at
+      // the map edge. Cars must never wrap there — that is a visible pop in
+      // the middle of the city; they turn off at the last junction instead.
+      for (const sg of segs) {
+        sg.edgeLo = sg.lo <= s0 + 8;
+        sg.edgeHi = sg.hi >= s1 - 8;
+      }
+      const info = { lane, segs, list: [], opposing: null, sMin: s0, sMax: s1 };
       this.lanes.push(info);
       this.byLaneId.set(lane.id, info);
+      for (let i = 0; i < segs.length; i++) {
+        if (segs[i].edgeLo) this.entries.push({ info, si: i });
+      }
     }
     // Oncoming lanes, cached for the left-turn yield test.
     for (const info of this.lanes) {
@@ -1462,13 +1501,21 @@ class Traffic {
         // --- signals + turn decision ---------------------------------------
         const j = net.nextJunction(lane, v.s);
         if (j) {
-          const stopOff = lane.axis === 'x' ? j.ix.stopX : j.ix.stopZ;
+          const stopOff = (lane.axis === 'x' ? j.ix.stopX : j.ix.stopZ)
+            + (j.ix.signalled ? STOP_SETBACK : STOP_SETBACK * 0.5);
           const dStop = (j.s - stopOff) - (v.s + v.len * 0.5);
           // Decide ONCE per junction. Re-rolling every frame would turn every
           // car in the city eventually, whatever the probability says.
           if (v.decided !== j.ix.id && dStop < 45) {
             v.decided = j.ix.id;
-            if (!v.turn) { v.turn = this._decideTurn(v, lane, j.ix); v.waitT = 0; }
+            if (!v.turn) {
+              const seg = info.segs[v.seg];
+              const nxt = net.nextJunction(lane, j.s + 1);
+              const dead = seg && !seg.edgeHi
+                && (!nxt || nxt.s > seg.hi - 14);
+              v.turn = this._decideTurn(v, lane, j.ix, dead);
+              v.waitT = 0;
+            }
           }
 
           if (dStop > -1.2 && dStop < 70) {
@@ -1492,18 +1539,28 @@ class Traffic {
 
         // --- execute the turn ------------------------------------------------
         const T = v.turn;
+        // Re-check the target slot just BEFORE the arc starts. The decision was
+        // taken up to 45 m back and the gap may have closed since; abandoning
+        // here costs nothing visually, abandoning mid-arc would snap the car.
+        if (T && !T.done && !T.checked && v.s >= T.sSrc - T.arc - 2) {
+          T.checked = true;
+          if (!this.hasRoom(T.dstInfo, T.sDst, v.len + 6)) { v.turn = null; continue; }
+        }
         if (T && !T.done && v.s >= T.sSrc) {
           T.done = true;
           this.pending.push({ v, from: info, to: T.dstInfo, s: T.sDst + (v.s - T.sSrc) });
           continue;
         }
 
-        // --- wrap at the end of the driveable stretch --------------------------
+        // --- leaving the map: reappear at a boundary, never mid-city ---------
         const seg = info.segs[v.seg];
-        if (v.s > seg.hi - v.len * 0.5) {
-          const ns = seg.lo + v.len * 0.5 + 2;
-          if (this.hasRoom(info, ns, v.len)) {
-            this.pending.push({ v, from: info, to: info, s: ns, reset: true });
+        if (seg && v.s > seg.hi - v.len * 0.5) {
+          const e = this._freeEntry(v);
+          if (e) {
+            this.pending.push({
+              v, from: info, to: e.info, si: e.si,
+              s: e.info.segs[e.si].lo + v.len * 0.5 + 2, reset: true,
+            });
           } else {
             v.s = seg.hi - v.len * 0.5;
             v.v = 0;
@@ -1518,12 +1575,29 @@ class Traffic {
       ev.v.s = ev.s;
       if (ev.to !== ev.from) {
         ev.v.lane = ev.to.lane;
-        ev.v.v0 = Math.min(ev.v.v0, ev.to.lane.speed * ev.v.vf);
-        ev.v.seg = this._segAt(ev.to, ev.s);
+        // Adopt the new road's limit outright — taking the min would ratchet a
+        // car that turns twice down to a crawl it never recovers from.
+        ev.v.v0 = ev.to.lane.speed * ev.v.vf;
+        ev.v.seg = ev.si !== undefined ? ev.si : this._segAt(ev.to, ev.s);
+      } else if (ev.si !== undefined) {
+        ev.v.seg = ev.si;
       }
       if (ev.reset) { ev.v.turn = null; ev.v.decided = -1; }
       this._insert(ev.to, ev.v);
     }
+  }
+
+  /** A map-edge segment start with room for this vehicle, or null. */
+  _freeEntry(v) {
+    const n = this.entries.length;
+    if (!n) return null;
+    for (let k = 0; k < 8; k++) {
+      const e = this.entries[Math.floor(this.rng() * n)];
+      const sg = e.info.segs[e.si];
+      if (sg.hi - sg.lo < v.len + 30) continue;
+      if (this.hasRoom(e.info, sg.lo + v.len * 0.5 + 2, v.len)) return e;
+    }
+    return null;
   }
 
   /** IDM interaction term against a leader `gap` metres ahead at speed `lv`. */
@@ -1545,11 +1619,13 @@ class Traffic {
    * Choose a turn at `ix`, or null to go straight. Returns the Bezier corner so
    * the vehicle sweeps the junction instead of snapping through a right angle.
    */
-  _decideTurn(v, lane, ix) {
-    if (v.noTurn) return null;
+  _decideTurn(v, lane, ix, forced) {
+    if (v.noTurn && !forced) return null;
     const r = this.rng;
-    const wantRight = r() < (lane.kerbLane ? 0.30 : 0.06);
-    const wantLeft = !wantRight && r() < (lane.kerbLane ? 0.10 : 0.22);
+    let wantRight = r() < (lane.kerbLane ? 0.30 : 0.06);
+    let wantLeft = !wantRight && r() < (lane.kerbLane ? 0.10 : 0.22);
+    // At the last junction before a dead end this is not a preference.
+    if (forced && !wantRight && !wantLeft) { wantRight = true; wantLeft = false; }
     if (!wantRight && !wantLeft) return null;
     // Travelling +z, right is -x; travelling +x, right is +z. See roadNetwork.
     const rightDir = lane.axis === 'x' ? -lane.dir : lane.dir;
@@ -1557,6 +1633,7 @@ class Traffic {
     const opts = this.net.turnOptions(lane, ix);
     let dst = null;
     for (const l of opts) if (l.dir === wantDir) { dst = l; break; }
+    if (!dst && forced) for (const l of opts) if (l.dir === -wantDir) { dst = l; wantLeft = !wantLeft; break; }
     if (!dst) return null;
     const dstInfo = this.byLaneId.get(dst.id);
     if (!dstInfo) return null;
@@ -1670,8 +1747,8 @@ function placeMoving(ctx, state, traf, rng) {
   for (const info of traf.lanes) {
     const lane = info.lane;
     const cls = lane.road.cls;
-    const spacing = cls === ROAD_CLASS.BOULEVARD ? 90
-      : cls === ROAD_CLASS.AVENUE ? 108 : 132;
+    const spacing = cls === ROAD_CLASS.BOULEVARD ? 46
+      : cls === ROAD_CLASS.AVENUE ? 58 : 74;
     for (let si = 0; si < info.segs.length; si++) {
       const seg = info.segs[si];
       const n = Math.floor((seg.hi - seg.lo) / spacing);
@@ -1723,9 +1800,11 @@ function placeParked(ctx, state, rng) {
         const z = alongX ? r.pos + s * off : t;
         if (layout.isWater(x, z)) continue;
         if (deckHeight(bridges, x, z) > 0.01) continue;
-        // Gappy on quiet edges, near-solid downtown: an unbroken row of cars
-        // for 500 m reads as a fence, not as parking.
-        if (!rng.chance(0.25)) continue;
+        // Runs and gaps, not confetti: a slow term along the road gives blocks
+        // of solid parking broken by driveways and hydrant clearances, which
+        // is what a real kerb looks like. Uniform noise reads as a fence.
+        const run = 0.5 + 0.5 * Math.sin(t * 0.020 + r.pos * 0.31 + s * 1.7);
+        if (!rng.chance(0.16 + 0.52 * run)) continue;
         const type = rng.weighted(KERB_MIX);
         const def = FLEET[type];
         if (def.len > 6.4 && !rng.chance(0.4)) continue;
@@ -1747,7 +1826,7 @@ function placeParked(ctx, state, rng) {
 function placeLots(ctx, state, rng) {
   let lots = 0;
   for (const b of ctx.layout.blocks) {
-    if (lots > 26) break;
+    if (lots > 20) break;
     if (b.zone === ZONE.PARK || b.zone === ZONE.MARINA) continue;
     if (Math.min(b.w, b.d) < 24) continue;
     const rad = Math.min(b.w, b.d) * 0.26;
@@ -1764,7 +1843,7 @@ function placeLots(ctx, state, rng) {
         const x = b.x + (alongX ? along : rowOff);
         const z = b.z + (alongX ? rowOff : along);
         if (!ctx.isFree(x, z, 2.2)) continue;
-        if (!rng.chance(0.58)) continue;
+        if (!rng.chance(0.46)) continue;
         const type = rng.weighted(LOT_MIX);
         const rot = (alongX ? 0 : Math.PI / 2) + ang * (ri % 2 ? 1 : -1);
         spawn(ctx, state, type, pickVariant(rng, type), x, ctx.Y_WALK + 0.01, z, rot, false);
@@ -1775,7 +1854,12 @@ function placeLots(ctx, state, rng) {
   return lots;
 }
 
-const BOAT_Y = -0.35;
+/**
+ * Waterline. Must match WATER_Y in water.js — that module keeps its surface
+ * geometrically flat and does all the swell per-pixel, so a hull that bobbed
+ * on a replicated wave function would drift off a plane that never moves.
+ */
+const BOAT_Y = 0.12;
 
 /** Marina basins, the river and the bay edge. */
 function placeBoats(ctx, state, rng) {
@@ -1787,37 +1871,72 @@ function placeBoats(ctx, state, rng) {
     return c;
   };
 
-  // Basins: boats moored bow-in to finger piers, in two facing rows.
+  // Basins. water.js lays a walkway 6 m off the landward edge with 1.5 m
+  // finger docks every ~9 m; boats moor ALONGSIDE the fingers, bow toward the
+  // walkway. Slots that would land on a finger are skipped rather than
+  // snapped, so nothing ends up parked on the decking.
   for (const bs of layout.basins) {
-    const zc = (bs.z0 + bs.z1) / 2;
-    const deep = bs.z1 - bs.z0 > 34;
-    for (let x = bs.x0 + 12; x < bs.x1 - 10; x += 11) {
-      for (const s of deep ? [-1, 1] : [1]) {
-        if (!rng.chance(0.82)) continue;
-        const z = zc + s * (deep ? 10 : 0) + (rng() - 0.5) * 3;
-        const type = rng.weighted([['motorYacht', 34], ['sailBoat', 28],
-          ['skiff', 20], ['sportFisher', 10], ['waterTaxi', 8]]);
-        put(type, x + (rng() - 0.5) * 2, z, s > 0 ? 0 : Math.PI);
-      }
+    const xA = bs.x0 + 6;
+    const zA = bs.z0 + 5, zB = bs.z1 - 5;
+    if (zB - zA < 6) continue;
+    const nF = Math.max(2, Math.floor((zB - zA) / 9));
+    const fingers = [];
+    for (let i = 0; i < nF; i++) fingers.push(zA + ((i + 0.5) / nF) * (zB - zA));
+    for (let z = bs.z0 + 4; z < bs.z1 - 4; z += 6.2) {
+      let onFinger = false;
+      for (const fz of fingers) if (Math.abs(z - fz) < 1.9) { onFinger = true; break; }
+      if (onFinger) continue;
+      if (!rng.chance(0.86)) continue;
+      const type = rng.weighted([['motorYacht', 24], ['sailBoat', 26],
+        ['skiff', 28], ['sportFisher', 10], ['waterTaxi', 12]]);
+      const half = FLEET[type].len * 0.5;
+      const x = xA + 3.2 + half;
+      if (x + half > bs.x1 - 3) continue;
+      put(type, x, z, -Math.PI / 2, true);   // bow toward the walkway
+    }
+    // A couple of bigger hulls lying along the outer wall of the basin.
+    for (let z = bs.z0 + 8; z < bs.z1 - 8; z += 15) {
+      if (!rng.chance(0.5)) continue;
+      const type = rng.weighted([['motorYacht', 40], ['sportFisher', 34], ['waterTaxi', 26]]);
+      put(type, bs.x1 - 7, z, 0, true);
     }
   }
 
-  // Bay: moored off the seawall plus a few running out to sea.
-  for (let z = -WORLD.SIZE + 70; z < WORLD.SIZE - 70; z += 34) {
-    if (Math.abs(z) < 60) continue;                       // keep the river mouth clear
-    if (!rng.chance(0.66)) continue;
-    const x = WORLD.BAY_EDGE + 12 + rng() * 46;
-    const type = rng.weighted([['motorYacht', 30], ['sailBoat', 30],
-      ['sportFisher', 14], ['waterTaxi', 14], ['skiff', 12]]);
-    put(type, x, z + (rng() - 0.5) * 14, rng() * 6.28, true);
+  // Bay: two bands. An inshore line of moored hulls off the seawall, then
+  // traffic further out so the water has depth instead of one row of boats.
+  for (const band of [{ x0: 12, x1: 40, step: 26, p: 0.82 },
+    { x0: 58, x1: 128, step: 46, p: 0.66 }]) {
+    for (let z = -WORLD.SIZE + 60; z < WORLD.SIZE - 60; z += band.step) {
+      if (Math.abs(z) < 52) continue;                     // keep the river mouth clear
+      if (!rng.chance(band.p)) continue;
+      const x = WORLD.BAY_EDGE + band.x0 + rng() * (band.x1 - band.x0);
+      const type = rng.weighted([['motorYacht', 30], ['sailBoat', 30],
+        ['sportFisher', 14], ['waterTaxi', 14], ['skiff', 12]]);
+      put(type, x, z + (rng() - 0.5) * 12, rng() * 6.28, true);
+    }
+  }
+
+  // The cuts around Brickell Key: sheltered water, so small craft.
+  for (const ch of layout.channels || []) {
+    const w = ch.x1 - ch.x0, d = ch.z1 - ch.z0;
+    if (Math.min(w, d) < 12) continue;
+    const n = Math.max(1, Math.floor(Math.max(w, d) / 26));
+    for (let i = 0; i < n; i++) {
+      if (!rng.chance(0.6)) continue;
+      const t = (i + 0.5) / n;
+      const x = w > d ? ch.x0 + t * w : (ch.x0 + ch.x1) / 2;
+      const z = w > d ? (ch.z0 + ch.z1) / 2 : ch.z0 + t * d;
+      put(rng.weighted([['skiff', 44], ['waterTaxi', 32], ['sailBoat', 24]]),
+        x, z, w > d ? Math.PI / 2 : 0);
+    }
   }
 
   // River: working craft along both banks, nosed into the bulkheads.
-  for (let x = -WORLD.SIZE + 120; x < WORLD.BAY_EDGE - 30; x += 30) {
+  for (let x = -WORLD.SIZE + 120; x < WORLD.BAY_EDGE - 30; x += 22) {
     const cz = layout.river.centerAt(x);
     const hw = layout.river.halfAt(x);
     for (const s of [-1, 1]) {
-      if (!rng.chance(0.5)) continue;
+      if (!rng.chance(0.62)) continue;
       const z = cz + s * (hw - 6.5);
       if (!layout.isWater(x, z)) continue;
       const type = rng.weighted([['waterTaxi', 30], ['skiff', 26],
@@ -1827,8 +1946,8 @@ function placeBoats(ctx, state, rng) {
   }
 
   // Two cruise vessels at the port terminals north and south of the channel.
-  put('cruiseShip', WORLD.BAY_EDGE + 30, -455, Math.PI / 2 + 0.04, true);
-  put('cruiseShip', WORLD.BAY_EDGE + 34, 452, Math.PI / 2 - 0.03, true);
+  put('cruiseShip', WORLD.BAY_EDGE + 17, -448, 0.02, true);
+  put('cruiseShip', WORLD.BAY_EDGE + 19, 455, Math.PI - 0.02, true);
   return boats;
 }
 
@@ -1839,16 +1958,27 @@ function placeMachinery(ctx, state, rng) {
     if (b.zone !== ZONE.CONSTRUCTION) continue;
     const r = makeRNG(b.seed ^ 0x51a7);
     // buildings.js fills the middle; the perimeter strip is what is left.
-    const hw = b.w * 0.46, hd = b.d * 0.46;
+    const hw = b.w * 0.42, hd = b.d * 0.42;
     const n = 3 + r.int(0, 3);
+    // Machines are 3-8 m long, so a purely random perimeter position parks two
+    // of them inside each other. Keep a local list and reject close pairs —
+    // the shared occupancy grid is no help here, buildings.js has already
+    // claimed the whole parcel for the tower core.
+    const placed = [];
     for (let i = 0; i < n; i++) {
-      const edge = r.int(0, 3);
-      const u = (r() - 0.5) * 0.78;
-      let x, z, rot;
-      if (edge === 0) { x = b.x + u * b.w; z = b.z - hd; rot = 0; }
-      else if (edge === 1) { x = b.x + u * b.w; z = b.z + hd; rot = Math.PI; }
-      else if (edge === 2) { x = b.x - hw; z = b.z + u * b.d; rot = Math.PI / 2; }
-      else { x = b.x + hw; z = b.z + u * b.d; rot = -Math.PI / 2; }
+      let x = 0, z = 0, rot = 0, ok = false;
+      for (let a = 0; a < 8 && !ok; a++) {
+        const edge = r.int(0, 3);
+        const u = (r() - 0.5) * 0.78;
+        if (edge === 0) { x = b.x + u * b.w; z = b.z - hd; rot = 0; }
+        else if (edge === 1) { x = b.x + u * b.w; z = b.z + hd; rot = Math.PI; }
+        else if (edge === 2) { x = b.x - hw; z = b.z + u * b.d; rot = Math.PI / 2; }
+        else { x = b.x + hw; z = b.z + u * b.d; rot = -Math.PI / 2; }
+        ok = true;
+        for (const q of placed) if (Math.hypot(q[0] - x, q[1] - z) < 9) { ok = false; break; }
+      }
+      if (!ok) continue;
+      placed.push([x, z]);
       const type = r.weighted([['excavator', 26], ['wheelLoader', 20],
         ['siteDumper', 18], ['cementMixer', 12], ['scissorLift', 14],
         ['roadRoller', 10]]);
@@ -1858,6 +1988,9 @@ function placeMachinery(ctx, state, rng) {
     if (cranes < 7 && r.chance(0.6) && Math.min(b.w, b.d) > 34) {
       const x = b.x + (r() - 0.5) * b.w * 0.5;
       const z = b.z + (r() - 0.5) * b.d * 0.5;
+      let clear = true;
+      for (const q of placed) if (Math.hypot(q[0] - x, q[1] - z) < 11) { clear = false; break; }
+      if (!clear) continue;
       spawn(ctx, state, 'craneBase', 0, x, ctx.Y_WALK + 0.01, z, r() * 1.5, false);
       ctx.occupy(x, z, 4.2);
       cranes++;
@@ -1930,13 +2063,6 @@ export function buildVehicles(ctx) {
 
 /* =========================================================== update ==== */
 
-/** The same three sines water.js displaces its surface with. */
-function waveAt(x, z, t) {
-  return Math.sin(x * 0.055 + t * 0.85) * 0.30
-    + Math.sin(z * 0.078 - t * 1.15) * 0.22
-    + Math.sin((x + z) * 0.031 + t * 0.55) * 0.34;
-}
-
 function makeUpdater(ctx, traf, state, boats) {
   const registry = ctx.registry;
   const bridges = ctx.layout.bridges;
@@ -1973,19 +2099,15 @@ function makeUpdater(ctx, traf, state, boats) {
       registry.rehash(c);
     }
 
-    // Moored hulls ride the same swell the water shader draws, so nothing sits
-    // in a trough looking beached.
-    const wu = ctx.scene.userData.waterUniforms;
-    const wt = wu ? wu.uTime.value : time;
+    // A slow heave and roll. Small on purpose: the water plane is flat, so a
+    // big bob would lift a hull clear of a surface that never rises to meet it.
     for (let i = 0; i < boats.length; i++) {
       const b = boats[i];
       const c = b.c;
       if (!c || c.state >= 2) continue;
-      const h = waveAt(b.x, b.z, wt) * 0.55;
-      const roll = (waveAt(b.x + 3, b.z, wt) - waveAt(b.x - 3, b.z, wt)) * 0.045;
-      const pitch = (waveAt(b.x, b.z + 4, wt) - waveAt(b.x, b.z - 4, wt)) * 0.035;
-      pos.set(b.x, BOAT_Y + h * 0.5, b.z);
-      e.set(pitch, b.rot, roll);
+      const ph = time * 0.62 + b.phase;
+      pos.set(b.x, BOAT_Y + Math.sin(ph) * 0.045, b.z);
+      e.set(Math.sin(ph * 0.83 + 1.1) * 0.011, b.rot, Math.cos(ph * 0.71) * 0.017);
       q.setFromEuler(e);
       c.position.copy(pos);
       const p = c.pool;

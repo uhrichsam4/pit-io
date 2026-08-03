@@ -1570,14 +1570,23 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
   }
 
   const pl = place(towerLot, side);
-  // Spread the layout's height field rather than flattening it: a uniform cap
-  // is exactly how a skyline turns into a comb. Tall blocks also take MORE of
-  // their lot, so height buys mass instead of turning into a needle.
-  const spread = 0.72 + 1.05 * (b.heightPotential ?? 0.5);
-  const wanted = h * spread;
-  const fill = 0.80 + 0.14 * Math.min(1, wanted / 170);
-  const slender = Math.min(pl.lw, pl.ld) * fill * 12.5;
-  const hCap = Math.max(34, Math.min(wanted, slender));
+  /*
+   * HEIGHT LOTTERY.
+   * cityLayout's height field is deliberately SMOOTH so the massing reads as a
+   * ridge along Brickell Ave. Used directly it also makes every tower in that
+   * ridge the same height, which renders as a picket fence — anti-pattern #7.
+   * So the field sets the *ceiling* of a heavy-tailed draw: most towers land
+   * well under it, a handful go all the way up. r() is the block's own seeded
+   * stream, so the result is still deterministic.
+   */
+  const hp = b.heightPotential ?? 0.5;
+  const lottery = Math.pow(r(), 2.4);
+  const mul = 0.28 + 0.42 * hp + lottery * (0.5 + 0.7 * hp);
+  const wanted = h * (isLandmark ? Math.max(0.95, mul) : mul);
+  // Taller blocks take more of their lot, so height buys mass, not a needle.
+  const fill = 0.78 + 0.16 * Math.min(1, wanted / 180);
+  const slender = Math.min(pl.lw, pl.ld) * fill * 12.0;
+  const hCap = Math.max(32, Math.min(wanted, slender));
   const masonry = b.style === STYLE.TOWER || (!isLandmark && r.chance(0.24));
   const podH = b.hasPodium ? Math.max(7, b.podiumH) : (r.chance(0.55) ? 6 + r() * 6 : 0);
 
@@ -1674,7 +1683,7 @@ function midriseBlock(ctx, group, b, r, lot, side) {
   const short = Math.min(lot.w, lot.d);
   // Several buildings per block. One slab per parcel is the loudest possible
   // "generated city" tell, and it flattens the skyline into a comb.
-  const n = long > 58 ? 3 : long > 30 ? 2 : 1;
+  const n = long > 54 ? 3 : long > 26 ? 2 : 1;
   const parts = splitLot(lot, short < 15 ? Math.min(n, 2) : n, 1.0 + r() * 1.8);
   let made = 0;
   for (const part of parts) {
@@ -1720,9 +1729,9 @@ function retailBlock(ctx, group, b, r, lot, side) {
 function shopStrip(ctx, group, b, r, lot, side, lw, ld, depth, dz, isRear) {
   const widths = [];
   let left = lw;
-  while (left > 7.5) {
-    let uw = 7.5 + r() * 7.5;
-    if (left - uw < 7.5) uw = left;
+  while (left > 7.0) {
+    let uw = 7.0 + r() * 7.4;
+    if (left - uw < 7.0) uw = left;
     widths.push(Math.min(uw, left));
     left -= Math.min(uw, left);
   }
