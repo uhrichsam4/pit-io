@@ -16,31 +16,45 @@ import { Hole } from '../gameplay/hole.js';
  * Canonical camera setups. Each is {x, z, dist, pitch, yaw, holeR?, note}.
  * x/z are the LOOK-AT point in world space.
  */
+/**
+ * Canonical camera setups, tuned to the real layout so every review frames
+ * actual content instead of the inside of a tower. x/z is the LOOK-AT point.
+ *
+ * Yaw convention: camera sits at target + (sin(yaw), _, cos(yaw)) * dist.
+ * So a POSITIVE yaw puts the camera east (+x) of the target — that is the
+ * bay side, which is where you want to stand to photograph Brickell.
+ */
 export const PRESETS = {
-  'menu-hero': { x: 120, z: 150, dist: 420, pitch: 26, yaw: -38, holeR: 6,
-    note: 'Wide hero shot of the Brickell skyline from the bay side.' },
-  'brickell-skyline': { x: 120, z: 220, dist: 330, pitch: 30, yaw: -40, holeR: 8,
-    note: 'Brickell towers, mid-height 3/4.' },
-  'downtown-wide': { x: 60, z: -280, dist: 320, pitch: 32, yaw: -35, holeR: 8,
-    note: 'Downtown blocks, landmarks and public space.' },
-  'street-level': { x: 60, z: 190, dist: 52, pitch: 34, yaw: -35, holeR: 2,
-    note: 'Sidewalk detail: props, textures, kerbs, palms.' },
-  'hole-small': { x: 60, z: 190, dist: 44, pitch: 54, yaw: -35, holeR: 1.6,
-    note: 'Default gameplay framing at start size.' },
-  'hole-mid': { x: 40, z: 150, dist: 120, pitch: 54, yaw: -35, holeR: 9,
-    note: 'Mid-game framing, cars and palms edible.' },
-  'hole-big': { x: 90, z: 170, dist: 300, pitch: 52, yaw: -35, holeR: 30,
-    note: 'Late-game: hole swallowing whole city blocks.' },
-  'waterfront': { x: 300, z: -140, dist: 220, pitch: 26, yaw: -60, holeR: 6,
-    note: 'Biscayne Bay, seawall, marina, boats.' },
-  'river': { x: 120, z: 0, dist: 200, pitch: 24, yaw: -35, holeR: 6,
-    note: 'Miami River channel and bridges.' },
-  'park': { x: 268, z: -180, dist: 130, pitch: 36, yaw: -35, holeR: 4,
-    note: 'Bayfront Park: grass, palms, plaza.' },
-  'intersection': { x: 0, z: -300, dist: 90, pitch: 46, yaw: -35, holeR: 3,
-    note: 'Road markings, crosswalks, traffic.' },
-  'construction': { x: -100, z: 260, dist: 140, pitch: 38, yaw: -35, holeR: 5,
-    note: 'Construction site and machinery.' },
+  'menu-hero': { x: 120, z: 250, dist: 560, pitch: 22, yaw: 62, holeR: 10,
+    note: 'Hero shot: the whole Brickell skyline seen across Biscayne Bay.' },
+  'brickell-skyline': { x: 110, z: 270, dist: 430, pitch: 30, yaw: 48, holeR: 10,
+    note: 'Brickell towers, high 3/4 from the bay side.' },
+  'downtown-wide': { x: 80, z: -260, dist: 470, pitch: 33, yaw: 40, holeR: 10,
+    note: 'Downtown: superblocks, landmarks, civic plazas, Kaseya Center.' },
+  'street-level': { x: 100, z: -200, dist: 58, pitch: 30, yaw: -35, holeR: 2,
+    note: 'Flagler St retail spine. Props, kerbs, storefronts, crowd, textures.' },
+  'hole-small': { x: 128, z: 150, dist: 46, pitch: 54, yaw: -35, holeR: 1.6,
+    note: 'Default gameplay framing at starting size.' },
+  'hole-mid': { x: 110, z: 230, dist: 135, pitch: 52, yaw: -35, holeR: 9,
+    note: 'Mid-game: cars, palms and street furniture all edible.' },
+  'hole-big': { x: 110, z: 230, dist: 340, pitch: 50, yaw: -35, holeR: 30,
+    note: 'Late game: the hole is eating whole city blocks.' },
+  'waterfront': { x: 300, z: -240, dist: 250, pitch: 24, yaw: 75, holeR: 6,
+    note: 'Bayfront: seawall, promenade, marina, boats, Bayfront Amphitheatre.' },
+  'river': { x: 140, z: 0, dist: 235, pitch: 20, yaw: 60, holeR: 6,
+    note: 'Miami River: bends, bridges, riverwalk, bulkheads.' },
+  'park': { x: 290, z: -200, dist: 155, pitch: 34, yaw: 55, holeR: 4,
+    note: 'Bayfront park + plaza: lawn, palms, paths, fountains.' },
+  'intersection': { x: 128, z: 194, dist: 95, pitch: 44, yaw: -35, holeR: 3,
+    note: 'Brickell Ave x SE 10 St. Crosswalks, lane paint, signals, traffic.' },
+  'construction': { x: -121, z: 54, dist: 155, pitch: 34, yaw: -35, holeR: 5,
+    note: 'Construction site: cranes, slabs, hoarding, machinery.' },
+  'rooftops': { x: 120, z: 240, dist: 300, pitch: 62, yaw: 30, holeR: 8,
+    note: 'Steep look-down. Roofs are on screen constantly — they must hold up.' },
+  'crowd': { x: 108, z: -196, dist: 42, pitch: 26, yaw: -20, holeR: 1.4,
+    note: 'Eye-level-ish on a busy spine: pedestrians, café clusters, signage.' },
+  'occlusion': { x: 92, z: 224, dist: 90, pitch: 40, yaw: -35, holeR: 5,
+    note: 'Hole tucked against Brickell City Centre — tests the see-through fade.' },
 };
 
 export function installDevTools(game) {
