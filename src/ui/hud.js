@@ -76,7 +76,7 @@ export class HUD {
         <div class="top">
           <div class="badge"><span class="n">1</span></div>
           <div class="txt">
-            <div class="tier">Litter</div>
+            <div class="tier"><span class="lbl">Litter</span><span class="grace">Safe 0.0</span></div>
             <div class="dia"><span class="n">2.3</span><span class="u">m</span></div>
           </div>
         </div>
@@ -116,7 +116,8 @@ export class HUD {
     this.feedEl = $('#hud-feed');
     this.sizeEl = $('#hud-size');
     this.badgeEl = $('#hud-size .badge .n');
-    this.tierEl = $('#hud-size .tier');
+    this.tierEl = $('#hud-size .tier .lbl');
+    this.graceEl = $('#hud-size .grace');
     this.diaEl = $('#hud-size .dia .n');
     this.nextEl = $('#hud-size .nxt .v');
     this.pctEl = $('#hud-size .nxt .p');
@@ -154,10 +155,20 @@ export class HUD {
     this._lastDia = '';
     this._lastPct = -1;
     this._lastScore = 0;
+    this._lastEat = 0;
+    this._grace = false;
     this._frenzy = false;
     this._dead = false;
     this._hints = new Set();
     this._feedItems = [];
+    /** Seconds a kill-feed line stays up. Field, not a constant, so the
+     *  screenshot harness can hold the feed open while it composites. */
+    this.feedTTL = 7.5;
+
+    // gameplay/match.js resolves its escalation lines through this global
+    // before falling back to DEV — claiming it is what makes clock milestones
+    // and lead changes reach the feed in a build with no dev harness.
+    globalThis.__miamiHUD = this;
 
     this._resize = this._resize.bind(this);
     window.addEventListener('resize', this._resize);
@@ -236,6 +247,7 @@ export class HUD {
     this._lastRank = 0;
     this._lastTier = -1;
     this._lastScore = 0;
+    this._lastEat = 0;
     this._dead = false;
     this.deadEl.classList.remove('on');
     for (const item of this._feedItems.slice()) this._dropFeed(item);
@@ -373,8 +385,10 @@ export class HUD {
       row.el.classList.remove('slide');
       row.el.style.transform = `translateY(${d}px)`;
       void row.el.offsetWidth;                 // commit the parked position
-      row.el.classList.add('slide');
+      row.el.classList.add('slide', 'moving');
       row.el.style.transform = '';
+      clearTimeout(row.moveT);
+      row.moveT = setTimeout(() => row.el.classList.remove('moving'), 300);
     }
   }
 
@@ -409,14 +423,18 @@ export class HUD {
 
     /* --- biggest single meal, for the results screen --------------------
      * Score deltas are the only per-meal signal the HUD is handed, so the
-     * "best meal" is reconstructed from the largest jump plus the label the
-     * hole was carrying at that moment. A negative delta is a respawn tax,
-     * not a meal — skip it, and keep the record for the whole match.        */
+     * "best meal" is reconstructed from a jump plus the label the hole was
+     * carrying at that moment. Gating on eatCount moving by exactly one is
+     * what makes it a MEAL rather than a frame total: at 60 fps a big hole
+     * swallows three things in a tick, and a respawn or a dev size-set moves
+     * the score without eating anything at all.                             */
     const gain = hole.score - this._lastScore;
-    if (gain > 0 && (!uiState.bestMeal || gain > uiState.bestMeal.score)) {
+    const bites = (hole.eatCount || 0) - this._lastEat;
+    if (bites === 1 && gain > 0 && (!uiState.bestMeal || gain > uiState.bestMeal.score)) {
       uiState.bestMeal = { label: hole.lastMeal || 'the city', score: gain };
     }
     this._lastScore = hole.score;
+    this._lastEat = hole.eatCount || 0;
 
     /* --- current tier and the next unlock ------------------------------- */
     let ti = 0;
@@ -430,6 +448,16 @@ export class HUD {
     if (dia !== this._lastDia) {
       this._lastDia = dia;
       this.diaEl.textContent = dia;
+    }
+
+    // Spawn protection (match.js, HOLE.RESPAWN_GRACE). Without a readout the
+    // player has no idea why nothing is hunting them for the first few seconds.
+    const grace = hole.spawnGrace || 0;
+    const graceOn = grace > 0.05;
+    if (graceOn) this.graceEl.textContent = `Safe ${grace.toFixed(1)}`;
+    if (graceOn !== this._grace) {
+      this._grace = graceOn;
+      this.graceEl.classList.toggle('on', graceOn);
     }
 
     let p = 1;
@@ -471,9 +499,16 @@ export class HUD {
   /* KILL FEED                                                              */
   /* ====================================================================== */
 
-  pushFeed(text, color = '#ffffff') {
+  /**
+   * @param {string} text  HTML (callers use <b> for the actor)
+   * @param {string} color accent for the bar and the bold run
+   * @param {string} [kind] 'clock' | 'lead' | 'tier' | 'kill' — match.js tags
+   *   its escalation lines, so clock ticks can sit quieter than a kill.
+   */
+  pushFeed(text, color = '#ffffff', kind = 'kill') {
     const el = document.createElement('div');
     el.className = 'feed-item';
+    el.dataset.kind = kind;
     el.style.setProperty('--fc', color);
     el.innerHTML = text;
     this.feedEl.prepend(el);
@@ -482,7 +517,7 @@ export class HUD {
 
     // Fade out on its own; a kill feed that only trims on overflow leaves stale
     // lines sitting there for the whole match when the action goes quiet.
-    item.timer = setTimeout(() => this._dropFeed(item), 6200);
+    item.timer = setTimeout(() => this._dropFeed(item), this.feedTTL * 1000);
     while (this._feedItems.length > 5) this._dropFeed(this._feedItems[0]);
   }
 
@@ -522,16 +557,23 @@ export class HUD {
     for (const p of effects.popups) {
       if (p.__el) continue;
       const val = parseFloat(String(p.text).replace(/[^0-9.]/g, '')) || 0;
-      const t = tierOfScore(val);
+      const tier = tierOfScore(val);
       const el = document.createElement('div');
-      el.className = `popup${val >= 400 ? ' huge' : p.big || val >= 60 ? ' big' : ''}`;
+      el.className = `popup t${tier}`;
       el.textContent = p.text;
-      el.style.setProperty('--pc', TIER_COLORS[t]);
+      el.style.setProperty('--pc', TIER_COLORS[tier]);
+      // Late game spawns dozens of these per second on top of each other. Tier
+      // decides both the size AND the stacking order, so the number that
+      // actually mattered is never buried under a shower of +2s.
+      el.style.zIndex = String(tier);
       this.popupEl.appendChild(el);
       p.__el = el;
-      // Deterministic per-popup drift so a burst of numbers fans out instead of
-      // stacking into an unreadable column.
-      p.__drift = ((val * 37 + this._popups.length * 61) % 100) / 100 - 0.5;
+      p.__tier = tier;
+      // Deterministic per-popup fan-out, seeded off the spawn position so two
+      // popups from the same object never take the same path.
+      const seed = (Math.abs(p.pos.x * 7.13 + p.pos.z * 3.71) % 1);
+      p.__dx = (seed - 0.5) * 2;
+      p.__dy = 0.6 + seed * 0.8;
       this._popups.push(p);
     }
 
@@ -547,12 +589,17 @@ export class HUD {
       this._v.copy(p.pos);
       this._v.y += 1 + t * 3.4;
       this._v.project(camera);
-      const x = (this._v.x * 0.5 + 0.5) * w + p.__drift * t * 46;
-      const y = (-this._v.y * 0.5 + 0.5) * h - t * t * 14;   // slight arc
+      // Behind the camera: project() mirrors the point, which would slap the
+      // number on the opposite side of the screen.
+      if (this._v.z > 1) { p.__el.style.opacity = '0'; continue; }
+      const x = (this._v.x * 0.5 + 0.5) * w + p.__dx * t * 82;
+      const y = (-this._v.y * 0.5 + 0.5) * h - p.__dy * t * 26 + t * t * 18;
       // Overshoot punch on spawn, then a slow drift-up scale.
       const punch = t < 0.17 ? 0.5 * (1 - t / 0.17) : 0;
       const scale = 1 + punch + t * 0.2;
-      const a = t < 0.72 ? 1 : 1 - (t - 0.72) / 0.53;
+      // Small values clear out fast so they cannot fog the big ones.
+      const life = p.__tier <= 2 ? 0.5 : 0.72;
+      const a = t < life ? 1 : 1 - (t - life) / (1.25 - life);
       p.__el.style.transform =
         `translate(-50%,-50%) translate(${x.toFixed(1)}px,${y.toFixed(1)}px) scale(${scale.toFixed(3)})`;
       p.__el.style.opacity = String(Math.max(0, a));

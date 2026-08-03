@@ -76,7 +76,12 @@ html, body {
   font-family: var(--font);
 }
 
-#hud-layer { font-size: calc(16px * var(--s)); }
+/* Stacking. Screens is appended to #ui-root BEFORE the HUD (game.js builds it
+   first), so without this the leaderboard, minimap and score popups paint over
+   the results card and the menu. Declared here, not inline, so both layers are
+   stated in one place. */
+#hud-layer { font-size: calc(16px * var(--s)); z-index: 1; }
+#screens { z-index: 5; }
 
 /* ======================================================================== */
 /* PANEL SYSTEM                                                             */
@@ -273,8 +278,12 @@ html, body {
 }
 .row.me .nm { font-weight: 900; }
 
-/* FLIP reorder: JS parks the row at its old offset, this glides it home. */
-.row.slide { transition: transform 0.42s var(--ease); }
+/* FLIP reorder: JS parks the row at its old offset, this glides it home.
+   While in flight a row gets a plate and a higher stacking order, because two
+   rows swapping past each other with transparent backgrounds interleave their
+   glyphs and the board reads as corrupted for the length of the transition. */
+.row.slide { transition: transform 0.26s var(--ease); }
+.row.moving { background-color: rgba(9, 16, 28, 0.82); z-index: 2; }
 .row.gain { animation: rowGain 0.7s ease-out; }
 @keyframes rowGain {
   0%   { background-color: rgba(255, 201, 60, 0.55); }
@@ -348,11 +357,22 @@ html, body {
 }
 #hud-size .txt { min-width: 0; flex: 1; }
 #hud-size .tier {
+  display: flex; align-items: center; gap: 0.7em; min-width: 0;
   font-size: 0.58em; font-weight: 900; letter-spacing: 0.17em; text-transform: uppercase;
   color: var(--tier-c, var(--aqua));
   text-shadow: 0 0 0.7em rgba(0, 0, 0, 0.5);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+#hud-size .tier .lbl { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hud-size .grace {
+  display: none; flex: none;
+  padding: 0.1em 0.55em 0.14em; border-radius: 1em;
+  background: rgba(55, 230, 213, 0.2); color: var(--aqua);
+  box-shadow: inset 0 0 0 1px rgba(55, 230, 213, 0.45);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.12em;
+  animation: gracePulse 1s ease-in-out infinite;
+}
+#hud-size .grace.on { display: block; }
+@keyframes gracePulse { 0%, 100% { opacity: 0.7; } 50% { opacity: 1; } }
 #hud-size .dia { display: flex; align-items: baseline; gap: 0.12em; margin-top: -0.02em; }
 #hud-size .dia .n {
   font-size: 1.9em; font-weight: 900; line-height: 1.02; letter-spacing: -0.025em;
@@ -477,14 +497,16 @@ html, body {
 .feed-item {
   position: relative; overflow: hidden;
   padding: 0.4em 0.6em 0.44em 0.75em; border-radius: 0.46em;
-  background: linear-gradient(90deg, rgba(10, 18, 32, 0.82), rgba(10, 18, 32, 0.5));
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 0.3em 0.9em rgba(2, 6, 14, 0.4);
+  background: linear-gradient(90deg, rgba(8, 15, 27, 0.9), rgba(8, 15, 27, 0.64));
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: 0 0.3em 0.9em rgba(2, 6, 14, 0.45);
   font-size: 0.72em; font-weight: 650; line-height: 1.25;
-  color: rgba(255, 255, 255, 0.92);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  color: rgba(255, 255, 255, 0.94);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   animation: feedIn 0.34s var(--ease-back);
 }
+/* Clock ticks are ambience, not news — they must not out-shout a kill. */
+.feed-item[data-kind='clock'] { opacity: 0.82; font-weight: 600; }
 .feed-item::before {
   content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 0.22em;
   background: var(--fc, #fff); box-shadow: 0 0 0.6em var(--fc, #fff);
@@ -517,8 +539,14 @@ html, body {
     0 0.14em 0.5em rgba(0, 0, 0, 0.7);
   will-change: transform, opacity;
 }
-.popup.big { font-size: 2em; }
-.popup.huge { font-size: 2.9em; letter-spacing: -0.03em; }
+/* Size by tier, so value is legible from the glyph height alone. */
+.popup.t0, .popup.t1 { font-size: 0.9em; }
+.popup.t2 { font-size: 1.05em; }
+.popup.t3 { font-size: 1.25em; }
+.popup.t4 { font-size: 1.55em; }
+.popup.t5 { font-size: 1.95em; }
+.popup.t6 { font-size: 2.4em; }
+.popup.t7 { font-size: 3em; letter-spacing: -0.03em; }
 
 /* ======================================================================== */
 /* DEATH / RESPAWN                                                          */
@@ -607,7 +635,7 @@ html, body {
 /* FULL-SCREEN SCREENS                                                      */
 /* ======================================================================== */
 
-#screens { font-size: clamp(13px, 1.35vh + 0.42vw, 21px); }
+#screens { font-size: clamp(13px, 1.35vh + 0.42vw, 21px); }   /* z-index: see top */
 
 .scr {
   position: absolute; inset: 0;
@@ -636,11 +664,11 @@ html, body {
    feed. Softness comes from the stop placement instead. */
 .aurora {
   position: absolute; inset: -20%;
-  pointer-events: none; opacity: 0.5;
+  pointer-events: none; opacity: 0.34;
   background:
-    radial-gradient(42% 48% at 24% 30%, rgba(255, 61, 139, 0.62), rgba(255, 61, 139, 0) 68%),
-    radial-gradient(38% 44% at 78% 28%, rgba(55, 230, 213, 0.5), rgba(55, 230, 213, 0) 68%),
-    radial-gradient(46% 52% at 56% 84%, rgba(255, 201, 60, 0.42), rgba(255, 201, 60, 0) 68%);
+    radial-gradient(40% 46% at 16% 26%, rgba(255, 61, 139, 0.7), rgba(255, 61, 139, 0) 68%),
+    radial-gradient(36% 42% at 86% 26%, rgba(55, 230, 213, 0.6), rgba(55, 230, 213, 0) 68%),
+    radial-gradient(46% 52% at 56% 90%, rgba(255, 201, 60, 0.5), rgba(255, 201, 60, 0) 68%);
   animation: auroraDrift 18s ease-in-out infinite alternate;
 }
 @keyframes auroraDrift {
@@ -704,8 +732,10 @@ html, body {
 .tagline {
   margin: 0; max-width: 30em;
   font-size: 0.95em; font-weight: 600; line-height: 1.5;
-  color: rgba(255, 255, 255, 0.86);
-  text-shadow: 0 0.1em 0.6em rgba(0, 0, 0, 0.85);
+  color: rgba(255, 255, 255, 0.92);
+  /* The skyline directly under the title is the brightest part of the frame,
+     so this line needs its own shadow rather than relying on the veil. */
+  text-shadow: 0 0.06em 0.02em rgba(4, 8, 16, 0.8), 0 0.1em 0.7em rgba(4, 8, 16, 0.95);
 }
 .tagline b { color: var(--sun); font-weight: 900; }
 
@@ -882,7 +912,7 @@ html, body {
 
 .place { line-height: 0.9; }
 .place .n {
-  font-size: clamp(46px, 7.6vw, 96px); font-weight: 900; letter-spacing: -0.045em;
+  font-size: clamp(58px, 8.4vw, 124px); font-weight: 900; letter-spacing: -0.045em;
   background: linear-gradient(180deg, #fff 12%, var(--pl-c, var(--sun)) 62%, var(--pl-c2, var(--hot)) 100%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
   filter: drop-shadow(0 0.06em 0.02em rgba(6, 11, 20, 0.6)) drop-shadow(0 0.1em 0.4em rgba(255, 61, 139, 0.35));
@@ -901,8 +931,8 @@ html, body {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 .res-stats .st .k {
-  font-size: 0.56em; font-weight: 900; letter-spacing: 0.2em; text-transform: uppercase;
-  color: var(--dimmer);
+  font-size: 0.5em; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--dimmer); white-space: nowrap;
 }
 .res-stats .st .v {
   margin-top: 0.15em; font-size: 1.05em; font-weight: 900; letter-spacing: -0.01em;

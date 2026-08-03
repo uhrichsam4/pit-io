@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { PHASE } from '../gameplay/match.js';
+import { HOLE } from '../config.js';
 import { Hole } from '../gameplay/hole.js';
 
 /**
@@ -31,7 +32,12 @@ export const PRESETS = {
     note: 'Brickell towers, high 3/4 from the bay side.' },
   'downtown-wide': { x: 80, z: -260, dist: 470, pitch: 33, yaw: 40, holeR: 10,
     note: 'Downtown: superblocks, landmarks, civic plazas, Kaseya Center.' },
-  'street-level': { x: 100, z: -200, dist: 58, pitch: 30, yaw: -35, holeR: 2,
+  // Moved west along Flagler and swung round to 125 deg. The old setup put the
+  // camera 1.5 m from a curtain wall once the massing changed — every one of
+  // 15 rays from the camera to the look-at box hit a building, so the frame was
+  // a sheet of glass and the review was reading the occlusion fade instead of
+  // the street. This spot is the only clear standing point on the spine.
+  'street-level': { x: 60, z: -200, dist: 58, pitch: 34, yaw: 125, holeR: 2,
     note: 'Flagler St retail spine. Props, kerbs, storefronts, crowd, textures.' },
   'hole-small': { x: 128, z: 150, dist: 46, pitch: 54, yaw: -35, holeR: 1.6,
     note: 'Default gameplay framing at starting size.' },
@@ -53,7 +59,11 @@ export const PRESETS = {
     note: 'Construction site: cranes, slabs, hoarding, machinery.' },
   'rooftops': { x: 120, z: 240, dist: 300, pitch: 62, yaw: 30, holeR: 8,
     note: 'Steep look-down. Roofs are on screen constantly — they must hold up.' },
-  'crowd': { x: 108, z: -196, dist: 42, pitch: 26, yaw: -20, holeR: 1.4,
+  // Aimed at a measured crowd cluster, not just at a busy-sounding street: the
+  // densest 30 m cell of live pedestrian instances in the whole layout. The old
+  // spot had a building corner 8 m off the lens and a palm crown over the rest,
+  // and the preset that exists to prove the city has people in it showed two.
+  'crowd': { x: 30, z: -60, dist: 44, pitch: 28, yaw: 40, holeR: 1.4,
     note: 'Eye-level-ish on a busy spine: pedestrians, café clusters, signage.' },
   'occlusion': { x: 92, z: 224, dist: 90, pitch: 40, yaw: -35, holeR: 5,
     note: 'Hole tucked against Brickell City Centre — tests the see-through fade.' },
@@ -88,14 +98,22 @@ export function installDevTools(game) {
       return this;
     },
 
-    /** Set the player's hole radius directly (score is back-solved). */
+    /**
+     * Set the player's hole radius directly, back-solving the score.
+     *
+     * MUST invert Hole.radiusFor using the LIVE constants. Hard-coding them
+     * silently desynchronises score from radius the moment anyone retunes the
+     * growth curve: the hole then snaps to a different size on its very next
+     * bite, which quietly invalidates every size-dependent test and preset.
+     */
     setSize(radius) {
       const p = game.player;
       if (!p) return this;
-      const s = Math.max(0, (Math.pow(radius / 1.15, 1 / 0.415) - 1) * 26);
-      p.score = s;
-      p.radius = radius;
-      p.displayRadius = radius;
+      const r = Math.min(radius, HOLE.MAX_RADIUS);
+      p.score = Math.max(0,
+        (Math.pow(r / HOLE.START_RADIUS, 1 / HOLE.GROWTH_P) - 1) * HOLE.GROWTH_K);
+      p.radius = Hole.radiusFor(p.score);
+      p.displayRadius = p.radius;
       return this;
     },
 

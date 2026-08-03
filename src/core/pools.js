@@ -1,31 +1,24 @@
 /**
- * Instancing + proxy pooling.
+ * Instanced prop pools.
  *
- * Miami has tens of thousands of small objects. Drawing them individually would
- * bury the GPU, so every repeated prop lives as one slot inside an InstancedMesh.
- * The moment a prop is swallowed it needs individual physics, so we zero its
- * instance slot and lease it a real Mesh from a free list — one draw call for
- * 6000 sleeping cones, real transforms for the eight that are currently falling.
+ * Miami has tens of thousands of small objects, so every repeated prop lives as
+ * one slot inside an InstancedMesh: one draw call for 6,000 cones.
+ *
+ * WHY THERE IS NO PROXY MESH
+ * --------------------------
+ * An earlier design hid the instance and leased a stand-in Mesh to animate the
+ * fall. That is one bug away from leaving a duplicate on the ground — and it
+ * did exactly that, because hiding a slot only takes effect when the instance
+ * buffer is uploaded, and nothing was uploading it. The prop the player is
+ * pulling in is now THE PLACED INSTANCE ITSELF: its matrix is animated in
+ * place, so there is no second object that can be left behind, and the thing
+ * that tips into the hole is provably the thing that was standing there.
+ *
+ * The cost of that is per-frame matrix uploads, which is why `flush()` narrows
+ * the upload to exactly the rows that changed.
  */
 
 import * as THREE from 'three';
-
-/** Cloned materials keyed by "<uuid>|<hex>" so proxies never recompile shaders. */
-const _matCache = new Map();
-
-function tintedMaterial(base, hex) {
-  if (hex === undefined || hex === null) return base;
-  const key = `${base.uuid}|${hex}`;
-  let m = _matCache.get(key);
-  if (!m) {
-    m = base.clone();
-    if (m.color) m.color.setHex(hex);
-    // Match the instanced draw, which multiplies instanceColor into diffuse.
-    m.vertexColors = false;
-    _matCache.set(key, m);
-  }
-  return m;
-}
 
 const _m4 = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
@@ -66,16 +59,31 @@ export class InstancedProp {
       this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     }
 
-    /** @type {number[]} hex per slot, for proxy tinting */
+    /** @type {number[]} hex per slot */
     this.slotHex = new Array(capacity).fill(null);
-    /** Cached transforms so a proxy can inherit them exactly. */
+    /**
+     * The AUTHORED resting transform of each slot. The live matrix in the
+     * instance buffer is free to be animated away from this (an object being
+     * dragged into a hole); this is what it returns to when it respawns.
+     */
     this.slotPos = [];
     this.slotRot = [];
     this.slotScale = [];
 
-    /** @type {THREE.Mesh[]} */
-    this._freeProxies = [];
-    this._dirty = true;
+    /**
+     * Slots whose matrix changed since the last flush. Uploading the whole
+     * buffer for a pool of 1,150 bollards because two of them moved is the
+     * difference between this being free and this costing megabytes a frame,
+     * so the upload is narrowed to exactly the rows that changed.
+     */
+    this._dirtySlots = new Set();
+    this._dirtyAll = true;
+  }
+
+  /** Mark one slot's matrix for upload. */
+  _touch(slot) {
+    if (this._dirtyAll) return;
+    this._dirtySlots.add(slot);
   }
 
   /**
@@ -109,56 +117,60 @@ export class InstancedProp {
     this.slotPos[i] = position.clone();
     this.slotRot[i] = new THREE.Quaternion().copy(_q);
     this.slotScale[i] = new THREE.Vector3().copy(sv);
-    this._dirty = true;
+    this._dirtyAll = true;
     return i;
   }
 
-  /** Write an arbitrary transform into a live slot (used by traffic). */
+  /**
+   * Write an arbitrary transform into a live slot. This is how a prop is
+   * animated: the REAL placed instance moves, tilts and falls. There is no
+   * stand-in mesh, so there is nothing that can be left behind.
+   */
   setTransform(slot, position, quaternion, scale) {
     _m4.compose(position, quaternion, scale);
     this.mesh.setMatrixAt(slot, _m4);
-    this._dirty = true;
+    this._touch(slot);
   }
 
+  /** Collapse a slot to nothing. Used when a prop has fallen out of the world. */
   hide(slot) {
     _m4.compose(_zero, _identQ, _nil);
     this.mesh.setMatrixAt(slot, _m4);
-    this._dirty = true;
+    this._touch(slot);
   }
 
-  /** Lease a standalone Mesh matching the given slot, then hide the slot. */
-  leaseProxy(slot) {
-    const hex = this.slotHex[slot];
-    let mesh = this._freeProxies.pop();
-    const mat = tintedMaterial(this.material, hex);
-    if (!mesh) {
-      mesh = new THREE.Mesh(this.geometry, mat);
-      mesh.castShadow = this.mesh.castShadow;
-      mesh.receiveShadow = false;
-    } else {
-      mesh.material = mat;
-      mesh.visible = true;
-    }
-    mesh.position.copy(this.slotPos[slot]);
-    mesh.quaternion.copy(this.slotRot[slot]);
-    mesh.scale.copy(this.slotScale[slot]);
-    mesh.__pool = this;
-    this.hide(slot);
-    return mesh;
+  /** Put a slot back exactly where it was authored. Used by the respawner. */
+  restore(slot) {
+    _m4.compose(this.slotPos[slot], this.slotRot[slot], this.slotScale[slot]);
+    this.mesh.setMatrixAt(slot, _m4);
+    this._touch(slot);
   }
 
-  releaseProxy(mesh) {
-    mesh.visible = false;
-    if (mesh.parent) mesh.parent.remove(mesh);
-    if (this._freeProxies.length < 64) this._freeProxies.push(mesh);
+  /** Move a slot's authored resting place (respawn at a different spot). */
+  reseat(slot, position, quaternion) {
+    this.slotPos[slot].copy(position);
+    if (quaternion) this.slotRot[slot].copy(quaternion);
+    this.restore(slot);
   }
 
   flush() {
-    if (!this._dirty) return;
-    this.mesh.count = this.count;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    if (this.useColor) this.mesh.instanceColor.needsUpdate = true;
-    this._dirty = false;
+    const attr = this.mesh.instanceMatrix;
+    if (this._dirtyAll) {
+      this.mesh.count = this.count;
+      attr.clearUpdateRanges();
+      attr.needsUpdate = true;
+      if (this.useColor) this.mesh.instanceColor.needsUpdate = true;
+      this._dirtyAll = false;
+      this._dirtySlots.clear();
+      return;
+    }
+    if (this._dirtySlots.size === 0) return;
+    attr.clearUpdateRanges();
+    // One 16-float range per changed row. `updateRanges` is consumed and
+    // cleared by WebGLAttributes after each upload, so it is rebuilt each time.
+    for (const slot of this._dirtySlots) attr.addUpdateRange(slot * 16, 16);
+    attr.needsUpdate = true;
+    this._dirtySlots.clear();
   }
 
   /** Trim the buffer to what was actually used and compute bounds. */
@@ -167,7 +179,8 @@ export class InstancedProp {
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.useColor) this.mesh.instanceColor.needsUpdate = true;
     this.mesh.computeBoundingSphere();
-    this._dirty = false;
+    this._dirtyAll = false;
+    this._dirtySlots.clear();
     return this.mesh;
   }
 }

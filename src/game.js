@@ -340,6 +340,12 @@ export class Game {
       this.net.update(this.player, t);
       if (this.net.serverTimeLeft != null) this.match.timeLeft = this.net.serverTimeLeft;
     }
+    // Upload every instance matrix that changed this frame. Without this a
+    // prop that has been hidden or animated keeps drawing at its old transform
+    // — which is precisely how a consumed prop was being left standing on the
+    // ground while its fall played out.
+    if (this.worldCtx && this.worldCtx.props) this.worldCtx.props.flushAll();
+
     this.effects.update(dt);
   }
 

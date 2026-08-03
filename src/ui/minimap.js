@@ -160,6 +160,16 @@ export class Minimap {
     c.fillStyle = isMe ? '#ffffff' : hex;
     c.fill();
 
+    // match.js flags the current leader (with hysteresis). On the map that is
+    // the single most useful thing to know about a rival: where the threat is.
+    if (h.isLeader && !isMe) {
+      c.beginPath();
+      c.arc(x, y, r + 3 * k, 0, Math.PI * 2);
+      c.strokeStyle = '#ffc93c';
+      c.lineWidth = 1.8 * k;
+      c.stroke();
+    }
+
     if (isMe) {
       c.lineWidth = 2 * k;
       c.strokeStyle = '#ff3d8b';

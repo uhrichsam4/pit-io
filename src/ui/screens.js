@@ -175,9 +175,9 @@ export class Screens {
    * the pop animation restarts sixty times a second and looks frozen.
    */
   showCountdown(n) {
-    // Match.start() primes the clock at 3.2s; ceil() alone would flash a "4"
-    // for two frames before settling into the real 3-2-1.
-    const step = n <= 0 ? 0 : Math.min(3, Math.ceil(n));
+    // MATCH.COUNTDOWN has slack on it (3.2s), so ceil() alone would flash a
+    // "4" for two frames before settling into the real 3-2-1.
+    const step = n <= 0 ? 0 : Math.min(Math.floor(MATCH.COUNTDOWN), Math.ceil(n));
     if (step === this._cd && this._cdWrap && this._cdWrap.isConnected) return;
     this._cd = step;
 

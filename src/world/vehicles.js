@@ -1488,6 +1488,10 @@ class Traffic {
         const c = v.c;
         // Swallowed mid-drive: drop out of the queue without stalling it.
         if (!c || c.state >= 2) { L.splice(i, 1); v.dead = true; continue; }
+        // Losing support: the consume system owns its transform now, so it is
+        // no longer a car in a queue. Leave it in the lane list (it may regain
+        // support if the hole moves on) but stop driving it.
+        if (c.state >= 1) continue;
 
         let acc = IDM_A * (1 - Math.pow(v.v / v.v0, 4));
 
@@ -2087,6 +2091,9 @@ function makeUpdater(ctx, traf, state, boats) {
       if (v.dead) continue;
       const c = v.c;
       if (!c || c.state >= 2) { v.dead = true; continue; }
+      // Wheels over the void: hand it to the physics rather than fighting it
+      // for the matrix every frame, which is what stopped cars ever tilting.
+      if (c.state >= 1) continue;
       traf.place(v, out);
       pos.set(out.x, deckHeight(bridges, out.x, out.z) + 0.015, out.z);
       e.set(0, out.rot, 0);
@@ -2104,7 +2111,7 @@ function makeUpdater(ctx, traf, state, boats) {
     for (let i = 0; i < boats.length; i++) {
       const b = boats[i];
       const c = b.c;
-      if (!c || c.state >= 2) continue;
+      if (!c || c.state >= 1) continue;
       const ph = time * 0.62 + b.phase;
       pos.set(b.x, BOAT_Y + Math.sin(ph) * 0.045, b.z);
       e.set(Math.sin(ph * 0.83 + 1.1) * 0.011, b.rot, Math.cos(ph * 0.71) * 0.017);

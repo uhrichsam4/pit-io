@@ -153,6 +153,11 @@ export const sharedWindow = {
  */
 export function applyOcclusionFade(material) {
   if (!material || material.userData.__occFade) return material;
+  // MeshBasicMaterial's vertex shader only declares `objectNormal` under
+  // USE_ENVMAP / USE_SKINNING, so the fresnel rim patch below would fail to
+  // compile on unlit materials. They are signage and light panels — nothing
+  // whose silhouette matters — so they are simply left solid.
+  if (material.isMeshBasicMaterial && !material.envMap) return material;
   material.userData.__occFade = true;
 
   const prev = material.onBeforeCompile;
