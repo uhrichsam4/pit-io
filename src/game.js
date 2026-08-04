@@ -79,6 +79,7 @@ export class Game {
       this.screens.showLoading('Building Miami…');
     }
 
+    this.worldSeed = worldSeed;
     const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer, worldSeed);
     this.layout = layout;
     // Hand the authoritative geometry to the two systems that place holes on
@@ -371,14 +372,29 @@ export class Game {
     return best;
   }
 
-  _spawnPoint(i = 0, n = 1) {
+  /**
+   * @param {number} salt  0 uses the shared city RNG (offline: the player and
+   *   each bot draw in turn, so they all differ). Anything else draws from its
+   *   own stream keyed on that number.
+   *
+   * The salt exists for multiplayer. The city RNG is seeded from the room seed
+   * and every client runs it through exactly the same sequence, so every player
+   * asking for "a spawn point" was handed the SAME square metre — two players
+   * materialised inside one another and whoever grew first ate the other before
+   * either had touched a key. Keyed on the network id, each player gets their
+   * own point and every client agrees about where everyone started.
+   */
+  _spawnPoint(salt = 0) {
+    const rng = salt
+      ? makeRNG(((this.worldSeed ?? 0) ^ Math.imul(salt, 2654435761)) >>> 0)
+      : this.rng;
     // Spread spawns across both districts, never on water or inside a tower.
     for (let tries = 0; tries < 60; tries++) {
-      const brickell = this.rng() < 0.5;
-      const x = this.rng.range(-WORLD.SIZE * 0.75, WORLD.BAY_EDGE - 50);
+      const brickell = rng() < 0.5;
+      const x = rng.range(-WORLD.SIZE * 0.75, WORLD.BAY_EDGE - 50);
       const z = brickell
-        ? this.rng.range(WORLD.RIVER_HALF_W + 50, WORLD.SIZE * 0.8)
-        : this.rng.range(-WORLD.SIZE * 0.8, -WORLD.RIVER_HALF_W - 50);
+        ? rng.range(WORLD.RIVER_HALF_W + 50, WORLD.SIZE * 0.8)
+        : rng.range(-WORLD.SIZE * 0.8, -WORLD.RIVER_HALF_W - 50);
       if (this.layout.isWater(x, z)) continue;
       return { x, z };
     }
@@ -446,7 +462,7 @@ export class Game {
     this.holes.length = 0;
     this.bots.length = 0;
 
-    const p = this._spawnPoint();
+    const p = this._spawnPoint(this.net ? this.net.id : 0);
     this.player = new Hole({
       type: 'player',
       name: this.net ? this.netCfg.name : 'You',

@@ -35,7 +35,18 @@ const mk = async (name) => {
   p.on('pageerror', (e) => errs.push(`${name}: ${String(e.stack || e).split('\n')[0]}`));
   await p.goto(`http://localhost:5173/?room=${ROOM}&name=${name}`, {waitUntil:'domcontentloaded'});
   await p.waitForFunction('!!window.DEV', null, {timeout:240000});
-  await p.evaluate(() => { DEV.play(true); });
+  await p.evaluate(() => {
+    DEV.play(true);
+    // Tap the two ends of the consumed-object relay. The server echoes an
+    // eater's own ids back to it, so __GOT is the complete event set as this
+    // client saw it, and the two clients' sets are what must match.
+    const g = window.__GAME__;
+    window.__RPT = []; window.__GOT = [];
+    const rep = g.net.reportAte.bind(g.net);
+    g.net.reportAte = (id) => { window.__RPT.push(id); rep(id); };
+    const oc = g.net.onConsumed;
+    g.net.onConsumed = (ids) => { window.__GOT.push(...ids); oc(ids); };
+  });
   return p;
 };
 const A = await mk('Alpha');
@@ -102,23 +113,35 @@ check('roster is symmetric', seenA.length === 1 && seenB.length === 1,
 // Freeze BOTH the instant A has eaten. Their own rAF loops keep simulating
 // between playwright calls, and a hole parked on a city block keeps swallowing
 // things — whichever side is still running moves the target every time the
-// other closes the gap, and the two counts can never meet. Paused, dt is 0: the
-// network still pumps (receiving is a socket callback, not a simulation step),
-// the simulation does not.
+// other closes the gap. Paused, dt is 0: the network still pumps (receiving is
+// a socket callback, not a simulation step), the simulation does not.
 await A.evaluate(() => { DEV.devour(45); DEV.pause(true); });
 await B.evaluate(() => { DEV.pause(true); });
 const flush = (p) => p.evaluate(() => {
   const g = window.__GAME__; g.net.update(g.player, g.clock.elapsedTime);
 });
-let aliveA = -1, aliveB = -2;
+const relay = (p) => p.evaluate(() => ({
+  reported: window.__RPT.length, got: window.__GOT.slice().sort((a, b) => a - b),
+  pending: window.__GAME__.net._pendingAte.length,
+  alive: window.__GAME__.registry.aliveCount,
+}));
+let rA = null, rB = null;
 for (let i = 0; i < 30; i++) {
   await flush(A); await flush(B);
   await A.waitForTimeout(90);
-  aliveA = await A.evaluate(() => window.__GAME__.registry.aliveCount);
-  aliveB = await B.evaluate(() => window.__GAME__.registry.aliveCount);
-  if (aliveA === aliveB) break;
+  rA = await relay(A); rB = await relay(B);
+  if (rA.got.length === rB.got.length && rA.pending === 0 && rB.pending === 0) break;
 }
-check('consumption sync', aliveA === aliveB, `A=${aliveA} B=${aliveB}`);
+// The event set, not the survivor count. Respawn is deliberately local — a prop
+// comes back 30 s after it fell, timed by each client's own clock — so two
+// clients that agree perfectly about every swallow can still hold different
+// alive counts for a second or two, and asserting on the counts made this test
+// fail on a correct implementation.
+const same = rA.got.length === rB.got.length && rA.got.every((v, i) => v === rB.got[i]);
+check('consumption sync', same && rA.pending === 0 && rB.pending === 0,
+  `${rA.got.length}/${rB.got.length} consumption events relayed identically ` +
+  `(A reported ${rA.reported}, B reported ${rB.reported}, ` +
+  `queues ${rA.pending}/${rB.pending}, alive ${rA.alive}/${rB.alive})`);
 
 /* 4. no page errors ------------------------------------------------------- */
 check('no page errors', errs.length === 0, errs.length ? errs.slice(0, 4).join(' / ') : 'none');
