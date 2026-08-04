@@ -1693,9 +1693,21 @@ function cardGeo(w, h, cellName) {
 }
 
 /**
- * Broadleaf canopy: three crossed vertical cards plus three tilted cards.
- * The tilted ones matter most — the game camera looks down at 40 degrees, and
- * a purely vertical card cloud goes paper-thin from up there.
+ * Broadleaf canopy: three crossed vertical cards plus a ring of four leaning
+ * ones. The leaning ones matter most — the game camera looks down at 40
+ * degrees, and a purely vertical card cloud goes paper-thin from up there.
+ *
+ * WHY THEY LEAN OUTWARD RATHER THAN LYING DOWN
+ * The first cut laid three cards NEARLY FLAT (24-41 degrees off horizontal),
+ * all in the same orientation, all within 0.38 radius of the trunk. On a
+ * banyan that is three 14 m plates stacked on top of each other with their
+ * edges parallel, and from the game's high 3/4 camera the crown read as a
+ * cabbage: a stack of overlapping discs with hard aligned silhouette edges,
+ * not a mound of foliage. Turning each card to face OUT along its own bearing
+ * and pushing it to 0.55 radius makes the same triangles describe a dome —
+ * the plan outline becomes a lobed ring instead of a disc, and no two edges
+ * line up. The crossed vertical cards still fill the middle from directly
+ * above, so the dome is not a doughnut.
  */
 function canopyGeo(radius, height, cellName, seedRng) {
   const parts = [];
@@ -1706,13 +1718,18 @@ function canopyGeo(radius, height, cellName, seedRng) {
     g.rotateY((i / 3) * Math.PI + seedRng() * 0.4);
     parts.push(g);
   }
-  for (let i = 0; i < 3; i++) {
-    const g = cardGeo(radius * 1.8, radius * 1.6, cellName);
-    g.translate(0, -radius * 0.8, 0);
-    _m4.makeRotationX(-Math.PI / 2 + 0.42 + seedRng() * 0.3);
+  for (let i = 0; i < 4; i++) {
+    const g = cardGeo(radius * 1.30, radius * 1.20, cellName);
+    g.translate(0, -radius * 0.60, 0);
+    // 35-59 degrees off horizontal: enough lean to catch the key light on a
+    // different plane from the flat top, not so much that the crown loses the
+    // horizontal mass the overhead camera needs.
+    _m4.makeRotationX(-Math.PI / 2 + 0.62 + seedRng() * 0.42);
     g.applyMatrix4(_m4);
-    const a = (i / 3) * Math.PI * 2 + seedRng();
-    g.translate(Math.cos(a) * radius * 0.38, cy + radius * 0.30, Math.sin(a) * radius * 0.38);
+    const a = (i / 4) * Math.PI * 2 + seedRng() * 0.9;
+    _m4.makeRotationY(a);
+    g.applyMatrix4(_m4);
+    g.translate(Math.cos(a) * radius * 0.55, cy + radius * 0.24, Math.sin(a) * radius * 0.55);
     parts.push(g);
   }
   const merged = BufferGeometryUtils.mergeGeometries(parts, false);
@@ -2900,8 +2917,15 @@ const SPECIES = {
     debris: PALETTE.PALM_FROND, variants: 4, tints: 'glaucous', rBase: 0.62, contactMax: 1.6,
     make: palmVariant,
     base: {
+      /* MEASURED. crownF 0.70 with frondW 1.45 built a blade 0.70x the palm's
+         height LONG and 1.0x its height WIDE — on a 9 m specimen, a single
+         7.6 x 13 m sheet, fifteen of them overlapping into one silver plate
+         15 m across floating on a stub of trunk. From the game camera that is
+         not a specimen palm, it is a cabbage. At 0.54 / 0.98 the crown still
+         spans about 1.1x the plant's height, which is the proportion this
+         species is here for, and the individual fans read as fans. */
       seed: 197, h: 7.6, rBot: 0.62, rTop: 0.50, bark: 'barkFib', crownshaft: false,
-      lean: 0.020, bulge: 0.10, fronds: 15, frondVar: 4, crownF: 0.70, frondW: 1.45,
+      lean: 0.020, bulge: 0.10, fronds: 15, frondVar: 4, crownF: 0.54, frondW: 0.98,
       // Stiff and held high — a Bismarckia does not hang. `droop` well under
       // `rise` keeps every blade tip above its own attachment point, which is
       // also what keeps a 5 m crown out of the contact band the physics

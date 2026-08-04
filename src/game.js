@@ -146,6 +146,10 @@ export class Game {
      * @type {import('./gameplay/entities.js').Consumable[]}
      */
     this._occSuspended = [];
+    // Same roots the fade uses: the camera boom must not pass through them.
+    // One ray a frame, against the identical bounding-sphere set the occlusion
+    // pass already walks seven times.
+    eng.camColliders = this.fadeRoots;
     console.info(
       `[game] occlusion candidates: ${this.occlusion.candidates.length} ` +
       `(${skipped} too small to fade)`
@@ -430,6 +434,8 @@ export class Game {
     this.consume.setFrenzy(false);
     this.match.start(this.holes);
     this.engine._camTarget.copy(this.player.position);
+    // A round must never open on a boom still retracted into last round's wall.
+    this.engine._boom = 1;
   }
 
   _onPhase(p) {

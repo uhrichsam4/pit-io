@@ -122,6 +122,10 @@ export function installDevTools(game) {
       game.player.position.set(x, 0, z);
       game.player.velocity.set(0, 0, 0);
       game.engine._camTarget.set(x, 0, z);
+      // The boom-collision easing is a state; a jump has no travel to ease
+      // over, so a retracted boom would otherwise glide out over ~1 s and the
+      // first frames of a capture would be shot from the wrong distance.
+      game.engine._boom = 1;
       return this;
     },
 

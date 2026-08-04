@@ -3012,13 +3012,19 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
       if (spent >= gameCap) break;
     }
     // Spectators. A domino game without anyone leaning over it is a chore.
+    // Ringed on the TABLE, not on one of its seats: a seat is 0.8 m off-centre
+    // and the ring drawn round it puts half the onlookers with their backs to
+    // the game and the other half three metres up the path.
+    let tx = 0, tz = 0;
+    for (const s of g) { tx += s.x; tz += s.z; }
+    tx /= g.length; tz /= g.length;
     const watch = r.weighted([[0, 32], [1, 34], [2, 24], [3, 10]]);
     for (let k = 0; k < watch && spent < gameCap; k++) {
-      const ang = r() * Math.PI * 2, rad = 1.5 + r() * 0.7;
-      const x = g[0].x + Math.cos(ang) * rad, z = g[0].z + Math.sin(ang) * rad;
+      const ang = r() * Math.PI * 2, rad = 1.45 + r() * 0.45;
+      const x = tx + Math.cos(ang) * rad, z = tz + Math.sin(ang) * rad;
       if (!clear(x, z, WALK_R)) continue;
       person(r, pickArchetype(r, false), x, z,
-        Math.atan2(g[0].x - x, g[0].z - z), MODE.IDLE, 'spectator');
+        Math.atan2(tx - x, tz - z), MODE.IDLE, 'spectator');
     }
   }
 

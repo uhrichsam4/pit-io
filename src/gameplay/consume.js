@@ -721,7 +721,20 @@ export class ConsumeSystem {
     this._capture(hole, c, t, true);
   }
 
+  /** One-time allocation of the vectors the plunge animation writes into. */
+  _fallScratch(c) {
+    if (c._startPos) return;
+    c._startPos = new THREE.Vector3();
+    c._startQuat = new THREE.Quaternion();
+    c._startScale = new THREE.Vector3(1, 1, 1);
+    c._pivot = new THREE.Vector3();
+    c._tipAxis = new THREE.Vector3(1, 0, 0);
+    c._spinAxis = new THREE.Vector3(0, 1, 0);
+    c._tipQuat = new THREE.Quaternion();
+  }
+
   _capture(hole, c, t, remote = false) {
+    this._fallScratch(c);
     this.registry.remove(c);
     this.attracted.delete(c);
     c.state = STATE.FALLING;

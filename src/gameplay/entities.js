@@ -120,17 +120,18 @@ export class Consumable {
       this._poseOff = this._restP.clone().sub(this._restObjP);
     }
 
-    // Scratch used by the fall animation so we don't allocate per frame.
-    this._startPos = new THREE.Vector3();
-    this._startQuat = new THREE.Quaternion();
-    this._startScale = new THREE.Vector3(1, 1, 1);
-    this._pivot = new THREE.Vector3();
-    this._tipAxis = new THREE.Vector3(1, 0, 0);
-    this._spinAxis = new THREE.Vector3(0, 1, 0);
-    this._tipQuat = new THREE.Quaternion();
+    /**
+     * Scratch for the fall animation, created on the first capture by
+     * ConsumeSystem.initFallScratch and reused for every later one.
+     *
+     * Not allocated here: there are 28,000 consumables and most of them are
+     * never touched in a given match, so seven vectors each would be about
+     * 12 MB of objects standing by for nothing. Creating them on capture keeps
+     * the steady-state allocation at zero, which is the property that matters
+     * — a late-game hole captures hundreds of props in a single frame.
+     */
+    this._startPos = null;
     this._hasTipQuat = false;
-    this._spin = new THREE.Vector3();
-    this._tilt = new THREE.Euler();
     this._cellKey = 0;
   }
 

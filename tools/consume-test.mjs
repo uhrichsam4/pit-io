@@ -126,7 +126,10 @@ const r = await p.evaluate(() => {
     return {kind:c.kind, radius:+c.radius.toFixed(2), passRadius:+c.passRadius.toFixed(2),
             holeR:+holeR.toFixed(2), canPass:g.consume.canPassThrough({radius:holeR},c), rows};
   };
-  out.wideObject={ bus: wide(/bus|truck|van|lorry/i), storefront: wide(/storefront/i) };
+  // Named exactly. `/bus|truck/` also matches busStopFlag and busBench, and a
+  // test that proves a bus stop sign topples proves nothing about a bus.
+  out.wideObject={ bus: wide(/^(cityBus|articBus|shuttleBus|boxTruck|deliveryVan|garbageTruck|flatbed)$/),
+                   storefront: wide(/^storefront$/) };
 
   // --- 2c. VISIBLE TOPPLE OVER TIME ---------------------------------------
   // The sweep gives each distance a single frame, which understates the tilt.
@@ -357,7 +360,12 @@ const r = await p.evaluate(() => {
       park(c.position.x+R*0.9, c.position.z, R);
       let last=0,late=0,tilt=0;
       for(let i=0;i<600;i++){
-        keepAlive(); g.stepSimulation(1/60);
+        keepAlive();
+        // Pin the opening. It is sitting in a street full of edible props and
+        // every one it swallows grows it, which raises the lean the wedged
+        // body is settling toward — real behaviour, but it reads as jitter.
+        DEV.setSize(R);
+        g.stepSimulation(1/60);
         const d=c._dyn; if(!d) continue;
         tilt=d.tilt;
         if(i>360) late+=Math.abs(d.tilt-last);   // motion in the last 4 seconds

@@ -421,6 +421,27 @@ export class Engine {
     this._followPos = new THREE.Vector3();
     this._dist = CAMERA.DIST_BASE;
     this._shakeOffset = new THREE.Vector3();
+
+    /* ---------------------------------------------------- boom collision ---
+     * Optional list of meshes the camera boom must not pass through. game.js
+     * hands over the building roots after the world is built; with nothing set
+     * the camera behaves exactly as it always did.
+     *
+     * WHY THIS EXISTS. Pitch and yaw are fixed by design, so the eye sits at a
+     * fixed offset from the hole — and in a city of 68 m blocks that offset
+     * lands INSIDE a building for a measured 4.2% of land positions at the
+     * starting size (2.5% at r=5). The result is not "a building in the way",
+     * which the x-ray handles; it is a wall a metre from the lens filling
+     * 85% of the frame. Shortening the boom along the SAME ray keeps the
+     * composition axis and the pitch that input.js un-foreshortens by, so
+     * steering still agrees with the screen — only the distance gives.
+     */
+    this.camColliders = null;
+    this._boom = 1;                    // 0..1 of the desired distance, eased
+    this._effDist = this._dist;        // what the camera is really at, for AO
+    /** Flat [minX,minY,minZ,maxX,maxY,maxZ] * n, built once from camColliders. */
+    this._camBoxes = null;
+    this._camBoxSrc = null;
     this._shadowExtent = -1;   // forces the first fit to write the ortho box
     this.time = 0;
 
@@ -931,6 +952,68 @@ export class Engine {
     this.gradePass.uniforms.uFlashColor.value.setHex(color);
   }
 
+  /** World AABBs of the boom colliders, fattened by the near-plane margin. */
+  _buildCamBoxes() {
+    const list = this.camColliders;
+    this._camBoxSrc = list;
+    if (!list || !list.length) { this._camBoxes = null; return; }
+    const box = new THREE.Box3();
+    const out = new Float32Array(list.length * 6);
+    const PAD = 1.6;                     // > CAMERA.NEAR, so no face grazes
+    let n = 0;
+    for (const o of list) {
+      box.setFromObject(o);
+      if (!Number.isFinite(box.min.x)) continue;
+      out[n++] = box.min.x - PAD; out[n++] = box.min.y - PAD; out[n++] = box.min.z - PAD;
+      out[n++] = box.max.x + PAD; out[n++] = box.max.y + PAD; out[n++] = box.max.z + PAD;
+    }
+    this._camBoxes = out.subarray(0, n);
+  }
+
+  _insideCamBox(x, y, z) {
+    const b = this._camBoxes;
+    for (let i = 0; i < b.length; i += 6) {
+      if (x > b[i] && x < b[i + 3] && y > b[i + 1] && y < b[i + 4] &&
+          z > b[i + 2] && z < b[i + 5]) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Fraction of the desired boom length at which the eye is in open air.
+   *
+   * AABB CONTAINMENT, NOT A RAYCAST. A ray from the hole to the eye is the
+   * obvious test and it is wrong for this game: the boom rises at 54 deg, so
+   * on any Brickell street it clips the corner of a tower it was never going
+   * to put the camera inside, and the framing would breathe constantly. The
+   * defect being fixed is specifically "the eye is INSIDE a building", so that
+   * is exactly what is tested — and a containment test against ~350 cached
+   * boxes is cheaper than the raycast anyway (no BVH, no triangle work).
+   *
+   * Boxes are conservative for L-shaped and courtyard plans. That errs toward
+   * a slightly shorter boom in a handful of spots, never toward a wall in the
+   * lens. Buildings do not move, so the boxes are built once.
+   *
+   * Never collapses past MIN_BOOM_DIST: pressed into the corner of a podium
+   * there may be no clear position at all, and a camera that dives to the lip
+   * of the hole is worse than one that lets the x-ray do its job.
+   */
+  _fitBoom(x, y, z, d) {
+    if (this.camColliders !== this._camBoxSrc) this._buildCamBoxes();
+    const b = this._camBoxes;
+    if (!b || d < 1e-3) return 1;
+    const cx = this._camTarget.x, cz = this._camTarget.z;
+    if (!this._insideCamBox(cx + x, y, cz + z)) return 1;
+    const floor = Math.min(1, 16 / d);
+    // Walk inward in 5% steps and take the first clear position. Linear rather
+    // than a bisection because the clear set is not an interval: the boom can
+    // pass out of a tower and back into its own podium.
+    for (let t = 0.95; t > floor; t -= 0.05) {
+      if (!this._insideCamBox(cx + x * t, y * t, cz + z * t)) return t;
+    }
+    return floor;
+  }
+
   /**
    * @param {THREE.Vector3} target world point to follow
    * @param {number} radius hole radius, drives zoom
@@ -946,10 +1029,21 @@ export class Engine {
     const pitch = THREE.MathUtils.degToRad(CAMERA.PITCH);
     const yaw = THREE.MathUtils.degToRad(CAMERA.YAW);
     const d = this._dist;
-    const y = Math.sin(pitch) * d;
-    const h = Math.cos(pitch) * d;
-    const x = Math.sin(yaw) * h;
-    const z = Math.cos(yaw) * h;
+    let y = Math.sin(pitch) * d;
+    let h = Math.cos(pitch) * d;
+    let x = Math.sin(yaw) * h;
+    let z = Math.cos(yaw) * h;
+
+    // Shorten the boom to the first surface between the hole and the eye.
+    // Retract fast (a wall arriving must never be seen from inside) and extend
+    // slowly (so leaving a podium is a glide, not a snap).
+    const boom = this._fitBoom(x, y, z, d);
+    const bk = boom < this._boom ? 1 - Math.exp(-20 * dt) : 1 - Math.exp(-2.6 * dt);
+    this._boom += (boom - this._boom) * bk;
+    if (this._boom < 0.999) {
+      x *= this._boom; y *= this._boom; z *= this._boom; h *= this._boom;
+    }
+    this._effDist = d * Math.min(1, this._boom);
 
     if (shake > 0.0001) {
       const t = this.time * 46;
@@ -994,7 +1088,11 @@ export class Engine {
     this.sky.position.copy(this.camera.position);
 
     this._updateShadowFit();
-    this.post.tuneAO(this._dist);
+    // The AO radius is screen-space, so it has to be tuned against where the
+    // camera actually IS — measured, not read off `_dist`, which is the boom's
+    // WANTED length and can be well short of it once the boom is retracted (and
+    // is not the eye distance at all on the dev-cam and menu-orbit paths).
+    this.post.tuneAO(this.camera.position.distanceTo(this._camTarget));
 
     const f = this.gradePass.uniforms.uFlash;
     if (f.value > 0) f.value = Math.max(0, f.value - dt * 2.6);
