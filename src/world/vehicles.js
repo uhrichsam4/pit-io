@@ -1612,14 +1612,16 @@ function cementMixer(sh) {
   cyl(sh, 0, drumY + 0.36, -3.72, 0.72, 0.72, 0.14, seg, 'z', ROLE.MACH_LO);
   cyl(sh, 0, 3.42, 1.12, 0.62, 0.34, 0.70, 8, 'y', ROLE.STEEL, [false, true]);
   stamp(sh, (s2) => {
-    // A tapered trough: floor plus two cheeks.
-    s2.quad([-0.42, 0, -0.80], [0.42, 0, -0.80], [0.30, 0, 0.80], [-0.30, 0, 0.80],
-      ROLE.STEEL, [0, -1, 0]);
+    // A tapered trough: floor plus two low cheeks, raked down and aft.
+    s2.quad([-0.50, 0, -0.70], [0.50, 0, -0.70], [0.34, 0, 0.70], [-0.34, 0, 0.70],
+      ROLE.MACH_LO, [0, -1, 0]);
     for (const s of [-1, 1]) {
-      s2.quad([s * 0.42, 0, -0.80], [s * 0.30, 0, 0.80], [s * 0.30, 0.24, 0.80], [s * 0.42, 0.24, -0.80],
-        ROLE.STEEL, [0, 0.1, 0]);
+      s2.quad([s * 0.50, 0, -0.70], [s * 0.34, 0, 0.70], [s * 0.34, 0.18, 0.70], [s * 0.50, 0.18, -0.70],
+        ROLE.MACH_LO, [0, 0.09, 0]);
     }
-  }, { x: 0, y: 1.62, z: -4.28, rx: 0.34 });
+    s2.quad([-0.50, 0, -0.70], [0.50, 0, -0.70], [0.50, 0.18, -0.70], [-0.50, 0.18, -0.70],
+      ROLE.GRIME, [0, 0.09, 0.5]);
+  }, { x: 0, y: 1.40, z: -4.34, rx: 0.62 });
   chamfer(sh, 0, 2.20, -3.86, 1.20, 0.36, 0.30, 0.06, ROLE.MACH_LO);       // chute hinge
   // Water tank behind the cab, ladder up the near side to a catwalk.
   cyl(sh, 0, 3.10, 1.90, 0.42, 0.42, 1.70, 8, 'x', ROLE.WHITE);

@@ -3386,25 +3386,45 @@ function netMaterial(hex) {
  * at distance instead of thrashing. Anything more open than this reads as a
  * dark noisy rectangle over the deck void rather than as a screen ON it.
  */
+/**
+ * Perforated metal cladding.
+ *
+ * WHY THE PUNCH IS TONAL AND NOT AN ALPHA CUT.
+ *
+ * It was an alpha cut, and A/B'd with the shadow pass off it still rendered as
+ * a dark olive rectangle rather than as pale anodised metal. Punching holes with
+ * `destination-out` leaves the canvas PREMULTIPLIED — the cleared texels carry
+ * RGB 0 as well as alpha 0 — and every mip above the first averages that black
+ * back into the strands. alphaTest hides the holes but it cannot hide what they
+ * did to the mip chain, so the panel darkens the moment it is more than a few
+ * metres away, which is always.
+ *
+ * A perforated panel at 40 m is a tone, not a set of holes: 27 mm punches on a
+ * 90 mm pitch are sub-pixel long before the player can see them. So the punch
+ * lives in the RGB, the sheet stays fully opaque, and it reads as pale metal at
+ * every distance with no alpha, no sorting and no mip bleed.
+ */
 function perfMaterial(hex) {
   return sheetMaterial(`perf${hex}`, (g, size) => {
     g.fillStyle = hexCss(hex);
     g.fillRect(0, 0, size, size);
     // A shaded band per panel so a 20 m screen is not one flat value.
-    g.fillStyle = hexCss(jitterHex(hex, 0.92, 0.005));
+    g.fillStyle = hexCss(jitterHex(hex, 0.94, 0.005));
     g.fillRect(0, 0, size, size * 0.5);
-    g.globalCompositeOperation = 'destination-out';
-    g.fillStyle = '#fff';
+    // The punch: a staggered field of shaded dots, each with a lit lower lip,
+    // which is what a real punched hole looks like once it is too small to see
+    // through — a dark spot with a highlight under it.
     const n = 5, p = size / n, rr = p * 0.28;
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
-        g.beginPath();
-        g.arc(i * p + (j % 2 ? p * 0.5 : 0) + p * 0.5, j * p + p * 0.5, rr, 0, Math.PI * 2);
-        g.fill();
+        const cx = i * p + (j % 2 ? p * 0.5 : 0) + p * 0.5, cy = j * p + p * 0.5;
+        g.fillStyle = hexCss(jitterHex(hex, 0.44, 0.0));
+        g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.fill();
+        g.fillStyle = hexCss(jitterHex(hex, 1.12, 0.0));
+        g.beginPath(); g.arc(cx, cy + rr * 0.42, rr * 0.52, 0, Math.PI * 2); g.fill();
       }
     }
-    g.globalCompositeOperation = 'source-over';
-  }, { alphaTest: 0.45, roughness: 0.42, metalness: 0.35 });
+  }, { roughness: 0.46, metalness: 0.04 });
 }
 
 /**
@@ -3661,9 +3681,17 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
     B.face(loft([{ p: plan, y: y + 0.5 }], { capTop: true, uScale: 10 }));
     // Spandrel. Kept low so the ~1.9 m band above it stays open — a garage you
     // cannot see into is just a concrete box.
+    /*
+     * Spandrel head at 1.15 m, not 1.25. A parked car's waist is at 0.88 and
+     * its glasshouse runs to 1.45, so at 1.25 the barrier hid every body panel
+     * on the deck and all you could see of a car was its dark window band —
+     * which is why the interiors read as rows of black lumps whatever the cars
+     * were actually made of. 1.15 is still a legal barrier height and it shows
+     * a third of a metre of paint.
+     */
     const sHex = i === bandLevel ? accent : bandHex[i % 2];
-    B.trim(loft([{ p: offsetPlan(plan, 0.22), y: y + 0.5 }, { p: offsetPlan(plan, 0.22), y: y + 1.25 }], {}), sHex);
-    B.trim(slabGeo(plan, y + 1.25, 0.18, 0.34), P.CONCRETE_DARK);
+    B.trim(loft([{ p: offsetPlan(plan, 0.22), y: y + 0.5 }, { p: offsetPlan(plan, 0.22), y: y + 1.15 }], {}), sHex);
+    B.trim(slabGeo(plan, y + 1.15, 0.18, 0.34), P.CONCRETE_DARK);
 
     /*
      * FILLING THE BLACK BAND.
@@ -3716,7 +3744,7 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
       const x = -lw / 2 + 2.2 + k * ((lw - 4.4) / Math.max(1, rows - 1));
       const inEntry = i === 0 && Math.abs(x - entryX) < entryW * 0.75;
       if (!inEntry && r() < 0.56) {
-        parkedCar(B, x, y + 0.5, bb.z1 - 2.4, Math.PI / 2, r.pick(CAR_HEX), 0, k + i);
+        parkedCar(B, x, y + 0.5, bb.z1 - 2.05, Math.PI / 2, r.pick(CAR_HEX), 0, k + i);
       }
       // The far row is behind everything else and only ever a colour showing
       // through the gaps, so it is deliberately thin.
@@ -3732,7 +3760,12 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
      opening anywhere on the elevation. The reveal is drawn proud of the
      spandrel so it reads as a hole cut through the band, with the jambs and
      head in the accent colour to say "this is the door". */
-  B.trim(box(entryW, lh + 0.2, 1.6, entryX, 0, bb.z1 - 0.50, 3), P.SIGN_DARK);
+  // The reveal is CONCRETE_DARK, not SIGN_DARK: a portal is a lit soffit and
+  // two grey jambs, and a near-black rectangle at street level is the exact
+  // value hole the open bands above it were criticised for.
+  B.trim(box(entryW, lh + 0.2, 1.6, entryX, 0, bb.z1 - 0.50, 3), P.CONCRETE_DARK);
+  B.trim(box(entryW - 0.4, 0.16, 1.4, entryX, lh - 0.35, bb.z1 - 0.55, 3), P.CONCRETE_WARM);
+  B.lit(box(entryW - 1.0, 0.10, 0.30, entryX, lh - 0.52, bb.z1 - 1.05, 2), P.SIGN_LIGHT);
   for (const sx of [-1, 1]) {
     B.trim(box(0.5, lh + 0.5, 1.9, entryX + sx * (entryW / 2 + 0.25), 0, bb.z1 - 0.5, 2), accent);
   }
@@ -3772,10 +3805,15 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
     s.translate(x, 0.4, bb.z1 + 0.42);
     B.gl(s, perfMaterial(P.ALUMINIUM));
     // The screen hangs on a frame; without it the sheet is a floating decal.
+    // Kept in bright STEEL — a dark mullion at this width reads as a black
+    // stripe painted down the elevation, which is the value hole being fixed.
     for (const sx of [-1, 1]) {
-      B.trim(box(0.16, top - 0.2, 0.34, x + sx * scW / 2, 0.3, bb.z1 + 0.42, 2), P.STEEL_DARK);
+      B.trim(box(0.16, top - 0.2, 0.34, x + sx * scW / 2, 0.3, bb.z1 + 0.42, 2), P.STEEL);
     }
-    B.trim(box(scW + 0.3, 0.18, 0.34, x, top - 0.1, bb.z1 + 0.42, 2), P.STEEL_DARK);
+    B.trim(box(scW + 0.3, 0.18, 0.34, x, top - 0.1, bb.z1 + 0.42, 2), P.STEEL);
+    for (let j = 1; j < levels; j++) {
+      B.trim(box(scW, 0.12, 0.28, x, j * lh, bb.z1 + 0.42, 2), P.ALUMINIUM);
+    }
   }
 
   // Ramp: a sheared slab climbing the west bay, visible from the 3/4 camera.
@@ -3836,6 +3874,11 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
       parkedCar(B, x, top + 0.12, rz + dir * 0.55, dir > 0 ? -Math.PI / 2 : Math.PI / 2,
         r.pick(CAR_HEX), 1, k + (dir > 0 ? 0 : 1));
     }
+  }
+  // Oil drips down the aisle. Four discs, and the deck stops being a plane.
+  for (let k = 0; k < 4; k++) {
+    B.trim(cyl(0.34 + r() * 0.34, 0.012, 6, ib.cx + (r() - 0.5) * ib.w * 0.7,
+      top + 0.05, ib.cz + (r() - 0.5) * ib.d * 0.45), P.OIL_STAIN);
   }
   // Aisle arrow and the hatched no-parking square by the core door.
   B.trim(box(0.34, 0.07, 2.4, bb.cx + lw * 0.18, top + 0.05, bb.cz, 2), P.ROAD_LINE);
@@ -3983,9 +4026,11 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
   const pitch = 2.72;
   const bays = Math.max(3, Math.floor((lw - 3) / pitch));
   const step = (lw - 3) / bays;
+  // A rank floating in the middle with seven metres of nothing on both sides is
+  // the arrangement no car park has ever used. Bays go against a kerb.
   const rowZ = ld >= 19
     ? [[bb.z0 + 4.2, -1], [bb.z1 - 4.2, 1]]
-    : [[bb.cz, -1]];
+    : [[bb.z0 + 4.2, -1]];
   if (ld >= 34) rowZ.push([bb.cz - 2.7, -1], [bb.cz + 2.7, 1]);
   // A hatched island only earns a whole bay on a lot with bays to spare, and
   // one accessible bay is the right number below about nine.
@@ -4036,13 +4081,39 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
         continue;
       }
       if (Math.abs(x - gateX) < gateW * 0.55 && rowZ.length === 1) continue;
-      if (r() < 0.22) continue;
+      if (r() < 0.18) continue;
       // Cars nose in to the wheel stop, so they sit forward in the bay with the
       // bumper overhanging it — which is what makes a rank of cars look parked
       // rather than placed.
       parkedCar(B, x, 0.055, z + dir * 0.55, dir > 0 ? -Math.PI / 2 : Math.PI / 2,
         r.pick(CAR_HEX), 2, carN + rr);
       carN++;
+    }
+  }
+
+  /*
+   * THE AISLE. Whatever the rank layout, there is a turning area left over, and
+   * on a shallow lot that is 12 x 16 m of unbroken tarmac — the same bare-plane
+   * failure this whole pass exists to remove, at ground level. It gets what a
+   * real lot has: a painted circulation arrow, and a kerbed planting island the
+   * traffic has to go round.
+   */
+  const aisleZ = rowZ.length === 1 ? bb.z1 - 5.0 : db.cz;
+  for (const ax of [bb.x0 + lw * 0.30, bb.x0 + lw * 0.70]) {
+    B.trim(box(0.32, 0.075, 2.4, ax, 0.045, aisleZ, 2), P.ROAD_LINE);
+    B.trim(box(1.0, 0.075, 0.32, ax, 0.045, aisleZ + 1.0, 2), P.ROAD_LINE);
+    B.trim(box(0.32, 0.075, 0.7, ax + 0.34, 0.045, aisleZ + 1.34, 1.2), P.ROAD_LINE);
+    B.trim(box(0.32, 0.075, 0.7, ax - 0.34, 0.045, aisleZ + 1.34, 1.2), P.ROAD_LINE);
+  }
+  if (rowZ.length === 1 && ld > 13) {
+    const ix = db.cx + (r() - 0.5) * lw * 0.18, iz = bb.z1 - 2.9;
+    const ip = movePlan(rectPlan(Math.min(lw * 0.44, 8.0), 2.3, 0.7), ix, iz);
+    B.trim(parapetGeo(ip, 0.04, 0.20, 0.3), P.CURB);
+    B.trim(loft([{ p: offsetPlan(ip, -0.3), y: 0.22 }], { capTop: true, uScale: 2 }), P.MULCH);
+    const ib2 = planBounds(ip);
+    for (let k = 0; k < 3; k++) {
+      B.trim(cyl(0.52, 0.62, 6, ib2.x0 + 1.0 + k * (ib2.w - 2.0) / 2, 0.22, ib2.cz),
+        k % 2 ? P.HEDGE : P.HEDGE_LIGHT);
     }
   }
 
@@ -4485,7 +4556,10 @@ function cableTray(B, x, y, z, len, rot, hex) {
     rails.push(box(0.06, 0.05, 0.34, -len / 2 + (len * (i + 0.5)) / rungs, 0.44, 0, 1));
   }
   B.trim(put(BufferGeometryUtils.mergeGeometries(rails, false)), P.ALUMINIUM);
-  B.trim(put(box(len * 0.98, 0.12, 0.22, 0, 0.50, 0, 2)), hex || P.SIGN_DARK);
+  // The cable bundle sitting in the tray. Wide enough to read as a run of
+  // services from above rather than as a stray dark line drawn on the roof.
+  B.trim(put(box(len * 0.98, 0.14, 0.40, 0, 0.48, 0, 2)), hex || P.STEEL_DARK);
+  B.trim(put(box(len * 0.98, 0.06, 0.46, 0, 0.62, 0, 2)), P.ALUMINIUM);
 }
 
 /**
@@ -4616,7 +4690,7 @@ function dressedCap(B, plan, y, r, o = {}) {
   const [dx0, dz0] = at(span * 0.06, zA);
   ductRun(B, dx0, y + 0.05, dz0, Math.min(span * 0.34, 7), rot, 1.3);
   const [cx0, cz0] = at(0, crossC + cross * (lane - 0.09));
-  cableTray(B, cx0, y + 0.05, cz0, Math.min(span * 0.6, 16), rot, o.trayHex);
+  cableTray(B, cx0, y + 0.05, cz0, Math.min(span * 0.45, 12), rot, o.trayHex);
   if (o.vents !== false) {
     for (let i = 0; i < 3; i++) {
       const [vx, vz] = at(-span * 0.24 + i * span * 0.24, crossC - cross * (lane - 0.12));

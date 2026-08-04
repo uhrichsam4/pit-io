@@ -80,12 +80,25 @@ import { ZONE } from './cityLayout.js';
  *
  * 1.0 puts ~16.6k props on the map (the art bible asks for 9k-16k small props;
  * ~1.3k of the overshoot is pavement ironwork, which is 9 cm tall and reads as
- * ground texture rather than as furniture) and costs ~1.09M geometry triangles.
- * Every spacing and every area-based count below divides by this, so if the
- * project needs the triangles back, 0.75 lands around 12.5k props and ~820k
- * triangles without changing how anything looks up close. Draw calls do not
- * move with density: this module is one InstancedMesh per prop type, 119 of
- * them, whatever DENSITY is set to.
+ * ground texture rather than as furniture).
+ *
+ * COST, MEASURED: ~2.78M geometry triangles, up from ~1.16M before the rebuild
+ * pass. That increase is the rebuild: 117 kinds went from flat boxes and single
+ * planks to slatted benches, openwork bins, spoked wheels, real lanterns and
+ * signs with legends on both faces, and none of it is decoration — every one of
+ * those was a named review failure. The spend is concentrated where the copies
+ * are (bollards 70 tris x 594, café chairs 98 x 553) and let out where they are
+ * not (porte-cochère, gelato counter, newsstand).
+ *
+ * Every spacing and every area-based count below divides by DENSITY, so this is
+ * the lever if the frame needs the triangles back: 0.75 lands around 12.5k
+ * props — still inside the art bible's band — for about a quarter fewer
+ * triangles, without changing how any single object looks up close. It is left
+ * at 1.0 because the balance curve in config.js was fitted against a MEASURED
+ * city population and moving it silently re-tunes the whole score ladder.
+ *
+ * Draw calls do not move with density: this module is one InstancedMesh per
+ * prop type, 123 of them, whatever DENSITY is set to.
  */
 const DENSITY = 1.0;
 
@@ -772,7 +785,10 @@ function rake(m, cx, w, y0, z0, y1, z1, off) {
   const B = [cx + w / 2, y0 + ny * off, z0 + nz * off];
   const C = [cx + w / 2, y1 + ny * off, z1 + nz * off];
   const D = [cx - w / 2, y1 + ny * off, z1 + nz * off];
-  return m.quad(A, D, C, B);
+  // Wind toward whichever face the offset moved the decal onto. Fixed winding
+  // put every chalk mark on the far side of its own board AND facing away from
+  // the camera, which is why the boards photographed blank.
+  return off >= 0 ? m.quad(A, D, C, B) : m.quad(A, B, C, D);
 }
 
 /** Cast base flange with a ring of bolt heads. Posts, hydrants, bollards. */
@@ -839,7 +855,7 @@ function gBollard(m) {
     // Body authored at roughly half the band's value. A multiplicative instance
     // hex cannot create contrast, only preserve a ratio — so the ratio has to
     // be in the geometry, or the reflective band vanishes under every tint.
-    cols: [0x6a706e, 0x8e9492, 0xffffff, 0x848a88],
+    cols: [0x8a908e, 0xb4bab8, 0xffffff, 0xa4aaa8],
   });
 }
 
@@ -1787,7 +1803,10 @@ function gDogStation(m) {
  * the whole difference between foliage and glass.
  */
 function shrub(m, x, y, z, r, hex, segs = 6, lobes = 2) {
-  bush(m, x, y, z, r, hex, hex === P.HEDGE ? P.HEDGE_LIGHT : P.HEDGE, segs, lobes);
+  const alt = hex === P.HEDGE ? P.HEDGE_LIGHT
+    : hex === P.HEDGE_LIGHT ? P.GRASS_DARK
+      : hex === P.TREE_CANOPY ? P.TREE_CANOPY_DARK : P.HEDGE;
+  bush(m, x, y, z, r, hex, alt, segs, lobes);
 }
 
 /**
@@ -1801,7 +1820,7 @@ function gPlanterRound(m) {
   ], 8, { cols: [0xb8ac94, 0xc8bda4, 0xf0e6d0, 0xfaf2e0, 0xe4d8be] });
   m.col(P.MULCH).disc(0, 0.585, 0, 0.50, 8);
   m.col(0x5c4534).disc(0, 0.60, 0.06, 0.24, 5);
-  shrub(m, 0, 0.575, 0, 0.44, P.HEDGE, 5, 2);
+  shrub(m, 0, 0.575, 0, 0.42, P.HEDGE, 5, 3);
 }
 
 /**
@@ -1829,7 +1848,7 @@ function gPlanterSquare(m) {
     m.reset();
   }
   m.col(P.MULCH).plate(0, 0.60, 0, 0.90, 0.90);
-  shrub(m, 0, 0.56, 0, 0.44, P.HEDGE_LIGHT, 5, 2);
+  shrub(m, 0, 0.56, 0, 0.42, P.HEDGE_LIGHT, 5, 3);
 }
 
 /**
@@ -3238,7 +3257,12 @@ function gPastryCase(m) {
   m.col(0xf0ece2).prism(0, 0, [[0.26, 1.04, 0.62], [0.80, 1.04, 0.62]]);
   m.col(P.CHROME).prism(0, 0, [[0.80, 1.10, 0.68], [0.86, 1.08, 0.66]]);
   // Dark interior first, so the glass has something to be in front of.
-  m.col(0x2a2f34).prism(0, 0, [[0.86, 1.00, 0.58], [1.42, 1.00, 0.58]], { capTop: false });
+  /* Back and end panels only. A closed interior box is a solid wall in front
+     of the two shelves of goods, which is exactly how the first attempt at
+     this managed to hide them a second time. */
+  m.col(0x2a2f34);
+  m.prism(0, -0.27, [[0.86, 1.00, 0.04], [1.42, 1.00, 0.04]], { capTop: false });
+  for (const s of [-1, 1]) m.prism(s * 0.48, 0, [[0.86, 0.04, 0.54], [1.42, 0.04, 0.54]], { capTop: false });
   for (const [y, hex] of [[0.90, P.STUCCO_BUTTER], [1.16, P.TERRACOTTA]]) {
     m.col(P.ALUMINIUM).prism(0, 0, [[y, 0.98, 0.52], [y + 0.03, 0.98, 0.52]]);
     for (let k = 0; k < 5; k++) {
@@ -4263,7 +4287,7 @@ function gPlanterUrn(m) {
   m.tube(0, 0, [[0.76, 0.475], [0.80, 0.495], [0.84, 0.465]], 6,
     { cols: [0xfdfaf2, 0xece6d8] });
   m.col(P.MULCH).disc(0, 0.79, 0, 0.44, 6);
-  shrub(m, 0, 0.76, 0, 0.32, P.HEDGE_LIGHT, 5, 2);
+  shrub(m, 0, 0.76, 0, 0.30, P.HEDGE_LIGHT, 5, 3);
   m.col(P.FLOWER_MAGENTA);
   for (let k = 0; k < 3; k++) {
     const a = (k / 3) * TAU + 0.9;
@@ -5028,7 +5052,9 @@ const DEFS = {
   },
   bollard: {
     g: gBollard, tier: T.TINY, r: 0.16, h: 0.95, label: 'Bollard', sv: 0.06,
-    tint: [0xdfe4e2, 0x6f7876, 0x4a5250, 0x8d938f, 0x4a5250], debris: P.BOLLARD_DARK,
+    /* Kept off the dark blue-greys: at this value the cool sky fill takes a
+       0x4a5250 bollard all the way to navy, which the art bible bans outright. */
+    tint: [0xdfe4e2, 0xa8b0ae, 0x8c9694, 0xc6ccc8, 0x9aa2a0], debris: P.BOLLARD_DARK,
   },
   bollardStone: {
     g: gBollardStone, tier: T.TINY, r: 0.20, h: 0.88, label: 'Stone Bollard', sv: 0.07,
