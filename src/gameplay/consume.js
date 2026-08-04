@@ -715,9 +715,18 @@ export class ConsumeSystem {
 
   /* ------------------------------------------------------------ capture --- */
 
-  /** Same animation for a prop a REMOTE player took: no score, no shake. */
+  /**
+   * Same animation for a prop a REMOTE player took: no score, no shake.
+   *
+   * `hole` may legitimately be missing — a client that is still on the menu,
+   * or one whose holes are all dead, has nothing to attribute the swallow to,
+   * and the whole plunge animation is built around a hole position. Dropping
+   * the event is correct there: startMatch() rebuilds the city from scratch
+   * anyway, so nothing carries over. Without this guard the CONSUMED broadcast
+   * threw on every id and killed the frame loop.
+   */
   captureRemote(hole, c, t) {
-    if (!c || c.state === STATE.FALLING || c.state === STATE.GONE) return;
+    if (!hole || !c || c.state === STATE.FALLING || c.state === STATE.GONE) return;
     this._capture(hole, c, t, true);
   }
 

@@ -175,7 +175,13 @@ class Room {
       if (this.timeLeft <= 0) {
         this.phase = 'playing';
         this.timeLeft = MATCH_DURATION;
-        this.seed = (Math.random() * 0x7fffffff) | 0;
+        // The seed is fixed for the life of the room. Clients build the city
+        // once, synchronously, at page load — they cannot adopt a new seed
+        // mid-session, and a player who joined before the re-roll would be
+        // matching object ids against a different city than one who joined
+        // after it, which is the whole basis of the replication scheme. A new
+        // city means a new room; a new round means the same city restored,
+        // exactly as the offline game does it.
         for (const c of this.clients.values()) {
           c.score = 0; c.r = 1.15; c.alive = true;
         }

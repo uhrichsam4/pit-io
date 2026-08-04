@@ -255,13 +255,33 @@ export class Game {
 
     // A remote player ate something: play the full swallow animation locally so
     // the world stays visually consistent, but credit nobody.
+    //
+    // Two things must not happen here. Applying it before the local match has a
+    // hole means there is nothing to fall into (captureRemote used to be handed
+    // null and threw on every id in the batch, which killed the page's frame
+    // loop). Applying it after the local match has ended breaks the end-of-match
+    // freeze: stepSimulation returns early in RESULTS, so anything started now
+    // would hang in mid-air over the results screen until the restart.
     net.onConsumed = (ids) => {
+      if (this.match.phase === PHASE.RESULTS) return;
       for (const id of ids) {
         const c = this.registry.byId.get(id);
         if (!c) continue;
         const eater = this._nearestHoleTo(c) || this.player;
         this.consume.captureRemote(eater, c, this.clock.elapsedTime);
       }
+    };
+
+    // The server owns the match clock for the whole room. When it starts the
+    // next round the local match has to follow it: without this a client that
+    // reached its own results screen sat there for ever, stopped sending state,
+    // and was evicted by the server's silence timeout — so multiplayer worked
+    // for exactly one match and then died.
+    net.onMatch = (d) => {
+      if (d.phase === 'playing' && this.match.phase === PHASE.RESULTS) {
+        this.startMatch();
+      }
+      if (typeof d.timeLeft === 'number') this.match.timeLeft = d.timeLeft;
     };
 
     net.onKill = (killerId, victimId, reward) => {
@@ -475,7 +495,16 @@ export class Game {
     // The match is over: nothing moves. Traffic, crowds, bots, physics,
     // scoring and consumption all stop dead so the end screen is presented
     // over a still city rather than one that carries on being eaten.
-    if (phase === PHASE.RESULTS) return;
+    //
+    // The network is the one exception. It moves no geometry, and a client that
+    // stops pumping it stops sending state, never hears the server start the
+    // next round, and is dropped by the silence timeout. Remote holes do keep
+    // interpolating — the other players really are still playing, and the
+    // leaderboard behind the end card should say so.
+    if (phase === PHASE.RESULTS) {
+      if (this.net && this.player) this.net.update(this.player, t);
+      return;
+    }
 
     if (this.trafficUpdate) this.trafficUpdate(dt);
     if (this.pedestrianUpdate) this.pedestrianUpdate(dt);
