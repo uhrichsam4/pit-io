@@ -343,8 +343,32 @@ function drawCanopy(g, rect, seed, base, dark, light, flower, flowerP) {
   }
   lobes.push({ x: cx, y: cy, r: R * 0.62 });
 
+  /* An OPAQUE core per lobe before any leaf is drawn.
+     Coverage and detail are two different jobs and the scatter cannot do both.
+     A mip chain averages alpha, so a crown whose interior is only just opaque
+     at level 0 goes see-through by level 3 and the tree thins out as the camera
+     pulls back; the core makes the interior opaque by construction. That in
+     turn frees the dabs to be small — which is the actual fix here, because a
+     banyan's canopy card is 16 m wide and dabs at the old 5.5-12.5% of the cell
+     came out as 1-2 m leaves. See drawSeagrape for the full diagnosis. */
+  /* A flowering tree's core takes some of the bloom colour. A poinciana in June
+     is not a green tree with red dots on it, and the crown has to still read as
+     RED from the skyline preset where the dabs have long since minified away. */
+  const core = flower > 0
+    ? blendHex(blendHex(dark, base, 0.66), flower, Math.min(0.62, flowerP * 0.78))
+    : blendHex(dark, base, 0.66);
   for (const L of lobes) {
-    const n = Math.round(48 * (L.r / R));
+    g.fillStyle = cssOf(core);
+    g.beginPath();
+    g.ellipse(L.x, L.y, L.r * 0.78, L.r * 0.74, 0, 0, 6.29);
+    g.fill();
+  }
+
+  for (const L of lobes) {
+    // Count tracks AREA, not radius. It was linear in L.r, so the small lobes
+    // were four times as densely leaved as the big ones and the crown had a
+    // texture gradient across it that no real tree has.
+    const n = Math.round(190 * (L.r / R) * (L.r / R));
     for (let i = 0; i < n; i++) {
       const a = rand() * Math.PI * 2;
       const d = Math.sqrt(rand()) * L.r;
@@ -360,7 +384,7 @@ function drawCanopy(g, rect, seed, base, dark, light, flower, flowerP) {
         fill = k > 0.5 ? mixHex(base, light, (k - 0.5) * 1.5) : mixHex(dark, base, k * 2);
       }
       g.fillStyle = fill;
-      const lr = R * (0.055 + rand() * 0.070);
+      const lr = R * (0.030 + rand() * 0.040);
       g.beginPath();
       g.ellipse(px, py, lr, lr * (0.60 + rand() * 0.4), rand() * 3.14, 0, 6.29);
       g.fill();
@@ -397,25 +421,80 @@ function drawShrub(g, rect, seed) {
   }
 }
 
-/** Sea grape: big leathery discs with a red midrib. Reads instantly coastal. */
+/**
+ * Sea grape: leathery round leaves with a red midrib. Reads instantly coastal.
+ *
+ * LEAF SCALE IS THE WHOLE PROBLEM HERE, and it is a texel-density bug, not a
+ * drawing one. A cell is stretched across a card `canopyR * 2.05` wide, and a
+ * sea grape's card is metres across — so the 46 discs this used to draw at
+ * 5.5-11% of the cell width came out 0.7-1.4 m in the world. Every leaf on the
+ * tree was the size of the pedestrian standing under it, and from four metres
+ * the whole species read as a cabbage. (Screenshot: shots/nat-probe-keep.)
+ *
+ * So the leaves are drawn at 40% of that size and four times as many of them,
+ * which puts them at ~0.4 m — a big leaf, still unmistakably a sea grape's,
+ * but a LEAF. The count has to rise with the square of the size cut or the
+ * crown goes lacy, and coverage cannot be left to the scatter alone: a mip
+ * chain averages alpha down, so a crown that is only just opaque at level 0 is
+ * see-through at level 3 and the tree flickers as the camera pulls back. An
+ * opaque lobe core under the scatter fixes that by construction, and the
+ * scatter is then free to be as fine as it likes because it is only ever
+ * defining the FRINGE and the surface detail.
+ */
 function drawSeagrape(g, rect, seed) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
   const base = PALETTE.TREE_CANOPY, light = PALETTE.TREE_CANOPY_LIGHT, dark = PALETTE.TREE_CANOPY_DARK;
-  for (let i = 0; i < 46; i++) {
-    const u = rand(), v = Math.pow(rand(), 0.6);
-    const dome = Math.sin(Math.PI * (0.08 + u * 0.84));
-    const px = X + W * (0.08 + u * 0.84);
-    const py = Y + H * (1.0 - v * (0.15 + dome * 0.80));
-    const r = W * (0.055 + rand() * 0.055);
-    const lit = 1 - (py - Y) / H;
-    g.fillStyle = lit > 0.5 ? mixHex(base, light, (lit - 0.5) * 1.5) : mixHex(dark, base, lit * 2);
+  // A sea grape is BROAD and flat-topped, not a ball. Three overlapping lobes
+  // spread along the horizontal give it that habit before a leaf is drawn.
+  const lobes = [];
+  for (let i = 0; i < 4; i++) {
+    const t = (i + 0.5) / 4;
+    lobes.push({
+      x: X + W * (0.14 + t * 0.72 + (rand() - 0.5) * 0.10),
+      y: Y + H * (0.50 + (rand() - 0.5) * 0.20),
+      rx: W * (0.19 + rand() * 0.08),
+      ry: H * (0.20 + rand() * 0.07),
+    });
+  }
+  // Opaque cores, inset from the lobe so the scatter still owns the outline.
+  for (const L of lobes) {
+    g.fillStyle = mixHex(dark, base, 0.72);
     g.beginPath();
-    g.ellipse(px, py, r, r * 0.86, rand() * 3.14, 0, 6.29);
+    g.ellipse(L.x, L.y, L.rx * 0.74, L.ry * 0.74, 0, 0, 6.29);
     g.fill();
-    g.strokeStyle = cssOf(PALETTE.RUST, 0.5);
-    g.lineWidth = Math.max(1, r * 0.09);
-    g.beginPath(); g.moveTo(px, py + r * 0.8); g.lineTo(px, py - r * 0.7); g.stroke();
+  }
+  for (const L of lobes) {
+    // Area-proportional: the count has to track the lobe or the big lobes go
+    // thin and the small ones turn into solid blobs.
+    const n = Math.round((L.rx * L.ry) / (W * H) * 2100);
+    for (let i = 0; i < n; i++) {
+      const a = rand() * Math.PI * 2;
+      const d = Math.sqrt(rand());
+      const px = L.x + Math.cos(a) * d * L.rx;
+      const py = L.y + Math.sin(a) * d * L.ry;
+      const r = W * (0.021 + rand() * 0.023);
+      const lit = 1 - (py - (L.y - L.ry)) / (2 * L.ry);
+      const k = Math.max(0, Math.min(1, lit * 0.95 + rand() * 0.3 - 0.12));
+      /* The bronze flush of new growth at the ends of the shoots. It is the one
+         marking that separates a sea grape from any other round-leaved shrub at
+         a glance, and it only reads if it is confined to the OUTSIDE of the
+         mass — a rusty leaf in the middle of the crown just looks dead. */
+      const young = d > 0.72 && rand() < 0.30;
+      g.fillStyle = young
+        ? mixHex(PALETTE.RUST, PALETTE.FLOWER_ORANGE, rand() * 0.55)
+        : (k > 0.5 ? mixHex(base, light, (k - 0.5) * 1.5) : mixHex(dark, base, k * 2));
+      g.beginPath();
+      g.ellipse(px, py, r, r * (0.82 + rand() * 0.16), rand() * 3.14, 0, 6.29);
+      g.fill();
+      // Midrib only on the leaves wide enough to carry one. On a 6 px disc a
+      // 1 px line is not a vein, it is noise that greys the whole crown out.
+      if (r > W * 0.032) {
+        g.strokeStyle = cssOf(PALETTE.RUST, 0.42);
+        g.lineWidth = Math.max(1, r * 0.13);
+        g.beginPath(); g.moveTo(px, py + r * 0.72); g.lineTo(px, py - r * 0.62); g.stroke();
+      }
+    }
   }
 }
 
@@ -1266,6 +1345,23 @@ function installNatureShader(mat, key) {
         {
           float gl = abs(vNatGlow) * uNatNight;
           totalEmissiveRadiance += (vNatGlow >= 0.0 ? uNatWarm : uNatCool) * gl;
+          /* CITY BOUNCE.
+             Only a quarter of the trees are hash-picked for an uplight, which
+             is right — a boulevard of floodlit palms reads as a stadium. But
+             the other three quarters were rendering as BLACK CUTOUTS after
+             sunset: in the night waterfront frame the entire promenade planting
+             was a single unlit band while the roads, the cars and every facade
+             behind it were lit. That is not what a city at night looks like.
+             Miami has an enormous amount of spill — sodium off the carriageway,
+             shopfronts, headlights, the sky itself — and all of it arrives from
+             BELOW and from the sides, so it dies off with height: a hedge is
+             washed by it, a royal palm's crown fourteen metres up is not.
+             Modulated by diffuseColor so it is a bounce and not a paint job —
+             adding flat warm light to a green leaf turns it grey-yellow, while
+             multiplying by the leaf's own albedo keeps the crown green and just
+             stops it being a hole in the frame. */
+          float bounce = exp(-max(vNatWorld.y, 0.0) * 0.20) * 0.50;
+          totalEmissiveRadiance += uNatWarm * diffuseColor.rgb * (uNatNight * bounce);
         }
       `);
   };
@@ -1301,7 +1397,10 @@ let _atlasMat = null;
 function atlasMaterial() {
   if (!_atlasMat) {
     _atlasMat = asCutout(foliage(atlasTexture()));
-    installNatureShader(_atlasMat, 'nature-atlas-v2');
+    // Bump the key whenever the injected GLSL changes: three caches compiled
+    // programs by it, and a stale hit is a shader that silently does not have
+    // the code you just wrote in it.
+    installNatureShader(_atlasMat, 'nature-atlas-v3');
   }
   return _atlasMat;
 }
@@ -2823,15 +2922,22 @@ const SPECIES = {
     },
   },
   seagrapeT: {
-    label: 'Sea Grape', tier: TIER.MEDIUM, h: 5.0, rad: 1.9, cap: 650, clear: 2.8, sep: 1.4,
+    /* MEASURED, not chosen. At h 5.0 / crownF 0.62 the built population ran
+       6.4-10.3 m tall with a 6-10 m crown — taller than the mangroves, as wide
+       as a banyan, and standing on the seawall where it is the closest thing to
+       the camera in the waterfront frames. A sea grape is a spreading coastal
+       SHRUB-tree; the numbers below measure 4.2-8.1 m with a flat 4.7 m crown,
+       which is both correct and small enough that its leaves come out leaf
+       sized. canopyF 0.58 is what makes it spread instead of mound. */
+    label: 'Sea Grape', tier: TIER.MEDIUM, h: 4.4, rad: 1.9, cap: 650, clear: 2.8, sep: 1.4,
     debris: PALETTE.TREE_CANOPY, variants: 3, tints: 'canopy', rBase: 0.30, contactMax: 1.4,
     make: treeVariant,
     base: {
       // trunkF was 0.34 and the crown hung into the contact band; makeTree now
       // lifts it regardless, but a coastal shrub-tree with a visible fork also
       // just looks more like a sea grape.
-      seed: 113, h: 5.0, trunkF: 0.44, rBot: 0.30, rTop: 0.19, bark: 'barkOak',
-      lean: 0.11, limbs: 3, crownF: 0.62, canopyF: 0.74, cell: 'seagrape',
+      seed: 113, h: 4.4, trunkF: 0.46, rBot: 0.30, rTop: 0.19, bark: 'barkOak',
+      lean: 0.11, limbs: 3, crownF: 0.52, canopyF: 0.58, cell: 'seagrape',
     },
   },
   mangrove: {

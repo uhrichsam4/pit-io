@@ -82,10 +82,27 @@
  * skyline's own shading. Look values live in DAY_LOOK / NIGHT_LOOK below and
  * are lerped on nightFactor — one place to retune, no shader edits.
  *
- * The DAY_LOOK endpoints are chosen so that at t = DAY.START the resolved
- * uniforms are numerically what the previously authored (baked) rig produced,
- * to within 4% on the horizon band. The afternoon frame the whole city was
- * reviewed under does not move.
+ * ---------------------------------------------------------------------------
+ * WHY THE SURFACE CARRIES THREE NORMALS AND A MEASURED DEPTH RAMP
+ * ---------------------------------------------------------------------------
+ * Fixing the night left the DAY bay as the weaker half, and two measurements
+ * explain the whole of it rather than any amount of colour tweaking:
+ *
+ *   1. Unprojecting the `waterfront` preset's camera onto this surface shows
+ *      the visible bay spans 0-90 m offshore. The depth ramp spent its contrast
+ *      between 34 m and 190 m, so the player only ever saw its first quarter
+ *      and every pixel of water graded to the same turquoise.
+ *   2. At the art-directed hour the sun is 56 deg up and the camera looks down
+ *      at 24-44 deg, putting the specular half-vector 41 deg off vertical. With
+ *      a 6 deg wave slope the glitter term evaluates to pow(0.75, 46) = 2e-6.
+ *      The bay had never rendered a single sparkle.
+ *
+ * So the ramp distances are now the distances the game renders, and the one
+ * wave gradient is re-steepened into three normals — calm for shading, 2.2x for
+ * the reflected sky, 5.5x for glitter — because those three terms want three
+ * different slope distributions and only one of them can afford to be noisy.
+ * The unlit floor came down 0.40 -> 0.18 at the same time: it is a constant
+ * added to every pixel, so it divided every bit of contrast underneath it.
  */
 
 import * as THREE from 'three';
@@ -153,7 +170,15 @@ const COPING_LIP = 1.14;
 const DAY_LOOK = {
   bodyMul: [1.00, 1.00, 1.00],
   foamMul: [1.00, 1.00, 1.00],
-  selfLit: 0.40,
+  /* Was 0.40, and that single number was most of why the day bay rendered as a
+     sheet of flat turquoise paint. An unlit floor is a constant added to every
+     pixel of the surface, so it does not merely brighten the water — it
+     DIVIDES every bit of contrast the wave field, the shadows and the
+     reflection manage to produce. At 0.40 it was roughly 40% of the final
+     value and nothing underneath it could read. The lit share below picks the
+     level back up (0.62 -> 0.78 in WATER_BODY), so the bay is no darker than
+     it was; it just has structure in it now. */
+  selfLit: 0.18,
   glareGain: 2.20,
   glintGain: 1.00,
   glintTight: 46.0,
@@ -168,7 +193,13 @@ const NIGHT_LOOK = {
   glareGain: 0.85,
   glintGain: 0.42,
   glintTight: 190.0,
-  mixFloor: 0.42,
+  /* 0.42 was tuned on the open bay, where the reflected towers arrive as
+     separated columns with dark water between them. The river is a 40 m strip
+     with a wall of lit podium directly behind it: every pixel of it was
+     covered, and it came back as a solid blown rug brighter than the street on
+     its bank. Backed off here, damped again over the river specifically, and
+     capped by the mirror-radiance shoulder in WATER_BODY. */
+  mixFloor: 0.36,
   mixCap: 0.90,
   /* NOT boosted after dark, even though the night reflection is the point.
      uReflAmt scales the target's own radiance, and the night proxy is already
@@ -755,12 +786,49 @@ const WATER_BODY = /* glsl */ `
   float wFoot = max(fwidth(wP.x), fwidth(wP.y));
   float wNear = 1.0 - smoothstep(0.10, 0.52, wFoot);
 
+  /* The two noise fields the whole surface runs on: one lacy and fast for the
+     texture of foam, one broad and slow for where things gather. Evaluated up
+     here rather than down in the foam block because the slow one also decides
+     where the chop is, and wind is the reason for both.
+     Three separate fBm evaluations per pixel is not affordable over half a
+     screen of bay, which is why there are exactly two. */
+  float wLace = wFbm(wP * 0.40 - vec2(wT * 0.18, wT * 0.11));
+  float wSwell = wFbm(wP * 0.048 + vec2(wT * 0.04, -wT * 0.025));
+
   /* Chop is damped in the shallows: the last few metres against a seawall are
      always calmer than open water, and the flattening is what reads as
      "shelter" rather than a texture running under a wall. */
   float wCalm = 0.35 + 0.65 * smoothstep(0.0, 26.0, wShore.x);
-  vec2 wG = waveGrad(wP, wT, wCalm, 0.30 + 0.70 * wNear);
+  /* CAT'S PAWS. Wind over water is gusty, so chop arrives in patches — bands of
+     ruffled water lying next to bands of glass. That patchiness is the largest
+     single cue that a surface is water and not a plane with a texture on it,
+     and it costs one multiply because the slow field is already in hand. */
+  float wGust = 0.45 + 1.05 * wSwell;
+  vec2 wG = waveGrad(wP, wT, wCalm * 1.55, (0.30 + 0.70 * wNear) * wGust);
   vec3 wNormal = normalize(vec3(-wG.x, 1.0, -wG.y));
+
+  /* ---- THREE NORMALS OUT OF ONE WAVE FIELD ---------------------------
+     The shading normal above has to stay calm: it feeds three's own specular
+     and IBL paths, and a steep sea in those goes to noise long before it goes
+     to chop. But calm is precisely the wrong slope distribution for the two
+     terms that actually REVEAL water, and the arithmetic is not close.
+
+     Measured at the art-directed hour: the sun sits 56 deg up, the game camera
+     looks down at 24-44 deg, so the specular half-vector stands 41 deg off
+     vertical. A surface whose steepest facet is 6 deg returns
+     pow(0.75, 46) = 2e-6 of the sun. That is not "subtle sparkle", it is zero,
+     and it is why the bay had no glitter anywhere in any daylight frame.
+
+     Real water answers this with capillary facets that genuinely do reach
+     30-40 deg — they are just far too small to put in a shading normal. So the
+     one gradient is re-steepened twice, for two normalizes and no extra noise
+     lookups, and each term gets the slope distribution it needs:
+       wSlopeN   the reflected sky. Swings the reflected ray across the sky
+                 gradient so the bay ripples instead of mirroring one colour.
+       wFacetN   glitter only. Steep enough that a sun 41 deg away can find
+                 facets aimed at it, which is what glitter physically is. */
+  vec3 wSlopeN = normalize(vec3(-wG.x * 2.2, 1.0, -wG.y * 2.2));
+  vec3 wFacetN = normalize(vec3(-wG.x * 5.5, 1.0, -wG.y * 5.5));
 
   /* ---- depth grade --------------------------------------------------
      Distance offshore is read from the HIGH-PRECISION signed channel while it
@@ -774,11 +842,21 @@ const WATER_BODY = /* glsl */ `
   /* Turquoise shelf -> deep cyan -> a deeper cyan still in the open bay. The
      last step is NOT a slide toward navy: uAbyss is uDeep held at 72%, which
      keeps the far water unmistakably Biscayne while giving the grade somewhere
-     to go. Without it every pixel past 115 m offshore landed on one colour and
-     the whole bay read as a flat sheet of paint. */
-  vec3 wCol = mix(uShallow, uMidC, smoothstep(0.0, 26.0, wDist));
-  wCol = mix(wCol, uDeep, smoothstep(34.0, 190.0, wDist) * 0.94);
-  wCol = mix(wCol, uAbyss, smoothstep(200.0, 620.0, wDist) * 0.80);
+     to go.
+
+     THE RAMP DISTANCES ARE MEASURED, NOT CHOSEN. Unprojecting the waterfront
+     preset's camera onto this surface puts the whole visible bay between 0 and
+     90 m offshore (camera 102 m up, 250 m back, view elevation 17-44 deg). The
+     previous ramp spent its contrast between 34 m and 190 m, so the player saw
+     the first quarter of it: every pixel of water in the frame resolved to
+     shallow-or-mid and the bay came out as one flat sheet of turquoise from the
+     seawall to the bottom of the screen. Everything below now lands inside
+     95 m, which is the range the game actually renders, while the abyss step
+     stays long because menu-hero does see 400 m and still needs somewhere for
+     the far bay to go. */
+  vec3 wCol = mix(uShallow, uMidC, smoothstep(0.0, 22.0, wDist));
+  wCol = mix(wCol, uDeep, smoothstep(18.0, 95.0, wDist) * 0.92);
+  wCol = mix(wCol, uAbyss, smoothstep(110.0, 520.0, wDist) * 0.85);
 
   /* The seawall stands 1.32 m out over the contour, so the WATERLINE the camera
      can actually see is that far offshore. Foam and shallows are measured from
@@ -801,12 +879,13 @@ const WATER_BODY = /* glsl */ `
   wCol = mix(wCol, uSandC, (1.0 - smoothstep(0.0, 6.0, wSdF)) * 0.26
                            * (1.0 - wRiv * 0.85) * (1.0 - uNight * 0.85));
 
+  /* Swell shading. A long wave is metres of extra water depth under a trough
+     and metres less under a crest, and the body colour follows it — that slow
+     tonal drift is the difference between a sea and a fill colour. Applied to
+     the graded body only, so foam and glitter still sit on top at full value. */
+  wCol *= 0.92 + 0.16 * wSwell;
+
   /* ---- foam ---------------------------------------------------------- */
-  /* Two noise fields do all of it: one lacy and fast for the texture of the
-     foam, one broad and slow for where it decides to gather. Three separate
-     fBm evaluations per pixel is not affordable over half a screen of bay. */
-  float wLace = wFbm(wP * 0.40 - vec2(wT * 0.18, wT * 0.11));
-  float wSwell = wFbm(wP * 0.048 + vec2(wT * 0.04, -wT * 0.025));
 
   /* FETCH. Surf needs open water to build in: a 48 m marina basin gets a
      ripple, the open bay gets a breaking line. Probing the field 45 m out in
@@ -836,8 +915,14 @@ const WATER_BODY = /* glsl */ `
   float wWidth = (6.5 + 8.0 * wSwell + 2.4 * sin(wT * 0.8 + wSwell * 21.0)) * wFetch;
   float wBand = 1.0 - smoothstep(0.0, max(2.0, wWidth), wSdF);
   wBand *= (0.18 + 1.05 * wTex) * wFetch;
-  /* Bright wash hugging the wall, the part that never fully drains back. */
-  float wEdge = (1.0 - smoothstep(0.0, 1.2 + 2.2 * wFetch, wSdF)) * (0.42 + 0.58 * wFetch);
+  /* Bright wash hugging the wall, the part that never fully drains back.
+     Widened, and given a term that survives the river fetch penalty: the Miami
+     River gets no breaking line and should not, but at 1.7 m the lick against
+     the bulkhead was four pixels from the river preset's camera, which is
+     indistinguishable from no surf at all. A river bank without a waterline is
+     what made that channel read as a swimming pool. */
+  float wEdge = (1.0 - smoothstep(0.0, 2.2 + 2.6 * wFetch, wSdF))
+              * (0.34 + 0.58 * wFetch + 0.22 * wRiv);
   float wFoam = clamp(max(wBand, wEdge * 0.96), 0.0, 1.0);
 
   /* Whitecaps. Sparse on purpose: the old shader covered the bay in them and
@@ -883,12 +968,16 @@ const WATER_BODY = /* glsl */ `
 
   /* Split the body colour between lit diffuse and an unlit floor. A tower
      shadow landing on a fully-lit turquoise plane drops it to grey-blue and
-     reads as an oil slick, not as shade; carrying 45% of the colour unlit
+     reads as an oil slick, not as shade; carrying some of the colour unlit
      keeps the shadow as a tonal shift instead of a stain. The floor itself is
      uSelfLit, and it collapses to ~0 after dark: an unlit term is by
      definition immune to the sun going down, which is precisely how the bay
-     ended up out-glowing the city it reflects. */
-  diffuseColor.rgb = wCol * 0.62;
+     ended up out-glowing the city it reflects.
+     The lit share went 0.62 -> 0.78 as the unlit floor went 0.40 -> 0.18, so
+     the bay sits at the same level it was reviewed at and the difference lands
+     entirely in contrast: the wave shading, the shadows and the reflection all
+     used to be divided by a large constant that no longer exists. */
+  diffuseColor.rgb = wCol * 0.78;
 
   /* Foam is matte and opaque; open water is a near-mirror. */
   float wRough = mix(0.20, 0.76, wFoam);
@@ -901,7 +990,12 @@ const WATER_BODY = /* glsl */ `
      ray back and forth across that horizon seam — which paints the bay in hard
      scalloped blotches. An analytic sky, plus the planar target where the
      skyline actually covers it, has no seam to cross. */
-  vec3 wR = reflect(-wV, wNormal);
+  /* wSlopeN, not wNormal. The reflected ray is the one place a few degrees of
+     wave slope turns into a large colour change, because it sweeps the ray
+     across the whole sky gradient — from a pale horizon haze to a saturated
+     zenith. On the calm shading normal that sweep is a couple of per cent and
+     the bay mirrors one colour. */
+  vec3 wR = reflect(-wV, wSlopeN);
   vec3 wSky = mix(uSkyLo, uSkyHi, pow(clamp(wR.y, 0.0, 1.0), 0.42));
   // Glare path. uSkyLo/uSkyHi/uSunTint/uSunDirW are all live: at golden hour
   // this lays an orange road down the bay toward the real sun, and after dark
@@ -913,27 +1007,53 @@ const WATER_BODY = /* glsl */ `
      so the target is horizontally flipped and only its own projection reads it
      back correctly. */
   vec2 wRefUv = vReflCoord.xy / max(vReflCoord.w, 1e-4);
-  /* Distortion has to stay small. The wave gradient swings +-0.16, so anything
-     past ~0.05 here scrambles the target into blobs instead of rippling it. */
-  wRefUv = clamp(wRefUv + wG.xy * vec2(0.045, 0.075), vec2(0.002), vec2(0.998));
+  /* STRONGLY ANISOTROPIC, and that is not a stylistic preference. A reflected
+     vertical edge in real water wanders very little sideways and smears a great
+     deal up and down, because a wave tilted toward you moves the reflected
+     point along the line of sight, not across it. Distorting both axes by
+     comparable amounts is exactly what turned the night skyline into wriggling
+     noodles — the lateral term is now less than half what it was and the
+     vertical term carries the break-up instead. */
+  wRefUv = clamp(wRefUv + wG.xy * vec2(0.020, 0.088), vec2(0.002), vec2(0.998));
   /* Five taps smeared along screen-vertical. Two things at once: it dissolves
      the reflected skyline's stepped silhouette (a row of box crowns mirrors
      into a hard staircase, which reads as a stain rather than as buildings),
-     and a vertically smeared reflection is what water actually does. */
+     and a vertically smeared reflection is what water actually does.
+     The spread GROWS with distance offshore: far water is seen at a shallower
+     angle, so one pixel of it integrates far more of the wave field, and the
+     reflection has to dissolve accordingly. A reflection that stays equally
+     crisp 400 m out is a decal. */
+  float wRefStep = 0.0072 * (1.0 + 2.2 * smoothstep(0.0, 220.0, wSdF));
   vec4 wRefl = texture2D(uRefl, wRefUv) * 0.34
-    + texture2D(uRefl, clamp(wRefUv + vec2(0.0, 0.0075), 0.002, 0.998)) * 0.22
-    + texture2D(uRefl, clamp(wRefUv - vec2(0.0, 0.0075), 0.002, 0.998)) * 0.22
-    + texture2D(uRefl, clamp(wRefUv + vec2(0.0, 0.0180), 0.002, 0.998)) * 0.11
-    + texture2D(uRefl, clamp(wRefUv - vec2(0.0, 0.0180), 0.002, 0.998)) * 0.11;
+    + texture2D(uRefl, clamp(wRefUv + vec2(0.0, wRefStep), 0.002, 0.998)) * 0.22
+    + texture2D(uRefl, clamp(wRefUv - vec2(0.0, wRefStep), 0.002, 0.998)) * 0.22
+    + texture2D(uRefl, clamp(wRefUv + vec2(0.0, wRefStep * 2.4), 0.002, 0.998)) * 0.11
+    + texture2D(uRefl, clamp(wRefUv - vec2(0.0, wRefStep * 2.4), 0.002, 0.998)) * 0.11;
   vec3 wMirror = mix(wSky, wRefl.rgb * uReflAmt, wRefl.a * 0.95);
+
+  /* A REFLECTION MAY NOT OUT-SHINE WHAT IT REFLECTS.
+     In the open bay the lit towers mirror into separated columns with dark
+     water between them and nothing ever binds. Over the river the camera sees a
+     40 m strip entirely covered by the reflection of the podium wall standing
+     right behind it, every tap lands on a lit window, and the sum came back as
+     a solid blown yellow rug measurably brighter than the street on its bank —
+     the same defect this module exists to remove, one bounce further along.
+     Compressing only above 0.85 leaves the whole daylight range and every
+     separated night column untouched; it binds solely on saturated sheets. */
+  float wMirL = max(wMirror.r, max(wMirror.g, wMirror.b));
+  wMirror *= 1.0 / (1.0 + max(0.0, wMirL - 0.85) * 0.85);
 
   float wFres = 0.02 + 0.98 * pow(1.0 - clamp(dot(wNormal, wV), 0.0, 1.0), 5.0);
   /* Honest Fresnel is wrong at both ends for this camera. Looking steeply down
      it puts the skyline at 4%, and the reflected towers are the money shot, so
      covered pixels get a floor. Looking near-horizontally down the channel it
      goes past 0.9 and the bay turns into a sheet of white sky, so it is capped
-     — Biscayne Bay has to stay turquoise all the way out. */
-  float wMix = clamp(wFres + wRefl.a * uMixFloor, 0.0, uMixCap);
+     — Biscayne Bay has to stay turquoise all the way out.
+     The river factor is silt: the Miami River carries far too much of it to
+     mirror a skyline the way the open bay does, and damping the mix here is
+     also the cheapest place to stop a 40 m channel filling bank to bank with
+     reflected windows. */
+  float wMix = clamp(wFres + wRefl.a * uMixFloor, 0.0, uMixCap) * (1.0 - wRiv * 0.42);
   vec3 wEmissive = wMirror * wMix * (1.0 - wFoam * 0.85) + wCol * uSelfLit;
   diffuseColor.rgb *= 1.0 - wMix * 0.55;      // what reflects does not transmit
 
@@ -941,12 +1061,15 @@ const WATER_BODY = /* glsl */ `
      screen pixel covers more than a wave crest — otherwise the far bay turns
      into television static. Tightness is live, because moon glitter is a much
      harder, narrower path than sun glitter and reusing the sun's exponent
-     after dark spreads it into a milky sheen. */
+     after dark spreads it into a milky sheen.
+     wFacetN, not wNormal: see the three-normal block above for the measurement.
+     On the shading normal this term evaluated to 2e-6 at the reviewed hour, in
+     other words the bay has never had any sun glitter on it at all. */
   vec3 wH = normalize(uSunDirW + wV);
-  float wPath = pow(max(dot(wNormal, wH), 0.0), uGlintTight);
+  float wPath = pow(max(dot(wFacetN, wH), 0.0), uGlintTight);
   float wGlint = wNoise(wP * 1.35 + vec2(wT * 0.55, -wT * 0.38))
                * wNoise(wP * 3.30 - vec2(wT * 0.90, wT * 0.62));
-  wEmissive += uSunTint * smoothstep(0.60, 0.94, wGlint) * wPath * 5.0 * uGlintGain
+  wEmissive += uSunTint * smoothstep(0.60, 0.94, wGlint) * wPath * 3.2 * uGlintGain
              * wNear * (1.0 - wFoam);
 
   /* City spill. After dark the promenade lamps, shopfronts and signage throw
@@ -1001,7 +1124,7 @@ function makeWaterMaterial(uniforms) {
       .replace('#include <lights_fragment_end>',
         '#include <lights_fragment_end>\ntotalEmissiveRadiance += wEmissive;');
   };
-  mat.customProgramCacheKey = () => 'miami-water-v2';
+  mat.customProgramCacheKey = () => 'miami-water-v3';
   return mat;
 }
 
@@ -1041,7 +1164,7 @@ const PROXY_VERT = /* glsl */ `
 
 const PROXY_FRAG = /* glsl */ `
   uniform float uNight, uDayGain;
-  uniform vec3  uDayTint, uWinWarm, uWinHome, uWinCool, uNightBody;
+  uniform vec3  uDayTint, uWinWarm, uWinHome, uWinCool, uWinPink, uWinViolet, uNightBody;
   varying vec3 vDay;
   varying vec2 vInfo;
   varying vec3 vW;
@@ -1053,8 +1176,6 @@ const PROXY_FRAG = /* glsl */ `
   }
 
   void main() {
-    vec3 day = vDay * uDayTint * uDayGain;
-
     float u = (vW.x + vW.z) * 0.2817;                    // ~3.55 m window bays
     vec2  cell = vec2(floor(u), floor((vW.y - 3.0) * 0.2597));   // 3.85 m floors
     float sd = vInfo.x * 91.7;
@@ -1065,15 +1186,33 @@ const PROXY_FRAG = /* glsl */ `
     // of them reads as a texture, not as a city.
     float occ = 0.22 + 0.36 * fract(vInfo.x * 7.13);
     float on  = step(1.0 - occ, r1);
-    vec3  wc  = r2 < 0.55 ? uWinWarm : (r2 < 0.86 ? uWinHome : uWinCool);
-    // Podiums stay busy, crowns thin out — that vertical falloff is what makes
-    // the reflected column taper instead of sitting there as a solid bar.
-    float band = mix(1.20, 0.70, smoothstep(0.15, 1.0, vInfo.y));
+
+    /* DAYLIGHT: the same lattice, spent as VALUE rather than as light. A
+       reflected tower with no articulation in it arrives in bright water as an
+       even grey smudge, and an even grey smudge reads as dirt on the lens, not
+       as a building — which is exactly how the daylight reflection looked. A
+       +-15% mullion/spandrel rhythm costs nothing here because the lattice is
+       already computed for the night state below. */
+    vec3 day = vDay * uDayTint * uDayGain * (0.86 + 0.28 * on + 0.10 * r2);
+
+    /* The cool family is picked PER BUILDING, not per window. Miami lights its
+       waterfront towers pink and violet, and a reflected skyline where every
+       accent is the same aqua reads as an office park; scattering the accent
+       across whole towers is what makes the bay look like Brickell. */
+    float acc = fract(vInfo.x * 3.77);
+    vec3 cool = acc < 0.17 ? uWinPink : (acc < 0.31 ? uWinViolet : uWinCool);
+    vec3  wc  = r2 < 0.55 ? uWinWarm : (r2 < 0.86 ? uWinHome : cool);
+    /* Podiums stay busy, crowns thin out — that vertical falloff is what makes
+       the reflected column taper instead of sitting there as a solid bar. The
+       podium end came down from 1.20 because the river reflects almost nothing
+       BUT podium: the brightest band of the proxy was the only band that
+       channel ever saw, and it filled bank to bank. */
+    float band = mix(1.00, 0.62, smoothstep(0.15, 1.0, vInfo.y));
     vec3  win  = wc * on * band * (0.50 + 0.80 * r2);
     // The top few per cent of a Brickell tower is a lit cap, and in a
     // reflection that cap is the brightest thing in the frame.
     float crown = smoothstep(0.95, 0.995, vInfo.y);
-    vec3 night = uNightBody * (0.45 + 1.0 * vInfo.y) + win + uWinCool * crown * 1.10;
+    vec3 night = uNightBody * (0.45 + 1.0 * vInfo.y) + win + cool * crown * 1.10;
 
     gl_FragColor = vec4(mix(day, night, uNight), 1.0);
   }
@@ -1491,7 +1630,17 @@ export function buildWater(ctx) {
     uMidC: { value: new THREE.Color(PALETTE.SEA_MID) },
     uShallow: { value: new THREE.Color(PALETTE.SEA_SHALLOW) },
     uFoamC: { value: new THREE.Color(PALETTE.SEA_FOAM) },
-    uRiverC: { value: new THREE.Color(PALETTE.WATER_RIVER) },
+    /* PALETTE.WATER_RIVER is already the greener of the two water entries, but
+       read straight it is still a clean teal, and a clean teal in a 40 m
+       channel with hard bulkheads on both sides renders as a swimming pool —
+       which is what the `river` preset looked like. Pulling it a little toward
+       wet sand and taking the level down puts the silt back without inventing
+       a colour or editing another agent's palette. */
+    uRiverC: {
+      value: new THREE.Color(PALETTE.WATER_RIVER)
+        .lerp(new THREE.Color(PALETTE.SAND_WET), 0.13)
+        .multiplyScalar(0.86),
+    },
     // The far bay: uDeep held down, NOT slid toward navy. See the depth grade.
     uAbyss: { value: new THREE.Color(PALETTE.SEA_DEEP).multiplyScalar(0.72) },
     // Wet sand under the first few metres. A real colour, not a brightened
@@ -1538,6 +1687,11 @@ export function buildWater(ctx) {
     uWinWarm: { value: new THREE.Color(PALETTE.WINDOW_OFFICE) },
     uWinHome: { value: new THREE.Color(PALETTE.WINDOW_HOME) },
     uWinCool: { value: new THREE.Color(PALETTE.NEON_AQUA).multiplyScalar(0.85) },
+    // Held below the aqua on purpose: NEON_PINK and NEON_PURPLE are saturated
+    // in one or two channels, and at parity they punch a hole in the reflection
+    // that the warm families never do.
+    uWinPink: { value: new THREE.Color(PALETTE.NEON_PINK).multiplyScalar(0.78) },
+    uWinViolet: { value: new THREE.Color(PALETTE.NEON_PURPLE).multiplyScalar(0.72) },
     // Unlit concrete under a night sky: not black, but far below its windows.
     uNightBody: { value: new THREE.Color(PALETTE.SKY_MID).multiplyScalar(0.055) },
   };

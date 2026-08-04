@@ -18,8 +18,11 @@
  *   -0.010  service alleys
  *   -0.006  the diagonal transit cut (must lose to the roads it crosses)
  *    0.000  carriageway, junction boxes, bridge decks
- *    0.008  asphalt repair panels + wheel-track polish     (pofs -2)
+ *    0.008  asphalt repair panels, resurfaced trenches     (pofs -2)
+ *    0.0088 wheel-track polish (crosses the panels)        (pofs -2.2)
+ *    0.0095 standing damp in the gutter                    (pofs -2.5)
  *    0.010  bus-lane paint                                 (pofs -3)
+ *    0.011  crack sealant                                  (pofs -3.6)
  *    0.018  all line marking: lanes, zebras, stop bars, arrows   (pofs -5)
  *    0.024  ironwork lids — manholes, gully grates, service covers  (pofs -7)
  *    0.155  Y_WALK, the sidewalk top
@@ -79,6 +82,12 @@ const Y_PATCH = 0.008;
  * a try/catch — so the whole city fails to build.
  */
 const Y_SEAM = Y_PATCH + 0.003;
+/**
+ * Tyre polish. Its own layer between the repair panels and the damp because it
+ * CROSSES the panels — see the note on the `polish` mesh. The y offset here is
+ * cosmetic; the polygon offset is what decides the order.
+ */
+const Y_POLISH = Y_PATCH + 0.0008;
 /**
  * Standing damp. Above the wear layer (it lies ON the polished asphalt) and
  * below the sealant, which is proud of everything on the carriageway.
@@ -153,6 +162,20 @@ const SEG7 = {
 const XOVER_MIN = 4.6;
 const XOVER_MAX = 7.4;
 const XOVER_FLARE = 0.9;
+
+/**
+ * How much carriageway is cleared of ordinary paint where a road dies at the
+ * water. Module scope, and for the same temporal-dead-zone reason as SEG7: the
+ * marking pass reads it through `paintRuns`, which runs before the end-of-road
+ * pass that owns the window.
+ *
+ * A road that runs into Biscayne Bay is not a road that has been cut off — it
+ * is a road that ENDS, and the difference is entirely in the last few metres.
+ * Left alone, the lane dashes, the bay ticks and the yellow kerb line all ran
+ * straight off the edge of the land, which reads exactly like a texture that
+ * has been clipped by a mask.
+ */
+const SHORE_CLEAR = 7.0;
 
 const CROSS_GAP = 1.1;   // clear gap between the junction box and the zebra
 const CROSS_W = 3.6;     // walking width of a zebra crossing
@@ -409,6 +432,24 @@ export function buildStreets(ctx) {
   const alley = new Surf(4.0);
   const patch = new Surf(9.0);
   /**
+   * TYRE POLISH, AND WHY IT IS NOT IN `patch`.
+   *
+   * The wear layer used to carry two things that genuinely overlap: transverse
+   * resurfaced trench bands, which run the full width of the carriageway, and
+   * longitudinal wheel tracks, which run its whole length. Every crossing of
+   * the two was a coplanar pair inside one mesh at one y with one polygon
+   * offset — a guaranteed z-fight, hundreds of them, on the surface the player
+   * looks at for the entire match. There is no y offset that fixes it either:
+   * at menu-hero range the depth buffer resolves centimetres.
+   *
+   * Splitting the polish out gives it its own polygon offset, so the crossings
+   * become a decided layering (tyres polish OVER a repair, which is also what
+   * happens) instead of a fight. It is then free to run through the junction
+   * boxes as well, which is the only reason the biggest bare surface in the
+   * game now has any traffic pattern on it.
+   */
+  const polish = new Surf(9.0);
+  /**
    * Standing damp — the water the afternoon sun has not lifted out of the
    * gutter yet. Its own mesh purely so it can carry its own ROUGHNESS, which is
    * the whole point of it: by day it is a barely-there dark stain against the
@@ -481,7 +522,7 @@ export function buildStreets(ctx) {
   const stat = {
     crossBars: 0, ramps: 0, manholes: 0, arrows: 0, medianM: 0, bridges: 0,
     xovers: 0, bays: 0, loading: 0, accessible: 0, seams: 0, cycleM: 0,
-    ev: 0, inlets: 0, pools: 0, xwalk: [0, 0, 0, 0],
+    ev: 0, inlets: 0, pools: 0, roadEnds: 0, xwalk: [0, 0, 0, 0],
   };
 
   /**
@@ -645,12 +686,55 @@ export function buildStreets(ctx) {
     return cutBridges(r, runs);
   }
 
+  /**
+   * Where a carriageway genuinely DIES AT THE WATER.
+   *
+   * Not every end of a dry run is one: `dryRuns` also ends at the edge of the
+   * map, and `cutBridges` chops a run either side of a crossing. Both of those
+   * are continuations, not ends, and painting a dead-end block into a bridge
+   * approach would be a marking that means the opposite of the truth. So the
+   * test is on the ground itself — is it wet two and a half metres further on —
+   * and a junction sitting hard against the shore is excluded because it
+   * already has a full vocabulary of stop bars and crossings in that space.
+   *
+   * Memoised: this bisects the coastline, `paintRuns` is called once per road
+   * and the end-marking pass again, and every road would otherwise pay for it
+   * twice.
+   */
+  const _shoreEnds = new Map();
+  function shoreEnds(r) {
+    let out = _shoreEnds.get(r);
+    if (out) return out;
+    out = [];
+    const hi = r.axis === 'x' ? S + 30 : BAY;
+    const perp = r.axis === 'x' ? layout.roadsZ : layout.roadsX;
+    for (const [a, b] of cutBridges(r, dryRuns(layout, r, -S - 30, hi))) {
+      if (b - a < 16) continue;
+      for (const dir of [-1, 1]) {
+        const t = dir > 0 ? b : a;
+        const px = r.axis === 'x' ? r.pos : t + dir * 2.5;
+        const pz = r.axis === 'x' ? t + dir * 2.5 : r.pos;
+        if (!layout.isWater(px, pz)) continue;
+        if (perp.some((o) => Math.abs(o.pos - t) < o.half + SHORE_CLEAR + 3)) continue;
+        out.push({ t, dir });
+      }
+    }
+    _shoreEnds.set(r, out);
+    return out;
+  }
+
   /** Runs of paint. The bridge deck paints itself, at deck height. */
   function paintRuns(r) {
     const hi = r.axis === 'x' ? S + 30 : BAY;
     let runs = dryRuns(layout, r, -S - 30, hi);
     for (const [a, b] of (r.axis === 'x' ? junctionSpansX : junctionSpansZ)) {
       runs = cut(runs, a - 6.5, b + 6.5);
+    }
+    // Hand the last few metres at a shoreline over to the end-of-road pass.
+    // Everything it draws lives at Y_MARK in the same two meshes as the lane
+    // lines, so the window has to be genuinely empty, not merely quieter.
+    for (const e of shoreEnds(r)) {
+      runs = cut(runs, e.t - (e.dir > 0 ? SHORE_CLEAR : 0), e.t + (e.dir < 0 ? SHORE_CLEAR : 0));
     }
     return cutBridges(r, runs);
   }
@@ -1014,29 +1098,6 @@ export function buildStreets(ctx) {
         // and the clearance at each junction — all hung off the same tick grid
         // vehicles.js parks on.
         parkingRun(r, P, s, a, b);
-
-        /* Tyre polish. Two wear tracks per lane, broken into uneven lengths so
-           they read as sheen on the asphalt rather than another painted line.
-           Only ~5% brighter — any more and it becomes a marking. */
-        for (let k = 0; k < P.lanes; k++) {
-          const lc = P.inner + (k + 0.5) * LANE_W;
-          for (const tr of [-0.86, 0.86]) {
-            const c0 = lc + tr - 0.48, c1 = lc + tr + 0.48;
-            let t = a;
-            while (t < b - 6) {
-              const len = 14 + fade(t, k) * 40;
-              const end = Math.min(b, t + len);
-              if (fade(t + 3, lc) > 0.87) {
-                const g = 1.0 + (fade(t, lc + 5) - 0.82) * 0.34;
-                const lo = r.pos + Math.min(s * c0, s * c1);
-                const hi = r.pos + Math.max(s * c0, s * c1);
-                if (r.axis === 'x') patch.rect(lo, hi, t, end, Y_PATCH, g);
-                else patch.rect(t, end, lo, hi, Y_PATCH, g);
-              }
-              t = end + 3 + fade(t, 7) * 9;
-            }
-          }
-        }
       }
       /* Painted speed limit in the kerbside lane. Deliberately rare — one per
          long boulevard run — because the value of a marking that is not a lane
@@ -1060,6 +1121,93 @@ export function buildStreets(ctx) {
         } else {
           solidRun(r, r.pos - 0.26, a, b, 0.20, yellow, 1.0);
           solidRun(r, r.pos + 0.26, a, b, 0.20, yellow, 1.0);
+        }
+      }
+    }
+  }
+
+  /* --- tyre polish -------------------------------------------------------- */
+
+  /**
+   * Two wear ribbons per lane, broken into uneven lengths so they read as sheen
+   * on the asphalt rather than as another painted line. Only a few percent
+   * brighter — any more and it becomes a marking.
+   *
+   * Laid on `tintRuns`, not `paintRuns`: paint stops 6.5 m short of every
+   * junction because it would fight the stop bar and the zebra, but polish is
+   * not paint and tyres do not stop there. Under the old runs every wheel track
+   * in the city ended in mid-air 6.5 m from each box and picked up again 6.5 m
+   * past it, which is the one place traffic is guaranteed to have been.
+   *
+   * `polish` mesh, per the note on its declaration: this crosses the transverse
+   * trench bands below, and the two cannot share a depth layer.
+   */
+  function wheelTracks(r, P, s, a, b) {
+    for (let k = 0; k < P.lanes; k++) {
+      const lc = P.inner + (k + 0.5) * LANE_W;
+      for (const tr of [-0.86, 0.86]) {
+        const c0 = lc + tr - 0.48, c1 = lc + tr + 0.48;
+        const lo = r.pos + Math.min(s * c0, s * c1);
+        const hi = r.pos + Math.max(s * c0, s * c1);
+        let t = a;
+        while (t < b - 6) {
+          const len = 14 + fade(t, k) * 40;
+          const end = Math.min(b, t + len);
+          if (fade(t + 3, lc) > 0.87) {
+            const g = 1.0 + (fade(t, lc + 5) - 0.82) * 0.34;
+            if (r.axis === 'x') polish.rect(lo, hi, t, end, Y_POLISH, g);
+            else polish.rect(t, end, lo, hi, Y_POLISH, g);
+          }
+          t = end + 3 + fade(t, 7) * 9;
+        }
+      }
+    }
+  }
+
+  for (const r of [...layout.roadsX, ...layout.roadsZ]) {
+    const P = lanePlan(r);
+    for (const [a, b] of tintRuns(r)) {
+      if (b - a < 8) continue;
+      for (const s of [-1, 1]) wheelTracks(r, P, s, a, b);
+    }
+  }
+
+  /**
+   * ...and straight through the junction box, for the road that owns it.
+   *
+   * A 40 m box is the single largest untouched surface in the game and the one
+   * the default gameplay camera is pointed at. It is also, in reality, the most
+   * polished asphalt for a mile in any direction. Only ONE of the two roads is
+   * drawn: the two sets of ribbons cross at right angles all over the box, and
+   * they are in a single mesh at a single depth layer, so drawing both would
+   * trade a bare surface for a hundred z-fights. Same owner rule the lane
+   * extension guides use, so the box reads as one road passing through another
+   * rather than as two roads disagreeing.
+   *
+   * Spans the box PLUS the 0.4 m `tintRuns` leaves either side of it, which is
+   * exactly where the mid-block ribbons stop, so the two abut without
+   * overlapping.
+   */
+  for (const ix of net.intersections) {
+    const rx = layout.roadsX[ix.ri], rz = layout.roadsZ[ix.rj];
+    const px = lanePlan(rx), pz = lanePlan(rz);
+    const useX = px.lanes !== pz.lanes ? px.lanes > pz.lanes : rx.half >= rz.half;
+    const r = useX ? rx : rz, P = useX ? px : pz;
+    const halfAlong = useX ? ix.halfZ : ix.halfX;
+    const c = useX ? ix.z : ix.x;
+    for (const s of [-1, 1]) {
+      for (let k = 0; k < P.lanes; k++) {
+        const lc = P.inner + (k + 0.5) * LANE_W;
+        for (const tr of [-0.86, 0.86]) {
+          const o0 = lc + tr - 0.48, o1 = lc + tr + 0.48;
+          const lo = r.pos + Math.min(s * o0, s * o1);
+          const hi = r.pos + Math.max(s * o0, s * o1);
+          // Junction polish is stronger than mid-block and always present:
+          // every tyre in the district brakes, waits and pulls away here.
+          const g = 1.03 + h01(ix.id + k, tr) * 0.07;
+          const t0 = c - halfAlong - 0.4, t1 = c + halfAlong + 0.4;
+          if (useX) polish.rect(lo, hi, t0, t1, Y_POLISH, g);
+          else polish.rect(t0, t1, lo, hi, Y_POLISH, g);
         }
       }
     }
@@ -1280,6 +1428,65 @@ export function buildStreets(ctx) {
         }
       }
     }
+  }
+
+  /* --- the end of the road ------------------------------------------------ */
+
+  /**
+   * WHERE THE CARRIAGEWAY MEETS BISCAYNE BAY.
+   *
+   * Half the east/west grid runs out of land before it runs out of city, and
+   * until now every one of those roads simply stopped: the lane dashes, the bay
+   * ticks and the yellow kerb line all ran to the last centimetre of asphalt
+   * and vanished. From the waterfront framing that reads as a texture clipped
+   * by a mask rather than as a place, and it is the one thing in this module
+   * that the bayfront preset is actually looking at.
+   *
+   * What goes in instead is what a real dead end against a bulkhead carries: a
+   * transverse hold line, then a block of diagonal hatch nobody is meant to
+   * drive into. Both are authored per DIRECTION rather than across the whole
+   * carriageway, so a median (whose own painted nose lives at Y_MARK and is not
+   * cut by the shore window) is stepped around rather than overpainted, and so
+   * the two halves meet on the centreline instead of crossing it.
+   *
+   * `paintRuns` has already cleared SHORE_CLEAR metres here, so this block owns
+   * every Y_MARK fragment inside it and nothing can tie with it on depth.
+   */
+  function roadEnd(r, t, dir) {
+    const P = lanePlan(r);
+    const face = t - dir * 0.7;               // stand off the actual waterline
+    const W = 3.0;                            // depth of the hatched block
+    const TH = 0.24;                          // stripe half-thickness, along u
+    for (const s of [-1, 1]) {
+      const o0 = P.inner + 0.2;
+      const o1 = Math.max(o0, r.half - 0.95);
+      const V = o1 - o0;
+      if (V < 1.3) continue;
+      /** Road-local (u = metres back from the face, v = metres out from o0). */
+      const q = (u, v) => {
+        const [x, z] = roadPt(r, s, face - dir * u, o0 + v);
+        return [x, Y_MARK, z];
+      };
+      // 45-degree stripes, clipped analytically to the u/v rectangle so a
+      // stripe never overshoots into the kerb line or the centreline.
+      for (let c = -V + 0.6; c < W; c += 1.45) {
+        const vLo = Math.max(0, -c), vHi = Math.min(V, W - c);
+        if (vHi - vLo < 0.45) continue;
+        yellow.quadUp(
+          q(vLo + c, vLo), q(vHi + c, vHi),
+          q(vHi + c + TH, vHi), q(vLo + c + TH, vLo), 0.90
+        );
+      }
+      // The hold line. Set back past the hatch, and full width of the
+      // direction: this is the marking that says "stop", and it is the only
+      // part of the treatment that still reads from 300 m up.
+      white.quadUp(q(W + 0.55, 0), q(W + 0.55, V), q(W + 1.05, V), q(W + 1.05, 0), 1.0);
+      stat.roadEnds++;
+    }
+  }
+
+  for (const r of [...layout.roadsX, ...layout.roadsZ]) {
+    for (const e of shoreEnds(r)) roadEnd(r, e.t, e.dir);
   }
 
   /* ============================================ 4. junctions + zebras === */
@@ -1639,9 +1846,17 @@ export function buildStreets(ctx) {
     poly([[-2.2, -0.24], [1.0, -0.24], [1.0, 0.24], [-2.2, 0.24]]);   // shaft
     poly([[1.0, -0.72], [2.2, 0], [1.0, 0.72]]);                      // head
     if (kind !== 'ahead') {
+      /* THE BARB HAS TO FIT INSIDE ITS OWN LANE. It used to reach 2.05 m off
+         the lane centre, and a lane is 3.4 m wide — so the left-turn arrow in
+         lane 0 crossed the thing on its left, which is either the double-yellow
+         centreline (a coplanar overlap between the white and yellow marking
+         meshes, both at Y_MARK with the same polygon offset: a z-fight) or the
+         raised median kerb, which simply swallowed the tip. 1.58 keeps the
+         whole glyph inside LANE_W/2 = 1.7 with a 12 cm margin, and at the size
+         this is actually seen the arrow reads no differently. */
       const sg = kind === 'left' ? 1 : -1;
-      poly([[0.52, sg * 0.24], [1.0, sg * 0.24], [1.0, sg * 1.15], [0.52, sg * 1.15]]);
-      poly([[0.24, sg * 1.15], [1.28, sg * 1.15], [0.76, sg * 2.05]]);
+      poly([[0.52, sg * 0.22], [1.0, sg * 0.22], [1.0, sg * 0.92], [0.52, sg * 0.92]]);
+      poly([[0.26, sg * 0.92], [1.26, sg * 0.92], [0.76, sg * 1.58]]);
     }
   }
 
@@ -2686,9 +2901,31 @@ export function buildStreets(ctx) {
     map: Textures.paving(512, PALETTE.GRAVEL, 'rgba(118,110,94,0.42)', 3),
     roughness: 1.0, name: 'streets-land',
   }, 0);
-  const matRoad = layer({ map: asphaltMap, roughness: 1.0, name: 'streets-road' }, 1);
+  /**
+   * ROAD RELIEF IS DELIBERATELY HELD DOWN, and it is the single biggest thing
+   * separating "asphalt" from "gravel lot" in the gameplay frame.
+   *
+   * The asphalt map ships at normalScale 0.92 over an 18 cm chip band. At the
+   * default hole-small framing one chip is five or six screen pixels, so at
+   * full strength every one of them gets its own lit face and its own shadow
+   * and the carriageway renders as loose crushed stone — measured on the
+   * baseline frame, the wearing course had more local contrast than the
+   * pastel facades above it. A wearing course seen from 45 m is not a field of
+   * pebbles; it is a near-flat plane whose stone you infer from a slight
+   * sparkle. Pulled to a third, the relief still catches the low sun along the
+   * kerb (which is where it is legible) and stops competing with the paint.
+   *
+   * The roughness companion is untouched: gloss variation is the part of
+   * "aggregate" that survives distance without turning into noise.
+   */
+  const ROAD_RELIEF = new THREE.Vector2(0.32, 0.32);
+  const matRoad = layer({
+    map: asphaltMap, normalMap: asphaltNormal, normalScale: ROAD_RELIEF,
+    roughness: 1.0, name: 'streets-road',
+  }, 1);
   const matPatch = layer({
-    map: asphaltMap, roughness: 1.0, vertexColors: true, name: 'streets-wear',
+    map: asphaltMap, normalMap: asphaltNormal, normalScale: ROAD_RELIEF,
+    roughness: 1.0, vertexColors: true, name: 'streets-wear',
   }, 2);
 
   const landMesh = addMesh(group, land, matLand, 'ground-base');
@@ -2705,6 +2942,22 @@ export function buildStreets(ctx) {
   }, 0.5), 'alleys');
 
   addMesh(group, patch, matPatch, 'road-wear');
+
+  /**
+   * Tyre polish. Same albedo and same relief as the road — the only thing that
+   * makes a wheel track visible is that it is smoother, so nearly all of the
+   * separation is in ROUGHNESS rather than in the vertex tone. Its polygon
+   * offset sits between the repair panels it crosses and the damp that lies on
+   * top of it; see the note on the `polish` mesh for why it cannot share one.
+   */
+  const matPolish = layer({
+    map: asphaltMap, normalMap: asphaltNormal,
+    // Two thirds of the road's relief: a polished wheel path has had its
+    // exposed aggregate worn flat, which is exactly what makes it catch light.
+    normalScale: new THREE.Vector2(0.20, 0.20),
+    roughness: 0.92, vertexColors: true, name: 'streets-polish',
+  }, 2.2);
+  addMesh(group, polish, matPolish, 'road-polish');
 
   /**
    * Standing damp. Same albedo and same relief as the road it lies on — the
@@ -2753,7 +3006,9 @@ export function buildStreets(ctx) {
   const matBus = layer({
     color: busColor,
     normalMap: asphaltNormal,
-    normalScale: new THREE.Vector2(0.8, 0.8),
+    // Same reasoning as ROAD_RELIEF, and more so: a painted lane bed is
+    // sealed, so it is genuinely SMOOTHER than the road either side of it.
+    normalScale: new THREE.Vector2(0.26, 0.26),
     roughnessMap: Textures.roughness(256, 196, 0.20),
     roughness: 1.0, name: 'streets-buslane',
   }, 3);
@@ -2861,7 +3116,8 @@ export function buildStreets(ctx) {
    *     under a city actually is.
    *  4. The bridge lamps, which were previously lit at noon.
    */
-  const nightWet = [matRoad, matPatch, matBus];
+  const nightWet = [matRoad, matPatch, matBus, matPolish];
+  for (const m of nightWet) m.userData.dryRough = m.roughness;
   const nightPaint = [matWhite, matYellow];
   matWhite.emissive.set(PALETTE.ROAD_LINE);
   matYellow.emissive.set(PALETTE.ROAD_LINE_YELLOW);
@@ -2872,7 +3128,10 @@ export function buildStreets(ctx) {
     if (Math.abs(n - lastNight) < 0.004) return;
     lastNight = n;
     for (const m of nightWet) {
-      m.roughness = 1.0 - 0.46 * n;
+      // Off each material's OWN dry roughness, not off a shared 1.0: the
+      // polished wheel tracks are already glossier than the wearing course by
+      // day, and that difference is the entire reason they are visible.
+      m.roughness = m.userData.dryRough * (1.0 - 0.46 * n);
       m.metalness = 0.07 * n;
       m.envMapIntensity = 0.30 + 0.30 * n;
     }
@@ -2915,7 +3174,7 @@ export function buildStreets(ctx) {
     `${stat.arrows} arrows | ${stat.bays} bays (${stat.accessible} accessible, ` +
     `${stat.loading} loading, ${stat.ev} EV) | ${Math.round(stat.cycleM)} m cycle lane | ` +
     `${stat.seams} crack seams | ${stat.manholes} manholes | ` +
-    `${stat.inlets} kerb inlets | ` +
+    `${stat.inlets} kerb inlets | ${stat.roadEnds} shore ends | ` +
     `${Math.round(stat.medianM)} m median | ${stat.bridges} bridges`
   );
 
