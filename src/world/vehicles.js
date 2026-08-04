@@ -249,6 +249,23 @@ const ROLE_DEFS = [
   ['CARBON', 'carbon', BAND.CARBON],
   ['INTERIOR', 'interior', BAND.MATTE], // dash / trim seen behind the screen
   ['BEACON', 'blue', BAND.BEACON],      // emergency light bar
+  /* --- added for the boat and machinery rebuild ------------------------- */
+  // Marine glazing. A boat's windows are 3-6 m of dark tinted band and the one
+  // thing that makes a stack of white boxes read as a yacht; the road-car
+  // `glass` tone is far too light to do that job against a cream hull.
+  ['GLASS_DK', 'glassDk', BAND.GLASS],
+  // The band below a boat's boot stripe: dark, matte, permanently wet.
+  ['ANTIFOUL', 'antifoul', BAND.HULL],
+  // Teak knocked back — plank reveals, coaming tops, side decks.
+  ['DECK_LO', 'deckLo', BAND.MATTE],
+  // Dried concrete / site dust on the bottom of a working machine.
+  ['DUSTY', 'dusty', BAND.ROUGH],
+  // Mud, rust and oil on a skip, a track frame or a counterweight.
+  ['GRIME', 'grime', BAND.ROUGH],
+  // Hazard chevrons and warning panels: unlit sun yellow, not a lamp.
+  ['HAZARD', 'hazard', BAND.ROUGH],
+  // Sail cloth in shade — the leeward panel of a mainsail.
+  ['SAIL_LO', 'sailLo', BAND.MATTE],
 ];
 /** @type {Record<string, number>} */
 const ROLE = {};
@@ -302,6 +319,13 @@ function paletteFor(v) {
     hull: v.hull ?? PALETTE.HULL_WHITE,
     deck: v.deck ?? PALETTE.TEAK,
     sail: PALETTE.SAIL,
+    glassDk: v.glassDk ?? 0x1b2b33,
+    antifoul: v.antifoul ?? 0x2b3f4a,
+    deckLo: v.deckLo ?? darken(v.deck ?? PALETTE.TEAK, 0.68),
+    dusty: v.dusty ?? 0xbcb3a1,
+    grime: v.grime ?? 0x6b6053,
+    hazard: v.hazard ?? PALETTE.ACCENT_SUN,
+    sailLo: v.sailLo ?? darken(PALETTE.SAIL, 0.80),
     steel: PALETTE.STEEL,
     blue: v.blue ?? PALETTE.POLICE_BLUE,
     red: v.red ?? PALETTE.CAR_RED,
@@ -497,6 +521,118 @@ function cyl(sh, cx, cy, cz, r0, r1, len, seg, axis, role, caps = [true, true]) 
 }
 
 /**
+ * Append a scratch shape into `sh`.
+ *
+ * Deliberately a loop and not `push(...arr)`: a spread of a 20k-element array
+ * is passed as 20k arguments and blows the call stack, which is a real limit on
+ * the bigger machinery shapes.
+ */
+function absorb(sh, s2) {
+  for (let i = 0; i < s2.p.length; i++) { sh.p.push(s2.p[i]); sh.n.push(s2.n[i]); }
+  for (let i = 0; i < s2.u.length; i++) sh.u.push(s2.u[i]);
+  for (let i = 0; i < s2.r.length; i++) sh.r.push(s2.r[i]);
+}
+
+/**
+ * Build a sub-assembly at the origin and stamp it in rotated and translated.
+ *
+ * Three shapes were already doing this by hand with a copy-pasted rotation
+ * loop, and every hydraulic ram, lattice diagonal, davit and outrigger in the
+ * rebuild needs it. Rotation order is roll (z) -> pitch (x) -> yaw (y), which
+ * is the order that makes "lay a beam down and then swing it" behave.
+ */
+function stamp(sh, build, o = {}) {
+  const s2 = new Shape();
+  build(s2);
+  const { x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0 } = o;
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cz = Math.cos(rz), sz = Math.sin(rz);
+  const rot = (arr, i, ox, oy, oz) => {
+    const px = arr[i], py = arr[i + 1], pz = arr[i + 2];
+    const a = px * cz - py * sz, b = px * sz + py * cz;
+    const b2 = b * cx - pz * sx, c2 = b * sx + pz * cx;
+    arr[i] = a * cy + c2 * sy + ox;
+    arr[i + 1] = b2 + oy;
+    arr[i + 2] = -a * sy + c2 * cy + oz;
+  };
+  for (let i = 0; i < s2.p.length; i += 3) {
+    rot(s2.p, i, x, y, z);
+    rot(s2.n, i, 0, 0, 0);
+  }
+  absorb(sh, s2);
+}
+
+/** Cylinder between two arbitrary points — stays, rails, rams, outriggers. */
+function tube(sh, a, b, r0, r1, seg, role, caps = [true, true]) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+  const len = Math.hypot(dx, dy, dz);
+  if (len < 1e-5) return;
+  const rx = -Math.asin(Math.max(-1, Math.min(1, dy / len)));
+  const ry = Math.atan2(dx, dz);
+  stamp(sh, (s) => cyl(s, 0, 0, 0, r0, r1, len, seg, 'z', role, caps),
+    { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, z: (a[2] + b[2]) / 2, rx, ry });
+}
+
+/**
+ * A hydraulic ram: a bright rod sliding out of a dark barrel, with a pivot pin
+ * at each end. It is the single strongest silhouette cue plant machinery has —
+ * without it an excavator arm is a bent stick.
+ */
+function ram(sh, a, b, rb, o = {}) {
+  const f = o.out ?? 0.55;            // how far along the rod is extended
+  const m = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  tube(sh, a, m, rb, rb, 6, o.barrel ?? ROLE.MACH_LO);
+  tube(sh, m, b, rb * 0.52, rb * 0.52, 5, ROLE.CHROME);
+  for (const p of [a, b]) box(sh, p[0], p[1], p[2], rb * 2.4, rb * 1.5, rb * 1.5, ROLE.DARK);
+}
+
+/**
+ * A raised rail / toe rail / rubbing strake following a sheer line, both sides.
+ * `stations` are half-widths, so the rail follows the hull's taper instead of
+ * running straight through the bow.
+ */
+function strake(sh, stations, h, t, role) {
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < stations.length - 1; i++) {
+      const A = stations[i], B = stations[i + 1];
+      const mz = (A.z + B.z) / 2, my = (A.y + B.y) / 2;
+      sh.quad([s * A.x, A.y, A.z], [s * B.x, B.y, B.z],
+        [s * B.x, B.y + h, B.z], [s * A.x, A.y + h, A.z], role, [0, my, mz]);
+      sh.quad([s * A.x, A.y + h, A.z], [s * B.x, B.y + h, B.z],
+        [s * (B.x - t), B.y + h, B.z], [s * (A.x - t), A.y + h, A.z], role, [0, my - 2, mz]);
+    }
+  }
+}
+
+/**
+ * Stanchions with a rail wire threaded through them, both sides.
+ *
+ * Posts alone read as loose sticks — the review said exactly that about the
+ * yacht's foredeck — and the wire is two triangles a span.
+ */
+function guardRail(sh, stations, h, role = ROLE.CHROME) {
+  for (const s of [-1, 1]) {
+    for (const st of stations) box(sh, s * st.x, st.y + h / 2, st.z, 0.05, h, 0.05, role);
+    for (let i = 0; i < stations.length - 1; i++) {
+      const A = stations[i], B = stations[i + 1];
+      const mz = (A.z + B.z) / 2;
+      sh.quad([s * A.x, A.y + h, A.z], [s * B.x, B.y + h, B.z],
+        [s * B.x, B.y + h - 0.05, B.z], [s * A.x, A.y + h - 0.05, A.z], role, [0, A.y, mz]);
+    }
+  }
+}
+
+/** Black/yellow hazard chevrons on a z-facing panel. */
+function chevrons(sh, x, y, z, w, h, n, dz) {
+  const cw = w / n;
+  for (let i = 0; i < n; i++) {
+    faceZ(sh, x - w / 2 + cw * (i + 0.5), y, z, cw * 0.86, h,
+      i % 2 ? ROLE.HAZARD : ROLE.DARK, dz);
+  }
+}
+
+/**
  * A road wheel: tread band, tyre sidewall, dished rim, and a fender lip.
  *
  * WHY THE RIM IS A REAL DISC AND NOT A GRADIENT
@@ -523,20 +659,37 @@ function wheel(sh, cx, cy, cz, r, width, seg = 8, o = {}) {
   const side = cx >= 0 ? 1 : -1;
   const xo = cx + side * width / 2, xi = cx - side * width / 2;
   const pt = (t, rad, x) => [x, cy + Math.sin(t) * rad, cz + Math.cos(t) * rad];
-  const rr = r * 0.60;                        // where the tyre ends and metal starts
+  /**
+   * WHERE THE VALUES SIT, AND WHY THEY MOVED
+   * ----------------------------------------
+   * The old face ran aluminium from 60% of the radius all the way to a CHROME
+   * hub vertex. Aluminium is metalness 0.92 against a turquoise Miami sky, so
+   * that disc reflected the sky and came out as a GLOWING TEAL CENTRE — three
+   * separate reviews called it out on the convertible, the taxi, the flatbed
+   * and the garbage truck, one of them as "reads as an error".
+   *
+   * A wheel is legible as dark-bright-dark: black rubber, an alloy ring, a dark
+   * hub boss. So the metal is now a RING between 0.62 and 0.26 of the radius,
+   * the hub interpolates to ROLE.DARK, and alternate sectors of the ring are
+   * knocked to dark so the face reads as spokes rather than a plate. Same three
+   * triangles a segment as before — this is a re-roling, not a spend.
+   */
+  const rr = r * 0.62;                        // where the tyre ends and metal starts
+  const rimRole = o.rimRole ?? ROLE.RIM;
   const inward = [cx - side * 2, cy, cz];
   const outward = [cx + side * 2, cy, cz];
   const face = (xs, sgn, ref2) => {
-    const xw = xs - sgn * width * 0.16;       // rim set into the sidewall
-    const hub = [xs - sgn * width * 0.34, cy, cz];
+    const xw = xs - sgn * width * 0.14;       // rim set into the sidewall
+    const hub = [xs - sgn * width * 0.30, cy, cz];
     for (let i = 0; i < seg; i++) {
       const t0 = (i / seg) * Math.PI * 2, t1 = ((i + 1) / seg) * Math.PI * 2;
+      const spoke = (i & 1) ? ROLE.DARK : rimRole;
       sh.tri3(pt(t0, r, xs), pt(t1, r, xs), pt(t1, rr, xw),
-        ROLE.TYRE, ROLE.TYRE, ROLE.RIM, ref2);
+        ROLE.TYRE, ROLE.TYRE, spoke, ref2);
       sh.tri3(pt(t0, r, xs), pt(t1, rr, xw), pt(t0, rr, xw),
-        ROLE.TYRE, ROLE.RIM, ROLE.RIM, ref2);
+        ROLE.TYRE, spoke, spoke, ref2);
       sh.tri3(hub, pt(t0, rr, xw), pt(t1, rr, xw),
-        ROLE.CHROME, ROLE.RIM, ROLE.RIM, ref2);
+        ROLE.DARK, spoke, spoke, ref2);
     }
   };
   for (let i = 0; i < seg; i++) {
@@ -629,6 +782,30 @@ const SEC = {
     [-1.00, 0.55], [-0.72, 0.16], [0.00, 0.00], [0.72, 0.16],
     [1.00, 0.55], [1.00, 1.00], [-1.00, 1.00],
   ],
+  /**
+   * The same hull with the topside split at the waterline.
+   *
+   * Every hull in the fleet was ONE tone from sheer to keel, and every boat
+   * review said the same thing: a white slab. A boat is three tones — dark
+   * antifouling below the water, a hard boot stripe at it, light topsides above
+   * — and a painted-on decal cannot do it, because the decal is flat while the
+   * chine is not. Two extra profile points buy the break in the geometry, which
+   * means it also survives the hull tapering into the bow.
+   */
+  HULL3: [
+    [-1.00, 0.52], [-0.72, 0.16], [0.00, 0.00], [0.72, 0.16],
+    [1.00, 0.52], [1.00, 0.62], [1.00, 1.00],
+    [-1.00, 1.00], [-1.00, 0.62],
+  ],
+};
+
+/**
+ * Edge roles for HULL3: keel and garboard in antifouling, a boot stripe at the
+ * waterline, topsides in the hull colour, deck on top.
+ */
+const HULL3_ROLES = {
+  0: ROLE.ANTIFOUL, 1: ROLE.ANTIFOUL, 2: ROLE.ANTIFOUL, 3: ROLE.ANTIFOUL,
+  4: ROLE.ACCENT, 5: ROLE.HULL, 6: ROLE.WHITE, 7: ROLE.HULL, 8: ROLE.ACCENT,
 };
 
 /** Edge-role maps for the sections above. */

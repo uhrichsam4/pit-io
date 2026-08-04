@@ -2,9 +2,187 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0f1a" />
     <title>MIAMI DEVOUR</title>
+
+    <!--
+      ORDER MATTERS.
+
+      styles.css is the in-match HUD sheet and owns :root. tokens.css is the
+      meta layer's design system and continues that palette, so it has to come
+      second. Every screen sheet is scoped to its own [data-screen] and comes
+      after tokens, so a screen can specialise a token but never the reverse.
+
+      Five of the screen modules also `import` their own sheet. Linking them
+      here as well is belt-and-braces: a screen can then never render unstyled,
+      whatever order the modules happen to load in, and the duplicate costs one
+      cached request in dev and nothing at all in a build.
+    -->
     <link rel="stylesheet" href="/src/ui/styles.css" />
+    <link rel="stylesheet" href="/src/ui/css/tokens.css" />
+    <link rel="stylesheet" href="/src/ui/css/lobby.css" />
+    <link rel="stylesheet" href="/src/ui/css/play.css" />
+    <link rel="stylesheet" href="/src/ui/css/modes.css" />
+    <link rel="stylesheet" href="/src/ui/css/leaderboard.css" />
+    <link rel="stylesheet" href="/src/ui/css/profile.css" />
+    <link rel="stylesheet" href="/src/ui/css/store.css" />
+    <link rel="stylesheet" href="/src/ui/css/rewards.css" />
+    <link rel="stylesheet" href="/src/ui/css/settings.css" />
+
+    <style>
+      /* ==================================================================
+         HUD CONTAINMENT
+
+         styles.css declares .panel, .btn and .row at GLOBAL scope for the
+         in-match HUD. tokens.css only wins on the properties it re-declares,
+         so a handful of HUD-specific rules leak into every meta screen — most
+         destructively `.panel { position: absolute }`, which pulls every panel
+         out of flow and stacks a whole page at one origin. Four of the six
+         screen sheets patched this for themselves; this is the single fix, so
+         the other two get it too and any screen added later starts correct.
+
+         The `.shell` half of each selector is wrapped in :where() ON PURPOSE.
+         That makes these rules specificity (0,1,x): enough to beat the
+         styles.css rule each one is cancelling (same specificity, later in the
+         cascade), and low enough that a screen's own [data-screen=…] rule
+         still wins. Without it this block would silently clobber, for example,
+         the lobby PLAY button's gloss sweep.
+
+         The real fix is scoping the HUD rules under #hud-layer in styles.css.
+         That file belongs to the HUD, not to integration.
+         ================================================================== */
+
+      /* .panel { position: absolute } — the load-bearing one. */
+      :where(.shell) .panel { position: relative; }
+
+      /* .row is the HUD's 1.72 em leaderboard line, plus a compositing layer
+         per row and a marker bar duplicating the one tokens.css draws. */
+      :where(.shell) .row { height: auto; will-change: auto; }
+      :where(.shell) .row.me::before { content: none; }
+
+      /* .btn::after is an infinite specular sweep on EVERY button — several
+         permanently animating layers per screen, on a phone. */
+      :where(.shell) .btn::after { content: none; }
+      /* .btn:hover lifts the button upward, fighting the depress that is the
+         meta layer's whole tap affordance. */
+      :where(.shell) .btn:hover { transform: none; filter: none; }
+
+      /* body { touch-action: none } stops the city scrolling under a drag; it
+         also stops a thumb scrolling a meta screen. .page-body is its own
+         scroll container, so re-allowing vertical panning there is enough. */
+      :where(.shell) .page-body { touch-action: pan-y; }
+
+      /* ==================================================================
+         END-OF-MATCH REWARDS
+
+         The results card lives in src/ui/screens.js and is styled by
+         styles.css. The XP / coins / challenge block and the pooled team
+         scores arrived with the meta layer and have nowhere else to go, so
+         they are declared here, beside the sheet they extend. All scoped
+         under .results-screen.
+         ================================================================== */
+
+      .results-screen .rs-mode {
+        margin-top: 0.35em;
+        font-size: 0.78em; font-weight: 800; letter-spacing: 0.1em;
+        text-transform: uppercase; color: var(--dim);
+      }
+
+      .results-screen .rs-rewards {
+        margin: 0.9em 0 0.2em;
+        padding: 0.85em 0.95em;
+        border-radius: 0.9em;
+        background: rgba(6, 12, 24, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      .results-screen .rw-top {
+        display: flex; flex-wrap: wrap; gap: 0.45em; justify-content: center;
+      }
+      .results-screen .rw-pill {
+        padding: 0.3em 0.75em; border-radius: 999px;
+        font-size: 0.86em; font-weight: 900; letter-spacing: 0.04em;
+        font-variant-numeric: tabular-nums;
+        border: 1px solid currentColor;
+      }
+      .results-screen .rw-pill.xp { color: var(--aqua); }
+      .results-screen .rw-pill.coin { color: var(--sun); }
+      .results-screen .rw-pill.up {
+        color: #180d17; border-color: transparent;
+        background: linear-gradient(180deg, #ffe07a, var(--sun));
+      }
+      .results-screen .rw-lvl {
+        display: flex; align-items: center; gap: 0.5em; margin-top: 0.65em;
+        font-size: 0.78em; font-weight: 800; font-variant-numeric: tabular-nums;
+      }
+      .results-screen .rw-lv,
+      .results-screen .rw-xp { color: var(--dim); flex: none; }
+      .results-screen .rw-bar {
+        flex: 1 1 auto; height: 0.62em; min-width: 3em;
+        border-radius: 999px; overflow: hidden;
+        background: rgba(255, 255, 255, 0.12);
+      }
+      .results-screen .rw-bar > i {
+        display: block; height: 100%;
+        background: linear-gradient(90deg, var(--sun), var(--hot));
+      }
+      .results-screen .rw-parts {
+        list-style: none; margin: 0.6em 0 0; padding: 0;
+        display: flex; flex-direction: column; gap: 0.18em;
+      }
+      .results-screen .rw-parts li {
+        display: flex; align-items: baseline; gap: 0.6em; font-size: 0.78em;
+      }
+      .results-screen .rw-parts .pl {
+        flex: 1 1 auto; min-width: 0; color: var(--dim);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .results-screen .rw-parts .pv {
+        flex: none; font-weight: 800; color: var(--txt);
+        font-variant-numeric: tabular-nums;
+      }
+      .results-screen .rw-note {
+        margin-top: 0.55em; font-size: 0.76em; font-weight: 700;
+        line-height: 1.35; overflow-wrap: anywhere;
+      }
+      .results-screen .rw-note.challenge { color: #4dff9e; }
+      .results-screen .rw-note.achieve { color: var(--sun); }
+
+      /* ---- pooled team scores ---- */
+      .results-screen .rs-teams { margin: 0.9em 0 0.2em; }
+      .results-screen .rs-teams h3 {
+        margin: 0 0 0.45em;
+        font-size: 0.78em; font-weight: 900; letter-spacing: 0.12em;
+        text-transform: uppercase; color: var(--dim);
+      }
+      .results-screen .rs-team {
+        display: flex; align-items: center; gap: 0.55em;
+        padding: 0.3em 0.1em;
+        font-size: 0.86em; font-variant-numeric: tabular-nums;
+      }
+      .results-screen .rs-team .tn {
+        flex: 0 0 8.2em; min-width: 0; font-weight: 800; color: var(--tc);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .results-screen .rs-team .tn i {
+        font-style: normal; font-size: 0.72em; font-weight: 900;
+        letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim);
+      }
+      .results-screen .rs-team .tbar {
+        flex: 1 1 auto; height: 0.7em; min-width: 2em;
+        border-radius: 999px; overflow: hidden;
+        background: rgba(255, 255, 255, 0.1);
+      }
+      .results-screen .rs-team .tbar > i {
+        display: block; height: 100%; background: var(--tc);
+      }
+      .results-screen .rs-team .ts { flex: none; font-weight: 900; }
+      .results-screen .rs-team.mine .ts { color: var(--tc); }
+
+      @media (max-width: 420px) {
+        .results-screen .rs-team .tn { flex-basis: 6.4em; font-size: 0.94em; }
+      }
+    </style>
   </head>
   <body>
     <div id="app">

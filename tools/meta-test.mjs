@@ -124,7 +124,7 @@ async function resilient(fn, what, tries = 6) {
 
 const shellInfo = await page.evaluate(() => {
   const g = window.__GAME__;
-  const shell = window.__SHELL__ || (g && g.shell) || (window.DEV && window.DEV.shell) || null;
+  const shell = window.__SHELL__ || (g && (g.meta || g.shell)) || (window.DEV && window.DEV.shell) || null;
   return {
     hasShellEl: !!document.querySelector('.shell'),
     hasShellObj: !!shell,
@@ -234,7 +234,7 @@ async function clickInto(rx) {
 async function goTo(name) {
   return page.evaluate((n) => {
     const g = window.__GAME__;
-    const shell = window.__SHELL__ || (g && g.shell) || (window.DEV && window.DEV.shell);
+    const shell = window.__SHELL__ || (g && (g.meta || g.shell)) || (window.DEV && window.DEV.shell);
     if (!shell || !shell.has || !shell.has(n)) return false;
     shell.go(n);
     return true;
@@ -244,7 +244,7 @@ async function goTo(name) {
 async function home() {
   await page.evaluate(() => {
     const g = window.__GAME__;
-    const shell = window.__SHELL__ || (g && g.shell) || (window.DEV && window.DEV.shell);
+    const shell = window.__SHELL__ || (g && (g.meta || g.shell)) || (window.DEV && window.DEV.shell);
     if (shell && shell.reset) shell.reset('lobby');
   });
   await page.waitForTimeout(220);
@@ -358,10 +358,12 @@ if (DO_MATCH) {
     await page.setViewportSize({ width: 390, height: 844 });
     await home();
 
-    const before = await page.evaluate(() => {
-      const p = window.__PROFILE__ || null;
+    const snap = async () => page.evaluate(async () => {
+      const m = await import('/src/meta/profile.js').catch(() => null);
+      const p = (m && m.profile) || window.__PROFILE__;
       return p ? { xp: p.data.xp, coins: p.data.coins, matches: p.data.stats.matches, level: p.data.level } : null;
     });
+    const before = await snap();
 
     const started = await page.evaluate(() => {
       const root = document.querySelector('.shell');
@@ -415,8 +417,9 @@ if (DO_MATCH) {
     await page.waitForTimeout(700);
     await page.screenshot({ path: join(OUT, 'results-phone.png'), timeout: 180000 });
 
-    const after = await page.evaluate(() => {
-      const p = window.__PROFILE__ || null;
+    const after = await page.evaluate(async () => {
+      const m = await import('/src/meta/profile.js').catch(() => null);
+      const p = (m && m.profile) || window.__PROFILE__ || null;
       const txt = document.body.textContent || '';
       return {
         prof: p ? { xp: p.data.xp, coins: p.data.coins, matches: p.data.stats.matches, level: p.data.level } : null,
@@ -440,7 +443,7 @@ if (DO_MATCH) {
       if (!gainedCoins) add('major', 'progression', 'No coins were awarded for finishing a match');
       if (!after.mentionsXp) add('major', 'results', 'The end screen never mentions XP — rewards are invisible');
     } else if (!after.prof) {
-      add('minor', 'progression', 'window.__PROFILE__ is not exposed, so reward persistence could not be verified');
+      add('minor', 'progression', 'The profile module could not be read, so reward persistence was not verified');
     }
 
     // Back to the lobby, on a restored world.

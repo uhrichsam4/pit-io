@@ -3,7 +3,7 @@
  */
 
 import * as THREE from 'three';
-import { CAMERA, HOLE, MATCH, WORLD, PALETTE, DEBUG } from './config.js';
+import { CAMERA, HOLE, MATCH, WORLD, PALETTE, DEBUG, QUALITY } from './config.js';
 import { Engine } from './core/engine.js';
 import { buildEnvironment } from './core/materials.js';
 import { makeRNG } from './core/rng.js';
@@ -1061,6 +1061,9 @@ export class Game {
         else b.hole.desiredDir.set(0, 0);
       }
       for (const h of this.holes) h.update(dt, t);
+      // AFTER the holes have moved and BEFORE anything is swallowed, so a hole
+      // can never eat from a position the ring has already taken back.
+      if (phase === PHASE.PLAYING) this._updateShrink(dt);
       this.consume.update(dt, this.holes, t);
     }
     this._reviveFadeCandidates();

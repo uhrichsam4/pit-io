@@ -367,22 +367,27 @@ export const ACHIEVEMENTS = [
 ];
 
 /**
- * Cosmetics is a SOFT dependency: it is built by another module and this file
- * must still work if it is absent. import.meta.glob resolves to an empty map
- * when the file does not exist, which is the whole reason it is used here
- * instead of a plain dynamic import — a missing module would otherwise log a
- * failed request to the console on every boot.
+ * Cosmetics is a soft dependency: only the "complete a set" achievement needs
+ * it, and that failing to unlock is a far better outcome than progression
+ * failing to load.
+ *
+ * This was written with Vite's import.meta.glob, to resolve to an empty map
+ * rather than log a failed request if the file were missing. It is not missing,
+ * and glob is a build-time transform — so the guard bought nothing and cost the
+ * module its portability: `import.meta.glob is not a function` under bare Node
+ * meant no tool, test or audit script could import this file at all, while
+ * every browser-based check passed and hid it. A plain dynamic import in a
+ * catch does the same job everywhere.
  */
-const COSMETIC_MODULE = import.meta.glob('./cosmetics.js');
 let _cosmetics = null;
 let _cosmeticsTried = false;
 
 function loadCosmetics() {
   if (_cosmeticsTried) return;
   _cosmeticsTried = true;
-  const loader = COSMETIC_MODULE['./cosmetics.js'];
-  if (!loader) return;
-  loader().then((m) => { _cosmetics = m; }).catch(() => { /* stays null; set achievement simply cannot unlock */ });
+  import('./cosmetics.js')
+    .then((m) => { _cosmetics = m; })
+    .catch(() => { /* stays null; the set achievement simply cannot unlock */ });
 }
 
 /** Let the integrator inject the catalogue synchronously if it prefers. */

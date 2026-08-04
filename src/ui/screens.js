@@ -1,27 +1,25 @@
 /**
- * SCREENS — the full-screen states: loading, title/menu, countdown, results.
+ * SCREENS — the in-match full-screen states: loading, countdown, results.
  *
  * CONTRACT (called from src/game.js, do not break):
- *   new Screens(root) · screens.onPlay · clear()
- *   showLoading(text) · showMenu(stats) · showCountdown(n) · showResults(ranks, me)
+ *   new Screens(root) · screens.onPlay · screens.onLobby · screens.onMenu
+ *   clear() · showLoading(text) · showMenu() · showCountdown(n)
+ *   showResults(summary, me, breakdown)
  *
- * A slow camera orbit over the Brickell skyline runs behind the menu, so every
- * screen here is built to sit ON TOP of a bright, moving, high-detail image:
- * a dimming veil, an animated colour wash, hard-outlined display type, and
- * plated cards for anything with small text in it.
+ * THE TITLE SCREEN IS GONE. It has been replaced by the meta layer's lobby
+ * (src/ui/screens/lobby.js, mounted by src/ui/meta.js). showMenu() is kept as
+ * the seam game.js already calls in two places: it clears this overlay and
+ * hands control to whoever owns the shell. showFallbackMenu() is the one
+ * exception — a bare title card used only when the meta layer failed to load,
+ * so a broken front end can never leave the game unplayable.
+ *
+ * Everything here sits ON TOP of a bright, moving, high-detail image, so each
+ * screen carries its own dimming veil, animated colour wash, hard-outlined
+ * display type, and plated cards for anything with small text in it.
  */
 
 import { MATCH, TIER_LIST } from '../config.js';
 import { uiState, formatScore, ordinal } from './hud.js';
-
-const NAME_KEY = 'miami-devour:name';
-const MAX_NAME = 12;
-
-/** Fallback handles, in the same register as the bot names. */
-const RANDOM_NAMES = [
-  'Sinkhole', 'Abyss', 'Undertow', 'Nightfall', 'Maw', 'Gulf',
-  'Vortex', 'Kraken', 'Riptide', 'Cyclone', 'Eclipse', 'Zenith',
-];
 
 const LOADING_TIPS = [
   'Cones first. Towers later.',
@@ -43,9 +41,10 @@ export class Screens {
     this.el = el;
     this.onPlay = null;
     this.onLobby = null;
+    /** Hand-off to the meta layer. Wired by game.js to show the lobby. */
+    this.onMenu = null;
 
     this._cd = -99;
-    this.playerName = readName();
 
     this.showLoading('Building Miami…');
   }
@@ -77,10 +76,29 @@ export class Screens {
   }
 
   /* ====================================================================== */
-  /* TITLE / MENU                                                           */
+  /* TITLE / MENU  (handed to the meta layer)                                */
   /* ====================================================================== */
 
-  showMenu(stats = {}) {
+  /**
+   * The title screen is now the lobby. game.js calls this from init() and from
+   * returnToLobby(); both must end up in the same place, so all this does is
+   * take this overlay down and hand over.
+   */
+  showMenu() {
+    this.clear();
+    if (this.onMenu) this.onMenu();
+  }
+
+  /**
+   * The one screen that exists purely as insurance.
+   *
+   * If the meta layer failed to load there is no lobby to hand to, and a black
+   * page over a slowly orbiting city is indistinguishable from a crash. This
+   * says what happened and still lets the player start a match.
+   *
+   * @param {number} objects edible objects in the world, for the footer
+   */
+  showFallbackMenu(objects = 0) {
     const mins = Math.floor(MATCH.DURATION / 60);
     const secs = String(MATCH.DURATION % 60).padStart(2, '0');
     this.el.innerHTML = `
@@ -90,81 +108,29 @@ export class Screens {
           <div class="eyebrow">Brickell &middot; Biscayne Bay</div>
           <h1 class="title"><span class="tl">Miami</span><span class="tl">Devour</span></h1>
           <p class="tagline">
-            You are a hole in the middle of Brickell. Swallow the city &mdash; litter,
-            then cars, then the <b>towers themselves</b>. Eat your rivals.
+            The lobby did not load, so this is the short way in. Swallow the
+            city &mdash; litter, then cars, then the <b>towers themselves</b>.
             Be the biggest when the clock hits zero.
           </p>
-
-          <div class="name-row">
-            <span class="k">Name</span>
-            <input id="name-in" maxlength="${MAX_NAME}" spellcheck="false"
-                   autocomplete="off" placeholder="YOU" value="${esc(this.playerName)}">
-            <button class="dice" id="name-dice" title="Random name">&#8635;</button>
-          </div>
 
           <button class="btn" id="play-btn">Play</button>
           <div class="key-hint">or press <kbd>Space</kbd></div>
 
-          <div class="howto">
-            <div class="card" style="--cc:var(--aqua)">
-              <span class="n">1</span>
-              <h4>Move</h4>
-              <p><kbd>WASD</kbd> or the arrows. Drag with the mouse, or use a thumb on touch.</p>
-            </div>
-            <div class="card" style="--cc:var(--sun)">
-              <span class="n">2</span>
-              <h4>Grow</h4>
-              <p>Every object you swallow widens the hole. Each new size unlocks a bigger tier.</p>
-            </div>
-            <div class="card" style="--cc:var(--hot)">
-              <span class="n">3</span>
-              <h4>Devour</h4>
-              <p>Bigger holes eat smaller holes. In the last ${MATCH.FRENZY_AT}s everything is edible.</p>
-            </div>
-          </div>
-
           <div class="foot">
             <span><b>${mins}:${secs}</b> match</span>
             <span><b>${MATCH.BOT_COUNT + 1}</b> holes</span>
-            <span><b>${esc(String(stats.objects ?? '—'))}</b> edible objects</span>
+            <span><b>${esc(Number(objects).toLocaleString())}</b> edible objects</span>
             <span><b>${TIER_LIST.length}</b> size tiers</span>
           </div>
         </div>
       </div>`;
     this.el.style.pointerEvents = 'auto';
-
-    const input = this.el.querySelector('#name-in');
-    const commit = () => {
-      this.playerName = cleanName(input.value) || 'You';
-      writeName(this.playerName);
-    };
-    input.addEventListener('input', commit);
-    // game.js listens for Space on window to start the match. Without this the
-    // space bar both types and launches, mid-word.
-    input.addEventListener('keydown', (e) => {
-      e.stopPropagation();
-      if (e.code === 'Enter' || e.code === 'NumpadEnter') { commit(); this._start(); }
+    this.el.querySelector('#play-btn').addEventListener('click', () => {
+      uiState.reset();
+      if (this.onPlay) this.onPlay();
     });
-
-    this.el.querySelector('#name-dice').addEventListener('click', () => {
-      input.value = RANDOM_NAMES[(Math.random() * RANDOM_NAMES.length) | 0];
-      commit();
-    });
-
-    this.el.querySelector('#play-btn').addEventListener('click', () => { commit(); this._start(); });
   }
 
-  /**
-   * Hand off to game.js, then stamp the entered name onto the hole it just
-   * created. game.js owns hole construction and reads its name from the net
-   * config; until it reads `screens.playerName` instead, this is the seam.
-   */
-  _start() {
-    uiState.reset();
-    if (this.onPlay) this.onPlay();
-    const g = typeof window !== 'undefined' ? window.__GAME__ : null;
-    if (g && g.player && this.playerName) g.player.name = this.playerName;
-  }
 
   /* ====================================================================== */
   /* COUNTDOWN                                                              */
@@ -204,9 +170,10 @@ export class Screens {
    * Lobby" goes back to the title. Both must hand off to a FULL reset — the
    * screen itself only reports, it never leaves gameplay state behind.
    */
-  showResults(summary, me) {
+  showResults(summary, me, breakdown = null) {
     const { rankings = [], winner, rank = 1, total = 1, score = 0,
-            diameter = 0, won = false, stats = {} } = summary || {};
+            diameter = 0, won = false, stats = {}, teams = null,
+            mode = null } = summary || {};
     const suffix = ordinal(rank);
 
     const stat = (label, value, cls = '') =>
@@ -229,9 +196,9 @@ export class Screens {
               <span class="rs-of">of ${total}</span>
             </div>
             <div class="rs-verdict ${won ? 'win' : ''}">
-              ${won ? 'You were the biggest hole in Miami'
-                    : `<b>${escapeHtml(winner ? winner.name : '—')}</b> took the city`}
+              ${verdictLine(won, teams, winner)}
             </div>
+            ${mode ? `<div class="rs-mode">${esc(mode.icon || '')} ${escapeHtml(mode.name || '')}</div>` : ''}
           </div>
 
           <div class="rs-stats">
@@ -241,6 +208,10 @@ export class Screens {
             ${stat('Rivals eaten', stats.rivalsEaten || 0)}
             ${bestMealStat(stats, stat)}
           </div>
+
+          ${rewardsBlock(breakdown)}
+
+          ${teamsBlock(teams)}
 
           <div class="rs-board">
             <h3>Final standings</h3>
@@ -305,25 +276,75 @@ function esc(s) {
 /** Alias: the results screen was written against this name. */
 const escapeHtml = esc;
 
-function cap1(s) {
-  const t = String(s || '');
-  return t.charAt(0).toUpperCase() + t.slice(1);
+/** 12345 -> "12,345". Every number on this card is read, not scanned. */
+const num = (n) => Math.round(Number(n) || 0).toLocaleString();
+
+/**
+ * Who took the city. In Team Devour the individual winner is beside the point —
+ * the round is decided on pooled score, so the line has to name a team.
+ */
+function verdictLine(won, teams, winner) {
+  if (teams && teams.length) {
+    if (won) return 'Your team took the city';
+    if (teams[0] && teams[0].score === teams[teams.length - 1].score) return 'The city is a draw';
+    return `<b>${escapeHtml(teams[0] ? teams[0].name : '—')}</b> took the city`;
+  }
+  if (won) return 'You were the biggest hole in Miami';
+  return `<b>${escapeHtml(winner ? winner.name : '—')}</b> took the city`;
 }
 
-function cleanName(s) {
-  // Markup characters out: the name is interpolated into HTML in both the
-  // leaderboard rows and the results list.
-  return String(s || '')
-    .replace(/[<>&"'`\\]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_NAME);
+/** Pooled team scores, above the individual standings rather than instead. */
+function teamsBlock(teams) {
+  if (!teams || !teams.length) return '';
+  const top = Math.max(1, ...teams.map((t) => t.score));
+  return `
+    <div class="rs-teams">
+      <h3>Team scores</h3>
+      ${teams.map((t) => `
+        <div class="rs-team ${t.mine ? 'mine' : ''}" style="--tc:${esc(t.color)}">
+          <span class="tn">${escapeHtml(t.name)}${t.mine ? ' <i>you</i>' : ''}</span>
+          <span class="tbar"><i style="width:${((t.score / top) * 100).toFixed(1)}%"></i></span>
+          <span class="ts">${num(t.score)}</span>
+        </div>`).join('')}
+    </div>`;
 }
 
-function readName() {
-  try { return cleanName(localStorage.getItem(NAME_KEY)) || ''; } catch { return ''; }
-}
+/**
+ * What the round paid.
+ *
+ * The breakdown comes from progression.grantMatchRewards and is ALWAYS optional
+ * — a failure there is caught in game.js and lands here as null, in which case
+ * the card simply reports the match and says nothing about rewards. Never a
+ * zeroed-out XP bar, which would read as "you earned nothing".
+ */
+function rewardsBlock(b) {
+  if (!b || !b.xp) return '';
+  const after = b.xp.after || { level: 1, xp: 0, need: 1 };
+  const pct = Math.min(100, Math.max(0, (after.xp / Math.max(1, after.need)) * 100));
+  const parts = (b.parts || []).map((p) => `
+    <li><span class="pl">${escapeHtml(p.label)}</span>
+        <span class="pv">${p.xp ? `+${num(p.xp)} XP` : ''}${p.xp && p.coins ? ' · ' : ''}${p.coins ? `+${num(p.coins)} 🪙` : ''}</span></li>`).join('');
 
-function writeName(v) {
-  try { localStorage.setItem(NAME_KEY, v); } catch { /* private mode: ignore */ }
+  const done = (b.challenges || []).filter((c) => c.completed);
+  const achievements = b.achievements || [];
+
+  return `
+    <div class="rs-rewards">
+      <div class="rw-top">
+        <span class="rw-pill xp">+${num(b.xp.total)} XP</span>
+        <span class="rw-pill coin">+${num(b.coins ? b.coins.total : 0)} 🪙</span>
+        ${b.xp.levelsGained > 0
+          ? `<span class="rw-pill up">LEVEL UP → ${after.level}</span>` : ''}
+      </div>
+      <div class="rw-lvl">
+        <span class="rw-lv">LV ${after.level}</span>
+        <span class="rw-bar"><i style="width:${pct.toFixed(1)}%"></i></span>
+        <span class="rw-xp">${num(after.xp)}/${num(after.need)}</span>
+      </div>
+      ${parts ? `<ul class="rw-parts">${parts}</ul>` : ''}
+      ${done.length ? `<div class="rw-note challenge">✔ ${done.map((c) => escapeHtml(c.text)).join(' · ')}</div>` : ''}
+      ${achievements.length
+        ? `<div class="rw-note achieve">🏅 ${achievements.map((a) => escapeHtml(a.name || a.title || a.id)).join(' · ')}</div>`
+        : ''}
+    </div>`;
 }
