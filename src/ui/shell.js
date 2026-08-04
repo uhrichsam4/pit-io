@@ -51,9 +51,20 @@ export class Shell {
     if (window.visualViewport) window.visualViewport.addEventListener('resize', this._onResize);
     this._scale();
 
-    // Hardware/browser back maps to shell back, which is what a phone player
-    // expects and what stops the browser navigating away mid-session.
-    window.addEventListener('popstate', () => { if (this.stack.length > 1) this.back(); });
+    /**
+     * Android's back gesture and the browser back button must pop a screen, not
+     * leave the game. That needs a real history entry per navigation — a bare
+     * popstate listener never fires, because nothing pushed anything, and the
+     * gesture unloads the page instead. Counted rather than assumed: we only
+     * consume a popstate we know we caused.
+     */
+    this._histDepth = 0;
+    this._onPop = () => {
+      if (this._histDepth <= 0) return;
+      this._histDepth--;
+      this._popStack();
+    };
+    window.addEventListener('popstate', this._onPop);
   }
 
   /** One scale knob drives every dimension. See --ui-scale in styles.css. */
@@ -89,17 +100,34 @@ export class Shell {
     }
     if (replace && this.stack.length) this.stack.pop();
     this.stack.push({ name, params });
+    if (!replace) {
+      try { history.pushState({ shell: this.stack.length }, ''); this._histDepth++; }
+      catch { /* sandboxed or file://: navigation still works, back does not */ }
+    }
     this._show(name, params, replace ? 'replace' : 'forward');
     return this;
   }
 
-  /** Pop to the previous screen. No-op at the root. */
+  /**
+   * Pop to the previous screen. No-op at the root.
+   *
+   * When we have pushed history, this delegates to history.back() and lets the
+   * popstate handler do the work, so an in-app back button and the hardware
+   * gesture take exactly the same path. Popping here as well would skip two
+   * screens per press.
+   */
   back() {
     if (this.stack.length <= 1) return this;
+    if (this._histDepth > 0) { history.back(); return this; }
+    this._popStack();
+    return this;
+  }
+
+  _popStack() {
+    if (this.stack.length <= 1) return;
     this.stack.pop();
     const top = this.stack[this.stack.length - 1];
     this._show(top.name, top.params, 'back');
-    return this;
   }
 
   /** Clear the stack and show `name` as the new root (used by "leave match"). */
@@ -221,6 +249,7 @@ export class Shell {
 
   dispose() {
     window.removeEventListener('resize', this._onResize);
+    window.removeEventListener('popstate', this._onPop);
     if (window.visualViewport) window.visualViewport.removeEventListener('resize', this._onResize);
   }
 }

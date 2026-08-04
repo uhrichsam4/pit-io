@@ -76,14 +76,19 @@
 /* SLIDER                                                                   */
 /* ======================================================================== */
 
-/* The band is 2.9em tall so the drag target clears 44 px, while the painted
-   track stays thin — a fat track reads as a progress bar, not a control. */
+/* The band clears 44 px so the whole strip is draggable, while the painted
+   track stays thin — a fat track reads as a progress bar, not a control.
+   `font: inherit` is load-bearing: a form control does NOT inherit font-size,
+   so without it every em below resolves against the UA's 13.33 px and the
+   drag band comes out a third short of the tap floor. The max() then guards
+   the floor at any --ui-scale. */
 [data-screen='settings'] input.sl {
   -webkit-appearance: none;
   appearance: none;
   display: block;
+  font: inherit;
   width: 100%;
-  height: 2.9em;
+  height: max(var(--tap), 2.9em);
   margin: 0;
   padding: 0;
   background: transparent;
@@ -101,6 +106,11 @@
   border: 1px solid var(--stroke);
   background:
     linear-gradient(90deg, var(--hot) 0 var(--v, 0%), rgba(4, 8, 16, 0.55) var(--v, 0%) 100%);
+  /* The gradient's origin box defaults to the padding box, so under a 1px
+     border it tiles and paints a stub of the START colour past the right end
+     of the track — a pink pip that looks like the fill wrapped around. */
+  background-origin: border-box;
+  background-repeat: no-repeat;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
 }
 [data-screen='settings'] input.sl::-webkit-slider-thumb {
@@ -199,7 +209,10 @@
   border-radius: var(--r-pill);
 }
 [data-screen='settings'] .seg button {
-  min-height: calc(var(--tap) - 0.6em);
+  /* Full 44 px each, not the shrunken height tokens.css uses for .tabs: these
+     five are the control itself, not a header, and a mis-tap silently changes
+     the renderer. */
+  min-height: var(--tap);
   min-width: 0;
   padding: 0.45em 0.15em;
   border: 0; border-radius: var(--r-pill);
@@ -270,14 +283,18 @@
   color: color-mix(in srgb, var(--hot) 78%, #fff);
   background: color-mix(in srgb, var(--hot) 12%, rgba(14, 22, 38, 0.78));
 }
+/* These two sit on the bare page rather than on a plate, so they carry their
+   own shadow — the city behind the shell is bright and moving. */
 [data-screen='settings'] .st-danger-note {
   margin: 0.6em 0 0;
   line-height: 1.4;
+  text-shadow: 0 0.08em 0.35em rgba(0, 0, 0, 0.85);
 }
 [data-screen='settings'] .st-about {
   margin: 0.4em 0 0;
   line-height: 1.6;
-  color: var(--dimmer);
+  color: var(--dim);
+  text-shadow: 0 0.08em 0.35em rgba(0, 0, 0, 0.85);
 }
 
 /* ======================================================================== */
@@ -291,7 +308,10 @@
   [data-screen='settings'] .code-copy .code { font-size: 1em; letter-spacing: 0.14em; margin-right: -0.14em; }
 }
 
+/* Landscape phone: claw back vertical space from padding only. The slider band
+   and the segmented buttons keep their 44 px — a cramped screen is not a reason
+   to make a control harder to hit. */
 @media (orientation: landscape) and (max-height: 460px) {
   [data-screen='settings'] .panel.st-sec { padding: 0.6em 0.75em 0.35em; }
-  [data-screen='settings'] input.sl { height: 2.6em; }
+  [data-screen='settings'] .st-row { padding: 0.4em 0; }
 }

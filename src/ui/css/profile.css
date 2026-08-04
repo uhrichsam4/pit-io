@@ -233,6 +233,11 @@
 
 /* ================================================================= modes === */
 
+/* Same HUD-sheet leakage the leaderboard hits: a bare `.row` there promotes a
+   compositing layer and paints an outside marker bar on `.row.me`. */
+[data-screen='profile'] .rows .row { will-change: auto; }
+[data-screen='profile'] .rows .row.me::before { content: none; }
+
 [data-screen='profile'] .mode-row .m-ico {
   flex: 0 0 auto;
   display: grid; place-items: center;
@@ -314,7 +319,9 @@
   text-align: center;
 }
 /* Destructive and last: ghost weight, no lift, and a red that is clearly not
-   the pink used for every primary action in this game. */
+   the pink used for every primary action in this game. The HUD sheet's `.btn`
+   also carries an infinite specular sweep — a reset button must not glitter. */
+[data-screen='profile'] .btn-ghost::after { content: none; }
 [data-screen='profile'] .btn-ghost.danger {
   border-color: rgba(255, 107, 107, 0.5);
   color: #ff9b9b;

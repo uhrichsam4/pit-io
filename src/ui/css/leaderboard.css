@@ -46,21 +46,24 @@
 /* ------------------------------------------------------------ source line --- */
 
 [data-screen='leaderboard'] .lb-source {
-  display: flex; align-items: center; gap: 0.5em;
+  display: flex; align-items: baseline; gap: 0.5em;
   min-height: 1.9em;
   margin-bottom: 0.8em;
   padding: 0 0.2em;
 }
+[data-screen='leaderboard'] .lb-source .chip { flex: 0 0 auto; align-self: center; }
 [data-screen='leaderboard'] .lb-source .chip.local {
   background: color-mix(in srgb, var(--sun) 20%, transparent);
   border-color: var(--sun);
   color: var(--sun);
 }
+/* This line carries the honesty. It wraps rather than ellipsising, because
+   "Local — not connected to a ser…" is exactly the half of the sentence that
+   must not be cut off. */
 [data-screen='leaderboard'] .lb-source .src-txt {
   min-width: 0;
-  font-size: 0.76em;
+  font-size: 0.76em; line-height: 1.3;
   color: var(--dim);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 [data-screen='leaderboard'] .lb-source[data-src='loading'] .src-txt { opacity: 0.75; }
 
@@ -173,6 +176,13 @@
 
 [data-screen='leaderboard'] .lb-list { margin-bottom: 0.7em; }
 
+/* More leakage from the HUD sheet's in-match leaderboard, which styles a bare
+   `.row`: a promoted compositing layer per row (fine for 8 animated HUD rows,
+   ruinous for 50 static ones) and an outside marker bar on `.row.me` that
+   duplicates the inset one tokens.css draws. */
+[data-screen='leaderboard'] .rows .row { will-change: auto; }
+[data-screen='leaderboard'] .rows .row.me::before { content: none; }
+
 [data-screen='leaderboard'] .rows .row.in { animation: row-in 0.3s var(--ease) both var(--d, 0ms); }
 @keyframes row-in { from { opacity: 0; transform: translateX(0.7em); } }
 
@@ -216,6 +226,19 @@
 
 [data-screen='leaderboard'] .lb-note { margin: 0 0.3em 0.7em; }
 
+/* A board with nothing under the podium is normal offline. Say why, rather
+   than leaving half a screen of nothing that reads as a failed load. */
+[data-screen='leaderboard'] .lb-thin {
+  margin: 0 auto 0.8em;
+  max-width: 24em;
+  padding: 1em 1.2em;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--stroke);
+  background: var(--sunk);
+  color: var(--dim);
+  font-size: 0.82em; line-height: 1.45; text-align: center;
+}
+
 /* The player's own row, pinned when they rank below the visible list. */
 [data-screen='leaderboard'] .pin-wrap {
   position: sticky; bottom: 0;
@@ -233,17 +256,21 @@
 
 /* ================================================== loading & empty state === */
 
+/* The skeleton sits on the bright city like everything else, so it needs real
+   contrast — a 6%-white block over sunlit water is invisible. */
 [data-screen='leaderboard'] .sk {
   display: block;
   border-radius: var(--r-sm);
   background: linear-gradient(100deg,
-      rgba(255, 255, 255, 0.06) 30%, rgba(255, 255, 255, 0.14) 50%, rgba(255, 255, 255, 0.06) 70%);
+      rgba(160, 190, 230, 0.16) 30%, rgba(200, 225, 255, 0.34) 50%, rgba(160, 190, 230, 0.16) 70%);
   background-size: 300% 100%;
   animation: sk-shimmer 1.3s linear infinite;
 }
 @keyframes sk-shimmer { to { background-position: -300% 0; } }
 
-[data-screen='leaderboard'] .sk-podium .pod { animation: none; }
+/* Without a --pc the plinth's color-mix is invalid and the plate disappears,
+   leaving a bare outline. Give the placeholder podium a neutral one. */
+[data-screen='leaderboard'] .sk-podium .pod { animation: none; --pc: rgba(190, 210, 240, 0.5); }
 [data-screen='leaderboard'] .sk-podium .plinth { animation: none; }
 [data-screen='leaderboard'] .sk-pav { width: 3.1em; height: 3.1em; border-radius: 50%; }
 [data-screen='leaderboard'] .sk-pav.big { width: 4em; height: 4em; }
@@ -280,6 +307,9 @@
   font-size: 0.84em; color: var(--dim); line-height: 1.4;
 }
 [data-screen='leaderboard'] .lb-empty .btn { margin-top: 0.5em; }
+/* The HUD sheet's `.btn` carries an infinite specular sweep. It belongs on a
+   hero PLAY button, not on a secondary action sitting idle in a menu. */
+[data-screen='leaderboard'] .btn-ghost::after { content: none; }
 
 /* =========================================================== responsive === */
 

@@ -14,6 +14,8 @@
 
 const KEY = 'miami-devour:profile:v1';
 const SAVE_DEBOUNCE_MS = 400;
+/** Emotes live on a wheel; more than this and it stops being thumb-reachable. */
+const MAX_EQUIPPED_EMOTES = 4;
 
 /** XP needed to go from level n to n+1. Gentle curve: early levels are quick. */
 export function xpForLevel(level) {
@@ -198,11 +200,45 @@ class Profile {
     return true;
   }
 
+  /**
+   * Equip a cosmetic.
+   *
+   * Emotes are the odd one out: a player equips SEVERAL of them (they go on a
+   * wheel), so `equipped.emotes` is an array while every other slot holds a
+   * single id. Handling that here rather than making every caller special-case
+   * it — the store screen should not have to know which slots are plural.
+   */
   equip(kind, id) {
     if (!this.owns(kind, id)) return false;
-    this.data.equipped[kind] = id;
+    const slot = kind === 'emote' ? 'emotes' : kind;
+    const cur = this.data.equipped[slot];
+    if (Array.isArray(cur)) {
+      if (cur.includes(id)) return true;
+      cur.push(id);
+      while (cur.length > MAX_EQUIPPED_EMOTES) cur.shift();
+    } else {
+      this.data.equipped[slot] = id;
+    }
     this.save();
     return true;
+  }
+
+  /** Take an emote back off the wheel. No-op for single-slot cosmetics. */
+  unequip(kind, id) {
+    const slot = kind === 'emote' ? 'emotes' : kind;
+    const cur = this.data.equipped[slot];
+    if (!Array.isArray(cur)) return false;
+    const i = cur.indexOf(id);
+    if (i < 0) return false;
+    cur.splice(i, 1);
+    this.save();
+    return true;
+  }
+
+  /** True if `id` is currently equipped, whichever kind of slot it lives in. */
+  isEquipped(kind, id) {
+    const cur = this.data.equipped[kind === 'emote' ? 'emotes' : kind];
+    return Array.isArray(cur) ? cur.includes(id) : cur === id;
   }
 
   /* ------------------------------------------------------------ stats --- */

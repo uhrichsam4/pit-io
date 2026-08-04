@@ -30,6 +30,15 @@ const CORS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
   'Access-Control-Max-Age': '600',
+  // Private Network Access. The normal setup for this game is a page on
+  // localhost:5173 calling a server on localhost:8787, and Chrome treats a
+  // request that lands on a loopback or LAN address as a private-network
+  // request: it forces a preflight and refuses unless the target opts in.
+  // Without these two the browser reports a bare "Failed to fetch" and the
+  // whole meta layer looks like it was never wired up. The second header is
+  // the newer Local Network Access spelling of the same opt-in.
+  'Access-Control-Allow-Private-Network': 'true',
+  'Access-Control-Allow-Local-Network-Access': 'true',
 };
 
 function sendJson(res, status, body) {
@@ -170,8 +179,17 @@ export function createHttpHandler({ store, version = 0 }) {
     const roomMatch = /^\/api\/rooms\/([^/]{1,32})$/.exec(path);
     if (roomMatch && method === 'GET') {
       const room = store.findRoom(decodeURIComponent(roomMatch[1]));
-      if (!room) { sendJson(res, 404, { error: 'not found' }); return; }
-      sendJson(res, 200, room);
+      // ?soft=1 answers 200 { room: null } instead of 404. The friends list
+      // polls a handful of codes every few seconds and most of them are not
+      // live lobbies; a 404 is the correct answer but the browser prints a red
+      // line in the console for every one, which buries real errors. The plain
+      // form keeps the documented 404 for anyone coding against the contract.
+      if (!room) {
+        if (url.searchParams.get('soft')) sendJson(res, 200, { room: null });
+        else sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+      sendJson(res, 200, url.searchParams.get('soft') ? { room } : room);
       return;
     }
 

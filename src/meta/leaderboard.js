@@ -50,8 +50,8 @@ export function getMetric(id) {
 
 /** Format a value for a metric, with "—" for "we genuinely do not know". */
 export function formatMetric(value, metricId) {
-  if (value == null || !Number.isFinite(Number(value))) return '—';
-  return getMetric(metricId).fmt(Number(value));
+  const v = num(value);
+  return v == null ? '—' : getMetric(metricId).fmt(v);
 }
 
 /* ============================================================ rank badge === */
@@ -107,9 +107,21 @@ export function rankBadge(rank) {
 
 /* ================================================================= local === */
 
+/**
+ * A real number or null. `Number(null)` is 0 and `Number.isFinite(0)` is true,
+ * so a bare isFinite check silently turns "we have no data for this player"
+ * into "this player scored zero" — which is exactly the kind of invented fact
+ * this module exists to avoid.
+ */
+function num(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function statValue(stats, metricId) {
-  const v = stats ? stats[metricId] : 0;
-  return Number.isFinite(Number(v)) ? Number(v) : 0;
+  const v = num(stats ? stats[metricId] : null);
+  return v == null ? 0 : v;
 }
 
 function meEntry(metricId) {
@@ -143,16 +155,16 @@ function friendEntry(f, metricId) {
   if (!f || typeof f !== 'object') return null;
   const id = f.id || f.code || f.friendCode;
   if (!id) return null;
-  const raw = f[metricId] != null ? f[metricId] : (f.stats ? f.stats[metricId] : null);
-  const value = Number.isFinite(Number(raw)) ? Number(raw) : null;
+  const s = f.stats || {};
+  const value = num(f[metricId] != null ? f[metricId] : s[metricId]);
   return {
     id,
     name: f.name || id,
     icon: f.icon,
-    level: f.level,
-    wins: Number(f.wins) || (f.stats ? Number(f.stats.wins) : 0) || 0,
-    matches: Number(f.matches) || (f.stats ? Number(f.stats.matches) : 0) || 0,
-    totalScore: Number(f.totalScore) || (f.stats ? Number(f.stats.totalScore) : 0) || 0,
+    level: num(f.level),
+    wins: num(f.wins) ?? num(s.wins) ?? 0,
+    matches: num(f.matches) ?? num(s.matches) ?? 0,
+    totalScore: num(f.totalScore) ?? num(s.totalScore) ?? 0,
     value,
     unknown: value == null,
   };
@@ -160,8 +172,8 @@ function friendEntry(f, metricId) {
 
 /** Rank the scored entries 1..n; anyone we have no number for keeps rank null. */
 function rankEntries(list) {
-  const scored = list.filter((e) => Number.isFinite(Number(e.value)));
-  const unknown = list.filter((e) => !Number.isFinite(Number(e.value)));
+  const scored = list.filter((e) => num(e.value) != null);
+  const unknown = list.filter((e) => num(e.value) == null);
   scored.sort((a, b) => (b.value - a.value) || String(a.name).localeCompare(String(b.name)));
   scored.forEach((e, i) => { e.rank = i + 1; });
   unknown.forEach((e) => { e.rank = null; });
@@ -191,18 +203,18 @@ const MAX_ROWS = 200;
 function toEntry(r, metricId, meId) {
   if (!r || typeof r !== 'object') return null;
   const id = r.id || r.playerId || r.code || null;
-  const raw = r[metricId] != null ? r[metricId]
-    : (r.value != null ? r.value : (r.stats ? r.stats[metricId] : null));
-  const value = Number.isFinite(Number(raw)) ? Number(raw) : null;
+  const s = r.stats || {};
+  const value = num(r[metricId] != null ? r[metricId]
+    : (r.value != null ? r.value : s[metricId]));
   if (value == null) return null;               // a row with no number is not a row
   return {
     id,
     name: String(r.name || r.player || 'Player').slice(0, 24),
     icon: r.icon,
-    level: Number(r.level) || 1,
-    wins: Number(r.wins) || 0,
-    matches: Number(r.matches) || 0,
-    totalScore: Number(r.totalScore) || 0,
+    level: num(r.level) ?? 1,
+    wins: num(r.wins) ?? 0,
+    matches: num(r.matches) ?? 0,
+    totalScore: num(r.totalScore) ?? 0,
     value,
     isMe: !!(id && meId && id === meId),
   };
@@ -309,8 +321,10 @@ export async function load({ board = 'global', metric = 'totalScore', force = fa
     if (source !== 'server') {
       const all = localBoard(m);
       // A friend we have no numbers for belongs on the friends board (so the
-      // player sees who they added) but not on a score ranking.
-      entries = b === 'friends' ? all : all.filter((e) => !e.unknown);
+      // player sees who they added) but not on a score ranking. Re-rank after
+      // the filter or the survivors keep the ranks they had alongside the
+      // entries that were just removed.
+      entries = rankEntries(b === 'friends' ? all : all.filter((e) => !e.unknown));
       if (b === 'weekly') note = 'Local history has no weekly split — these are lifetime totals.';
     }
 
@@ -337,7 +351,10 @@ export async function push() {
   try {
     const mod = await import('../net/matchmaking.js');
     if (!mod || typeof mod.submitProfile !== 'function') return false;
-    await withTimeout(mod.submitProfile(profile.publicRecord()), NET_TIMEOUT_MS);
+    // submitProfile resolves null on any failure rather than throwing, so the
+    // result has to be inspected — awaiting it proves nothing.
+    const r = await withTimeout(mod.submitProfile(profile.publicRecord()), NET_TIMEOUT_MS);
+    if (!r) return false;
     clearCache();                                 // our own row just changed
     return true;
   } catch {

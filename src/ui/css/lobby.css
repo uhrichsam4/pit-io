@@ -393,7 +393,7 @@
   z-index: 3;
   padding:
     0.9em calc(1em + var(--safe-r))
-    calc(0.7em + var(--safe-b)) calc(1em + var(--safe-l));
+    calc(0.85em + var(--safe-b)) calc(1em + var(--safe-l));
   background: linear-gradient(180deg, transparent, rgba(6, 11, 21, 0.94) 44%);
   transform: translateY(115%);
   transition: transform 0.26s var(--ease);

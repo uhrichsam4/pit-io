@@ -318,13 +318,36 @@ function equip(it) {
   shellRef.toast(`${it.name} equipped`, 'ok');
 }
 
+/**
+ * Six category labels do not fit across a phone, so the strip scrolls. Keep the
+ * selected tab on screen — an invisible active tab reads as a broken control.
+ * (`.store-tabs` is position:sticky, so it is the offsetParent of its buttons.)
+ */
+function revealTab(root) {
+  const strip = root.querySelector('.store-tabs');
+  const sel = strip && strip.querySelector('[aria-selected="true"]');
+  if (!strip || !sel || strip.scrollWidth <= strip.clientWidth) return;
+  strip.scrollLeft = sel.offsetLeft - (strip.clientWidth - sel.offsetWidth) / 2;
+}
+
 /* -------------------------------------------------------- live patching --- */
+
+/** Motion the player has switched off, or cannot see, is not worth a tween. */
+function skipTween() {
+  if (typeof document !== 'undefined' && document.hidden) return true;
+  try {
+    return typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch { return false; }
+}
 
 function syncCoins(root) {
   const el = root.querySelector('.coin-val');
   if (!el) return;
   const target = P.data.coins;
-  if (shownCoins === null || shownCoins === target) {
+  // A hidden tab never services rAF: tweening there would freeze the balance on
+  // a stale number until the next profile change. Snap instead.
+  if (shownCoins === null || shownCoins === target || skipTween()) {
     shownCoins = target;
     el.textContent = String(target);
     return;
@@ -436,6 +459,7 @@ export function registerStore(shell, deps = {}) {
           const grid = root.querySelector('.store-grid');
           grid.dataset.kind = state.tab;
           grid.innerHTML = gridHTML(state.tab);
+          revealTab(root);
           // Land on the top of the new category, but never yank the player back
           // down if they were still looking at the collection banner.
           // offsetTop is measured from .screen-page (the nearest positioned
@@ -487,6 +511,7 @@ export function registerStore(shell, deps = {}) {
       document.addEventListener('keydown', onKeyDown);
 
       if (body && state.scroll) body.scrollTop = state.scroll;
+      revealTab(root);
       syncCoins(root);
     },
 

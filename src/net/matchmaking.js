@@ -223,6 +223,24 @@ export async function fetchLeaderboard(opts = {}) {
   return j;
 }
 
+/**
+ * findRoom() for polling. Identical result, but asks the server for the quiet
+ * form: a 404 is the honest answer for "that is not a live lobby", and it is
+ * also a red line in the browser console every time — several per poll once a
+ * friends list exists, which buries anything real. Falls back cleanly to the
+ * plain 404 when talking to a server that predates the flag.
+ * @param {string} code
+ * @returns {Promise<object|null>}
+ */
+export async function probeRoom(code) {
+  const c = normalizeCode(code);
+  if (c.length < 4) return null;
+  const j = await request(`/api/rooms/${encodeURIComponent(c)}?soft=1`);
+  if (!j) return null;
+  if (j.room !== undefined) return j.room;
+  return j.code ? j : null;
+}
+
 /** @param {string} id @returns {Promise<object|null>} */
 export async function fetchProfile(id) {
   const c = normalizeCode(id);

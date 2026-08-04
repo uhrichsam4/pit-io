@@ -109,9 +109,12 @@ export function applyShowFps(on) {
   _fpsEl = document.createElement('div');
   _fpsEl.id = 'md-fps';
   _fpsEl.setAttribute('aria-hidden', 'true');
+  // Bottom-left, not the customary top-left: the shell's back button lives in
+  // the top-left corner of every meta screen and the kill feed lives there
+  // during a match, so a readout parked there sits on top of both.
   _fpsEl.style.cssText = [
     'position:fixed',
-    'top:calc(6px + env(safe-area-inset-top,0px))',
+    'bottom:calc(6px + env(safe-area-inset-bottom,0px))',
     'left:calc(6px + env(safe-area-inset-left,0px))',
     'z-index:9999',
     'padding:2px 7px',

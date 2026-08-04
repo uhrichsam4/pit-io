@@ -144,10 +144,26 @@ function sourceHtml(data) {
   return `<span class="chip local">Local</span><span class="src-txt">— not connected to a server. Showing your own history.</span>`;
 }
 
+/**
+ * The line that fills the space under a board with nothing below the podium.
+ * A short board is normal offline, and a blank half-screen looks like a bug.
+ */
+function thinHtml(data) {
+  if (data.board === 'friends') {
+    return 'Add a friend by their code to see how you compare.';
+  }
+  if (data.source === 'server') return 'That is the whole board so far.';
+  return 'Nobody else to compare with: there is no server connection, so no other player’s scores can be shown here.';
+}
+
 function bodyHtml(data, shell, profile) {
   if (!data.entries.length) return emptyHtml(data, shell);
-  const top = data.entries.slice(0, 3);
-  const rest = data.entries.slice(3, 3 + MAX_LIST);
+  // Only players we have a real number for can stand on a podium; a friend we
+  // know nothing about belongs in the list, where "—" reads honestly.
+  const ranked = data.entries.filter((e) => e.rank != null);
+  const top = ranked.slice(0, 3);
+  const topSet = new Set(top);
+  const rest = data.entries.filter((e) => !topSet.has(e)).slice(0, MAX_LIST);
   const shown = new Set([...top, ...rest]);
   const me = data.me || (data.source === 'server' ? {
     // On a server board we have not reached yet, say so plainly rather than
@@ -163,7 +179,7 @@ function bodyHtml(data, shell, profile) {
     ${podiumHtml(top, data.metric)}
     ${rest.length ? `<div class="panel panel-flush lb-list"><div class="rows">${
       rest.map((e) => rowHtml(e, data.metric)).join('')
-    }</div></div>` : ''}
+    }</div></div>` : `<p class="lb-thin">${esc(thinHtml(data))}</p>`}
     ${data.note ? `<p class="lb-note tiny muted">${esc(data.note)}</p>` : ''}
     ${pinned ? `<div class="pin-wrap"><div class="pin-label tiny muted">Your position</div><div class="panel panel-flush"><div class="rows">${rowHtml(me, data.metric)}</div></div></div>` : ''}`;
 }
@@ -196,6 +212,12 @@ export function registerLeaderboard(shell, deps = {}) {
     render({ params }) {
       if (params && BOARDS.includes(params.board)) state.board = params.board;
       if (params && METRICS.some((m) => m.id === params.metric)) state.metric = params.metric;
+      // The board the player was last reading is kept across visits so coming
+      // back from a profile lands where they left — but only if it is still the
+      // board being asked for, or the first paint shows the wrong data.
+      if (state.data && (state.data.board !== state.board || state.data.metric !== state.metric)) {
+        state.data = null;
+      }
       return page({
         title: 'Leaderboards',
         actions: '<button class="icon-btn" data-act="refresh" aria-label="Refresh board">&#8635;</button>',
@@ -228,12 +250,15 @@ export function registerLeaderboard(shell, deps = {}) {
         }
       };
 
-      const refresh = async (force) => {
+      // `quiet` refetches without dropping to the skeleton — used after our own
+      // record is submitted, where the board is already on screen and only the
+      // numbers are about to change.
+      const refresh = async (force, quiet = false) => {
         const mine = ++state.token;
         state.loading = true;
         const btn = root.querySelector('[data-act="refresh"]');
         if (btn) btn.classList.add('spin');
-        if (force) state.data = null;
+        if (force && !quiet) state.data = null;
         paint();
         let d;
         try {
@@ -297,8 +322,10 @@ export function registerLeaderboard(shell, deps = {}) {
       }, 1000);
 
       // Get our own row onto the server board before anyone reads it. Silent:
-      // a player who never asked about matchmaking should not see it fail.
-      push();
+      // a player who never asked about matchmaking should not see it fail. If
+      // it lands, the board we just drew predates our latest match, so pull it
+      // again — otherwise the player's own row is a match behind.
+      push().then((ok) => { if (ok && root.isConnected) refresh(true, true); });
       refresh(false);
     },
 

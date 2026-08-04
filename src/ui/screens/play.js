@@ -179,11 +179,17 @@ function roomRow(r) {
 }
 
 function friendRow(f, state) {
-  const joinable = state && state.room && num(state.room.players) < num(state.room.max || 12);
+  const room = state && state.room;
+  const players = room ? num(room.players) : 0;
+  const joinable = !!room && players < (num(room.max) || 12);
+  // A room that exists with nobody in it is a lobby they opened and have not
+  // entered — still joinable, but saying "in a lobby" would be a lie.
   const sub = !state || state.unknown
     ? 'No server — can\'t check'
-    : state.room
-      ? `In a lobby · ${num(state.room.players)}/${num(state.room.max) || 12}`
+    : room
+      ? (players > 0
+        ? `In a lobby · ${players}/${num(room.max) || 12}`
+        : 'Lobby open · waiting')
       : 'Not in a lobby';
   return `
     <div class="row friend-row${joinable ? ' on' : ''}">
@@ -460,7 +466,7 @@ export function registerPlay(shell, deps = {}) {
       } else {
         ctx.ticks++;
         if (ctx.lobby) {
-          const r = await MM.findRoom(ctx.lobby.code);
+          const r = await MM.probeRoom(ctx.lobby.code);
           if (!ctx.alive) return;
           if (r) {
             ctx.online = true;
@@ -484,7 +490,7 @@ export function registerPlay(shell, deps = {}) {
   async function pollFriends(ctx) {
     const list = friendList().slice(0, 8);
     if (!list.length) { paintFriends(ctx); return; }
-    const rooms = await Promise.all(list.map((f) => MM.findRoom(f.id)));
+    const rooms = await Promise.all(list.map((f) => MM.probeRoom(f.id)));
     if (!ctx.alive) return;
     const off = MM.isOffline();
     for (let i = 0; i < list.length; i++) {
@@ -593,7 +599,7 @@ export function registerPlay(shell, deps = {}) {
     ctx.joining = true;
     paintCodeState(ctx);
     joinMsg(ctx, 'Checking…', false);
-    const room = await MM.findRoom(code);
+    const room = await MM.probeRoom(code);
     if (!ctx.alive) return;
     ctx.joining = false;
     paintCodeState(ctx);

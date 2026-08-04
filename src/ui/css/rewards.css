@@ -102,17 +102,27 @@
 /* JUMP NAV                                                                 */
 /* ======================================================================== */
 
+/* Sticky, so it has to be OPAQUE: the section headings scroll underneath it and
+   a translucent bar over a bright city render is unreadable in both directions.
+   `top: 0` and not a nudged-down offset — the page body clips its own top edge,
+   so flush against it there is no gap for content to show through. */
 [data-screen='rewards'] .jump {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35em;
-  padding: 0.3em;
-  background: var(--sunk);
-  border: 1px solid var(--stroke);
-  border-radius: var(--r-pill);
+  /* Full-bleed to the page-body's padding edges rather than a floating pill:
+     a sticky pill leaves slivers of scrolling content visible down each side
+     and around its rounded corners, which reads as a rendering fault. */
+  margin: 0 -1em;
+  padding: 0.4em 1em;
+  /* Fully opaque, not 0.98: at any alpha below 1 the challenge text scrolling
+     underneath is still legible through it. */
+  background: linear-gradient(180deg, #121c2f 0%, #090f1b 100%);
+  border: 0;
+  border-bottom: 1px solid var(--stroke-hi);
+  box-shadow: 0 0.5em 1em rgba(6, 11, 21, 0.7);
   position: sticky; top: 0; z-index: 3;
-  backdrop-filter: blur(6px);
 }
 [data-screen='rewards'] .jump-chip {
-  min-height: calc(var(--tap) - 0.5em);
+  min-height: var(--tap);
   min-width: 0;
   padding: 0.4em 0.3em;
   border: 0; border-radius: var(--r-pill);
@@ -466,13 +476,14 @@
 /* RESPONSIVE                                                               */
 /* ======================================================================== */
 
-/* Small Android portrait (360 px): the achievement grid must not drop to a
-   single column — three-across thumbnails are what make it read as a trophy
-   case rather than a list. */
+/* Small Android portrait (360 px). The achievement description stays visible at
+   every width — for a locked award it IS the requirement, and hiding it behind
+   a tap would be a tooltip carrying required information. */
 @media (max-width: 380px) {
-  [data-screen='rewards'] .ach-grid { grid-template-columns: repeat(3, 1fr); gap: 0.35em; }
-  [data-screen='rewards'] .ach { padding: 0.6em 0.3em 0.5em; }
-  [data-screen='rewards'] .ach-desc { display: none; }
+  [data-screen='rewards'] .ach-grid { grid-template-columns: repeat(2, 1fr); gap: 0.4em; }
+  [data-screen='rewards'] .ach { padding: 0.6em 0.4em 0.5em; }
+  [data-screen='rewards'] .ach-name { font-size: 0.74em; }
+  [data-screen='rewards'] .ach-desc { font-size: 0.63em; }
   [data-screen='rewards'] .lvl-ring { width: 3.8em; height: 3.8em; }
   [data-screen='rewards'] .tr { width: 6.6em; }
 }

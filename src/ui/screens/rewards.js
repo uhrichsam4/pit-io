@@ -342,16 +342,23 @@ export function registerRewards(shell, deps = {}) {
         for (const b of root.querySelectorAll('button')) b.style.minHeight = 'var(--tap)';
       };
 
-      // A single claim fires several profile saves (xp, coins, achievements),
-      // and each one emits. Coalescing to one rebuild per frame keeps that from
-      // becoming four full re-renders of a 60-card page.
-      let pending = 0;
+      // A single claim fires several profile saves (xp, coins, achievements)
+      // and each one emits, so the rebuild is coalesced to one per task. This
+      // is a MICROTASK and not requestAnimationFrame on purpose: rAF never runs
+      // in a backgrounded tab, which would leave a claimed reward still showing
+      // its CLAIM button when the player came back.
+      let pending = false;
+      let alive = true;
       const refresh = () => {
         if (pending) return;
-        pending = requestAnimationFrame(() => { pending = 0; rebuild(); });
+        pending = true;
+        Promise.resolve().then(() => {
+          pending = false;
+          if (alive) rebuild();
+        });
       };
       root.__refresh = refresh;
-      root.__cancelRefresh = () => { if (pending) cancelAnimationFrame(pending); pending = 0; };
+      root.__cancelRefresh = () => { alive = false; };
 
       const scrollToTier = () => {
         const rail = root.querySelector('[data-rail]');
@@ -361,7 +368,10 @@ export function registerRewards(shell, deps = {}) {
           || rail.querySelector('[data-tier]');
         if (target) rail.scrollLeft = Math.max(0, target.offsetLeft - rail.clientWidth * 0.28);
       };
-      requestAnimationFrame(scrollToTier);
+      // setTimeout rather than rAF for the same backgrounded-tab reason: the
+      // rail must already be parked on the player's tier the first time they
+      // look at it, whenever that is.
+      root.__scrollTimer = setTimeout(scrollToTier, 0);
 
       root.addEventListener('click', (e) => {
         const claim = e.target.closest('[data-claim]');
@@ -393,9 +403,9 @@ export function registerRewards(shell, deps = {}) {
         }
 
         if (e.target.closest('[data-season-all]')) {
-          const pending = prog.seasonProgress().claimable;
+          const ready = prog.seasonProgress().claimable;
           let n = 0;
-          for (const t of pending) if (prog.claimSeason(t)) n++;
+          for (const t of ready) if (prog.claimSeason(t)) n++;
           shell.toast(n ? `Claimed ${n} season reward${n === 1 ? '' : 's'}` : 'Nothing to claim', n ? 'ok' : 'info');
           refresh();
           return;
@@ -404,9 +414,16 @@ export function registerRewards(shell, deps = {}) {
         const jump = e.target.closest('[data-jump]');
         if (jump) {
           const sec = root.querySelector(`#${jump.dataset.jump}`);
+          const nav = root.querySelector('.jump');
           if (sec && body) {
+            // Measured, not offsetTop: the section's offsetParent is the
+            // absolutely positioned .screen-page, so offsetTop is off by the
+            // header. The nav's own height comes off too, or the heading we
+            // just scrolled to lands underneath the sticky bar.
+            const delta = sec.getBoundingClientRect().top - body.getBoundingClientRect().top;
+            const navH = nav ? nav.getBoundingClientRect().height : 0;
             body.scrollTo({
-              top: Math.max(0, sec.offsetTop - 8),
+              top: Math.max(0, body.scrollTop + delta - navH - 12),
               behavior: profile.data.settings.reducedMotion ? 'auto' : 'smooth',
             });
           }
@@ -428,6 +445,7 @@ export function registerRewards(shell, deps = {}) {
 
     unmount(root) {
       if (root.__timer) { clearInterval(root.__timer); root.__timer = null; }
+      if (root.__scrollTimer) { clearTimeout(root.__scrollTimer); root.__scrollTimer = null; }
       if (root.__cancelRefresh) root.__cancelRefresh();
       root.__refresh = null;
       root.__cancelRefresh = null;

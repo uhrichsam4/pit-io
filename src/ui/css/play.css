@@ -11,6 +11,40 @@
  * meta layer. Portrait phone first; the .wrap max-width does the desktop work.
  * ====================================================================== */
 
+/* ======================================================================== */
+/* CONTAINMENT — the in-match HUD's unscoped globals                        */
+/* ------------------------------------------------------------------------ */
+/* src/ui/styles.css is loaded first and defines .panel, .btn and .row at    */
+/* GLOBAL scope for the HUD. tokens.css redefines the same names for the     */
+/* meta layer and, being the later sheet, wins every property it declares —  */
+/* but the properties it does NOT declare leak straight through, and three   */
+/* of them are fatal rather than cosmetic:                                   */
+/*                                                                          */
+/*   .panel  position: absolute   every panel on the page piles up at the   */
+/*                                same origin; the screen is unreadable      */
+/*   .row    height: 1.72em       list rows collapse to HUD row height       */
+/*   .btn    text-transform + an infinite ::after shine animation on every   */
+/*           button in the meta layer                                        */
+/*                                                                          */
+/* Measured, not theorised — this screen laid its panels on top of its own  */
+/* tabs until this block existed. The real fix is to scope the HUD's rules   */
+/* under #hud-layer, which is not this agent's file; until then every meta   */
+/* screen needs these four lines. Keep them first so ordinary rules below    */
+/* can still override them.                                                  */
+/* ======================================================================== */
+
+[data-screen="play"] .panel { position: relative; }
+[data-screen="play"] .row { height: auto; will-change: auto; }
+[data-screen="play"] .btn { text-transform: none; }
+[data-screen="play"] .btn::after { display: none; }
+/* There are no hover affordances in this design; this only has to stop the
+   HUD's hover state (a lift plus a hot-pink glow) landing on an aqua button. */
+[data-screen="play"] .btn:hover {
+  transform: none;
+  filter: brightness(1.05);
+  box-shadow: var(--lift-2);
+}
+
 [data-screen="play"] .play-wrap {
   display: flex;
   flex-direction: column;
@@ -32,6 +66,11 @@
 [data-screen="play"] .play-wrap > *:nth-child(4) { animation-delay: 0.12s; }
 [data-screen="play"] .play-wrap > *:nth-child(5) { animation-delay: 0.16s; }
 @keyframes play-rise { from { opacity: 0; transform: translateY(0.7em); } }
+
+/* .tabs carries its own bottom margin for screens that lay panels out in
+   normal flow. Here the wrap's flex gap already provides it, and the two
+   together read as a hole in the layout. */
+[data-screen="play"] .tabs { margin-bottom: 0; }
 
 [data-screen="play"] .pane { display: flex; flex-direction: column; gap: var(--gap); }
 [data-screen="play"] .pane[hidden] { display: none; }
@@ -458,12 +497,25 @@
   [data-screen="play"] .mycode { font-size: 1.3em; letter-spacing: 0.1em; }
 }
 
-/* Landscape phone: the search card and the mode chips both lose height. */
+/* Landscape phone. Vertical space is the whole problem: head + tabs + mode
+   strip + the sticky action bar can eat a 400 px viewport before a single
+   lobby row is visible, so everything above the list gets flatter and the
+   blurb — which repeats what the selected chip already says — goes entirely. */
 @media (orientation: landscape) and (max-height: 460px) {
+  [data-screen="play"] .play-wrap { gap: 0.55em; }
+  [data-screen="play"] .mode-blurb { display: none; }
+  [data-screen="play"] .mode-chip { min-height: 3.3em; width: 6.4em; padding: 0.45em; }
+  [data-screen="play"] .mode-chip .mc-ico { font-size: 1.1em; }
+  [data-screen="play"] .mode-strip { padding-bottom: 0.3em; }
   [data-screen="play"] .radar { width: 4.2em; height: 4.2em; margin-bottom: 0; }
   [data-screen="play"] .search-card { padding: 1em; }
-  [data-screen="play"] .mode-chip { min-height: 4.2em; }
   [data-screen="play"] .off-ico { font-size: 1.6em; }
+  [data-screen="play"] .offline-note { padding: 0.8em; }
+  [data-screen="play"] .sticky-actions {
+    padding-top: 0.5em;
+    padding-bottom: calc(0.5em + var(--safe-b));
+  }
+  [data-screen="play"] .lobby-intro { display: none; }
 }
 
 /* Roomy screens: the friends pane reads better as two columns than as one

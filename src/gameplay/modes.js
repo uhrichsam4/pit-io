@@ -33,12 +33,17 @@ const RX = {
   building: /tower|midrise|storefront|garage|construction|landmark|building|block/i,
 };
 
-const isVehicle = (c) => RX.vehicle.test(c.kind || '');
-const isPerson = (c) => RX.person.test(c.kind || '');
-const isBuilding = (c) => c.crumbles || c.tier.id >= 6 || RX.building.test(c.kind || '');
+// Defensive about shape: scoreFor runs in the swallow hot path and is also
+// called from tests and tools with partial stand-ins. A mode that throws there
+// takes down the whole match, and the only cost of guarding is a null check.
+const isVehicle = (c) => RX.vehicle.test((c && c.kind) || '');
+const isPerson = (c) => RX.person.test((c && c.kind) || '');
+const isBuilding = (c) => !!c && (
+  c.crumbles || (c.tier && c.tier.id >= 6) || RX.building.test(c.kind || '')
+);
 
 /** Default scoring: whatever the object is worth. */
-const base = (c) => c.score;
+const base = (c) => (c && c.score) || 0;
 
 export const MODES = [
   {
@@ -79,7 +84,7 @@ export const MODES = [
     scoreFor(c) {
       if (!isVehicle(c)) return 0;
       const lux = /exotic|super|luxur|sport|convert/i.test(c.kind || '');
-      return Math.round(c.score * (lux ? 2 : 1) * 1.4);
+      return Math.round(base(c) * (lux ? 2 : 1) * 1.4);
     },
     rewards: { xp: 130, coins: 45 },
   },
@@ -176,7 +181,7 @@ export const EVENTS = [
     teams: 0,
     shrink: null,
     timeOfDay: 0.88,
-    scoreFor(c) { return Math.round(c.score * 2); },
+    scoreFor(c) { return Math.round(base(c) * 2); },
     rewards: { xp: 200, coins: 90 },
     limited: true,
   },

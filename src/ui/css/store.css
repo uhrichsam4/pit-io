@@ -171,7 +171,7 @@
   box-shadow: var(--lift-1);
 }
 [data-screen="store"] .store-tabs::-webkit-scrollbar { display: none; }
-[data-screen="store"] .store-tabs button { flex: 0 0 auto; padding: 0.45em 1.1em; }
+[data-screen="store"] .store-tabs button { flex: 0 0 auto; padding: 0.45em 0.6em; }
 
 /* ======================================================================== */
 /* ITEM CARDS                                                               */

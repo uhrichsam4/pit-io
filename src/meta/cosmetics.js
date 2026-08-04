@@ -507,6 +507,32 @@ function spiralPath(cx, cy, r0, r1, turns) {
   return `M${p.join(' L')}`;
 }
 
+/**
+ * The bit of street a hole preview sits in. Warm asphalt per the art direction
+ * — never blue-grey — carrying a vignette, a little aggregate speckle and a
+ * tint of the item's own colour. A flat fill here reads as a grey placeholder
+ * square at thumbnail size, which is the exact failure this store cannot have.
+ */
+const SPECKLE = [[16, 24], [78, 20], [30, 78], [66, 84], [88, 60], [12, 62], [50, 18], [22, 44], [84, 38]];
+
+function roadPlate(tint) {
+  const g = nid('rd');
+  const v = nid('vg');
+  return `<defs>` +
+      `<linearGradient id="${g}" x1="0" y1="0" x2="0.45" y2="1">` +
+        `<stop offset="0%" stop-color="${mix('#837c6e', tint, 0.16)}"/>` +
+        `<stop offset="100%" stop-color="${mix('#3f3a33', tint, 0.14)}"/>` +
+      `</linearGradient>` +
+      `<radialGradient id="${v}" cx="50%" cy="46%" r="64%">` +
+        `<stop offset="52%" stop-color="#000000" stop-opacity="0"/>` +
+        `<stop offset="100%" stop-color="#000000" stop-opacity="0.42"/>` +
+      `</radialGradient>` +
+    `</defs>` +
+    `<rect x="4" y="10" width="92" height="82" rx="16" fill="url(#${g})"/>` +
+    `<g fill="#ffffff" opacity="0.13">${SPECKLE.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.1"/>`).join('')}</g>` +
+    `<rect x="4" y="10" width="92" height="82" rx="16" fill="url(#${v})"/>`;
+}
+
 function svgWrap(size, inner, extraClass = '') {
   return `<svg class="cos-svg ${extraClass}" width="${size}" height="${size}" viewBox="0 0 100 100" ` +
     `xmlns="http://www.w3.org/2000/svg" role="img" aria-hidden="true" focusable="false">${inner}</svg>`;
@@ -599,8 +625,7 @@ function skinPreview(item, size) {
       `<clipPath id="${clip}"><ellipse cx="50" cy="53" rx="30" ry="25"/></clipPath>` +
     `</defs>` +
     // The road the hole sits in, so the void has something to be darker than.
-    `<rect x="4" y="10" width="92" height="82" rx="16" fill="#6b6a66"/>` +
-    `<rect x="4" y="10" width="92" height="82" rx="16" fill="${mix('#6b6a66', c.glow, 0.18)}" opacity="0.6"/>` +
+    roadPlate(c.glow) +
     `<ellipse cx="50" cy="53" rx="42" ry="35" fill="url(#${gGlow})"/>` +
     `<ellipse cx="50" cy="53" rx="30" ry="25" fill="url(#${gCore})"/>` +
     `<g clip-path="url(#${clip})">${pattern}</g>` +
@@ -680,8 +705,7 @@ function trailPreview(item, size) {
   const s = trailSpec(item.id);
   const g = nid('t');
   const head = `<ellipse cx="93" cy="22" rx="9" ry="7.5" fill="#05070d" stroke="${s.color2}" stroke-width="2"/>`;
-  const road = `<rect x="4" y="10" width="92" height="82" rx="16" fill="#6b6a66"/>` +
-    `<rect x="4" y="10" width="92" height="82" rx="16" fill="#0b1622" opacity="0.28"/>`;
+  const road = roadPlate(s.color2);
   const grad = `<defs><linearGradient id="${g}" x1="0" y1="1" x2="1" y2="0">` +
     `<stop offset="0%" stop-color="${s.color}" stop-opacity="0.15"/>` +
     `<stop offset="55%" stop-color="${mix(s.color, s.color2, 0.5)}" stop-opacity="0.75"/>` +
@@ -741,8 +765,7 @@ function rimPreview(item, size) {
   const s = rimSpec(item.id);
   const w = 3.4 * s.thickness;
   const hole = `<ellipse cx="50" cy="52" rx="27" ry="27" fill="#04070d"/>`;
-  const road = `<rect x="4" y="10" width="92" height="82" rx="16" fill="#6b6a66"/>` +
-    `<rect x="4" y="10" width="92" height="82" rx="16" fill="#0b1622" opacity="0.22"/>`;
+  const road = roadPlate(s.color);
   let ring;
 
   switch (s.style) {
