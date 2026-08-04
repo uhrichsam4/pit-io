@@ -3068,6 +3068,13 @@ function dressBlock(pl, b, r) {
      (which the hoarding did once, and cost most of itself to bins that had
      already taken the kerb) gets the priority exactly backwards. */
   if (Z === ZONE.CONSTRUCTION) constructionYard(pl, b, r, band);
+  /* The pop-up bar is a composed layout too, and it needs 4 m of genuinely
+     clear ground for the counter, the booth and the PA. Called from inside
+     plazaFurniture/parkFurniture/marinaApron it ran AFTER the kerb line and the
+     promenade had claimed their rings, and a citywide audit found it landing
+     zero times — the whole nightlife group existed in the code and nowhere in
+     the game. It goes with the other designed places, first. */
+  if (open) eventCorner(pl, b, r);
   const shoppy = Z === ZONE.RETAIL || Z === ZONE.LOWRISE;
   if (shoppy && life > 0.32 && band > 3.3) restaurantTerrace(pl, b, r, band);
   if ((Z === ZONE.TOWER || Z === ZONE.LANDMARK || Z === ZONE.MIDRISE
@@ -4076,11 +4083,15 @@ function eventCorner(pl, b, r) {
   const nx = Math.sin(face), nz = Math.cos(face);    // local +z, the way it faces
 
   let cx = 0, cz = 0, ok = false;
-  for (let t = 0; t < 8 && !ok; t++) {
+  for (let t = 0; t < 14 && !ok; t++) {
     cx = b.x + (r() - 0.5) * b.w * 0.52;
     cz = b.z + (r() - 0.5) * b.d * 0.52;
-    // Room for the whole group, and not on top of a fountain apron or a pond.
-    ok = pl.free(cx, cz, 4.2) && pl.ctx.isFree(cx, cz, 3.0) && pl.sceneryClear(cx, cz, 3.4);
+    /* Room for the whole group, and not on top of a fountain apron or a pond.
+       `isFree` is asked at 1.6 rather than 3.0: it is the shared 3 m grid, so
+       three metres there tests a 7 m square and a bandshell's own `occupy(17)`
+       already blankets most of a park on it. `pl.free` and `sceneryClear` are
+       the honest tests and they are asked at the group's real size. */
+    ok = pl.free(cx, cz, 4.2) && pl.ctx.isFree(cx, cz, 1.6) && pl.sceneryClear(cx, cz, 3.4);
   }
   if (!ok) return;
 
@@ -4119,9 +4130,6 @@ function eventCorner(pl, b, r) {
 }
 
 function plazaFurniture(pl, b, r) {
-  // Composed group first — see eventCorner: it needs 4 m of clear ground and
-  // will not find it once 40 benches and planters have been scattered over it.
-  eventCorner(pl, b, r);
   /* One prop per 82 m2, not per 115. An open block is the one place the game
      camera sees a large uninterrupted area of paving, so it is where thin
      dressing reads loudest — measured off the `crowd` frame, where a plaza at
@@ -4162,7 +4170,6 @@ function plazaFurniture(pl, b, r) {
 }
 
 function parkFurniture(pl, b, r) {
-  eventCorner(pl, b, r);
   const n = Math.round((b.w * b.d) / 108 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.84;
@@ -4214,7 +4221,6 @@ function parkFurniture(pl, b, r) {
 }
 
 function marinaApron(pl, b, r) {
-  eventCorner(pl, b, r);
   // One prop per 95 m2 rather than 118. A marina block is small and almost all
   // of it is apron, so the interior scatter IS its dressing — there is no
   // building line for a facade run to hang anything off.

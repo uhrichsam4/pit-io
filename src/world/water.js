@@ -1364,23 +1364,36 @@ function makeLightingUpdate(scene, uniforms, proxyU) {
  * `kind` is their FLEET key and whose `position` vehicles.js updates every
  * frame. Reading it is free and needs nobody's cooperation.
  *
- * Speed and heading come from the position DELTA rather than from any velocity
- * the other module might expose, so this keeps working whatever vehicles.js
- * does internally — including the jet skis, which weave.
+ * Heading comes from the position DELTA rather than from any velocity the other
+ * module might expose, so this keeps working whatever vehicles.js does
+ * internally — including the jet skis, which weave.
+ *
+ * WHY "UNDER WAY" IS A DISPLACEMENT TEST AND NOT A SPEED TEST
+ * The obvious version divides the frame's displacement by a frame time and
+ * thresholds the speed. There is no honest frame time available here. uTime is
+ * a WALL clock (game.js feeds it clock.elapsedTime) while the simulation runs
+ * on whatever dt it is handed — and the screenshot harness drives the game
+ * synchronously, so it advances the boats a sixtieth of a second at a time
+ * while the wall clock stands still. Measured: every wake in every captured
+ * frame came out as zero. performance.now() fails the same test from the other
+ * end, reporting 4 m/s hulls as doing 0.02 m/s because one software-rendered
+ * frame takes ten seconds.
+ *
+ * Displacement needs no clock and answers the question exactly: vehicles.js
+ * writes a moored hull's x and z as constants and only heaves it in y, so ANY
+ * horizontal movement means the boat is under way. Wake size then comes off the
+ * hull, which is a property of the boat rather than of the frame rate.
  */
 function makeWakeTracker(ctx, uniforms) {
   const registry = ctx.registry;
   const camPos = new THREE.Vector3();
   /** Preallocated so a per-frame sort does not churn the heap. */
   const cand = [];
-  for (let i = 0; i < 64; i++) cand.push({ x: 0, z: 0, dx: 0, dz: 0, spd: 0, d2: 0, r: 1 });
+  for (let i = 0; i < 64; i++) cand.push({ x: 0, z: 0, dx: 0, dz: 0, d2: 0, r: 1 });
   let boats = null;
   let prev = null;
-  let lastT = -1;
 
   return (renderer, scene, camera) => {
-    const t = uniforms.uTime.value;
-
     if (boats === null) {
       // water.js builds FIRST, so there are no boats to find until the world is
       // finished. Resolve on the first rendered frame, once.
@@ -1391,47 +1404,46 @@ function makeWakeTracker(ctx, uniforms) {
         prev[i * 2] = boats[i].position.x;
         prev[i * 2 + 1] = boats[i].position.z;
       }
-      lastT = t;
       return;
     }
 
-    const dt = t - lastT;
-    // dt === 0 is the GTAO pass re-rendering the same frame; dt < 0 is a reset.
-    if (dt <= 1e-5) { if (dt < 0) lastT = t; return; }
-    lastT = t;
-
     camera.getWorldPosition(camPos);
     let n = 0;
+    let moved = 0;
     for (let i = 0; i < boats.length; i++) {
       const c = boats[i];
       const p = c.position;
       const dx = p.x - prev[i * 2], dz = p.z - prev[i * 2 + 1];
-      prev[i * 2] = p.x;
-      prev[i * 2 + 1] = p.z;
-      if (c.state >= 1) continue;                 // being eaten, or gone
       const d = Math.hypot(dx, dz);
-      // Moored hulls heave and roll on the spot; only forward motion makes a
-      // wake, and 0.6 m/s is below the speed at which one would be visible.
-      if (d / dt < 0.6) continue;
+      // A stationary frame (the GTAO pass re-rendering the same one) must not
+      // wipe the heading of everything that IS moving, so hold the previous
+      // sample until something actually moves.
+      if (d > 1e-4) { prev[i * 2] = p.x; prev[i * 2 + 1] = p.z; moved++; }
+      if (c.state >= 1) continue;                 // being eaten, or gone
+      if (d <= 1e-4) continue;
       if (n >= cand.length) break;
       const e = cand[n++];
       e.x = p.x; e.z = p.z;
       e.dx = dx / d; e.dz = dz / d;
-      e.spd = d / dt;
       e.r = c.radius || 2;
       const ox = p.x - camPos.x, oz = p.z - camPos.z;
       e.d2 = ox * ox + oz * oz;
     }
+    if (!moved) return;                           // nothing advanced; keep the last set
+
     // Spend the handful of shader slots on what the player can actually see.
     const near = cand.slice(0, n).sort((a, b) => a.d2 - b.d2);
     const used = Math.min(MAX_WAKES, near.length);
     for (let i = 0; i < used; i++) {
       const w = near[i];
       uniforms.uWakeA.value[i].set(w.x, w.z, w.dx, w.dz);
+      // Everything scales off the hull. A jet ski's radius is ~1 m and a cruise
+      // ship's is ~20, and that spread is a better predictor of how much water
+      // a boat throws than anything this module could measure per frame.
       uniforms.uWakeB.value[i].set(
-        Math.max(1.2, w.r * 0.62),                       // half-beam of the trail
-        Math.min(190, 16 + w.spd * 13 + w.r * 2.5),      // how far it survives
-        Math.min(1.0, 0.26 + w.spd * 0.11),              // how hard it foams
+        Math.max(1.1, w.r * 0.70),                       // half-beam of the trail
+        THREE.MathUtils.clamp(22 + w.r * 5.5, 24, 165),  // how far it survives
+        THREE.MathUtils.clamp(0.42 + w.r * 0.035, 0.42, 0.95), // how hard it foams
         0
       );
     }

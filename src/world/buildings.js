@@ -1844,9 +1844,14 @@ function crown(B, plan, y, r, opt = {}) {
   } else if (kind === 'taper') {
     const p2 = insetPlan(plan, m * 0.3);
     const h = 7 + r() * 9;
-    B.trim(loft([{ p: plan, y }, { p: p2, y: y + h }], { capTop: true }), P.PRECAST);
+    B.trim(loft([{ p: plan, y }, { p: p2, y: y + h }], { capTop: false }), P.PRECAST);
+    // A capped taper is a bare pale bulge, and on an elliptical plan it renders
+    // as a featureless dome the size of the shaft — the one place in the crown
+    // menu that still put an untextured mass on the skyline. The top of a tower
+    // carries machinery like any other roof, so give it one.
+    roofScape(B, p2, y + h, r, { parapetH: 0.8, tank: false, sign: false });
     if (lit) litBand(B, plan, y + 0.4, 0.7, 0.2, litHex);
-    top = y + h;
+    top = y + h + 2;
   } else if (kind === 'blade') {
     B.trim(parapetGeo(plan, y, 1.5, 0.5), P.PARAPET);
     const bw = m * 0.34;
@@ -1913,10 +1918,16 @@ function crown(B, plan, y, r, opt = {}) {
     /* Pitched cap. Reads as masonry, so it is what breaks a run of glass. */
     B.trim(slabGeo(plan, y, 0.6, 0.9), P.CONCRETE_WARM);
     const h = 4 + r() * 5;
+    // Half the hats used to be TERRACOTTA and the other half ROOF_DARK, so a
+    // pitched cap on a teal glass shaft landed as a dark brown lump — the one
+    // muddy note in an otherwise bright frame. Pale options carry the same
+    // silhouette without the value hole.
     B.trim(loft([
       { p: offsetPlan(plan, 0.5), y: y + 0.6 },
       { p: insetPlan(plan, m * 0.42), y: y + 0.6 + h },
-    ], { capTop: true }), r.chance(0.5) ? P.TERRACOTTA : P.ROOF_DARK);
+    ], { capTop: true }), r.weighted([
+      [P.TERRACOTTA, 8], [P.ROOF_DARK, 6], [P.CONCRETE_WARM, 9], [P.STUCCO_WHITE, 7],
+    ]));
     if (lit) litBand(B, plan, y - 0.9, 0.7, 0.3, litHex);
     top = y + 0.6 + h;
   } else if (kind === 'slant') {

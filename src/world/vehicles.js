@@ -3887,7 +3887,11 @@ function beamGeometry() {
     for (let i = 0; i < NX; i++) {
       const u = (i / (NX - 1)) * 2 - 1;
       // Brightness: hot at the lamp, gone by the far end, gone at the edges.
-      const b = Math.pow(1 - t, 1.7) * (1 - u * u) * 0.9;
+      // Falloff pulled back from 1.7 to 1.15 and the peak raised: at 1.7 the
+      // pool had collapsed to a quarter of its brightness by 4 m, so from the
+      // game's 125 m camera it read as a smudge at the bumper rather than as a
+      // wedge of light down the road. It has to survive the night grade.
+      const b = Math.pow(1 - t, 1.15) * (1 - u * u) * 1.15;
       row.push({ x: u * (0.5 + 0.5 * t), z: t, b });
     }
     grid.push(row);
@@ -4253,7 +4257,10 @@ function makeUpdater(ctx, traf, state, boats) {
       // bay has its lights off — that contrast between the moving lanes and the
       // parked kerb is most of what makes the night frame read.
       if (lit > 0.02 && v.mode !== 'parked') {
-        pos.set(out.x + sn * v.noseZ, surf + 0.035, out.z + cs * v.noseZ);
+        // 0.06, not 0.035: streets.js works its marking pass at y = 0.018 and
+        // the carriageway itself is cambered, so the old height left the pool
+        // fighting the lane paint for the same depth.
+        pos.set(out.x + sn * v.noseZ, surf + 0.06, out.z + cs * v.noseZ);
         scl.set(v.beamW, 1, v.beamL);
         beams.setTransform(v.beam, pos, qy, scl);
         v.beamShown = true;
