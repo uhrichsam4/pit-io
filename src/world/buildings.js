@@ -556,6 +556,9 @@ function makeSkin(tex, fu, fv, uScale, vScale, matOpts, awn = false, night = nul
   };
 }
 
+/** Build-order counter that drives the cladding UV phase. See Build. */
+let _phase = 0;
+
 const _skins = new Map();
 function skin(key, make) {
   let s = _skins.get(key);
@@ -872,7 +875,7 @@ class Build {
    *   neighbours picking differently, which is how a real strip looks anyway.
    */
   /**
-   * @param {?object} rng when given, the building draws a UV PHASE from it.
+   * @param {boolean} phased slide this building's cladding tile — see below.
    *
    * WHY A PHASE.
    * One stucco texture serves every building painted that colour, so a row of
@@ -886,8 +889,14 @@ class Build {
    * courses and cornices are modelled geometry placed at 3.4 m intervals from
    * the building's own base, and a fractional shift would slice them straight
    * through the painted window heads.
+   *
+   * The phase comes from a build-order counter and NOT from the block RNG.
+   * Drawing it from `r` would consume two numbers out of the stream every other
+   * decision about that building reads from, so a purely cosmetic choice would
+   * silently re-roll the massing, the crown and the roof of the entire city.
+   * The counter is still deterministic: modules build in a fixed order.
    */
-  constructor(sk, neon = null, rng = null) {
+  constructor(sk, neon = null, phased = false) {
     this.sk = sk;
     this.skinGeo = [];
     this.glassGeo = [];
@@ -897,9 +906,12 @@ class Build {
     this.neon = neon || P.NEON_AQUA;
     this.uPhase = 0;
     this.vPhase = 0;
-    if (rng && sk.bays) {
-      this.uPhase = rng.int(0, sk.bays - 1) / sk.bays;
-      this.vPhase = -rng.int(0, (sk.floors || 1) - 1) * STOREY;
+    if (phased && sk.bays) {
+      const n = _phase++;
+      this.uPhase = (n % sk.bays) / sk.bays;
+      // A different stride on each axis, and one that shares no factor with
+      // the bay count, so the pair does not cycle back after six buildings.
+      this.vPhase = -(((n * 3) + ((n / sk.bays) | 0)) % (sk.floors || 1)) * STOREY;
     }
   }
 
@@ -3931,6 +3943,8 @@ export function buildBuildings(ctx) {
   const heroes = new Set(layout.landmarks.map((l) => l.name));
 
   _footprint.clear();
+  // Reset so a rebuilt city phases its cladding identically to the first one.
+  _phase = 0;
   let count = 0;
 
   for (const b of layout.blocks) {
@@ -4162,7 +4176,7 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
 
   if (masonry) {
     const hex = r.weighted(TOWER_PASTELS);
-    const MB = new Build(stuccoSkin(hex), neon, r);
+    const MB = new Build(stuccoSkin(hex), neon, true);
     if (wing) {
       wingBlock(MB, r, wingSide * (pl.lw * fill / 2 - wingW / 2), wingW, sd * 0.94,
         hCap * (0.22 + r() * 0.18), P.STUCCO_WHITE, null, pal);
@@ -4286,7 +4300,7 @@ function annex(ctx, group, r, lot, side) {
   const ap = place(lot, side);
   if (ap.lw < 8 || ap.ld < 8) return 0;
   const hex = r.pick(STUCCO_SET);
-  const AB = new Build(stuccoSkin(hex), r.pick(NEON_SET), r);
+  const AB = new Build(stuccoSkin(hex), r.pick(NEON_SET), true);
   const ah = 9 + r() * 16;
   const top = midrise(ctx, AB, r, ap.lw, ap.ld, ah, { deco: r.chance(0.45), wallHex: hex });
   register(ctx, group, AB, ap.world, Math.max(ap.lw, ap.ld) * 0.5, top,
@@ -4337,7 +4351,7 @@ function midriseBlock(ctx, group, b, r, lot, side) {
     if (part.w < 7.5 || part.d < 7.5) continue;
     const pl = place(part, side);
     const hex = r.pick(STUCCO_SET);
-    const B = new Build(stuccoSkin(hex), r.pick(NEON_SET), r);
+    const B = new Build(stuccoSkin(hex), r.pick(NEON_SET), true);
     const h = Math.max(11, (b.floors + r.int(-2, 3)) * STOREY * (0.85 + r() * 0.3));
     // Full strip, no safety fudge: midrise() now draws its structural plan
     // inside the width it is handed, so the 5% haircut that used to absorb the
@@ -4454,7 +4468,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
   }
   if (style === STYLE.CIVIC) {
     const hex = r.pick([P.STUCCO_SAND, P.STUCCO_CREAM, P.STUCCO_WHITE]);
-    const B = new Build(stuccoSkin(hex), P.NEON_WHITE, r);
+    const B = new Build(stuccoSkin(hex), P.NEON_WHITE, true);
     const top = civicBlock(ctx, B, r, pl.lw * 0.96, pl.ld * 0.96, Math.min(h, 34));
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.55, top,
       TIER.LANDMARK, 'landmark', b.landmark || 'Civic Hall', hex, { lw: pl.lw, ld: pl.ld });
@@ -4462,7 +4476,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
   }
   if (style === STYLE.DECO) {
     const hex = r.pick([P.STUCCO_CREAM, P.STUCCO_SAND, P.STUCCO_WHITE]);
-    const B = new Build(stuccoSkin(hex), P.NEON_YELLOW, r);
+    const B = new Build(stuccoSkin(hex), P.NEON_YELLOW, true);
     const top = decoTower(ctx, B, r, pl.lw * 0.9, pl.ld * 0.9, h);
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, top,
       TIER.LANDMARK, 'landmark', b.landmark || 'Deco Tower', hex, { lw: pl.lw, ld: pl.ld });
@@ -4471,14 +4485,49 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
   if (style === STYLE.STUCCO) {
     // Market hall: a vaulted shed, low and wide.
     const hex = r.pick(SHOP_SET);
-    const B = new Build(stuccoSkin(hex), r.pick(NEON_SET), r);
+    const B = new Build(stuccoSkin(hex), r.pick(NEON_SET), true);
     const plan = rectPlan(pl.lw * 0.94, pl.ld * 0.94, 1.4);
     const bb = planBounds(plan);
     B.face(loft([{ p: plan, y: 0 }, { p: plan, y: Math.max(6, h * 0.6) }], B.wall()));
     const hh = Math.max(6, h * 0.6);
-    B.trim(loft([
-      { p: plan, y: hh }, { p: offsetPlan(plan, -1.6), y: hh + 1.8 }, { p: offsetPlan(plan, -5.0), y: hh + 3.4 },
-    ], { uScale: 6, vScale: 6, capTop: true }), P.TERRACOTTA);
+    /*
+     * A COURSED SHED ROOF, NOT A LID.
+     *
+     * The market's roof was one lofted cone with `capTop` — and because every
+     * coloured surface in this file pins its UVs to a single texel, that cap
+     * rendered as a flat terracotta plane roughly 40 x 30 m. On the
+     * downtown-wide preset it was the largest untextured area in the frame and
+     * read as an orange box dropped into the city. A real market shed is laid
+     * in courses with a gutter, a ridge and a run of clerestory glazing, which
+     * is four lofts instead of one and gives the slope a shadow line every
+     * couple of metres.
+     */
+    const eaves = offsetPlan(plan, 0.7);
+    B.trim(slabGeo(plan, hh - 0.35, 0.5, 0.75), P.CONCRETE_WARM);      // gutter
+    const COURSES = 4;
+    let pPrev = eaves, yPrev = hh + 0.15;
+    for (let i = 1; i <= COURSES; i++) {
+      // insetPlan, not offsetPlan: on a narrow market shed a mitred inset
+      // refuses to fold and every course would land on top of the last, which
+      // turns the roof into a vertical box.
+      const pi = insetPlan(eaves, 5.7 * (i / COURSES));
+      const yi = hh + 0.15 + 3.4 * (i / COURSES);
+      B.trim(loft([{ p: pPrev, y: yPrev }, { p: pi, y: yi }], { uScale: 6, vScale: 6 }),
+        i % 2 ? P.TERRACOTTA : P.BRICK_LIGHT);
+      B.trim(slabGeo(pi, yi, 0.14, 0.22), P.CONCRETE_WARM);            // course batten
+      pPrev = pi; yPrev = yi + 0.14;
+    }
+    B.trim(loft([{ p: pPrev, y: yPrev }], { capTop: true, uScale: 4 }), P.ROOF_MEMBRANE);
+    // Ridge lantern: a raised clerestory with a cap over it. Every real market
+    // hall has one, it is how the shed is daylit, and it is the mark that reads
+    // as a market from the 3/4 camera rather than as a warehouse.
+    const rb = planBounds(pPrev);
+    const lp = movePlan(rectPlan(Math.max(2, rb.w * 0.62), Math.max(1.6, rb.d * 0.30), 0.6), rb.cx, rb.cz);
+    B.trim(loft([{ p: lp, y: yPrev }, { p: lp, y: yPrev + 1.7 }], { uScale: 4, vScale: 4 }), P.GLASS_SKY);
+    B.trim(slabGeo(lp, yPrev + 1.7, 0.35, 0.55), P.TERRACOTTA);
+    for (let i = 0; i < 3; i++) {
+      ventStack(B, rb.cx + (i - 1) * rb.w * 0.26, yPrev, rb.cz + rb.d * 0.30, 0.9);
+    }
     awning(B, pl.lw * 0.84, 4.0, bb.z1, 2.6, 0.7, P.FABRIC_CORAL);
     B.trim(box(pl.lw * 0.9, 0.3, 3.0, 0, 4.2, bb.z1 + 1.5, 4), P.FABRIC_CORAL);
     channelSign(B, 0, 5.4, bb.z1 + 0.2, pl.lw * 0.44, 1.8, 0, r, B.neon, false);

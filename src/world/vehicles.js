@@ -1787,6 +1787,11 @@ function tintPlan(key) {
       return out;
     });
     plan = { n, sel, variants, slotOf };
+  } else {
+    // Not fatal — `spawn` falls back to one pool per paint — but it silently
+    // costs draw calls, so say so rather than letting it rot.
+    console.warn(`[vehicles] ${key} repaints more than ${MAX_TINT} role groups; `
+      + 'falling back to one pool per paint');
   }
   _planCache.set(key, plan);
   return plan;
@@ -1980,44 +1985,75 @@ const FLEET = {
       { paint: P.CAR_RED, roof: P.CAR_BLACK }, { paint: P.CAR_BLUE },
       { paint: P.CAR_CORAL, roof: P.STUCCO_CREAM }, { paint: P.CAR_GRAPHITE },
       { paint: P.CAR_NAVY }, { paint: P.CAR_TEAL, roof: P.CAR_WHITE },
-      { paint: P.STUCCO_BUTTER }] },
-  suv: { tier: 'LARGE', r: 1.7, h: 1.85, len: 4.9, cap: 110, label: 'SUV',
+      { paint: P.STUCCO_BUTTER },
+      // Everything below this line is FREE. A pool is one shape now, not one
+      // (shape, paint), so a fourteenth sedan colour costs twelve floats on one
+      // instance and not a draw call — and a kerb of nine repeating colours was
+      // still the loudest "this is procedural" tell in the frame.
+      { paint: P.CAR_BLACK, roof: P.CAR_GRAPHITE }, { paint: P.STUCCO_SKY },
+      { paint: P.CAR_GREEN }, { paint: P.STUCCO_SAND, roof: P.CAR_WHITE },
+      { paint: P.CAR_PURPLE, roof: P.CAR_BLACK }] },
+  suv: { tier: 'LARGE', r: 1.7, h: 1.85, len: 4.9, cap: 68, label: 'SUV',
     paints: [
       { paint: P.CAR_BLACK }, { paint: P.CAR_WHITE, roof: P.CAR_GRAPHITE },
       { paint: P.CAR_SILVER }, { paint: P.CAR_GREEN, roof: P.CAR_WHITE },
       { paint: P.CAR_ORANGE }, { paint: P.CAR_NAVY, roof: P.CAR_SILVER },
-      { paint: P.CAR_GRAPHITE }] },
-  hatchback: { tier: 'LARGE', r: 1.4, h: 1.6, len: 4.0, cap: 90, label: 'Hatchback',
+      { paint: P.CAR_GRAPHITE },
+      { paint: P.CAR_RED, roof: P.CAR_BLACK }, { paint: P.STUCCO_SAND },
+      { paint: P.CAR_TEAL, roof: P.CAR_WHITE }, { paint: P.STUCCO_CREAM },
+      { paint: P.CAR_BLUE, roof: P.CAR_GRAPHITE }] },
+  hatchback: { tier: 'LARGE', r: 1.4, h: 1.6, len: 4.0, cap: 54, label: 'Hatchback',
     // Pastels come from the stucco set on purpose: they are already graded for
     // this sun, and a mint or peach hatchback is exactly right for Miami.
     paints: [
       { paint: P.CAR_LIME, roof: P.CAR_WHITE }, { paint: P.CAR_TEAL },
       { paint: P.CAR_YELLOW, roof: P.CAR_GRAPHITE }, { paint: P.CAR_WHITE },
       { paint: P.STUCCO_MINT }, { paint: P.STUCCO_PEACH, roof: P.CAR_WHITE },
-      { paint: P.CAR_PINK, roof: P.CAR_WHITE }] },
-  pickup: { tier: 'LARGE', r: 1.8, h: 1.9, len: 5.5, cap: 70, label: 'Pickup',
-    paints: plain([P.CAR_CORAL, P.CAR_GRAPHITE, P.CAR_WHITE, P.CAR_NAVY, P.CAR_RED]) },
-  sports: { tier: 'LARGE', r: 1.5, h: 1.25, len: 4.5, cap: 55, label: 'Sports Coupe',
-    paints: [P.CAR_RED, P.CAR_PINK, P.CAR_MINT, P.CAR_YELLOW, P.CAR_PURPLE].map((c) => exotic(c)) },
-  convertible: { tier: 'LARGE', r: 1.5, h: 1.35, len: 4.4, cap: 50, label: 'Convertible',
-    paints: plain([P.CAR_PURPLE, P.CAR_WHITE, P.CAR_CORAL, P.STUCCO_AQUA, P.CAR_PINK]) },
-  supercar: { tier: 'LARGE', r: 1.6, h: 1.15, len: 4.7, cap: 40, label: 'Supercar',
-    paints: [P.NEON_PINK, P.NEON_AQUA, P.ACCENT_SUN, P.CAR_ORANGE, P.CAR_LIME, P.CAR_WHITE]
+      { paint: P.CAR_PINK, roof: P.CAR_WHITE },
+      { paint: P.STUCCO_LILAC }, { paint: P.CAR_CORAL, roof: P.STUCCO_CREAM },
+      { paint: P.CAR_SILVER, roof: P.CAR_BLACK }, { paint: P.STUCCO_AQUA },
+      { paint: P.CAR_RED }] },
+  pickup: { tier: 'LARGE', r: 1.8, h: 1.9, len: 5.5, cap: 40, label: 'Pickup',
+    paints: [
+      ...plain([P.CAR_CORAL, P.CAR_GRAPHITE, P.CAR_WHITE, P.CAR_NAVY, P.CAR_RED]),
+      { paint: P.CAR_BLACK }, { paint: P.CAR_SILVER, roof: P.CAR_GRAPHITE },
+      { paint: P.CAR_GREEN }, { paint: P.STUCCO_SAND }] },
+  sports: { tier: 'LARGE', r: 1.5, h: 1.25, len: 4.5, cap: 39, label: 'Sports Coupe',
+    paints: [P.CAR_RED, P.CAR_PINK, P.CAR_MINT, P.CAR_YELLOW, P.CAR_PURPLE,
+      P.CAR_BLACK, P.NEON_ORANGE].map((c) => exotic(c)) },
+  convertible: { tier: 'LARGE', r: 1.5, h: 1.35, len: 4.4, cap: 28, label: 'Convertible',
+    paints: plain([P.CAR_PURPLE, P.CAR_WHITE, P.CAR_CORAL, P.STUCCO_AQUA, P.CAR_PINK,
+      P.CAR_RED, P.STUCCO_BUTTER, P.CAR_SILVER, P.NEON_AQUA]) },
+  supercar: { tier: 'LARGE', r: 1.6, h: 1.15, len: 4.7, cap: 30, label: 'Supercar',
+    paints: [P.NEON_PINK, P.NEON_AQUA, P.ACCENT_SUN, P.CAR_ORANGE, P.CAR_LIME, P.CAR_WHITE,
+      P.NEON_PURPLE, P.CAR_BLACK]
       .map((c) => exotic(c, P.CAR_GRAPHITE)) },
-  roadster: { tier: 'LARGE', r: 1.5, h: 1.3, len: 4.5, cap: 40, label: 'Roadster',
-    paints: [P.CAR_MINT, P.STUCCO_PINK, P.CAR_SILVER, P.CAR_NAVY, P.CAR_PURPLE]
+  roadster: { tier: 'LARGE', r: 1.5, h: 1.3, len: 4.5, cap: 29, label: 'Roadster',
+    paints: [P.CAR_MINT, P.STUCCO_PINK, P.CAR_SILVER, P.CAR_NAVY, P.CAR_PURPLE,
+      P.CAR_RED, P.STUCCO_BUTTER]
       .map((c) => exotic(c)) },
-  gtCoupe: { tier: 'LARGE', r: 1.6, h: 1.4, len: 5.0, cap: 40, label: 'Grand Tourer',
-    paints: [P.CAR_GRAPHITE, P.CAR_NAVY, P.CAR_RED, P.CAR_SILVER, P.CAR_TEAL]
+  gtCoupe: { tier: 'LARGE', r: 1.6, h: 1.4, len: 5.0, cap: 29, label: 'Grand Tourer',
+    paints: [P.CAR_GRAPHITE, P.CAR_NAVY, P.CAR_RED, P.CAR_SILVER, P.CAR_TEAL,
+      P.CAR_BLACK, P.STUCCO_CREAM]
       .map((c) => exotic(c)) },
-  taxi: { tier: 'LARGE', r: 1.6, h: 1.7, len: 4.7, cap: 170, label: 'Taxi',
-    paints: [{ paint: P.TAXI_YELLOW, accent: 0x24262b, paintLo: darken(P.TAXI_YELLOW, 0.72) }] },
-  police: { tier: 'LARGE', r: 1.7, h: 1.9, len: 4.9, cap: 50, label: 'Police Car',
-    paints: [{ paint: P.CAR_WHITE, blue: P.POLICE_BLUE, red: P.CAR_RED }] },
-  deliveryVan: { tier: 'LARGE', r: 2.0, h: 2.6, len: 6.0, cap: 110, label: 'Delivery Van',
+  // Three operators, because a rank of a hundred and seventy identical cabs is
+  // the same repetition problem as a kerb of identical saloons. The body stays
+  // taxi-yellow; the livery band is what changes.
+  taxi: { tier: 'LARGE', r: 1.6, h: 1.7, len: 4.7, cap: 60, label: 'Taxi',
+    paints: [
+      { paint: P.TAXI_YELLOW, accent: 0x24262b, paintLo: darken(P.TAXI_YELLOW, 0.72) },
+      { paint: P.TAXI_YELLOW, accent: P.CAR_TEAL, paintLo: darken(P.TAXI_YELLOW, 0.72) },
+      { paint: P.CAR_WHITE, accent: P.NEON_PINK, paintLo: darken(P.CAR_WHITE, 0.72) }] },
+  police: { tier: 'LARGE', r: 1.7, h: 1.9, len: 4.9, cap: 26, label: 'Police Car',
+    paints: [
+      { paint: P.CAR_WHITE, blue: P.POLICE_BLUE, red: P.CAR_RED },
+      { paint: P.CAR_BLACK, blue: P.POLICE_BLUE, red: P.CAR_RED }] },
+  deliveryVan: { tier: 'LARGE', r: 2.0, h: 2.6, len: 6.0, cap: 56, label: 'Delivery Van',
     paints: [
       { paint: P.TRUCK_WHITE, accent: P.NEON_PINK }, { paint: P.CAR_TEAL, accent: P.FABRIC_WHITE },
-      { paint: P.BRICK, accent: P.STUCCO_CREAM }, { paint: P.BUS_BLUE, accent: P.FABRIC_WHITE }] },
+      { paint: P.BRICK, accent: P.STUCCO_CREAM }, { paint: P.BUS_BLUE, accent: P.FABRIC_WHITE },
+      { paint: P.CAR_YELLOW, accent: P.CAR_GRAPHITE }, { paint: P.CAR_GREEN, accent: P.FABRIC_WHITE },
+      { paint: P.STUCCO_CREAM, accent: P.CAR_CORAL }, { paint: P.CAR_GRAPHITE, accent: P.NEON_AQUA }] },
   boxTruck: { tier: 'XLARGE', r: 2.5, h: 3.3, len: 8.6, cap: 60, label: 'Box Truck',
     paints: [
       { paint: P.CAR_BLUE, white: P.TRUCK_WHITE, accent: P.FABRIC_SKY },

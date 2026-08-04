@@ -3673,11 +3673,30 @@ function restaurantTerrace(pl, b, r, band) {
        boundary must not do. */
     const cb = contactBox(key);
     if (Math.abs(u + cb.hx - uMid) > GAP * 0.5 + cb.hx) {
-      const p = edgePt(b, s, u + cb.hx, dKerb + (r() - 0.5) * 0.10);
-      if (pl.put(key, p.x, p.z, rot + (r() - 0.5) * 0.05, 1, null, cb.hz)) {
+      /* STEP THE SECTION IN OR OUT, NEVER SKIP IT.
+         A boundary section may not slide ALONG the run — its neighbours are
+         packed against it and the next one starts where this one ends — so the
+         one axis it is free on is depth. A third of them were being lost, and
+         the thing that takes them is nature's kerb underplanting: buildStreetTrees
+         puts a shrub 1.5 m either side of every street tree at an inset of
+         1.75-2.35 m, which lands within a metre of the 1.30 m boundary line.
+         Half a metre of give either way steps the screen round it, and a
+         boundary that jogs 0.5 m round a planter still reads as one edge —
+         a 2 m hole in it does not, and that is the defect the packing above
+         exists to avoid in the first place. */
+      let done = false;
+      for (const dd of [0, -0.42, 0.48, -0.80, 0.92]) {
+        const dep = dKerb + dd;
+        // Never step past the table line, and never into the gutter.
+        if (dep < 0.95 || dep > dTable - 0.55) continue;
+        const p = edgePt(b, s, u + cb.hx, dep + (r() - 0.5) * 0.10);
+        if (!pl.put(key, p.x, p.z, rot + (r() - 0.5) * 0.05, 1, null, cb.hz)) continue;
         pl.claimFeet(p.x, p.z, rot, [-cb.hx * 0.55, cb.hx * 0.55], cb.hz);
         pl.tally.terraceEdge++;
-      } else pl.tally.terraceEdgeLost++;
+        done = true;
+        break;
+      }
+      if (!done) pl.tally.terraceEdgeLost++;
     }
     u += cb.hx * 2 + 0.16;
   }
@@ -3788,8 +3807,16 @@ function anchorAlong(pl, b, s, u0, inset, key, rot, claimR = -1) {
   for (const du of [0, 4, -4, 8, -8, 12, -12, 16, -16]) {
     const u = u0 + du;
     if (u < 6 || u > edgeLen(b, s) - 6) continue;
-    const p = edgePt(b, s, u, inset);
-    if (pl.put(key, p.x, p.z, rot, 1, null, claimR)) return u;
+    /* Depth as well as length. A tree line is a LINE: walking the frontage
+       moves the canopy along with you, so a bay refused at one inset is often
+       refused at every inset the walk visits. Half a metre in or out clears the
+       trunk instead, and 28 of 86 frontages were still ending up with no front
+       door at all. The steps are small enough that the canopy stays where the
+       composition wants it — it is still the middle of the frontage. */
+    for (const di of [0, -0.55, 0.55]) {
+      const p = edgePt(b, s, u, inset + di);
+      if (p && pl.put(key, p.x, p.z, rot, 1, null, claimR)) return u;
+    }
   }
   return null;
 }
@@ -3902,9 +3929,23 @@ function loungeGroup(pl, b, s, u, band, rot, r) {
 }
 
 /** In the open: two sofas looking at each other across the table. */
-function loungeIsland(pl, x, z, face, r) {
+function loungeIsland(pl, px, pz, face, r) {
   const nx = Math.sin(face), nz = Math.cos(face);
-  if (!pl.free(x, z, 2.6) || !pl.sceneryClear(x, z, 2.2)) return false;
+  /* SEARCHED, not diced. The caller hands over one random point inside a park
+     or a plaza, and one point inside ground that nature has already planted is
+     a coin flip weighted heavily against — measured, the whole city held 23
+     lounge sofas and 12 lounge tables, i.e. the seating group the plaza, the
+     park and the marina each ask for existed in about a third of one of them.
+     The group cannot be slid the way a kerb prop can, because the sofas and the
+     table are laid out around wherever the table lands; so the SITE is what
+     moves, before anything is placed. */
+  let x = px, z = pz, ok = false;
+  for (let t = 0; t < 12 && !ok; t++) {
+    x = px + (t === 0 ? 0 : (r() - 0.5) * 11);
+    z = pz + (t === 0 ? 0 : (r() - 0.5) * 11);
+    ok = pl.free(x, z, 2.6) && pl.sceneryClear(x, z, 2.2);
+  }
+  if (!ok) return false;
   if (!pl.put('loungeTable', x, z, face)) return false;
   let n = 0;
   for (const sg of [-1, 1]) {
@@ -4082,16 +4123,32 @@ function eventCorner(pl, b, r) {
   const ax = Math.cos(face), az = -Math.sin(face);   // local +x
   const nx = Math.sin(face), nz = Math.cos(face);    // local +z, the way it faces
 
+  /* THE SITE SEARCH IS THE WHOLE FEATURE.
+     Counted in the built city, this landed TWICE — two pop-up bars, two DJ
+     booths and four speakers across every park, plaza and marina apron in
+     Miami. The group is not rare by design, it was being refused by tests that
+     are wrong for the ground it stands on:
+
+       ctx.isFree(1.6)  the shared 3 m grid, which rounds that up to a 9 x 9 m
+                        square. Inside a planted park every square metre reads
+                        as claimed (see putOpen), so this alone is close to a
+                        blanket no — and it is the ONE test that answers nothing
+                        an open block cares about, because an open block carries
+                        no building.
+       4.2 / 3.4        a reservation for a group whose real extent is a 2.7 m
+                        counter and a booth 3.2 m behind it. Asking for 4.2 m of
+                        clear ground in every direction from the CENTRE asked
+                        for roughly twice the footprint the bar actually uses.
+
+     `pl.free` (the placer's own fine grid, at the group's true size) and
+     `sceneryClear` (nature's measured plants) are the honest tests and they are
+     kept. The sample also walks the whole parcel rather than its middle half —
+     a bar belongs at the edge of a plaza as readily as in the centre. */
   let cx = 0, cz = 0, ok = false;
-  for (let t = 0; t < 14 && !ok; t++) {
-    cx = b.x + (r() - 0.5) * b.w * 0.52;
-    cz = b.z + (r() - 0.5) * b.d * 0.52;
-    /* Room for the whole group, and not on top of a fountain apron or a pond.
-       `isFree` is asked at 1.6 rather than 3.0: it is the shared 3 m grid, so
-       three metres there tests a 7 m square and a bandshell's own `occupy(17)`
-       already blankets most of a park on it. `pl.free` and `sceneryClear` are
-       the honest tests and they are asked at the group's real size. */
-    ok = pl.free(cx, cz, 4.2) && pl.ctx.isFree(cx, cz, 1.6) && pl.sceneryClear(cx, cz, 3.4);
+  for (let t = 0; t < 36 && !ok; t++) {
+    cx = b.x + (r() - 0.5) * b.w * 0.72;
+    cz = b.z + (r() - 0.5) * b.d * 0.72;
+    ok = pl.free(cx, cz, 3.1) && pl.sceneryClear(cx, cz, 2.6);
   }
   if (!ok) return;
 

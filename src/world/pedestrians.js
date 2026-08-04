@@ -202,8 +202,6 @@ const STREET_HEX = {
   trolley: PALETTE.STEEL_DARK,
   soapbox: PALETTE.WOOD_DECK,
   signCard: PALETTE.STUCCO_SAND,
-  dominoSet: PALETTE.WOOD_DARK,
-  chessSet: PALETTE.WOOD_DARK,
   pigeon: PALETTE.CONCRETE_DARK,
 };
 
@@ -901,6 +899,10 @@ export function buildPedestrians(ctx) {
   // MeshBasic, not MeshStandard, so the pixels it does rasterise are free.
   const matShadow = new THREE.MeshBasicMaterial({
     colorWrite: false, depthWrite: false,
+    // The proxy is an open lathe, so the default FrontSide -> BackSide shadow
+    // flip would depend on the surface being closed. Rendering both faces into
+    // the depth map costs nothing at 24 triangles and cannot be wrong.
+    shadowSide: THREE.DoubleSide,
   });
 
   /* ------------------------------------------------------------ agents --- */
@@ -961,7 +963,7 @@ export function buildPedestrians(ctx) {
   if (!N) return;
 
   /* -------------------------------------------- nobody stands in a bench --- */
-  const cleared = clearCrowd(agents, obstacles, paths);
+  const cleared = clearCrowd(agents, obstacles);
 
   // WHERE EACH PERSON BELONGS. A pedestrian that has been swallowed comes back
   // 30 s later like every other prop, and "comes back" has to mean back to
@@ -1510,7 +1512,7 @@ function buildClearance(paths, field) {
  * position is regenerated from (arc length, lateral offset) on every tick and
  * writing x/z directly would be undone on frame one.
  */
-function clearCrowd(agents, field, paths) {
+function clearCrowd(agents, field) {
   let fixed = 0, stuck = 0;
   const band = { lo: 0, hi: 0 };
   for (const a of agents) {
@@ -1550,7 +1552,6 @@ function clearCrowd(agents, field, paths) {
     a.x = _clearOut.x; a.z = _clearOut.z;
     fixed++;
   }
-  void paths;
   return { fixed, stuck };
 }
 
@@ -2992,15 +2993,16 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
       a.seatYaw = a.yaw;
       a.sitSprawl = false;
       a.lean = 0.20 + r() * 0.10;
-      a.game = game;
       if (r.chance(0.55)) { a.hat = true; a.hatHex = rng.pick(HAT_COLORS); a.hatScale = 1.18; }
+      // The tile or the piece in their hand. Deliberately a HELD item and not
+      // a prop on the table: a consumable resting on a 0.75 m table top audits
+      // as a floating prop, and this reads better anyway — you can see who is
+      // about to play.
+      addItem(a, AT.HAND_R, game === 'domino' ? 0.030 : 0.036,
+        game === 'domino' ? 0.062 : 0.070, 0.016,
+        game === 'domino' ? PALETTE.FABRIC_WHITE : PALETTE.WOOD_DARK, 0);
       if (spent >= gameCap) break;
     }
-    // The tiles or the pieces on the table between them.
-    props.push({
-      kind: game === 'domino' ? 'dominoSet' : 'chessSet',
-      x: g[0].x + (r() - 0.5) * 0.3, z: g[0].z + (r() - 0.5) * 0.3, y: yWalk, yaw: r() * 6.28,
-    });
     // Spectators. A domino game without anyone leaning over it is a chore.
     const watch = r.weighted([[0, 32], [1, 34], [2, 24], [3, 10]]);
     for (let k = 0; k < watch && spent < gameCap; k++) {
@@ -3199,10 +3201,14 @@ const STREET_PROPS = {
   trolley: { geo: trolleyGeo, label: 'Trolley', cap: 90, score: 5, tier: 'SMALL' },
   soapbox: { geo: crateGeo, label: 'Crate', cap: 90, score: 3, tier: 'TINY' },
   signCard: { geo: signCardGeo, label: 'Cardboard Sign', cap: 120, score: 2, tier: 'TINY' },
-  dominoSet: { geo: crateGeo, label: 'Dominoes', cap: 60, score: 2, tier: 'TINY', scale: 0.34 },
-  chessSet: { geo: crateGeo, label: 'Chess Set', cap: 60, score: 2, tier: 'TINY', scale: 0.34 },
   pigeon: { geo: pigeonGeo, label: 'Pigeon', cap: 400, score: 1, tier: 'TINY' },
 };
+
+/** Deterministic 0..1 from a world position. */
+function jitter(x, z) {
+  const h = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
+  return h - Math.floor(h);
+}
 
 function buildStreetProps(ctx, list) {
   const pos = new THREE.Vector3();
@@ -3220,7 +3226,9 @@ function buildStreetProps(ctx, list) {
     }), {
       position: pos,
       rotationY: p.yaw,
-      scale: (def.scale ?? 1) * (0.94 + (p.jitter ?? 0.06)),
+      // ANTI-REPETITION: a hashed size wobble per piece, so a row of vendor
+      // tables is not a row of identical vendor tables.
+      scale: (def.scale ?? 1) * (0.90 + jitter(p.x, p.z) * 0.20),
       hex: p.hex ?? STREET_HEX[p.kind] ?? PALETTE.FABRIC_WHITE,
       capacity: def.cap,
       tier: ctx.TIER[def.tier],

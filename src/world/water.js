@@ -659,7 +659,13 @@ function box(w, hgt, d, x, y, z, rotY = 0) {
 /* ============================================================== shader === */
 
 const WATER_PARS = /* glsl */ `
-  uniform float uTime;
+  /* NAMED uWaterTime, not uTime. The hole cutter patches this same material and
+     declares its own `uniform float uTime`, and two declarations of one name in
+     one fragment shader is a hard compile error — which silently took the whole
+     bay out of the frame the first time the two were combined. The JS-side
+     uniform object still exposes `uTime` as well (both keys point at the same
+     object) so game.js keeps driving it by the name it always used. */
+  uniform float uWaterTime;
   uniform sampler2D uShoreMap;
   uniform vec2  uShoreOrigin;
   uniform vec2  uShoreSize;
@@ -803,7 +809,7 @@ const WATER_BODY = /* glsl */ `
     if (abs(wP.x - br.x) < br.z && abs(wP.y - br.y) < br.w) discard;
   }
 
-  float wT = uTime;
+  float wT = uWaterTime;
   vec3 wV = normalize(cameraPosition - vWaterPos);
 
   /* How much world one pixel covers here. Everything with a wavelength under
