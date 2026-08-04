@@ -2205,100 +2205,272 @@ function wheelX(m, z, y, x, r, t, segs = 7) {
   m.reset();
 }
 
+/**
+ * Bicycle. Wheels with a hub and six spokes (spokes are the whole reason a bike
+ * reads as a bike), a chainring with cranks and pedals, a chain run to the rear
+ * hub, a real diamond frame so the triangle reads, a two-blade fork, a saddle on
+ * a post and bars through a visible stem — plus a kickstand, because 72 coral
+ * pictograms were standing up unsupported.
+ */
 function gBicycle(m) {
-  // Wheels lie in the XY plane, so the bike points along +x; the placer turns it.
-  m.col(P.TYRE);
-  wheelZ(m, -0.55, 0.34, 0.34, 0.05, 7);
-  wheelZ(m, 0.55, 0.34, 0.34, 0.05, 7);
+  const wheel = (cx, cy, r) => {
+    m.col(P.TYRE);
+    for (let k = 0; k < 8; k++) {
+      const a0 = (k / 8) * TAU, a1 = ((k + 1) / 8) * TAU;
+      m.tubeBetween(cx + Math.cos(a0) * r, cy + Math.sin(a0) * r, 0,
+        cx + Math.cos(a1) * r, cy + Math.sin(a1) * r, 0, 0.032, 3);
+    }
+    m.col(P.STEEL);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * TAU + 0.3;
+      m.tubeBetween(cx, cy, 0, cx + Math.cos(a) * r * 0.94, cy + Math.sin(a) * r * 0.94, 0, 0.010, 3);
+    }
+    m.col(P.CHROME);
+    m.xform(0, cx, cy, 0); m.discZ(0, 0, 0.045, 0.075, 5, 0, 0.045); m.reset();
+  };
+  wheel(-0.55, 0.34, 0.34);
+  wheel(0.55, 0.34, 0.34);
+  // Diamond frame: down tube, seat tube, top tube, chainstay, seatstay.
   m.col(0xf2f2f2);
-  m.beam(-0.55, 0.34, 0, -0.05, 0.62, 0, 0.05, 0.05, false);
-  m.beam(-0.05, 0.62, 0, 0.42, 0.90, 0, 0.05, 0.05, false);
-  m.beam(-0.05, 0.62, 0, 0.18, 0.36, 0, 0.05, 0.05, false);
-  m.beam(0.42, 0.90, 0, 0.55, 0.34, 0, 0.05, 0.05, false);
+  m.tubeBetween(-0.05, 0.30, 0, 0.40, 0.62, 0, 0.026, 4);   // down tube
+  m.tubeBetween(-0.05, 0.30, 0, -0.06, 0.86, 0, 0.026, 4);  // seat tube
+  m.tubeBetween(-0.06, 0.86, 0, 0.42, 0.66, 0, 0.024, 4);   // top tube
+  m.tubeBetween(-0.05, 0.30, 0, -0.55, 0.34, 0, 0.022, 4);  // chainstay
+  m.tubeBetween(-0.06, 0.84, 0, -0.55, 0.34, 0, 0.020, 4);  // seatstay
+  // Fork: two blades to the front hub.
+  for (const s of [-1, 1]) {
+    m.tubeBetween(0.42, 0.66, 0, 0.55, 0.34, s * 0.045, 0.020, 4);
+  }
+  // Chainring, cranks, pedals, chain.
+  m.col(P.CHROME);
+  m.xform(0, -0.05, 0.30, 0.055); m.discZ(0, 0, 0.105, 0.014, 6, 0, 0.105); m.reset();
   m.col(P.SIGN_DARK);
-  m.beam(-0.10, 0.68, -0.09, -0.10, 0.68, 0.09, 0.20, 0.07);
-  m.beam(0.44, 0.94, -0.22, 0.44, 0.94, 0.22, 0.05, 0.05);
-}
-
-function gBikeRack(m) {
-  m.col(P.STEEL);
-  // Inverted-U hoop.
-  m.beam(-0.44, 0, 0, -0.44, 0.72, 0, 0.07, 0.07, false);
-  m.beam(0.44, 0, 0, 0.44, 0.72, 0, 0.07, 0.07, false);
-  m.beam(-0.44, 0.72, 0, 0.44, 0.72, 0, 0.07, 0.07);
+  m.tubeBetween(-0.05, 0.30, 0.07, -0.05, 0.16, 0.07, 0.018, 3);
+  m.tubeBetween(-0.05, 0.30, -0.07, -0.05, 0.44, -0.07, 0.018, 3);
+  m.prism(-0.05, 0.10, [[0.135, 0.10, 0.05], [0.155, 0.10, 0.05]]);
+  m.prism(-0.05, -0.10, [[0.415, 0.10, 0.05], [0.435, 0.10, 0.05]]);
+  m.col(0x1e2124);
+  m.tubeBetween(-0.05, 0.395, 0.055, -0.55, 0.375, 0.055, 0.010, 3);
+  m.tubeBetween(-0.05, 0.205, 0.055, -0.55, 0.305, 0.055, 0.010, 3);
+  // Saddle on a post, stem and bars.
+  m.col(0x22262a);
+  m.tubeBetween(-0.06, 0.86, 0, -0.07, 0.98, 0, 0.018, 4);
+  m.prism(-0.07, 0, [[0.98, 0.24, 0.09], [1.01, 0.20, 0.13], [1.03, 0.13, 0.10]]);
+  m.tubeBetween(0.42, 0.66, 0, 0.44, 0.94, 0, 0.020, 4);
+  m.tubeBetween(0.44, 0.94, 0, 0.50, 0.96, 0, 0.020, 4);
+  m.tubeBetween(0.50, 0.96, -0.22, 0.50, 0.96, 0.22, 0.018, 4);
+  m.col(0x15181b);
+  for (const s of [-1, 1]) m.tubeBetween(0.50, 0.96, s * 0.14, 0.50, 0.96, s * 0.22, 0.028, 4, true);
+  // Kickstand — nothing in this module is allowed to balance on two points.
   m.col(P.STEEL_DARK);
-  m.beam(-0.44, 0.06, 0, 0.44, 0.06, 0, 0.05, 0.05, false);
+  m.tubeBetween(-0.05, 0.26, 0.05, -0.16, 0.01, 0.20, 0.016, 3);
 }
 
+/**
+ * Sheffield stand. PAIRED hoops 0.9 m apart so a rack reads as a rack, round
+ * 0.08 m tube instead of a square section, bolted base flanges so it lands on
+ * the pavement instead of sinking into it, and the cross-rail lifted to 0.22
+ * where it can actually be seen.
+ */
+function gBikeRack(m) {
+  for (const z of [-0.45, 0.45]) {
+    m.col(0x8d938f);
+    for (const s of [-1, 1]) {
+      m.tubeBetween(s * 0.42, 0.045, z, s * 0.42, 0.68, z, 0.040, 5);
+      m.tubeBetween(s * 0.42, 0.68, z, s * 0.34, 0.75, z, 0.040, 5);
+      m.col(P.STEEL_DARK);
+      m.prism(s * 0.42, z, [[0, 0.16, 0.16], [0.03, 0.13, 0.13]]);
+      m.col(0x6f7876);
+      for (const b of [-1, 1]) m.plate(s * 0.42 + b * 0.05, 0.032, z, 0.035, 0.035);
+      m.col(0x8d938f);
+    }
+    m.tubeBetween(-0.34, 0.75, z, 0.34, 0.75, z, 0.040, 5);
+    m.col(0x6f7876);
+    m.tubeBetween(-0.42, 0.22, z, 0.42, 0.22, z, 0.030, 4);
+  }
+}
+
+/**
+ * E-scooter. 192 of these read as a coloured stick with a dark T on one end:
+ * r=0.13 wheels at five segments vanish entirely. Wheels are now 0.19 at eight
+ * segments, on a two-leg fork and a rear swingarm, with a chamfered deck and an
+ * inset grip panel, a folding-clamp collar at the stem root, a rear fender, a
+ * kickstand that touches the ground and a number plate on the stem head.
+ */
 function gScooter(m) {
   m.col(P.TYRE);
-  wheelZ(m, -0.48, 0.13, 0.13, 0.05, 5);
-  wheelZ(m, 0.42, 0.13, 0.13, 0.05, 5);
+  m.xform(0, -0.46, 0.19, 0); m.discZ(0, 0, 0.19, 0.07, 8, 0, 0.19); m.reset();
+  m.xform(0, 0.44, 0.19, 0); m.discZ(0, 0, 0.19, 0.07, 8, 0, 0.19); m.reset();
+  m.col(0x9aa0a0);
+  m.xform(0, -0.46, 0.19, 0); m.discZ(0, 0, 0.055, 0.09, 5, 0, 0.055); m.reset();
+  m.xform(0, 0.44, 0.19, 0); m.discZ(0, 0, 0.055, 0.09, 5, 0, 0.055); m.reset();
+  // Deck with an inset grip panel, then the fork and swingarm.
   m.col(0xf4f4f4);
-  m.prism(-0.03, 0, [[0.14, 0.86, 0.17], [0.22, 0.80, 0.15]]);
-  m.beam(0.42, 0.16, 0, 0.50, 1.00, 0, 0.055, 0.055, false);
-  m.col(P.SIGN_DARK);
-  m.beam(0.50, 1.00, -0.22, 0.50, 1.00, 0.22, 0.05, 0.05, false);
+  m.prism(-0.02, 0, [[0.11, 0.80, 0.19], [0.14, 0.86, 0.21], [0.19, 0.80, 0.17]]);
+  m.col(0x22262a);
+  m.plate(-0.02, 0.192, 0, 0.66, 0.13);
+  for (const s of [-1, 1]) {
+    m.tubeBetween(0.44, 0.19, s * 0.055, 0.47, 0.60, s * 0.035, 0.026, 4);
+    m.tubeBetween(-0.46, 0.19, s * 0.055, -0.30, 0.15, s * 0.05, 0.024, 4);
+  }
+  m.col(0xf4f4f4);
+  m.tubeBetween(0.47, 0.58, 0, 0.50, 1.00, 0, 0.040, 5);
+  m.col(0x30363a).tube(0.475, 0, [[0.56, 0.055], [0.63, 0.052]], 5);
+  m.col(0xf4f4f4).tubeBetween(0.50, 1.00, -0.24, 0.50, 1.00, 0.24, 0.026, 5);
+  m.col(0x15181b);
+  for (const s of [-1, 1]) m.tubeBetween(0.50, 1.00, s * 0.13, 0.50, 1.00, s * 0.24, 0.035, 5, true);
+  m.tubeBetween(0.50, 0.98, 0.10, 0.44, 0.95, 0.16, 0.014, 3);
+  m.col(0x2b2f33).board(0, 0.34, 0.30, -0.62, 0.40, -0.34, 0.03);
+  m.col(P.STEEL_DARK).tubeBetween(-0.10, 0.14, 0.06, -0.18, 0.01, 0.18, 0.016, 3);
+  m.col(P.SIGN_FACE); decal(m, 0.50, 0.86, 0.04, 0.14, 0.09);
 }
 
 /* -- lighting ------------------------------------------------------------- */
 
-function gLampModern(m) {
-  // The arm reaches along +z, i.e. outward over the carriageway once the
-  // placer has turned the post to face the street.
-  m.col(P.STEEL_DARK).tube(0, 0, [[0, 0.24], [0.20, 0.145]], 6, { capTop: false });
-  m.col(P.LAMP_POST).tube(0, 0, [[0.22, 0.135], [6.60, 0.085]], 7, { capTop: false });
-  m.col(P.LAMP_POST);
-  m.beam(0, 6.56, 0, 0, 6.94, 0.34, 0.10, 0.10, false);
-  m.beam(0, 6.94, 0.34, 0, 6.98, 1.52, 0.09, 0.09, false);
-  m.col(P.ALUMINIUM).prism(0, 1.60, [[6.80, 0.30, 0.74], [6.96, 0.34, 0.80]]);
-  m.lit(P.LAMP_GLOW, 1, 1.4).plate(0, 6.795, 1.60, 0.24, 0.64);
-}
-
-/** Acorn globe: two rings is enough to read as a globe at any game distance. */
-function globe(m, x, z, y, r, segs = 6) {
-  m.tube(x, z, [[y, r * 0.62], [y + r * 0.78, r], [y + r * 2.0, r * 0.40]], segs, { capTop: true });
+/**
+ * Lantern head. Eight-sided glass housing with a dark mullion band, a skirt
+ * ring under it, a dark ogee cap and a ball finial.
+ *
+ * The whole lamp family shipped a two-ring faceted cone in beige — a party hat,
+ * not a lit lantern. The mullion read comes out of the sweep's own `cols` so it
+ * costs nothing, and only the glass panes carry the glow flag.
+ */
+function lantern(m, x, z, y, r, segs = 7) {
+  m.col(P.BENCH_METAL);
+  m.tube(x, z, [[y, r * 0.44], [y + r * 0.16, r * 0.92], [y + r * 0.30, r * 0.98]], segs);
+  m.lit(P.LAMP_GLOW, 1, 1.3);
+  m.tube(x, z, [
+    [y + r * 0.30, r], [y + r * 0.90, r * 0.96], [y + r * 1.45, r * 0.80],
+  ], segs, { cols: [P.LAMP_GLOW, P.LAMP_GLOW] });
+  m.col(P.BENCH_METAL);
+  m.tube(x, z, [[y + r * 0.62, r * 1.02], [y + r * 0.74, r * 1.00]], segs);
+  m.tube(x, z, [
+    [y + r * 1.45, r * 0.86], [y + r * 1.80, r * 0.52], [y + r * 2.00, r * 0.18],
+  ], segs, { capTop: true });
+  m.tube(x, z, [[y + r * 2.00, r * 0.20], [y + r * 2.18, r * 0.24], [y + r * 2.36, r * 0.08]], 5,
+    { capTop: true });
 }
 
 /**
- * @param {boolean} baskets hang a flower basket off each bracket end.
- *
- * The baskets are PART OF THE LAMP, not props of their own. As separate
- * consumables they were 476 objects whose lowest geometry sat four metres in
- * the air: nothing supported them, the audit called every one of them floating,
- * and eating the post left its flowers hanging over the pit. Baked in, they
- * fall with the post they hang from, which is the only behaviour that was ever
- * believable.
+ * Cobra-arm street light. Correct silhouette already; this adds the detail it
+ * had none of — a tapered chamfered housing, a cast bracket joint with a gusset
+ * under the arm, a hinged access door with two bolts at 0.6 m, a bolted base
+ * flange and a bird spike on the housing top, which sells the scale for 6 tris.
+ */
+function gLampModern(m) {
+  m.col(P.STEEL_DARK);
+  m.tube(0, 0, [[0, 0.26], [0.05, 0.25], [0.09, 0.175]], 8, { capTop: false });
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * TAU + 0.4;
+    m.tube(Math.cos(a) * 0.205, Math.sin(a) * 0.205, [[0.05, 0.028], [0.075, 0.02]], 3,
+      { capTop: true });
+  }
+  m.col(P.LAMP_POST).tube(0, 0, [[0.09, 0.145], [0.22, 0.135], [6.60, 0.085]], 7,
+    { capTop: false });
+  m.col(0x8f938c); decal(m, 0, 0.72, 0.126, 0.13, 0.34);
+  m.col(P.LAMP_POST);
+  m.tubeBetween(0, 6.52, 0, 0, 6.94, 0.34, 0.055, 5);
+  m.tubeBetween(0, 6.94, 0.34, 0, 6.98, 1.52, 0.050, 5);
+  m.tubeBetween(0, 6.86, 0.20, 0, 6.92, 0.60, 0.032, 4);   // gusset
+  m.col(P.ALUMINIUM);
+  m.prism(0, 1.56, [[6.78, 0.26, 0.60], [6.83, 0.32, 0.78], [6.94, 0.30, 0.74], [6.98, 0.24, 0.62]]);
+  m.lit(P.LAMP_GLOW, 1, 1.4).plate(0, 6.775, 1.58, 0.24, 0.62);
+  m.col(P.STEEL_DARK).tubeBetween(0, 6.98, 1.70, 0, 7.10, 1.70, 0.010, 3);
+}
+
+/**
+ * Twin-globe Deco post. Tapered fluted shaft with three raised rings on a cast
+ * bell base with bolt ears, a pair of SCROLL brackets rather than a straight
+ * bar, two real lanterns and a ball finial between the arms.
  */
 function gLampDeco(m, baskets = false) {
   m.col(P.BENCH_METAL);
-  m.prism(0, 0, [[0, 0.44, 0.44], [0.44, 0.26, 0.26]]);
-  m.tube(0, 0, [[0.44, 0.115], [4.36, 0.085]], 5, { capTop: false });
-  m.beam(-0.60, 4.44, 0, 0.60, 4.44, 0, 0.08, 0.08, false);
-  for (const s of [-1, 1]) {
-    m.col(P.BENCH_METAL);
-    m.beam(s * 0.60, 4.42, 0, s * 0.60, 4.62, 0, 0.07, 0.07, false);
-    m.lit(P.LAMP_GLOW, 1, 1.3);
-    globe(m, s * 0.60, 0, 4.62, 0.22, 5);
-    if (!baskets) continue;
-    m.col(P.STEEL_DARK).beam(s * 0.60, 4.40, 0, s * 0.60, 4.12, 0, 0.03, 0.03, false);
-    m.col(P.PLANTER_DARK).tube(s * 0.60, 0, [[4.12, 0.30], [4.30, 0.32]], 6, { capTop: false });
-    shrub(m, s * 0.60, 4.24, 0, 0.30, s > 0 ? P.FLOWER_MAGENTA : P.FLOWER_PINK, 5);
+  m.prism(0, 0, [[0, 0.46, 0.46], [0.06, 0.42, 0.42], [0.26, 0.40, 0.40], [0.34, 0.30, 0.30]]);
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * TAU + Math.PI / 4;
+    m.prism(Math.cos(a) * 0.20, Math.sin(a) * 0.20, [[0.26, 0.10, 0.10], [0.30, 0.08, 0.08]]);
   }
+  m.tube(0, 0, [[0.34, 0.145], [0.46, 0.128], [0.52, 0.118]], 6);
+  m.tube(0, 0, [[0.52, 0.112], [2.30, 0.094], [3.90, 0.080], [4.36, 0.076]], 6, { capTop: false });
+  for (const y of [1.06, 2.30, 3.54]) m.tube(0, 0, [[y, 0.108], [y + 0.05, 0.106]], 6);
+  // Scroll brackets: a knee and a short drop, not one straight cross-arm.
+  for (const s of [-1, 1]) {
+    m.tubeBetween(0, 4.30, 0, s * 0.36, 4.44, 0, 0.045, 4);
+    m.tubeBetween(s * 0.36, 4.44, 0, s * 0.62, 4.42, 0, 0.045, 4);
+    m.tubeBetween(s * 0.30, 4.16, 0, s * 0.56, 4.40, 0, 0.028, 4);
+    m.tubeBetween(s * 0.62, 4.42, 0, s * 0.62, 4.56, 0, 0.042, 4);
+    lantern(m, s * 0.62, 0, 4.56, 0.185, 6);
+    if (!baskets) continue;
+    m.col(P.STEEL_DARK);
+    for (const c of [-1, 1]) {
+      m.tubeBetween(s * 0.62 + c * 0.16, 4.40, 0, s * 0.62 + c * 0.20, 4.14, 0, 0.010, 3);
+    }
+    // Woven basket: rim ring, a two-tone flower mound, foliage under it and
+    // trailing stems, so it is not one solid magenta lump.
+    m.col(0x7a6248).tube(s * 0.62, 0, [[4.06, 0.20], [4.16, 0.28]], 8, { capTop: false });
+    m.col(0x5e4a36).tube(s * 0.62, 0, [[4.16, 0.285], [4.20, 0.29]], 8);
+    m.col(P.HEDGE).tube(s * 0.62, 0, [[4.14, 0.30], [4.22, 0.26], [4.26, 0.16]], 6, { capTop: true });
+    m.col(s > 0 ? P.FLOWER_MAGENTA : P.FLOWER_PINK);
+    m.tube(s * 0.62, 0, [[4.20, 0.24], [4.30, 0.27], [4.40, 0.14]], 6, { capTop: true });
+    m.col(s > 0 ? P.FLOWER_PINK : P.FLOWER_WHITE);
+    m.tube(s * 0.62 + 0.10, 0.06, [[4.26, 0.13], [4.34, 0.15], [4.40, 0.06]], 5, { capTop: true });
+    m.col(P.HEDGE_LIGHT);
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * TAU + 0.8;
+      m.tubeBetween(s * 0.62 + Math.cos(a) * 0.22, 4.14, Math.sin(a) * 0.22,
+        s * 0.62 + Math.cos(a) * 0.30, 3.84, Math.sin(a) * 0.30, 0.022, 3);
+    }
+    m.col(P.BENCH_METAL);
+  }
+  m.col(P.BENCH_METAL);
+  m.tube(0, 0, [[4.36, 0.080], [4.48, 0.096], [4.60, 0.036]], 5, { capTop: true });
 }
 
 function gLampDecoBasket(m) { gLampDeco(m, true); }
 
+/**
+ * Park lamp. Tapered fluted post on a cast square plinth with a chamfered
+ * collar and bolt ears, three raised rings, and a real eight-sided lantern with
+ * a skirt, an ogee cap and a ball finial in place of the beige acorn.
+ */
 function gLampPark(m) {
   m.col(P.BENCH_METAL);
-  m.prism(0, 0, [[0, 0.34, 0.34], [0.08, 0.27, 0.27], [0.34, 0.18, 0.18]]);
-  m.tube(0, 0, [[0.34, 0.085], [3.34, 0.07]], 6, { capTop: false });
-  m.lit(P.LAMP_GLOW, 1, 1.3);
-  globe(m, 0, 0, 3.30, 0.25, 6);
+  m.prism(0, 0, [[0, 0.36, 0.36], [0.06, 0.33, 0.33], [0.20, 0.31, 0.31], [0.28, 0.22, 0.22]]);
+  m.tube(0, 0, [[0.28, 0.115], [0.38, 0.100]], 6);
+  m.tube(0, 0, [[0.38, 0.096], [1.70, 0.082], [3.02, 0.070], [3.34, 0.066]], 6, { capTop: false });
+  for (const y of [0.86, 1.90, 2.86]) m.tube(0, 0, [[y, 0.094], [y + 0.045, 0.092]], 6);
+  lantern(m, 0, 0, 3.30, 0.23, 7);
 }
 
 /* -- transit -------------------------------------------------------------- */
 
+/**
+ * Hanging garment: shoulders, a taper, a hem, and a hook over the rail.
+ *
+ * Both clothing rails in the module hung flat vertical cards, so from the game
+ * camera they read as a flag stand rather than stock. A garment is defined by
+ * being WIDEST just below the shoulder and narrowing to the hem.
+ */
+function garment(m, x, y, z, len, hex, lean = 0) {
+  m.col(P.CHROME);
+  m.tubeBetween(x, y + 0.05, z, x + lean * 0.03, y - 0.10, z, 0.010, 3);
+  m.col(hex);
+  const dx = lean * 0.05;
+  m.prism(x + dx, z, [
+    [y - 0.10 - len, 0.20, 0.16],
+    [y - 0.10 - len * 0.30, 0.25, 0.20],
+    [y - 0.22, 0.23, 0.18],
+    [y - 0.10, 0.11, 0.09],
+  ], { capTop: false });
+}
+
+/**
+ * Bus shelter. The composition was right and the surfaces were not: the glazing
+ * was an opaque pale slab and the canopy — the face the high 3/4 camera sees
+ * most of — was a blank cream board. The back wall is now three panes divided
+ * by real mullions with a top and bottom rail (the frame is what tells the eye
+ * it is glazing), and the canopy has a parapet lip, three ribs and a gutter.
+ */
 function gBusShelter(m) {
   const L = 4.30, D = 1.55;
   m.col(P.STEEL_DARK);
@@ -2307,21 +2479,36 @@ function gBusShelter(m) {
   }
   m.beam(-L / 2, 0, D / 2 - 0.1, -L / 2, 2.48, D / 2 - 0.1, 0.12, 0.12, false);
   m.beam(L / 2 - 0.24, 0, D / 2 - 0.1, L / 2 - 0.24, 2.48, D / 2 - 0.1, 0.12, 0.12, false);
-  // Back wall + one end wall in frosted glazing.
-  m.col(P.GLASS_SKY, 1.06);
-  m.prism(0, -D / 2 + 0.12, [[0.30, L - 0.30, 0.05], [2.36, L - 0.30, 0.05]]);
-  m.prism(-L / 2 + 0.08, 0, [[0.30, 0.05, D - 0.30], [2.36, 0.05, D - 0.30]]);
-  // Canopy, cantilevered a little past the posts so it reads from above.
+  // Glazing, brighter and paler so it reads as glass, in a real frame.
+  m.col(P.GLASS_SKY, 1.22);
+  m.prism(0, -D / 2 + 0.12, [[0.34, L - 0.34, 0.035], [2.32, L - 0.34, 0.035]]);
+  m.prism(-L / 2 + 0.08, 0, [[0.34, 0.035, D - 0.34], [2.32, 0.035, D - 0.34]]);
   m.col(P.ALUMINIUM);
-  m.prism(0, 0.05, [[2.48, L + 0.30, D + 0.42], [2.62, L + 0.22, D + 0.34]]);
+  for (const x of [-L / 3, L / 3]) {
+    m.prism(x, -D / 2 + 0.12, [[0.34, 0.05, 0.06], [2.32, 0.05, 0.06]]);
+  }
+  for (const y of [0.30, 2.32]) {
+    m.prism(0, -D / 2 + 0.12, [[y, L - 0.30, 0.07], [y + 0.05, L - 0.30, 0.07]]);
+  }
+  // Canopy: parapet lip, ribs and a gutter edge, because this is what is seen.
+  m.col(P.ALUMINIUM);
+  m.prism(0, 0.05, [[2.48, L + 0.30, D + 0.42], [2.58, L + 0.22, D + 0.34]]);
+  m.col(0xb4b8b2);
+  m.prism(0, 0.05, [[2.58, L + 0.24, D + 0.36], [2.64, L + 0.24, D + 0.36], [2.66, L + 0.18, D + 0.30]]);
+  m.col(P.STEEL_DARK);
+  for (const x of [-1.30, 0, 1.30]) {
+    m.prism(x, 0.05, [[2.58, 0.10, D + 0.30], [2.61, 0.10, D + 0.30]]);
+  }
+  m.col(0x9aa09a).prism(0, 0.05 + (D + 0.42) / 2 - 0.03, [[2.44, L + 0.30, 0.06], [2.50, L + 0.30, 0.06]]);
+  m.lit(P.LAMP_GLOW, 1, 1.1).plate(0, 2.475, 0.05, L - 0.6, 0.22);
   // Bench inside.
   m.col(P.TEAK);
-  m.prism(0, -D / 2 + 0.38, [[0.44, L - 1.0, 0.40], [0.49, L - 1.06, 0.36]]);
+  slats(m, 0, -D / 2 + 0.38, 0.44, L - 1.06, 3, 0.115, 0.02, 0.05, [0xc08a52, 0xb07a44]);
   m.col(P.STEEL_DARK);
   for (const s of [-1, 1]) {
     m.beam(s * (L / 2 - 0.7), 0, -D / 2 + 0.38, s * (L / 2 - 0.7), 0.45, -D / 2 + 0.38, 0.06, 0.30, false);
   }
-  // Advertising panel + timetable, the two things that make a shelter readable.
+  // Advertising panel and a route map on the end panel.
   m.col(P.SIGN_DARK);
   m.prism(L / 2 - 0.06, 0, [[0.30, 0.09, D - 0.30], [2.36, 0.09, D - 0.30]]);
   m.lit(P.NEON_PINK, 1, 0.9);
@@ -2330,206 +2517,516 @@ function gBusShelter(m) {
   m.prism(-L / 2 + 0.85, -D / 2 + 0.19, [[1.42, 0.60, 0.02], [1.96, 0.60, 0.02]]);
   m.col(P.SIGN_BLUE);
   m.prism(-L / 2 + 0.85, -D / 2 + 0.185, [[1.96, 0.66, 0.03], [2.10, 0.66, 0.03]]);
+  m.col(P.HYDRANT_RED); decal(m, -L / 2 + 0.85, 1.70, -D / 2 + 0.205, 0.50, 0.02);
+  m.col(P.SIGN_GREEN); decal(m, -L / 2 + 0.85, 1.58, -D / 2 + 0.205, 0.42, 0.02);
 }
 
+/**
+ * Vendor food cart. Fabric canopy in four alternating panels with a scalloped
+ * valance and a finial, a braced frame, a dressed counter (serving lip, two
+ * chrome hatch lids, a menu board, a condiment tray, a cup stack) and running
+ * gear that reads — two spoked wheels on a visible axle, a caster and a handle.
+ */
 function gFoodCart(m) {
   m.col(P.TYRE);
-  wheelX(m, 0.46, 0.20, -0.62, 0.20, 0.09);
-  wheelX(m, 0.46, 0.20, 0.62, 0.20, 0.09);
+  for (const s of [-1, 1]) {
+    m.xform(Math.PI / 2, s * 0.62, 0.24, 0.46); m.discZ(0, 0, 0.24, 0.10, 8, 0, 0.24); m.reset();
+    m.col(P.CHROME);
+    m.xform(Math.PI / 2, s * 0.62, 0.24, 0.46); m.discZ(0, 0, 0.07, 0.12, 5, 0, 0.07); m.reset();
+    m.col(P.TYRE);
+  }
+  m.col(P.STEEL_DARK).tubeBetween(-0.66, 0.24, 0.46, 0.66, 0.24, 0.46, 0.035, 5);
+  m.tubeBetween(0, 0.12, -0.42, 0, 0.34, -0.42, 0.03, 4);
+  m.col(P.TYRE);
+  m.xform(Math.PI / 2, 0, 0.12, -0.42); m.discZ(0, 0, 0.12, 0.07, 6, 0, 0.12); m.reset();
   m.col(0xf4f4f4);
-  m.prism(0, 0, [[0.34, 1.72, 0.92], [1.02, 1.78, 0.96], [1.08, 1.72, 0.90]]);
-  m.col(P.ACCENT_HOT);
-  m.prism(0, 0, [[0.58, 1.80, 0.98], [0.78, 1.80, 0.98]]);
+  m.oct(0, 0, [[0.34, 1.68, 0.88, 0.06], [0.40, 1.74, 0.94, 0.06],
+    [1.02, 1.78, 0.96, 0.06]], { capTop: false });
+  m.col(P.ACCENT_HOT).prism(0, 0, [[0.58, 1.80, 0.98], [0.78, 1.80, 0.98]]);
   m.col(P.CHROME);
-  m.prism(0, 0, [[1.08, 1.76, 0.94], [1.14, 1.70, 0.88]]);
+  m.prism(0, 0, [[1.02, 1.80, 0.98], [1.08, 1.76, 0.94]]);
+  m.prism(0, 0.44, [[1.08, 1.76, 0.10], [1.14, 1.74, 0.08]]);   // serving lip
+  for (const s of [-1, 1]) m.tube(s * 0.44, -0.12, [[1.08, 0.20], [1.12, 0.19]], 6, { capTop: true });
+  m.tubeBetween(-0.92, 0.90, 0, -0.92, 0.90, 0, 0.03, 4);
+  m.tubeBetween(-0.90, 0.78, -0.30, -0.90, 0.78, 0.30, 0.032, 5);   // push handle
   m.col(P.STEEL_DARK);
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    m.beam(sx * 0.78, 1.14, sz * 0.40, sx * 0.72, 2.28, sz * 0.36, 0.05, 0.05, false);
+    m.tubeBetween(sx * 0.78, 1.14, sz * 0.40, sx * 0.72, 2.28, sz * 0.36, 0.032, 4);
   }
-  m.col(P.FABRIC_SUN);
-  m.prism(0, 0, [[2.20, 2.00, 1.24], [2.34, 1.30, 0.80], [2.46, 0.20, 0.14]]);
+  for (const sz of [-1, 1]) {
+    m.tubeBetween(-0.75, 1.70, sz * 0.38, 0.75, 1.70, sz * 0.38, 0.022, 4);
+  }
+  m.tubeBetween(-0.78, 1.14, -0.40, 0.72, 2.28, 0.36, 0.018, 4);
+  // Menu board, condiment tray, cup stack, propane bottle.
+  m.col(P.SIGN_DARK).prism(-0.74, 0.42, [[1.30, 0.42, 0.03], [1.86, 0.42, 0.03]]);
+  m.col(P.FABRIC_SUN); decal(m, -0.74, 1.78, 0.437, 0.36, 0.07);
+  m.col(P.SIGN_FACE);
+  for (let k = 0; k < 4; k++) decal(m, -0.74, 1.66 - k * 0.09, 0.437, 0.32, 0.035);
+  m.col(P.HYDRANT_RED).tube(0.66, 0.18, [[1.14, 0.06], [1.30, 0.05]], 5, { capTop: true });
+  m.col(P.FABRIC_SUN).tube(0.78, 0.18, [[1.14, 0.06], [1.30, 0.05]], 5, { capTop: true });
+  m.col(P.SIGN_FACE).tube(0.50, 0.20, [[1.14, 0.075], [1.42, 0.085]], 6, { capTop: true });
+  m.col(P.CAR_SILVER).tube(-0.40, 0, [[0.36, 0.16], [0.62, 0.155], [0.66, 0.10]], 6, { capTop: true });
+  canopyFabric(m, 2.20, 2.34, 2.52, 1.42, 1.30, 6, P.FABRIC_SUN, 0xfdf3dc);
   m.col(P.FABRIC_WHITE);
-  m.prism(0, 0, [[2.14, 2.06, 1.30], [2.20, 2.02, 1.26]]);
+  valance(m, 2.20, 0.16, 1.42, 1.30, 6);
+  m.col(P.STEEL_DARK).tube(0, 0, [[2.52, 0.05], [2.58, 0.055], [2.62, 0.02]], 5, { capTop: true });
 }
 
+/**
+ * Hot-dog cart. A stainless drum lying on its side and CAPPED so the ends are
+ * rounded, a two-leaf lid with a steam vent, a chrome push handle, a condiment
+ * shelf with squeeze bottles and a napkin box, an under-shelf with a propane
+ * bottle, two spoked wheels plus a jockey wheel, a menu board, and an umbrella
+ * with eight gores and a scalloped hem.
+ */
 function gHotdogStand(m) {
   m.col(P.TYRE);
-  wheelX(m, 0.28, 0.17, -0.46, 0.17, 0.08);
-  wheelX(m, 0.28, 0.17, 0.46, 0.17, 0.08);
+  for (const s of [-1, 1]) {
+    m.xform(Math.PI / 2, s * 0.46, 0.20, 0.28); m.discZ(0, 0, 0.20, 0.08, 7, 0, 0.20); m.reset();
+    m.col(P.CHROME);
+    m.xform(Math.PI / 2, s * 0.46, 0.20, 0.28); m.discZ(0, 0, 0.06, 0.10, 5, 0, 0.06); m.reset();
+    m.col(P.TYRE);
+  }
+  m.xform(Math.PI / 2, 0, 0.10, -0.34); m.discZ(0, 0, 0.10, 0.06, 6, 0, 0.10); m.reset();
+  m.col(P.STEEL_DARK).tubeBetween(-0.50, 0.20, 0.28, 0.50, 0.20, 0.28, 0.03, 5);
   m.col(P.CHROME);
-  m.prism(0, 0, [[0.34, 1.18, 0.66], [0.92, 1.22, 0.70], [0.98, 1.16, 0.64]]);
-  m.col(P.HYDRANT_RED);
-  m.prism(0, 0, [[0.62, 1.26, 0.74], [0.78, 1.26, 0.74]]);
+  m.tubeBetween(-0.58, 0.62, 0, 0.58, 0.62, 0, 0.30, 8, true);
+  m.col(0xe4e8e6);
+  m.prism(0, 0, [[0.88, 1.20, 0.62], [0.94, 1.16, 0.58]]);
+  m.col(P.HYDRANT_RED).prism(0, 0, [[0.56, 1.24, 0.66], [0.70, 1.24, 0.66]]);
+  m.col(P.CHROME);
+  m.tube(0, 0.10, [[0.94, 0.07], [1.04, 0.06]], 5, { capTop: true });   // steam vent
+  m.tubeBetween(0.62, 0.74, -0.20, 0.62, 0.74, 0.20, 0.028, 5, true);   // push handle
+  m.tubeBetween(0.58, 0.68, 0, 0.62, 0.74, 0, 0.024, 4);
+  // Condiment shelf and the under-shelf.
+  m.col(P.ALUMINIUM).prism(0, 0.44, [[0.72, 0.90, 0.20], [0.76, 0.90, 0.20]]);
+  m.col(P.HYDRANT_RED).tube(-0.24, 0.44, [[0.76, 0.055], [0.90, 0.04]], 5, { capTop: true });
+  m.col(P.FABRIC_SUN).tube(-0.10, 0.44, [[0.76, 0.055], [0.90, 0.04]], 5, { capTop: true });
+  m.col(P.BIN_GREEN).tube(0.04, 0.44, [[0.76, 0.055], [0.88, 0.04]], 5, { capTop: true });
+  m.col(P.SIGN_FACE).prism(0.26, 0.44, [[0.76, 0.16, 0.14], [0.86, 0.16, 0.14]]);
+  m.col(P.CAR_SILVER).tube(-0.30, -0.10, [[0.24, 0.14], [0.46, 0.135], [0.50, 0.09]], 6, { capTop: true });
+  // Menu board on the street face.
+  m.col(P.SIGN_DARK).prism(-0.62, 0.40, [[0.90, 0.44, 0.03], [1.36, 0.44, 0.03]]);
+  m.col(P.HYDRANT_RED); decal(m, -0.62, 1.28, 0.417, 0.38, 0.08);
+  m.col(P.SIGN_FACE);
+  for (let k = 0; k < 3; k++) decal(m, -0.68, 1.14 - k * 0.09, 0.417, 0.24, 0.035);
+  m.col(P.FABRIC_SUN); decal(m, 0.72 - 0.62, 1.14, 0.417, 0.10, 0.16);
   m.col(P.STEEL_DARK);
-  m.tube(0, 0, [[0.98, 0.045], [2.06, 0.04]], 5);
+  m.tube(0, 0, [[0.94, 0.045], [2.02, 0.04]], 5);
+  canopyFabric(m, 2.00, 2.14, 2.40, 1.02, 0.92, 8, P.FABRIC_CORAL, 0xff9a90);
   m.col(P.FABRIC_CORAL);
-  canopy(m, 2.02, 1.00, 2.14, 0.86, 2.40);
+  valance(m, 2.00, 0.13, 1.02, 0.92, 8);
+  m.col(P.STEEL_DARK).tube(0, 0, [[2.40, 0.045], [2.46, 0.05], [2.50, 0.02]], 5, { capTop: true });
 }
 
+/**
+ * Market clothing rail. Shaped garments on visible hangers, a lower shelf of
+ * folded stock, a cross-brace between the uprights and a header board — five
+ * flat coloured slabs on a bare goalpost read as a rack of card.
+ */
 function gDisplayRack(m) {
   m.col(P.STEEL);
   for (const s of [-1, 1]) {
-    m.beam(s * 0.62, 0, 0, s * 0.62, 1.52, 0, 0.05, 0.05, false);
-    m.beam(s * 0.62, 0.04, -0.32, s * 0.62, 0.04, 0.32, 0.05, 0.05);
+    m.tubeBetween(s * 0.62, 0.04, 0, s * 0.62, 1.52, 0, 0.028, 5);
+    m.tubeBetween(s * 0.62, 0.04, -0.32, s * 0.62, 0.04, 0.32, 0.026, 4);
+    for (const sz of [-1, 1]) m.prism(s * 0.62, sz * 0.32, [[0, 0.10, 0.10], [0.03, 0.08, 0.08]]);
   }
-  m.beam(-0.62, 1.50, 0, 0.62, 1.50, 0, 0.05, 0.05, false);
-  // Hanging stock, blocked in so it reads as clothing at 4 m.
-  const cols = [P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_SUN, P.FABRIC_SKY, P.FABRIC_PINK];
-  for (let k = 0; k < 5; k++) {
-    m.col(cols[k % cols.length]);
-    m.prism(-0.48 + k * 0.24, 0, [[0.74, 0.21, 0.30], [1.44, 0.19, 0.26]], { capTop: false });
+  m.tubeBetween(-0.62, 1.50, 0, 0.62, 1.50, 0, 0.024, 5);
+  m.tubeBetween(-0.62, 0.44, 0, 0.62, 0.44, 0, 0.020, 4);
+  m.col(P.WOOD_LIGHT).prism(0, 0, [[0.44, 1.16, 0.42], [0.48, 1.16, 0.42]]);
+  m.col(P.FABRIC_SKY).prism(-0.28, 0, [[0.48, 0.34, 0.30], [0.62, 0.32, 0.28]]);
+  m.col(P.FABRIC_PINK).prism(0.26, 0.04, [[0.48, 0.32, 0.28], [0.58, 0.30, 0.26]]);
+  const cols = [P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_SUN, P.FABRIC_SKY, P.FABRIC_PINK, P.FABRIC_LIME];
+  for (let k = 0; k < 6; k++) {
+    garment(m, -0.50 + k * 0.20, 1.50, (k % 3 - 1) * 0.04, 0.52 + (k % 3) * 0.09,
+      cols[k], (k % 2 ? 1 : -1) * (1 + k % 3));
   }
+  m.col(P.SIGN_DARK).prism(0, 0, [[1.56, 0.72, 0.03], [1.78, 0.72, 0.03]]);
+  m.col(P.SIGN_FACE); decal(m, 0, 1.67, 0.017, 0.56, 0.07);
 }
 
+/**
+ * Slatted produce crate. Four corner posts, three slats a side with 15 mm gaps
+ * you can see through, a rim rail and a plank floor, filled with a mound of
+ * overlapping fruit at two sizes rather than two smooth domes.
+ */
 function gProduceCrate(m) {
+  const W = 0.62, D = 0.44, H = 0.34;
+  m.col(P.WOOD_DECK);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.prism(sx * (W / 2 - 0.035), sz * (D / 2 - 0.035), [[0, 0.075, 0.075], [H + 0.04, 0.07, 0.07]]);
+    }
+  }
   m.col(P.WOOD_LIGHT);
-  m.prism(0, 0, [[0, 0.62, 0.44], [0.34, 0.64, 0.46]], { capTop: false });
+  for (let k = 0; k < 3; k++) {
+    const y = 0.03 + k * 0.115;
+    for (const sz of [-1, 1]) m.prism(0, sz * (D / 2 - 0.012), [[y, W - 0.06, 0.022], [y + 0.075, W - 0.06, 0.022]]);
+    for (const sx of [-1, 1]) m.prism(sx * (W / 2 - 0.012), 0, [[y, 0.022, D - 0.06], [y + 0.075, 0.022, D - 0.06]]);
+  }
   m.col(P.WOOD_DARK);
-  m.prism(0, 0, [[0.34, 0.66, 0.48], [0.38, 0.62, 0.44]], { capTop: false });
-  m.col(P.FLOWER_ORANGE);
-  m.tube(-0.14, 0, [[0.32, 0.16], [0.44, 0.15], [0.50, 0.05]], 6, { capTop: true });
-  m.col(P.GRASS_LIGHT);
-  m.tube(0.16, 0.02, [[0.32, 0.16], [0.44, 0.15], [0.50, 0.05]], 6, { capTop: true });
+  m.prism(0, 0, [[H + 0.04, W + 0.03, D + 0.03], [H + 0.075, W - 0.01, D - 0.01]]);
+  m.col(P.WOOD_DECK).plate(0, 0.03, 0, W - 0.08, D - 0.08);
+  berries(m, 0, H - 0.02, 0, 0.075, 0.20, 9,
+    [P.FLOWER_ORANGE, P.CAR_LIME, P.HYDRANT_RED, P.FLOWER_ORANGE, P.GRASS_LIGHT]);
 }
 
 /* -- construction --------------------------------------------------------- */
 
+/**
+ * Jersey barrier. The profile was already right; what it had none of was the
+ * JOINT — a recessed end face with two lifting pockets, a connector lug at one
+ * end and a socket at the other, so a run of them reads as linked units rather
+ * than as identical blocks parked in a line. Top edges chamfered, a dirtier top
+ * face than the flanks, and a tyre scuff band at 0.35.
+ */
 function gJersey(m) {
-  m.col(P.CONCRETE_DARK);
   m.prism(0, 0, [
-    [0, 2.00, 0.60], [0.10, 1.98, 0.56], [0.30, 1.98, 0.30],
-    [0.72, 1.98, 0.24], [0.80, 1.94, 0.20],
-  ], { cols: [P.CONCRETE_DARK, P.PRECAST, P.PRECAST, P.PRECAST] });
+    [0, 2.00, 0.62], [0.06, 1.98, 0.58], [0.30, 1.98, 0.32], [0.33, 1.98, 0.31],
+    [0.40, 1.98, 0.30], [0.70, 1.98, 0.25], [0.76, 1.96, 0.22], [0.80, 1.90, 0.17],
+  ], {
+    cols: [0xa8a08c, 0xf4eee0, 0xdcd4c0, 0xf4eee0, 0xf2ece0, 0xeae2d2, 0xe4dccc],
+  });
+  // Recessed end faces with two lifting pockets each.
+  m.col(0xd8d0be);
+  for (const s of [-1, 1]) {
+    m.prism(s * 0.985, 0, [[0.34, 0.03, 0.26], [0.72, 0.03, 0.22]]);
+    m.xform(Math.PI / 2 * s, 0, 0, 0);
+    m.reset();
+  }
+  m.col(0xb4ac98);
+  for (const s of [-1, 1]) {
+    for (const z of [-0.05, 0.05]) m.plate(s * 0.62, 0.802, z, 0.16, 0.07);
+  }
+  // Connector lug on one end, socket on the other.
+  m.col(0xe8e0d0).prism(1.02, 0, [[0.40, 0.09, 0.16], [0.70, 0.09, 0.16]]);
+  m.col(0x9a9280).prism(-0.995, 0, [[0.40, 0.02, 0.19], [0.70, 0.02, 0.19]]);
   m.col(P.ACCENT_SUN);
-  m.prism(0, 0, [[0.56, 2.00, 0.27], [0.64, 2.00, 0.27]]);
+  m.prism(0, 0, [[0.52, 2.00, 0.285], [0.60, 2.00, 0.275]]);
 }
 
+/**
+ * Water-filled traffic barrier. Re-authored 1.85 m long along local x so it
+ * packs end to end down a construction edge; the old one was a 0.72 m stepped
+ * block that read as a chunky Lego brick. Splayed foot, wasp waist, flat top
+ * deck, a raised fill cap with a screw lid at each end, a moulded lifting
+ * handle recess in each flank, a male lug at one end and a female socket at the
+ * other, two moulding ribs a side and a reflective panel at each end.
+ */
 function gWaterBarrier(m) {
-  m.col(0xffffff);
   m.prism(0, 0, [
-    [0, 0.58, 0.44], [0.06, 0.54, 0.40], [0.86, 0.56, 0.42], [0.94, 0.50, 0.36],
-  ]);
-  m.col(0xe8e8e8);
-  m.prism(0, 0, [[0.34, 0.60, 0.46], [0.42, 0.60, 0.46]]);
-  m.col(0xd8d8d8);
-  m.prism(0, 0, [[0.94, 0.30, 0.22], [1.02, 0.26, 0.18]]);
+    [0, 1.82, 0.56], [0.09, 1.80, 0.48], [0.34, 1.80, 0.33],
+    [0.60, 1.80, 0.31], [0.84, 1.82, 0.42], [0.96, 1.80, 0.46], [1.00, 1.74, 0.40],
+  ], { cols: [0xd0d0d0, 0xf4f4f4, 0xffffff, 0xffffff, 0xfafafa, 0xf0f0f0] });
+  // Fill caps with screw lids.
+  for (const s of [-1, 1]) {
+    m.col(0xe4e4e4).tube(s * 0.66, 0, [[1.00, 0.115], [1.09, 0.105]], 6);
+    m.col(0xc8c8c8).tube(s * 0.66, 0, [[1.09, 0.115], [1.14, 0.095]], 6, { capTop: true });
+  }
+  // Ribs, handle recesses, and the interlocking ends.
+  m.col(0xe0e0e0);
+  for (const y of [0.42, 0.66]) m.prism(0, 0, [[y, 1.83, 0.36], [y + 0.05, 1.83, 0.36]]);
+  m.col(0xcccccc);
+  for (const s of [-1, 1]) {
+    for (const sx of [-1, 1]) decal(m, sx * 0.42, 0.74, s * 0.20, 0.34, 0.13, s);
+  }
+  m.col(0xf4f4f4).prism(0.93, 0, [[0.30, 0.14, 0.24], [0.86, 0.14, 0.24]]);
+  m.col(0xbcbcbc).prism(-0.905, 0, [[0.28, 0.03, 0.28], [0.88, 0.03, 0.28]]);
+  m.lit(P.SIGN_FACE, 1, 0.4);
+  for (const s of [-1, 1]) m.prism(s * 0.80, 0, [[0.60, 0.20, 0.34], [0.80, 0.20, 0.34]]);
+  // Scuff band baked into the bottom 0.12 so it does not read as new plastic.
+  m.col(0x9a9a96).prism(0, 0, [[0.02, 1.83, 0.50], [0.11, 1.82, 0.46]]);
 }
 
+/**
+ * Type II barricade. The stripes are DIAGONAL now — that 45-degree slope is the
+ * feature that identifies a barricade, and vertical bars read as a fence. Two
+ * rails plus a cap, a sandbag over the feet and an amber reflector at each end.
+ */
 function gAframe(m) {
   m.col(P.BARRIER_ORANGE);
   for (const s of [-1, 1]) {
     m.beam(-0.52, 0, s * 0.24, -0.52, 1.02, s * 0.05, 0.06, 0.06, false);
     m.beam(0.52, 0, s * 0.24, 0.52, 1.02, s * 0.05, 0.06, 0.06, false);
   }
-  m.col(P.BARRIER_WHITE);
-  m.prism(0, 0, [[0.52, 1.10, 0.06], [0.76, 1.10, 0.06]]);
-  m.col(P.BARRIER_ORANGE);
-  for (let k = 0; k < 4; k++) {
-    m.prism(-0.42 + k * 0.28, 0, [[0.52, 0.13, 0.075], [0.76, 0.13, 0.075]]);
-  }
-  m.col(P.BARRIER_WHITE);
-  m.prism(0, 0, [[0.86, 1.06, 0.06], [1.02, 1.06, 0.06]]);
-}
-
-function gTrafficBarrel(m) {
-  m.tube(0, 0, [
-    [0, 0.36], [0.05, 0.33], [0.30, 0.34], [0.42, 0.31],
-    [0.60, 0.32], [0.72, 0.29], [0.92, 0.30],
-  ], 8, {
-    capTop: true,
-    cols: [P.BARRIER_ORANGE, P.BARRIER_ORANGE, P.BARRIER_WHITE, P.BARRIER_ORANGE,
-      P.BARRIER_WHITE, P.BARRIER_ORANGE],
-  });
-}
-
-function gCrate(m) {
-  m.col(P.WOOD_DECK);
-  m.prism(0, 0, [[0, 0.78, 0.72], [0.06, 0.82, 0.76], [0.62, 0.82, 0.76], [0.68, 0.78, 0.72]]);
-  m.col(P.WOOD_DARK);
-  m.prism(0, 0, [[0.28, 0.84, 0.78], [0.36, 0.84, 0.78]]);
-}
-
-function gPallet(m) {
-  m.col(P.WOOD_LIGHT);
-  for (let k = 0; k < 3; k++) {
-    const y = k * 0.16;
-    m.prism(0, 0, [[y, 1.16, 0.98], [y + 0.05, 1.16, 0.98]]);
-    m.col(P.WOOD_DARK);
-    for (const s of [-1, 0, 1]) {
-      m.prism(s * 0.46, 0, [[y + 0.05, 0.16, 0.92], [y + 0.11, 0.16, 0.92]]);
+  for (const [y0, slope] of [[0.44, 1], [0.78, -1]]) {
+    m.col(P.BARRIER_WHITE);
+    m.prism(0, 0, [[y0, 1.10, 0.06], [y0 + 0.22, 1.10, 0.06]]);
+    m.col(P.BARRIER_ORANGE);
+    for (let k = 0; k < 5; k++) {
+      const x = -0.44 + k * 0.24;
+      for (const s of [1, -1]) {
+        const z = s * 0.032;
+        // Parallelogram: four quads on the diagonal, mirrored on the far rail.
+        m.quad([x - 0.06, y0 + 0.005, z], [x + 0.06, y0 + 0.005, z],
+          [x + 0.06 + slope * 0.13, y0 + 0.215, z], [x - 0.06 + slope * 0.13, y0 + 0.215, z]);
+        m.quad([x + 0.06, y0 + 0.005, -z], [x - 0.06, y0 + 0.005, -z],
+          [x - 0.06 + slope * 0.13, y0 + 0.215, -z], [x + 0.06 + slope * 0.13, y0 + 0.215, -z]);
+      }
     }
-    m.col(P.WOOD_LIGHT);
   }
-}
-
-function gScaffold(m) {
-  m.col(P.SCAFFOLD);
-  for (const sz of [-1, 1]) {
-    for (const sx of [-1, 1]) {
-      m.beam(sx * 0.58, 0, sz * 0.42, sx * 0.58, 1.94, sz * 0.42, 0.07, 0.07, false);
-    }
-    m.beam(-0.58, 0.96, sz * 0.42, 0.58, 0.96, sz * 0.42, 0.06, 0.06, false);
-    m.beam(-0.58, 1.90, sz * 0.42, 0.58, 1.90, sz * 0.42, 0.06, 0.06, false);
-    m.beam(-0.58, 0.06, sz * 0.42, 0.58, 1.90, sz * 0.42, 0.05, 0.05, false);
-  }
-  m.col(P.WOOD_DECK);
-  m.prism(0, 0, [[1.90, 1.24, 0.90], [1.96, 1.24, 0.90]]);
+  m.col(P.BARRIER_WHITE);
+  m.prism(0, 0, [[1.00, 1.06, 0.08], [1.05, 1.02, 0.06]]);
+  m.col(P.ACCENT_SUN);
+  for (const s of [-1, 1]) decal(m, s * 0.50, 0.66, 0.033, 0.10, 0.10);
+  // Sandbag over the feet: a barricade nobody has weighted down is the tell.
+  m.col(P.SAND_WET);
+  m.tube(-0.52, 0, [[0, 0.16, 0.24], [0.08, 0.21, 0.30], [0.15, 0.10, 0.16]], 6,
+    { capTop: true, rot: 0.4 });
 }
 
 /**
- * Timber cable reel, stood on its rim and chocked.
- *
- * Every other object on a construction site is a box or a barrier, so the yard
- * had no round vertical silhouette at all. It is chocked rather than free —
- * which is both how a site leaves one and how it gets a contact patch wide
- * enough for the support physics to behave: on the bare rim it would stand on a
- * 9 cm line and topple the instant anything touched it.
+ * Traffic drum. Closed 8-sided barrel with PROUD ribs and retroreflective
+ * bands rather than colour changes on the same surface, on a black rubber
+ * ballast base ring — the single most identifying feature of a traffic drum and
+ * the one the old model had none of — with a recessed lid and a lift slot.
+ */
+function gTrafficBarrel(m) {
+  m.col(0x1e2124);
+  m.tube(0, 0, [[0, 0.42], [0.06, 0.43], [0.10, 0.40], [0.12, 0.32]], 8, { capTop: false });
+  m.col(P.BARRIER_ORANGE);
+  m.tube(0, 0, [[0.10, 0.30], [0.20, 0.295], [0.86, 0.285], [0.92, 0.275]], 8, { capTop: true });
+  for (const [y, hex] of [[0.22, P.BARRIER_WHITE], [0.40, P.BARRIER_ORANGE],
+    [0.58, P.BARRIER_WHITE], [0.76, P.BARRIER_ORANGE]]) {
+    m.col(hex);
+    m.tube(0, 0, [[y, 0.312], [y + 0.14, 0.308]], 8);
+  }
+  m.col(0xe06010);
+  m.tube(0, 0, [[0.88, 0.255], [0.90, 0.22]], 8, { capTop: true });
+  m.col(0x8c3c08); decal(m, 0, 0.905, 0, 0.16, 0.03);
+}
+
+/**
+ * Timber packing case. Four corner posts, three planks a face with a visible
+ * gap and a darker seam between them, a lid with two cleats across it and a
+ * stencilled shipping mark. Every edge bevelled, and no two boards the same
+ * tone — the old one was a plain tan cube with a stripe.
+ */
+function gCrate(m) {
+  const W = 0.78, D = 0.72, H = 0.66;
+  const tones = [P.WOOD_DECK, P.WOOD_LIGHT, 0xd0a274, 0xbb8d5f];
+  m.col(P.WOOD_DARK);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.prism(sx * (W / 2 - 0.045), sz * (D / 2 - 0.045),
+        [[0, 0.09, 0.09], [0.02, 0.10, 0.10], [H - 0.02, 0.10, 0.10], [H, 0.09, 0.09]]);
+    }
+  }
+  for (let k = 0; k < 3; k++) {
+    const y = 0.04 + k * 0.205;
+    m.col(tones[k % 4]);
+    for (const sz of [-1, 1]) {
+      m.prism(0, sz * (D / 2 - 0.018), [[y, W - 0.10, 0.035], [y + 0.165, W - 0.115, 0.030]]);
+    }
+    m.col(tones[(k + 2) % 4]);
+    for (const sx of [-1, 1]) {
+      m.prism(sx * (W / 2 - 0.018), 0, [[y, 0.035, D - 0.10], [y + 0.165, 0.030, D - 0.115]]);
+    }
+  }
+  m.col(P.WOOD_LIGHT);
+  slats(m, 0, 0, H, W - 0.02, 4, 0.155, 0.012, 0.04, [P.WOOD_LIGHT, P.WOOD_DECK]);
+  m.col(P.WOOD_DARK);
+  for (const sx of [-1, 1]) m.prism(sx * 0.24, 0, [[H + 0.04, 0.075, D - 0.02], [H + 0.065, 0.07, D - 0.03]]);
+  m.col(P.SIGN_FACE); decal(m, 0, 0.36, D / 2 + 0.002, 0.24, 0.18);
+  m.col(P.SIGN_DARK);
+  decal(m, 0, 0.42, D / 2 + 0.004, 0.18, 0.03);
+  decal(m, 0, 0.32, D / 2 + 0.004, 0.12, 0.06);
+}
+
+/**
+ * Pallet stack. One pallet is now five top deck boards with 4 cm gaps, three
+ * stringers below and three bottom boards — you can see the pavement through
+ * the fork slots, which is the one thing a pallet actually does. The stack is
+ * three layers with a rotation offset per layer and a splintered gap in the
+ * middle one, plus nail heads at every board crossing.
+ */
+function gPallet(m) {
+  const tones = [P.WOOD_LIGHT, 0xd7b384, P.WOOD_DECK];
+  for (let k = 0; k < 3; k++) {
+    const y = k * 0.155;
+    m.xform((k - 1) * 0.06, 0, 0, 0);
+    m.col(tones[k % 3]);
+    for (const s of [-1, 0, 1]) {
+      m.prism(s * 0.46, 0, [[y, 0.16, 0.96], [y + 0.045, 0.155, 0.95]]);       // stringers
+    }
+    m.col(tones[(k + 1) % 3]);
+    for (const s of [-1, 0, 1]) {
+      m.prism(s * 0.46, 0, [[y + 0.115, 0.16, 0.96], [y + 0.15, 0.155, 0.95]]);
+    }
+    // Top deck: five boards, one missing on the middle pallet.
+    const n = 5;
+    for (let b = 0; b < n; b++) {
+      if (k === 1 && b === 3) continue;
+      m.col(tones[(b + k) % 3]);
+      const z = -0.42 + b * 0.21;
+      m.prism(0, z, [[y + 0.045, 1.16, 0.135], [y + 0.115, 1.15, 0.125]]);
+    }
+    m.col(0x8f9490);
+    for (const s of [-1, 0, 1]) {
+      for (const z of [-0.42, 0, 0.42]) m.plate(s * 0.46, y + 0.117, z, 0.04, 0.04);
+    }
+    m.reset();
+  }
+}
+
+/**
+ * Scaffold tower. Ledgers on ALL FOUR faces at four lifts (the old one had two
+ * faces and read as an inverted F), adjustable base plates with a visible screw
+ * jack under each standard, a boarded deck with a toe board on all four edges,
+ * a guard rail and a mid rail above the deck, and a ladder on one face.
+ */
+function gScaffold(m) {
+  const HX = 0.60, HZ = 0.45, TOP = 2.62, DECK = 1.62;
+  m.col(P.STEEL_DARK);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.prism(sx * HX, sz * HZ, [[0, 0.20, 0.20], [0.03, 0.17, 0.17]]);
+      m.col(P.CHROME).tubeBetween(sx * HX, 0.03, sz * HZ, sx * HX, 0.16, sz * HZ, 0.028, 4);
+      m.col(P.SCAFFOLD).tubeBetween(sx * HX, 0.16, sz * HZ, sx * HX, TOP, sz * HZ, 0.045, 5);
+      m.col(P.STEEL_DARK);
+    }
+  }
+  m.col(P.SCAFFOLD);
+  for (const y of [0.52, 1.06, DECK - 0.06, 1.98, 2.56]) {
+    for (const sz of [-1, 1]) m.tubeBetween(-HX, y, sz * HZ, HX, y, sz * HZ, 0.036, 4);
+    for (const sx of [-1, 1]) m.tubeBetween(sx * HX, y, -HZ, sx * HX, y, HZ, 0.036, 4);
+  }
+  // Diagonal braces on two opposite faces only, as a real tower is braced.
+  m.col(0x9a8a64);
+  for (const sz of [-1, 1]) {
+    m.tubeBetween(-HX, 0.20, sz * HZ, HX, DECK - 0.10, sz * HZ, 0.030, 4);
+  }
+  // Deck, toe boards, ladder.
+  m.col(P.WOOD_DECK);
+  slats(m, 0, 0, DECK, HX * 2 + 0.04, 3, 0.28, 0.012, 0.05, [P.WOOD_DECK, 0xb08a5c]);
+  m.col(P.WOOD_DARK);
+  for (const sz of [-1, 1]) m.prism(0, sz * (HZ - 0.02), [[DECK + 0.05, HX * 2, 0.03], [DECK + 0.20, HX * 2, 0.03]]);
+  for (const sx of [-1, 1]) m.prism(sx * (HX - 0.02), 0, [[DECK + 0.05, 0.03, HZ * 2], [DECK + 0.20, 0.03, HZ * 2]]);
+  m.col(P.SCAFFOLD);
+  for (const sx of [-1, 1]) m.tubeBetween(sx * 0.28, 0.16, HZ - 0.10, sx * 0.28, DECK + 0.30, HZ - 0.10, 0.026, 4);
+  for (let k = 0; k < 5; k++) {
+    const y = 0.34 + k * 0.30;
+    m.tubeBetween(-0.28, y, HZ - 0.10, 0.28, y, HZ - 0.10, 0.020, 4);
+  }
+}
+
+/**
+ * Cable reel. There was NO CABLE on it — the thing the object is named for.
+ * The flanges are now radial timber staves with a darker seam between each and
+ * a steel hub plate carrying six bolt heads, five stacked rings of near-black
+ * cable are wound on the drum, and one loose end drapes over the flange to the
+ * ground.
  */
 function gCableDrum(m) {
   const R = 0.78;
-  // Flanges are discs in the XY plane, so the reel would roll along local x.
   for (const s of [-1, 1]) {
-    m.col(s > 0 ? P.WOOD_DECK : P.WOOD_LIGHT);
     m.xform(0, 0, R, s * 0.30);
-    m.discZ(0, 0, R, 0.09, 10, -Math.PI / 2);
+    for (let k = 0; k < 8; k++) {
+      m.col(k % 2 ? P.WOOD_DECK : 0xb98d5f);
+      const a0 = (k / 8) * TAU, a1 = ((k + 1) / 8) * TAU;
+      m.tri([0, 0, s * 0.045], [Math.cos(a0) * R, Math.sin(a0) * R, s * 0.045],
+        [Math.cos(a1) * R, Math.sin(a1) * R, s * 0.045]);
+      m.tri([0, 0, -s * 0.045], [Math.cos(a1) * R, Math.sin(a1) * R, -s * 0.045],
+        [Math.cos(a0) * R, Math.sin(a0) * R, -s * 0.045]);
+      m.quad([Math.cos(a0) * R, Math.sin(a0) * R, 0.045],
+        [Math.cos(a1) * R, Math.sin(a1) * R, 0.045],
+        [Math.cos(a1) * R, Math.sin(a1) * R, -0.045],
+        [Math.cos(a0) * R, Math.sin(a0) * R, -0.045]);
+    }
+    m.col(P.STEEL_DARK);
+    m.discZ(0, 0, 0.18, 0.10, 6, -Math.PI / 2);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * TAU;
+      m.discZ(Math.cos(a) * 0.13, Math.sin(a) * 0.13, 0.028, 0.12, 3, -Math.PI / 2);
+    }
     m.reset();
   }
-  m.col(0x2a2e31);
-  m.xform(0, 0, R, 0);
-  m.discZ(0, 0, R * 0.66, 0.50, 10, -Math.PI / 2);
-  m.reset();
+  // The cable itself: five stacked rings, each offset to suggest a helix.
+  for (let k = 0; k < 5; k++) {
+    m.col(k % 2 ? 0x24282c : 0x1a1e22);
+    m.xform(0, 0, R, -0.20 + k * 0.10);
+    m.discZ(0, 0, 0.46 - k * 0.005, 0.095, 10, -Math.PI / 2 + k * 0.12);
+    m.reset();
+  }
+  m.col(0x1a1e22);
+  m.tubeBetween(0.06, R + 0.46, 0.28, 0.30, R * 0.9, 0.42, 0.035, 4);
+  m.tubeBetween(0.30, R * 0.9, 0.42, 0.52, 0.10, 0.50, 0.035, 4);
+  m.tubeBetween(0.52, 0.10, 0.50, 0.78, 0.04, 0.30, 0.035, 4);
   m.col(P.WOOD_DARK);
   for (const s of [-1, 1]) {
     m.prism(s * 0.52, 0, [[0, 0.30, 0.76], [0.15, 0.24, 0.72]]);
   }
-  // Axle boss, proud of the flange face so it never shares a plane with it.
-  m.col(P.STEEL_DARK);
-  m.xform(0, 0, R, 0.375);
-  m.discZ(0, 0, 0.17, 0.05, 8, -Math.PI / 2);
-  m.reset();
+  m.col(P.SIGN_FACE);
+  m.xform(0, 0, R, 0.352); m.discZ(0.20, -0.16, 0.16, 0.02, 4, -Math.PI / 4); m.reset();
 }
 
+/**
+ * Sandbags. Flattened SACKS — wider than tall, squashed on the axis they lie
+ * on, with a pinched tied end at one side and a seam ridge along the top — in a
+ * deliberately untidy 3-2-1 stack with one knocked off the end. Six radially
+ * symmetric tubes in a perfect pyramid read as pebbles.
+ */
 function gSandbags(m) {
   const rows = [
-    [0, [-0.34, 0, 0.34]],
-    [0.19, [-0.20, 0.20]],
-    [0.38, [0]],
+    [0, [[-0.34, 0.10, 0.2], [0.02, -0.06, 1.4], [0.36, 0.06, 2.6]]],
+    [0.155, [[-0.19, -0.02, 3.5], [0.20, 0.08, 0.8]]],
+    [0.30, [[0.02, 0.02, 2.0]]],
   ];
-  for (let ri = 0; ri < rows.length; ri++) {
-    const [y, xs] = rows[ri];
-    for (const x of xs) {
-      m.col(ri % 2 ? P.SAND_WET : P.SAND);
-      m.tube(x, 0, [[y, 0.10, 0.16], [y + 0.09, 0.20, 0.20], [y + 0.19, 0.09, 0.15]], 6, { capTop: true });
+  const tones = [P.SAND, P.SAND_WET, 0xdcc79a];
+  let i = 0;
+  for (const [y, xs] of rows) {
+    for (const [x, z, rot] of xs) {
+      m.col(tones[i % 3]); i++;
+      m.tube(x, z, [
+        [y, 0.13, 0.09], [y + 0.045, 0.235, 0.155], [y + 0.115, 0.215, 0.14],
+        [y + 0.165, 0.10, 0.07],
+      ], 6, { capTop: true, rot });
+      m.col(tones[(i + 1) % 3]);
+      m.tube(x + Math.cos(rot) * 0.24, z + Math.sin(rot) * 0.24,
+        [[y + 0.03, 0.055, 0.045], [y + 0.09, 0.035, 0.03]], 4, { capTop: true });
+      m.col(tones[i % 3], 0.9);
+      m.plate(x, y + 0.168, z, 0.30, 0.035);
     }
   }
+  // One knocked off the end, and a damp band along the bottom course.
+  m.col(P.SAND_WET);
+  m.tube(0.56, -0.30, [[0, 0.14, 0.10], [0.05, 0.23, 0.16], [0.12, 0.21, 0.145],
+    [0.17, 0.10, 0.07]], 6, { capTop: true, rot: 1.1 });
 }
 
+/**
+ * Site toilet. Corrugations down the side and back panels — that texture is the
+ * entire visual identity of one of these — a roof raked back and lighter than
+ * the shell, a vent pipe up the rear corner, a moulded base skid with fork
+ * slots, a door in a contrasting colour with a recessed handle plate and an
+ * occupancy vane, and a hand-sanitiser box on one flank.
+ */
 function gPortaloo(m) {
-  m.col(0xd8d8d8).prism(0, 0, [[0, 1.14, 1.14], [0.06, 1.10, 1.10]]);
-  m.col(0xffffff).prism(0, 0, [[0.06, 1.08, 1.08], [2.16, 1.10, 1.10], [2.26, 1.02, 1.02]]);
-  m.col(0xe2e2e2).prism(0, 0.56, [[0.10, 0.72, 0.02], [2.00, 0.72, 0.02]]);
-  m.col(P.SIGN_BLUE).prism(0, 0.565, [[1.50, 0.26, 0.02], [1.76, 0.26, 0.02]]);
-  m.col(P.STEEL_DARK).beam(0.28, 1.02, 0.58, 0.34, 1.02, 0.58, 0.05, 0.14);
+  m.col(0xb8bcb6).prism(0, 0, [[0, 1.18, 1.18], [0.05, 1.14, 1.14], [0.10, 1.10, 1.10]]);
+  m.col(0x8f948e);
+  for (const sx of [-1, 1]) m.plate(sx * 0.42, 0.052, 0, 0.20, 1.10);
+  m.col(0xf2f2f2);
+  m.oct(0, 0, [[0.10, 1.08, 1.08, 0.05], [0.16, 1.12, 1.12, 0.05],
+    [2.10, 1.12, 1.12, 0.05]], { capTop: false });
+  // Corrugations: eight vertical ribs on the two flanks and the back.
+  m.col(0xdcdcdc);
+  for (let f = 0; f < 3; f++) {
+    m.xform((f + 1) * Math.PI / 2, 0, 0, 0);
+    for (let k = 0; k < 8; k++) {
+      m.prism(-0.42 + k * 0.12, 0.56, [[0.20, 0.055, 0.025], [2.02, 0.055, 0.025]]);
+    }
+    m.reset();
+  }
+  m.col(0xf8f8f8).board(0, 1.14, 2.10, -0.60, 2.22, 0.60, 0.06);
+  m.col(0x8f948e);
+  m.tubeBetween(-0.50, 0.14, -0.50, -0.50, 2.30, -0.50, 0.055, 5, true);
+  // Door in a contrasting colour, with a handle plate and an occupancy vane.
+  m.col(P.SIGN_GREEN).prism(0, 0.565, [[0.14, 0.70, 0.03], [2.00, 0.70, 0.03]]);
+  m.col(0x1f5c3c); decal(m, 0, 1.07, 0.582, 0.62, 0.02);
+  m.col(P.ALUMINIUM).prism(0.26, 0.575, [[1.02, 0.10, 0.025], [1.22, 0.10, 0.025]]);
+  m.col(P.HYDRANT_RED); decal(m, 0.26, 1.30, 0.584, 0.05, 0.05);
+  m.col(P.SIGN_BLUE); decal(m, 0, 1.62, 0.584, 0.26, 0.20);
+  m.col(0xf2f2f2).prism(0.44, -0.585, [[1.20, 0.20, 0.11], [1.46, 0.20, 0.11]]);
 }
 
 /* -- restaurant terrace --------------------------------------------------- */
@@ -2538,123 +3035,324 @@ function gPortaloo(m) {
    pastry case, bar) and light (heaters, festoon). Each of those is a distinct
    silhouette so a cluster of them reads as one place from the game camera. */
 
-/** Dressed round table: cloth to the floor, a bud vase and two glasses. */
+/**
+ * Dressed round table. The cloth is now a DRAPE — eight sides flaring to a
+ * wider hem at the floor, two corner points pulled down and out, and a soft
+ * fold — over a visible tabletop disc, with the settings standing on a closed
+ * top. Before the capTop fix it rendered as an open V-shell with the bud vase
+ * and glasses floating on the rim.
+ */
 function gCafeTableCloth(m) {
-  m.col(P.FABRIC_WHITE);
-  m.tube(0, 0, [[0, 0.50], [0.30, 0.53], [0.70, 0.47], [0.75, 0.45]], 6, { capTop: true });
-  // Settings on the cloth. Small and few: from 40 m these are two bright dots
-  // that say "occupied", and any more of them is triangles nobody can resolve.
-  m.col(P.PATINA).tube(0.12, 0.10, [[0.75, 0.05], [0.88, 0.042]], 5, { capTop: true });
+  m.col(0xfaf6ec);
+  m.tube(0, 0, [[0, 0.55], [0.10, 0.52], [0.44, 0.49], [0.70, 0.47], [0.74, 0.455]], 8,
+    { capTop: false });
+  // Two corner points pulled down and outward, and one soft fold crease.
+  for (const [a, r0] of [[0.9, 0.62], [3.6, 0.60]]) {
+    m.col(0xf2ece0);
+    m.tubeBetween(Math.cos(a) * 0.50, 0.30, Math.sin(a) * 0.50,
+      Math.cos(a) * r0, 0.0, Math.sin(a) * r0, 0.075, 4);
+  }
+  m.col(0xf0eade);
+  m.tubeBetween(Math.cos(2.2) * 0.50, 0.62, Math.sin(2.2) * 0.50,
+    Math.cos(2.2) * 0.52, 0.06, Math.sin(2.2) * 0.52, 0.035, 4);
+  m.col(0xe8e0d0).tube(0, 0, [[0.74, 0.46], [0.76, 0.455]], 8);
+  m.col(0xfdfaf2).disc(0, 0.762, 0, 0.455, 8);
+  // Settings on the closed top.
+  m.col(P.PATINA).tube(0.12, 0.10, [[0.762, 0.05], [0.88, 0.042]], 5, { capTop: true });
   m.col(P.FLOWER_PINK).tube(0.12, 0.10, [[0.88, 0.075], [0.96, 0.03]], 5, { capTop: true });
   m.col(P.CHROME);
-  m.tube(-0.16, -0.10, [[0.75, 0.045], [0.87, 0.05]], 5, { capTop: true });
-  m.tube(-0.06, 0.20, [[0.75, 0.045], [0.87, 0.05]], 5, { capTop: true });
+  m.tube(-0.16, -0.10, [[0.762, 0.045], [0.87, 0.05]], 5, { capTop: true });
+  m.tube(-0.06, 0.20, [[0.762, 0.045], [0.87, 0.05]], 5, { capTop: true });
+  m.col(P.SIGN_FACE).prism(0.20, -0.20, [[0.762, 0.16, 0.10], [0.78, 0.15, 0.09]]);
+  m.col(0xf4efe2).tube(-0.24, 0.14, [[0.762, 0.09], [0.775, 0.085]], 6, { capTop: true });
 }
 
-/** Square bistro table on four legs — the shape cafeTable is not. */
+/**
+ * Square bistro table. Chamfered and darkened top edge band, an apron rail on
+ * all four sides, a cross-stretcher between the legs, tapered legs, and a
+ * second setting so it never reads as an unused table.
+ */
 function gCafeTableSquare(m) {
   m.col(P.STEEL_DARK);
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    m.beam(sx * 0.32, 0, sz * 0.32, sx * 0.29, 0.70, sz * 0.29, 0.05, 0.05, false);
+    m.tubeBetween(sx * 0.32, 0, sz * 0.32, sx * 0.29, 0.64, sz * 0.29, 0.025, 4);
   }
-  m.col(P.TEAK).prism(0, 0, [[0.70, 0.78, 0.78], [0.76, 0.74, 0.74]]);
-  m.col(P.SIGN_FACE).prism(0.20, 0.18, [[0.76, 0.14, 0.10], [0.94, 0.13, 0.09]]);
+  m.tubeBetween(-0.30, 0.20, -0.30, 0.30, 0.20, 0.30, 0.018, 4);
+  m.tubeBetween(0.30, 0.20, -0.30, -0.30, 0.20, 0.30, 0.018, 4);
+  m.col(0x6f5a44);
+  m.prism(0, 0, [[0.64, 0.66, 0.66], [0.70, 0.66, 0.66]]);          // apron
+  m.col(0x9a7048).prism(0, 0, [[0.70, 0.78, 0.78], [0.73, 0.79, 0.79]]);
+  m.col(0xfaf4e6).prism(0, 0, [[0.73, 0.79, 0.79], [0.765, 0.75, 0.75]]);
+  m.col(P.SIGN_FACE).prism(0.20, 0.18, [[0.765, 0.14, 0.10], [0.945, 0.13, 0.09]]);
+  m.col(P.STEEL_DARK).tube(-0.18, -0.16, [[0.765, 0.075], [0.79, 0.07]], 6, { capTop: true });
+  m.col(P.GLASS_MINT).tube(-0.14, 0.20, [[0.765, 0.045], [0.87, 0.05]], 5, { capTop: true });
 }
 
-/** Splay-legged bistro chair. Four legs, a round seat, one curved back board. */
+/**
+ * French bistro chair. A round dished seat, four legs splayed 12 degrees and
+ * tapered, a ring stretcher, and a back of a curved top rail on three vertical
+ * spindles — the SEE-THROUGH back is what stops 588 of these massing into a
+ * green wall, which is exactly what a solid board did.
+ *
+ * The seat is authored near-white and the frame carries the saturated hue, so a
+ * terrace reads as one chair model in four colours rather than four blocks of
+ * colour.
+ */
 function gBistroChair(m) {
-  m.col(P.CHAIR);
-  m.tube(0, 0, [[0.42, 0.25], [0.46, 0.24]], 6, { capTop: true });
-  m.board(0, 0.44, 0.48, -0.18, 0.88, -0.26, 0.05);
-  m.col(P.WOOD_DARK);
+  m.col(0xe0d8c8);
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    m.beam(sx * 0.14, 0, sz * 0.14, sx * 0.20, 0.43, sz * 0.20, 0.045, 0.045, false);
+    m.tubeBetween(sx * 0.24, 0, sz * 0.24, sx * 0.155, 0.42, sz * 0.155, 0.026, 4);
+  }
+  for (let k = 0; k < 4; k++) {
+    const a0 = (k / 4) * TAU + Math.PI / 4, a1 = ((k + 1) / 4) * TAU + Math.PI / 4;
+    m.tubeBetween(Math.cos(a0) * 0.225, 0.16, Math.sin(a0) * 0.225,
+      Math.cos(a1) * 0.225, 0.16, Math.sin(a1) * 0.225, 0.016, 3);
+  }
+  m.col(0xf6f2e8);
+  m.tube(0, 0, [[0.42, 0.225], [0.45, 0.245], [0.465, 0.238]], 10);
+  m.col(0xfdfaf2).disc(0, 0.463, 0, 0.238, 10);
+  m.col(0xe8e2d4).tube(0, 0, [[0.463, 0.20], [0.475, 0.185]], 10, { capTop: true });
+  // Back: a curved top rail carried on three spindles.
+  m.col(0xe0d8c8);
+  for (const x of [-0.13, 0, 0.13]) {
+    const z = -0.19 - (0.13 * 0.13 - x * x) * 0.9;
+    m.tubeBetween(x, 0.44, z + 0.02, x, 0.84, z - 0.03, 0.020, 4);
+  }
+  const rail = [[-0.20, -0.175], [-0.10, -0.205], [0.10, -0.205], [0.20, -0.175]];
+  for (let k = 0; k < 3; k++) {
+    m.tubeBetween(rail[k][0], 0.86, rail[k][1] - 0.03, rail[k + 1][0], 0.86, rail[k + 1][1] - 0.03,
+      0.030, 5);
+  }
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * 0.155, 0.44, -0.155, s * 0.20, 0.86, -0.205, 0.024, 4);
   }
 }
 
+/**
+ * Bar stool. Round tapered legs triangulated by TWO stretcher rings, a seat
+ * with a dished top and a rounded edge roll over a rattan panel, and foot pads
+ * at the leg tips.
+ */
 function gBarStool(m) {
   m.col(P.STEEL_DARK);
   for (let k = 0; k < 3; k++) {
     const a = (k / 3) * TAU + 0.4;
-    m.beam(Math.cos(a) * 0.26, 0, Math.sin(a) * 0.26,
-      Math.cos(a) * 0.10, 0.70, Math.sin(a) * 0.10, 0.05, 0.05, false);
+    m.tubeBetween(Math.cos(a) * 0.28, 0.02, Math.sin(a) * 0.28,
+      Math.cos(a) * 0.10, 0.70, Math.sin(a) * 0.10, 0.028, 5);
+    m.tube(Math.cos(a) * 0.28, Math.sin(a) * 0.28, [[0, 0.05], [0.025, 0.042]], 4, { capTop: true });
   }
-  m.tube(0, 0, [[0.28, 0.22], [0.32, 0.21]], 6, { capTop: false });
-  m.col(P.TEAK).tube(0, 0, [[0.70, 0.23], [0.76, 0.22]], 6, { capTop: true });
-}
-
-/** Free-standing lit menu case — the reason a terrace reads at night. */
-function gMenuBoard(m) {
-  m.col(P.SIGN_DARK);
-  for (const s of [-1, 1]) m.beam(s * 0.26, 0, 0, s * 0.26, 0.98, 0, 0.06, 0.06, false);
-  m.prism(0, 0, [[0.92, 0.64, 0.11], [1.66, 0.64, 0.11]]);
-  m.lit(P.SIGN_FACE, 1, 0.62);
-  m.prism(0, 0.058, [[0.98, 0.54, 0.012], [1.52, 0.54, 0.012]]);
-  m.lit(P.NEON_ORANGE, 1, 0.95);
-  m.prism(0, 0.058, [[1.54, 0.54, 0.012], [1.62, 0.54, 0.012]]);
-}
-
-/** Host / greeter lectern with a little reading lamp. */
-function gHostStand(m) {
-  m.col(P.WOOD_DARK).prism(0, 0, [[0, 0.54, 0.44], [0.07, 0.48, 0.38], [1.00, 0.48, 0.38]]);
-  m.col(P.TEAK).board(0, 0.54, 1.00, -0.20, 1.12, 0.18, 0.05);
-  m.col(P.CHROME).beam(0.18, 1.06, -0.10, 0.18, 1.30, -0.10, 0.03, 0.03, false);
-  m.lit(P.LAMP_GLOW, 1, 1.1).tube(0.18, -0.10, [[1.30, 0.10], [1.38, 0.07]], 5, { capTop: true });
-}
-
-/** Refrigerated pastry case outside a bakery. Lit from inside after dark. */
-function gPastryCase(m) {
-  m.col(P.STEEL_DARK).prism(0, 0, [[0, 1.10, 0.68], [0.08, 1.04, 0.62], [0.84, 1.04, 0.62]]);
-  m.col(P.GLASS_SKY, 1.05).prism(0, 0, [[0.84, 1.08, 0.66], [1.44, 1.04, 0.62]]);
-  m.lit(P.LAMP_GLOW, 1, 0.7).prism(0, 0, [[1.44, 1.10, 0.68], [1.50, 1.06, 0.64]]);
-  // Two shelves of goods, blocked in as warm slabs — legible at 4 m, invisible
-  // at 40, which is exactly the right amount of detail for it.
-  for (const [y, hex] of [[0.90, P.STUCCO_BUTTER], [1.14, P.TERRACOTTA]]) {
-    m.col(hex).prism(0, 0, [[y, 0.90, 0.44], [y + 0.14, 0.86, 0.40]], { capTop: false });
+  for (const [y, r] of [[0.24, 0.225], [0.44, 0.175]]) {
+    for (let k = 0; k < 3; k++) {
+      const a0 = (k / 3) * TAU + 0.4, a1 = ((k + 1) / 3) * TAU + 0.4;
+      m.tubeBetween(Math.cos(a0) * r, y, Math.sin(a0) * r, Math.cos(a1) * r, y, Math.sin(a1) * r,
+        0.018, 4);
+    }
   }
-}
-
-/** Waiter's side station: cupboard, tray stack, ice bucket. */
-function gServiceStation(m) {
-  m.col(P.WOOD_DARK).prism(0, 0, [[0, 0.94, 0.54], [0.08, 0.88, 0.48], [0.86, 0.88, 0.48]]);
-  m.col(P.TEAK).prism(0, 0, [[0.86, 0.96, 0.56], [0.92, 0.92, 0.52]]);
-  m.col(P.FABRIC_WHITE).prism(-0.24, 0, [[0.92, 0.34, 0.34], [1.04, 0.32, 0.32]]);
-  m.col(P.CHROME).tube(0.26, 0, [[0.92, 0.16], [1.12, 0.18]], 6, { capTop: false });
-  m.col(P.SEA_FOAM).plate(0.26, 1.11, 0, 0.30, 0.30);
-}
-
-/** Glass windbreak in an aluminium frame — the legal edge of a terrace. */
-function gTerraceRail(m) {
-  m.col(P.CONCRETE_DARK);
-  for (const s of [-1, 1]) m.prism(s * 0.80, 0, [[0, 0.34, 0.40], [0.10, 0.30, 0.36]]);
-  m.col(P.ALUMINIUM);
-  for (const s of [-1, 1]) m.beam(s * 0.80, 0.08, 0, s * 0.80, 1.06, 0, 0.07, 0.07, false);
-  m.beam(-0.86, 1.06, 0, 0.86, 1.06, 0, 0.08, 0.06, false);
-  m.col(P.GLASS_SKY, 1.04).prism(0, 0, [[0.16, 1.56, 0.035], [1.02, 1.56, 0.035]]);
-}
-
-/** Long timber trough with a clipped box hedge — the softer terrace edge. */
-function gTerraceHedge(m) {
-  m.col(P.WOOD_DARK).prism(0, 0, [
-    [0, 2.04, 0.56], [0.07, 1.98, 0.50], [0.52, 2.10, 0.62],
-  ], { cols: [P.BRICK_DARK, P.WOOD_DARK, P.WOOD_DARK], capTop: false });
-  m.col(P.MULCH).plate(0, 0.48, 0, 2.00, 0.52);
-  // One swept block rather than a row of shrub domes: a clipped hedge IS a
-  // block, and three domes cost three times the triangles to say it worse.
-  m.col(P.HEDGE).prism(0, 0, [
-    [0.44, 1.92, 0.46], [0.86, 2.02, 0.54], [1.00, 1.84, 0.38],
-  ], { cols: [P.HEDGE, P.HEDGE_LIGHT] });
+  m.col(P.TEAK);
+  m.tube(0, 0, [[0.68, 0.215], [0.72, 0.235], [0.755, 0.228]], 8);
+  m.col(0xd8a870).disc(0, 0.753, 0, 0.228, 8);
+  m.col(0xb98a52).tube(0, 0, [[0.753, 0.19], [0.762, 0.175]], 8, { capTop: true });
 }
 
 /**
- * Slatted trellis on a planter, with a climber through it and a short run of
- * bulbs along the head rail.
- *
- * The fourth terrace boundary, and the only one that is TALL. A hedge, a glass
- * screen and a rope line are all waist height, so a street of terraces has no
- * vertical rhythm at its edge at all; this one is 1.9 m and casts a real
- * shadow. It is also the only boundary piece that lights up, which is what
- * stops a fenced terrace going flat at night.
+ * Menu board. A dark slate inset inside a proud timber frame, canted back 8
+ * degrees on chunky A-frame legs with feet — and CHALK on it: five pale bars in
+ * two lengths plus a heading and a drawn motif. At four metres that reads
+ * unmistakably as a written menu, and the old blank navy slab read as nothing.
+ */
+function gMenuBoard(m) {
+  m.col(P.WOOD_DARK);
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * 0.30, 0, 0.14, s * 0.26, 1.00, -0.02, 0.045, 5);
+    m.tubeBetween(s * 0.30, 0, -0.14, s * 0.26, 1.00, -0.02, 0.038, 4);
+    m.prism(s * 0.30, 0.14, [[0, 0.12, 0.10], [0.03, 0.10, 0.08]]);
+    m.prism(s * 0.30, -0.14, [[0, 0.12, 0.10], [0.03, 0.10, 0.08]]);
+  }
+  m.tubeBetween(-0.28, 0.34, 0.02, 0.28, 0.34, 0.02, 0.030, 4);
+  // The board itself, raked back 8 degrees.
+  m.col(P.TEAK).board(0, 0.68, 0.90, 0.10, 1.68, -0.02, 0.07);
+  m.col(0x24282c).board(0, 0.56, 0.96, 0.082, 1.62, -0.005, 0.045);
+  m.col(P.SIGN_FACE);
+  rake(m, 0, 0.40, 1.46, 0.028, 1.50, 0.022, 0.026);
+  for (let k = 0; k < 5; k++) {
+    const y = 1.34 - k * 0.115;
+    rake(m, -0.05 + (k % 2) * 0.04, k % 2 ? 0.30 : 0.42, y, 0.03, y + 0.035, 0.028, 0.026);
+  }
+  m.col(P.NEON_ORANGE);
+  rake(m, 0.14, 0.12, 0.68, 0.055, 0.80, 0.045, 0.026);
+  m.lit(P.SIGN_FACE, 1, 0.5);
+  rake(m, 0, 0.44, 1.52, 0.021, 1.58, 0.014, 0.026);
+}
+
+/**
+ * Host lectern. Frame-and-panel body with a two-tone inset, a contrasting dark
+ * top with a lip and a brass edge band, a reservation book and a stack of menus
+ * on the sloped top, a brass kick rail, an open shelf of menu covers below, and
+ * a lamp that has a shade, an elbow and a base plate.
+ */
+function gHostStand(m) {
+  m.col(P.WOOD_DARK);
+  m.oct(0, 0, [[0, 0.56, 0.46, 0.03], [0.07, 0.50, 0.40, 0.03],
+    [0.98, 0.50, 0.40, 0.03]], { capTop: false });
+  m.col(0x6f5232); decal(m, 0, 0.56, 0.202, 0.36, 0.68);
+  m.col(0xa07a4c); borderBoth(m, 0, 0.56, 0.204, 0.40, 0.74, 0.03);
+  m.col(P.ACCENT_SUN).prism(0, 0, [[0.94, 0.53, 0.43], [0.97, 0.53, 0.43]]);
+  m.col(P.TEAK).board(0, 0.56, 0.98, -0.21, 1.10, 0.19, 0.06);
+  m.col(0x6f5232).board(0, 0.58, 1.03, 0.20, 1.06, 0.21, 0.04);
+  m.col(P.CHROME).tubeBetween(-0.22, 0.10, 0.215, 0.22, 0.10, 0.215, 0.020, 5);
+  // Reservation book, menu stack and the shelf below.
+  m.col(P.SIGN_FACE).prism(-0.10, -0.02, [[1.05, 0.24, 0.18], [1.08, 0.235, 0.175]]);
+  m.col(0x8c1a2c).prism(0.16, 0.02, [[1.03, 0.16, 0.22], [1.09, 0.155, 0.215]]);
+  m.col(0x2a2f3a).prism(0, 0, [[0.60, 0.42, 0.32], [0.63, 0.42, 0.32]]);
+  m.col(P.STUCCO_BUTTER).prism(-0.08, 0, [[0.63, 0.20, 0.26], [0.69, 0.19, 0.25]]);
+  // The lamp: arm, elbow, shade, base plate.
+  m.col(P.CHROME);
+  m.tube(0.18, -0.10, [[1.08, 0.06], [1.10, 0.055]], 6, { capTop: true });
+  m.tubeBetween(0.18, 1.10, -0.10, 0.18, 1.32, -0.10, 0.016, 4);
+  m.tubeBetween(0.18, 1.32, -0.10, 0.18, 1.34, -0.02, 0.016, 4);
+  m.col(P.SIGN_DARK).tube(0.18, -0.02, [[1.28, 0.13], [1.35, 0.075]], 6, { capTop: true });
+  m.lit(P.LAMP_GLOW, 1, 1.1).disc(0.18, 1.278, -0.02, 0.125, 6, 0, false);
+}
+
+/**
+ * Pastry case. The goods inside were invisible because the glass band rendered
+ * fully opaque: the glass is now pale and high-key with a bright highlight
+ * streak across the top third, a dark interior value behind it, a chrome bezel
+ * top and bottom and a mullion at each end, and the front curves forward at the
+ * top the way a bakery case does. Shelf goods are brighter and more varied.
+ */
+function gPastryCase(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 1.12, 0.70], [0.08, 1.06, 0.64], [0.20, 1.04, 0.62]]);
+  m.col(P.ALUMINIUM).prism(0, 0, [[0.20, 1.08, 0.66], [0.26, 1.06, 0.64]]);
+  m.col(0xf0ece2).prism(0, 0, [[0.26, 1.04, 0.62], [0.80, 1.04, 0.62]]);
+  m.col(P.CHROME).prism(0, 0, [[0.80, 1.10, 0.68], [0.86, 1.08, 0.66]]);
+  // Dark interior first, so the glass has something to be in front of.
+  m.col(0x2a2f34).prism(0, 0, [[0.86, 1.00, 0.58], [1.42, 1.00, 0.58]], { capTop: false });
+  for (const [y, hex] of [[0.90, P.STUCCO_BUTTER], [1.16, P.TERRACOTTA]]) {
+    m.col(P.ALUMINIUM).prism(0, 0, [[y, 0.98, 0.52], [y + 0.03, 0.98, 0.52]]);
+    for (let k = 0; k < 5; k++) {
+      m.col([hex, P.FLOWER_WHITE, 0x6b4630, P.FLOWER_PINK, P.STUCCO_BUTTER][k]);
+      m.prism(-0.36 + k * 0.18, 0, [[y + 0.03, 0.14, 0.30], [y + 0.11, 0.12, 0.26]]);
+    }
+  }
+  // Curved front glass: two rings leaning forward at the top.
+  m.col(P.GLASS_SKY, 1.30);
+  m.board(0, 1.06, 0.86, 0.31, 1.30, 0.33, 0.035);
+  m.board(0, 1.06, 1.30, 0.33, 1.44, 0.24, 0.035);
+  m.col(0xf4fbff, 1.35);
+  m.board(0, 1.06, 1.30, 0.352, 1.40, 0.288, 0.012);
+  m.col(P.GLASS_SKY, 1.24);
+  for (const s of [-1, 1]) m.prism(s * 0.53, 0, [[0.86, 0.03, 0.60], [1.44, 0.03, 0.52]]);
+  m.col(P.CHROME);
+  for (const s of [-1, 1]) m.prism(s * 0.53, 0, [[0.86, 0.05, 0.62], [0.90, 0.05, 0.62]]);
+  for (const s of [-1, 1]) m.prism(s * 0.53, 0.30, [[0.86, 0.05, 0.06], [1.44, 0.05, 0.06]]);
+  m.lit(P.LAMP_GLOW, 1, 0.7).prism(0, 0, [[1.44, 1.10, 0.60], [1.50, 1.06, 0.56]]);
+}
+
+/**
+ * Waiter's side station. Two cupboard doors with a scribed reveal and chrome
+ * pulls, a drawer line under the top, a shelf of folded linen, a plinth recess
+ * so it does not sit flush on the pavement, a stack of three offset trays, a
+ * flared ice bucket and a folded napkin pile with two glasses.
+ */
+function gServiceStation(m) {
+  m.col(0x5f4630).prism(0, 0, [[0, 0.86, 0.46], [0.06, 0.90, 0.50]]);
+  m.col(P.WOOD_DARK);
+  m.oct(0, 0, [[0.06, 0.90, 0.50, 0.03], [0.10, 0.94, 0.54, 0.03],
+    [0.86, 0.94, 0.54, 0.03]], { capTop: false });
+  m.col(0x6f5232);
+  decal(m, 0, 0.45, 0.272, 0.014, 0.58);                       // centre seam
+  decal(m, 0, 0.78, 0.272, 0.86, 0.012);                       // drawer line
+  for (const s of [-1, 1]) {
+    m.col(0x7d5e3c); decal(m, s * 0.22, 0.44, 0.272, 0.36, 0.50);
+    m.col(P.CHROME); m.tubeBetween(s * 0.22, 0.62, 0.28, s * 0.22, 0.62, 0.31, 0.018, 4, true);
+  }
+  m.col(P.CHROME).tubeBetween(-0.24, 0.82, 0.28, 0.24, 0.82, 0.28, 0.016, 4);
+  m.col(P.TEAK).prism(0, 0, [[0.86, 0.98, 0.58], [0.92, 0.94, 0.54]]);
+  // Tray stack, ice bucket, napkins and glasses.
+  m.col(P.FABRIC_WHITE);
+  for (let k = 0; k < 3; k++) {
+    m.xform(k * 0.10, 0, 0, 0);
+    m.prism(-0.26, 0.02, [[0.92 + k * 0.035, 0.34, 0.30], [0.95 + k * 0.035, 0.33, 0.29]]);
+    m.reset();
+  }
+  m.col(P.CHROME);
+  m.tube(0.26, 0, [[0.92, 0.14], [1.02, 0.17], [1.12, 0.19]], 6, { capTop: false });
+  m.tube(0.26, 0, [[1.12, 0.195], [1.15, 0.185]], 6);
+  m.col(P.SEA_FOAM).disc(0.26, 1.115, 0, 0.185, 6);
+  m.col(P.FABRIC_WHITE).prism(0.02, -0.14, [[0.92, 0.22, 0.16], [0.98, 0.20, 0.14]]);
+  m.col(P.GLASS_MINT);
+  for (const dx of [-0.02, 0.08]) m.tube(dx, 0.16, [[0.92, 0.045], [1.03, 0.05]], 5, { capTop: true });
+}
+
+/**
+ * Glass windbreak. A bottom rail and four chrome glass clamps where the pane
+ * meets the frame, a rounded capping profile on the top rail, levelling feet
+ * under the concrete shoes, and a frosted band along the bottom of the pane
+ * plus a slim etched band at eye height so it is not one uniform blue sheet.
+ */
+function gTerraceRail(m) {
+  m.col(P.CONCRETE_DARK);
+  for (const s of [-1, 1]) {
+    m.prism(s * 0.80, 0, [[0.03, 0.34, 0.40], [0.10, 0.30, 0.36]]);
+    m.col(P.STEEL_DARK);
+    for (const sz of [-1, 1]) m.tube(s * 0.80, sz * 0.13, [[0, 0.045], [0.035, 0.04]], 4, { capTop: true });
+    m.col(P.CONCRETE_DARK);
+  }
+  m.col(P.ALUMINIUM);
+  for (const s of [-1, 1]) m.tubeBetween(s * 0.80, 0.10, 0, s * 0.80, 1.04, 0, 0.040, 5);
+  m.tubeBetween(-0.86, 1.04, 0, 0.86, 1.04, 0, 0.055, 6);
+  m.tubeBetween(-0.82, 0.18, 0, 0.82, 0.18, 0, 0.035, 5);
+  m.col(P.GLASS_SKY, 1.18).prism(0, 0, [[0.18, 1.56, 0.028], [1.02, 1.56, 0.028]]);
+  m.col(0xd8ecf6, 1.24).prism(0, 0, [[0.18, 1.56, 0.032], [0.43, 1.56, 0.032]]);
+  m.col(0xeaf6fc, 1.2); decal(m, 0, 0.78, 0.018, 1.50, 0.05);
+  m.col(P.CHROME);
+  for (const sx of [-1, 1]) {
+    for (const y of [0.24, 0.96]) m.prism(sx * 0.70, 0, [[y, 0.09, 0.09], [y + 0.07, 0.09, 0.09]]);
+  }
+}
+
+/**
+ * Terrace hedge trough. The old one was a solid extruded green prism on a brown
+ * box — "the green sausage" nature.js already names as the failure mode. The
+ * trough now has five visible staves per long side with reveals between them, a
+ * darker capping rail and a shadow gap at the plinth; the hedge is five
+ * overlapping clipped clumps with a RIDGED top so it has a lit face and a
+ * turned-away face, jittered in height so the top is not a ruled line, with
+ * two leaves overhanging the lip and dark mulch visible between the stems.
+ */
+function gTerraceHedge(m) {
+  m.col(P.BRICK_DARK).prism(0, 0, [[0, 1.98, 0.50], [0.045, 2.04, 0.56]]);
+  m.col(P.WOOD_DARK);
+  m.prism(0, 0, [[0.045, 2.04, 0.56], [0.44, 2.08, 0.60]], { capTop: false });
+  m.col(0x74522e);
+  for (let k = 0; k < 5; k++) {
+    const x = -0.80 + k * 0.40;
+    for (const sz of [-1, 1]) decal(m, x, 0.24, sz * 0.301, 0.055, 0.36, sz);
+  }
+  m.col(0x6f4e2c).prism(0, 0, [[0.44, 2.12, 0.64], [0.50, 2.08, 0.60]]);
+  m.col(P.MULCH).plate(0, 0.455, 0, 1.96, 0.50);
+  // Clipped hedge: overlapping clumps with a pitched ridge, not one prism.
+  for (let k = 0; k < 5; k++) {
+    const x = -0.84 + k * 0.42;
+    const h = 0.86 + ((k * 7) % 3) * 0.055;
+    m.col(k % 2 ? P.HEDGE : P.HEDGE_LIGHT);
+    m.prism(x, 0, [[0.42, 0.46, 0.44], [h - 0.14, 0.50, 0.50], [h, 0.40, 0.34]],
+      { cols: [k % 2 ? P.HEDGE : P.HEDGE_LIGHT, k % 2 ? P.HEDGE_LIGHT : P.HEDGE] });
+  }
+  // Two leaves overhanging the lip.
+  m.col(P.HEDGE_LIGHT);
+  m.tube(-0.62, 0.30, [[0.52, 0.16], [0.62, 0.14], [0.68, 0.05]], 5, { capTop: true });
+  m.col(P.HEDGE);
+  m.tube(0.72, -0.30, [[0.50, 0.15], [0.60, 0.13], [0.66, 0.05]], 5, { capTop: true });
+}
+
+/**
+ * Planted screen. A trellis reads by its CROSSING lattice; the old one was five
+ * evenly-spaced horizontal rails, i.e. a ladder. Seven vertical battens now
+ * cross the rails so there are see-through squares, the top rail overhangs the
+ * posts, and the climber is five clumps threaded THROUGH the lattice at varied
+ * heights with a trailing flower run, rather than three gems parked in front.
  */
 function gPlantScreen(m) {
   m.col(P.WOOD_DARK).prism(0, 0, [
@@ -2665,19 +3363,33 @@ function gPlantScreen(m) {
   for (const s of [-1, 1]) m.beam(s * 0.84, 0.42, 0, s * 0.84, 1.82, 0, 0.10, 0.09, false);
   for (let k = 0; k < 5; k++) {
     const y = 0.78 + k * 0.25;
-    m.beam(-0.90, y, 0, 0.90, y, 0, 0.09, 0.05, false);
+    m.beam(-0.94, y, 0.02, 0.94, y, 0.02, 0.085, 0.045, false);
   }
-  // Climber: three clumps threaded up the lattice at different heights, so the
-  // planting reads as grown rather than as a hedge lifted onto a frame.
-  const clumps = [[-0.56, 0.86, 0.34], [0.10, 1.24, 0.40], [0.62, 0.74, 0.30]];
+  m.col(0x9a7048);
+  for (let k = 0; k < 7; k++) {
+    const x = -0.72 + k * 0.24;
+    m.beam(x, 0.62, -0.02, x, 1.90, -0.02, 0.055, 0.04, false);
+  }
+  m.col(P.TEAK).beam(-0.98, 1.90, 0, 0.98, 1.90, 0, 0.11, 0.06, false);
+  // Climber woven through the lattice, front and back.
+  const clumps = [[-0.62, 0.88, 0.30, 0.06], [-0.14, 1.32, 0.26, -0.05],
+    [0.30, 1.02, 0.28, 0.06], [0.68, 1.52, 0.24, -0.05], [0.06, 0.72, 0.24, 0.06]];
   for (let k = 0; k < clumps.length; k++) {
-    const [x, y, r] = clumps[k];
-    shrub(m, x, y, 0, r, k % 2 ? P.HEDGE : P.HEDGE_LIGHT, 5);
+    const [x, y, r, z] = clumps[k];
+    m.col(k % 2 ? P.HEDGE : P.HEDGE_LIGHT);
+    m.tube(x, z, [[y - r, r * 0.6], [y, r], [y + r * 0.9, r * 0.7], [y + r * 1.4, r * 0.25]], 5,
+      { capTop: true, rot: k });
+  }
+  m.col(P.FLOWER_MAGENTA);
+  for (const [x, y] of [[-0.40, 1.10], [0.12, 1.56], [0.52, 0.94]]) {
+    m.tube(x, 0.08, [[y, 0.09], [y + 0.07, 0.10], [y + 0.14, 0.04]], 5, { capTop: true });
   }
   m.lit(P.LAMP_GLOW, 1, 1.15);
   for (const x of [-0.56, 0, 0.56]) {
     m.tube(x, 0, [[1.80, 0.05], [1.70, 0.042]], 5, { capTop: true });
   }
+  m.col(P.STEEL_DARK);
+  m.tubeBetween(-0.84, 1.86, 0, 0.84, 1.86, 0, 0.010, 3);
 }
 
 /* -- nightlife + hotel ---------------------------------------------------- */
@@ -2691,24 +3403,57 @@ function gPlantScreen(m) {
  */
 function gPorteCochere(m) {
   const HX = 2.70, HZ = 1.30, H = 4.05;
-  m.col(P.CONCRETE);
+  /* Each column gets a base plinth, a contrasting stone lower metre, two
+     vertical reveal grooves per face and a capital block at the head — 12
+     copies of a 6.4 m hotel entrance is a landmark object, and four plain
+     tapered shafts is not what a landmark looks like. */
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      m.prism(sx * HX, sz * HZ, [
-        [0, 0.52, 0.52], [0.14, 0.42, 0.42], [H, 0.40, 0.40],
-      ], { cols: [P.CONCRETE_DARK, P.CONCRETE], capTop: false });
+      m.col(P.CONCRETE_DARK);
+      m.prism(sx * HX, sz * HZ, [[0, 0.62, 0.62], [0.10, 0.58, 0.58], [0.16, 0.52, 0.52]]);
+      m.col(P.STUCCO_SAND);
+      m.prism(sx * HX, sz * HZ, [[0.16, 0.50, 0.50], [1.10, 0.48, 0.48]], { capTop: false });
+      m.col(P.CONCRETE);
+      m.prism(sx * HX, sz * HZ, [[1.10, 0.46, 0.46], [H - 0.34, 0.42, 0.42]], { capTop: false });
+      m.col(P.CONCRETE_WARM);
+      m.prism(sx * HX, sz * HZ, [[H - 0.34, 0.48, 0.48], [H - 0.26, 0.52, 0.52],
+        [H, 0.50, 0.50]], { capTop: false });
+      m.col(P.CONCRETE_DARK);
+      for (let f = 0; f < 4; f++) {
+        m.xform((f / 4) * TAU, sx * HX, 0, sz * HZ);
+        for (const g of [-0.11, 0.11]) decal(m, g, 2.30, 0.232, 0.035, 2.20);
+        m.reset();
+      }
     }
   }
   /* The soffit is its own thin slab with a bottom face, and it is the lit part.
      A canopy modelled as one prism has no underside at all — `prism` only caps
      the top — so at eye level you would look straight up through it, and any
      "downlight" placed under it would be an upward-facing quad nobody can see. */
-  m.lit(P.LAMP_GLOW, 0.62, 0.9).prism(0, 0, [
-    [H - 0.06, 6.30, 3.20], [H, 6.30, 3.20],
-  ], { capTop: false, capBot: true });
-  m.col(P.CONCRETE_WARM).prism(0, 0, [
-    [H, 6.40, 3.30], [H + 0.16, 6.66, 3.56], [H + 0.40, 6.30, 3.20],
-  ]);
+  m.col(P.CONCRETE).prism(0, 0, [[H - 0.06, 6.30, 3.20], [H, 6.30, 3.20]],
+    { capTop: false, capBot: true });
+  m.lit(P.LAMP_GLOW, 0.62, 0.9).prism(0, 0, [[H - 0.055, 4.90, 2.10], [H - 0.005, 4.90, 2.10]],
+    { capTop: false, capBot: true });
+  // Recessed downlights with visible dark housings in the soffit.
+  m.col(0x2a2f34);
+  for (let k = 0; k < 6; k++) {
+    const x = -2.10 + (k % 3) * 2.10, z = k < 3 ? -0.80 : 0.80;
+    m.tube(x, z, [[H - 0.10, 0.17], [H - 0.055, 0.17]], 6, { capBot: false });
+    m.lit(P.LAMP_GLOW, 1, 1.25).disc(x, H - 0.10, z, 0.15, 6, 0, false);
+    m.col(0x2a2f34);
+  }
+  // Three-part fascia: shadow gap, main band, proud drip edge.
+  m.col(P.CONCRETE_DARK).prism(0, 0, [[H, 6.26, 3.16], [H + 0.06, 6.26, 3.16]]);
+  m.col(P.CONCRETE_WARM).prism(0, 0, [[H + 0.06, 6.46, 3.36], [H + 0.26, 6.52, 3.42]]);
+  m.col(P.CONCRETE).prism(0, 0, [[H + 0.26, 6.66, 3.56], [H + 0.34, 6.62, 3.52],
+    [H + 0.40, 6.30, 3.20]]);
+  m.lit(P.NEON_AQUA, 1, 0.8);
+  decal(m, 0, H + 0.16, 1.712, 3.20, 0.13);
+  decal(m, 0, H + 0.16, 1.712, 3.20, 0.13, -1);
+  // Hanging lantern under the centre of the canopy.
+  m.col(P.BENCH_METAL);
+  m.tubeBetween(0, H - 0.06, 0, 0, H - 0.52, 0, 0.030, 4);
+  lantern(m, 0, 0, H - 1.10, 0.24, 7);
 }
 
 /**
@@ -2738,309 +3483,836 @@ function gCarpetRunner(m) {
   }
 }
 
-/** Two posts and a slack rope — a queue line, not two lonely stanchions. */
+/**
+ * Queue line. Five chords with a real catenary on a round six-sided section, so
+ * it reads as rope and not as a bent stick; a brass end clip and a tassel where
+ * it meets each finial; and a weighted disc base with a chamfered top under a
+ * bead below the finial.
+ */
 function gVelvetRope(m) {
   const S = 0.95;
   for (const s of [-1, 1]) {
-    m.col(P.STEEL_DARK).tube(s * S, 0, [[0, 0.17], [0.05, 0.15]], 5, { capTop: true });
-    m.col(P.CHROME).tube(s * S, 0, [[0.05, 0.05], [0.92, 0.046]], 5);
-    m.tube(s * S, 0, [[0.92, 0.075], [1.00, 0.05]], 5, { capTop: true });
+    m.col(P.STEEL_DARK);
+    m.tube(s * S, 0, [[0, 0.185], [0.03, 0.180], [0.06, 0.13], [0.075, 0.055]], 5, { capTop: false });
+    m.col(P.CHROME);
+    m.tube(s * S, 0, [[0.075, 0.048], [0.86, 0.045]], 5);
+    m.tube(s * S, 0, [[0.86, 0.070], [0.90, 0.066]], 5);
+    m.tube(s * S, 0, [[0.90, 0.055], [0.96, 0.065], [1.00, 0.028]], 5, { capTop: true });
+    m.col(P.ACCENT_SUN);
+    m.tube(s * S, 0, [[0.82, 0.058], [0.86, 0.058]], 5);
   }
-  // Three chords of a sag. Authored dark red so it reads as rope, not cable.
   m.col(0x8c1a2c);
-  const pts = [[-S, 0.86], [-S * 0.33, 0.68], [S * 0.33, 0.68], [S, 0.86]];
-  for (let k = 0; k < 3; k++) {
-    m.beam(pts[k][0], pts[k][1], 0, pts[k + 1][0], pts[k + 1][1], 0, 0.05, 0.05, false);
+  ropeRun(m, -S, S, 0, 0.86, 0.62, 0.038, 6);
+  m.col(P.ACCENT_SUN);
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * S, 0.86, 0, s * (S - 0.07), 0.82, 0, 0.045, 5, true);
+    m.col(0x6f1424);
+    m.tube(s * S, 0, [[0.78, 0.035], [0.82, 0.045], [0.86, 0.02]], 4, { capTop: true });
+    m.col(P.ACCENT_SUN);
   }
 }
 
+/**
+ * Door podium. A raked lectern top with a lipped edge, a guest-list clipboard
+ * and a pen on it, a chrome toe kick and top edge band, a rope eye on the
+ * street face so it visibly belongs to the velvetRope run it is placed with,
+ * and an illuminated house-number plate rather than a bare glow rectangle.
+ */
 function gBouncerPodium(m) {
-  m.col(P.SIGN_DARK).prism(0, 0, [
-    [0, 0.66, 0.50], [0.08, 0.58, 0.42], [1.08, 0.58, 0.42], [1.14, 0.66, 0.50],
-  ]);
-  m.lit(P.NEON_PINK, 1, 0.9).prism(0, 0.256, [[0.74, 0.40, 0.02], [0.92, 0.40, 0.02]]);
+  m.col(P.SIGN_DARK);
+  m.oct(0, 0, [[0, 0.68, 0.52, 0.035], [0.09, 0.60, 0.44, 0.035],
+    [1.00, 0.60, 0.44, 0.035]], { capTop: false });
+  m.col(P.CHROME);
+  m.prism(0, 0, [[0.05, 0.66, 0.50], [0.09, 0.64, 0.48]]);
+  m.prism(0, 0, [[1.00, 0.66, 0.50], [1.035, 0.64, 0.48]]);
+  m.col(0x1b1f26).board(0, 0.66, 1.02, -0.20, 1.14, 0.20, 0.05);
+  m.col(P.CHROME).board(0, 0.66, 1.06, 0.21, 1.10, 0.225, 0.035);
+  m.col(P.SIGN_FACE);
+  rake(m, -0.05, 0.30, 1.05, -0.10, 1.12, 0.13, 0.03);
+  m.col(P.SIGN_DARK);
+  rake(m, -0.05, 0.26, 1.075, -0.02, 1.085, 0.03, 0.035);
+  m.col(P.ACCENT_SUN);
+  rake(m, 0.20, 0.02, 1.06, -0.02, 1.10, 0.10, 0.035);
+  m.col(P.CHROME);
+  m.tubeBetween(0, 0.72, 0.225, 0, 0.78, 0.255, 0.016, 3);
+  m.tubeBetween(0, 0.78, 0.255, 0, 0.72, 0.275, 0.016, 3);
+  m.col(P.SIGN_DARK).prism(0, 0.235, [[0.52, 0.34, 0.03], [0.76, 0.34, 0.03]]);
+  m.lit(P.NEON_PINK, 1, 0.9); decal(m, 0, 0.64, 0.252, 0.28, 0.18);
+  m.col(P.SIGN_DARK);
+  decal(m, -0.05, 0.64, 0.256, 0.06, 0.11);
+  decal(m, 0.06, 0.64, 0.256, 0.06, 0.11);
 }
 
-/** Valet key board — a lockable cabinet of hooks on two legs. */
+/**
+ * Valet key board. A real cabinet — 0.78 x 0.16 x 0.68 box with a recessed door
+ * panel, a hinge line, a lock escutcheon and a pull — with the CONTENTS shown:
+ * eight hooks and four fobs on the open half. A sloped writing ledge with a
+ * clipboard on top, a braced A-frame with feet and a lower stretcher, and a lit
+ * VALET header. The old one was a blank white board on two bare sticks.
+ */
 function gKeyBoard(m) {
   m.col(P.STEEL_DARK);
-  for (const s of [-1, 1]) m.beam(s * 0.30, 0, 0, s * 0.30, 0.94, 0, 0.05, 0.05, false);
-  m.col(P.ALUMINIUM).prism(0, 0, [[0.94, 0.78, 0.16], [1.62, 0.78, 0.16]]);
-  m.col(P.SIGN_DARK).prism(0, 0.085, [[1.00, 0.68, 0.015], [1.56, 0.68, 0.015]]);
-  m.lit(P.NEON_AQUA, 1, 0.8).prism(0, 0.09, [[1.42, 0.60, 0.012], [1.52, 0.60, 0.012]]);
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * 0.36, 0, -0.12, s * 0.30, 0.94, 0, 0.028, 4);
+    m.tubeBetween(s * 0.36, 0, 0.12, s * 0.30, 0.94, 0, 0.028, 4);
+    m.prism(s * 0.36, -0.12, [[0, 0.10, 0.10], [0.03, 0.08, 0.08]]);
+    m.prism(s * 0.36, 0.12, [[0, 0.10, 0.10], [0.03, 0.08, 0.08]]);
+  }
+  m.tubeBetween(-0.34, 0.30, 0, 0.34, 0.30, 0, 0.022, 4);
+  m.col(P.ALUMINIUM);
+  m.oct(0, 0, [[0.94, 0.78, 0.16, 0.02], [1.62, 0.78, 0.16, 0.02]], { capTop: true });
+  // Left half: a closed door with a hinge line, escutcheon and pull.
+  m.col(0x9aa09c); decal(m, -0.19, 1.26, 0.082, 0.36, 0.60);
+  m.col(P.STEEL_DARK);
+  for (const y of [1.02, 1.26, 1.50]) decal(m, -0.365, y, 0.084, 0.03, 0.08);
+  decal(m, -0.03, 1.26, 0.084, 0.03, 0.09);
+  m.col(P.CHROME).tubeBetween(-0.05, 1.26, 0.086, -0.05, 1.26, 0.11, 0.014, 4, true);
+  // Right half: open, showing hooks and fobs.
+  m.col(0x2a2f3a); decal(m, 0.19, 1.26, 0.082, 0.36, 0.60);
+  m.col(P.CHROME);
+  for (let k = 0; k < 8; k++) {
+    const x = 0.06 + (k % 4) * 0.09, y = 1.44 - Math.floor(k / 4) * 0.24;
+    m.tubeBetween(x, y, 0.084, x, y - 0.03, 0.10, 0.010, 3);
+    if (k % 2) {
+      m.col([P.ACCENT_SUN, P.NEON_AQUA][k % 2 ? 0 : 1]);
+      decal(m, x, y - 0.10, 0.104, 0.035, 0.09);
+      m.col(P.CHROME);
+    }
+  }
+  m.col(P.STEEL_DARK).board(0, 0.78, 1.62, -0.10, 1.72, 0.12, 0.05);
+  m.col(P.SIGN_FACE); rake(m, -0.10, 0.24, 1.66, 0.01, 1.70, 0.08, 0.03);
+  m.col(P.SIGN_DARK).prism(0, 0, [[1.72, 0.66, 0.06], [1.86, 0.66, 0.06]]);
+  m.lit(P.NEON_AQUA, 1, 0.85);
+  decal(m, 0, 1.79, 0.032, 0.54, 0.08);
+  decal(m, 0, 1.79, 0.032, 0.54, 0.08, -1);
 }
 
+/**
+ * Ash bin. Capped at both ends (it had an open top and a void at the base and
+ * read as a length of ducting), with the parts that make it legible: an angled
+ * stainless head with a crescent ash slot, a hinged door line and a lock barrel
+ * on the body, a moulded base collar with two fixing bolts and a brand plate.
+ */
 function gCigBin(m) {
-  m.col(P.STEEL_DARK).tube(0, 0, [[0, 0.20], [0.06, 0.17], [0.92, 0.19]], 6, {
-    cols: [P.BOLLARD_DARK, P.STEEL_DARK],
-  });
-  m.col(P.ALUMINIUM).tube(0, 0, [[0.92, 0.21], [1.02, 0.14]], 6, { capTop: true });
+  m.col(P.BOLLARD_DARK).tube(0, 0, [[0, 0.215], [0.055, 0.20], [0.075, 0.175]], 6, { capTop: false });
+  for (const s of [-1, 1]) {
+    m.tube(s * 0.15, 0, [[0.05, 0.026], [0.07, 0.02]], 3, { capTop: true });
+  }
+  m.col(P.STEEL_DARK).tube(0, 0, [[0.075, 0.17], [0.90, 0.19]], 6, { capTop: false });
+  m.col(0x5b6260); decal(m, 0, 0.48, 0.176, 0.20, 0.62);        // door line
+  m.col(P.CHROME).tubeBetween(0.09, 0.48, 0.175, 0.09, 0.48, 0.20, 0.018, 4, true);
+  m.col(P.ALUMINIUM);
+  m.tube(0, 0, [[0.90, 0.205], [0.96, 0.20], [1.02, 0.155]], 6, { capTop: true });
+  m.col(0x15181b).disc(0, 1.005, 0.05, 0.085, 5);
+  m.col(P.SIGN_FACE).prism(0, 0.178, [[0.70, 0.14, 0.012], [0.76, 0.14, 0.012]]);
 }
 
-/** Illuminated blade sign: the bar's name, on a pole, glowing after dark. */
+/**
+ * Illuminated blade sign. It carried NO CONTENT — 129 identical blank hot-pink
+ * rectangles, when the entire job of the object is to name a bar. It now has
+ * five chunky channel letters standing 3 cm proud on a dark panel, a neon tube
+ * frame round the perimeter, a visible dark return so it reads as a box, two
+ * bracket gussets at the pole, a transformer box and a row of chase bulbs.
+ */
 function gLightboxSign(m) {
-  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.54, 0.46], [0.10, 0.46, 0.38]]);
+  m.col(P.STEEL_DARK);
+  m.oct(0, 0, [[0, 0.56, 0.48, 0.04], [0.10, 0.48, 0.40, 0.04]], { capTop: false });
   m.col(P.SIGN_POLE).tube(0, 0, [[0.10, 0.10], [1.62, 0.09]], 6);
-  m.col(P.SIGN_DARK).prism(0, 0, [[1.62, 0.86, 0.24], [3.34, 0.86, 0.24]]);
+  m.col(P.STEEL_DARK).prism(0, 0, [[0.72, 0.24, 0.20], [1.02, 0.24, 0.20]]);   // transformer
+  for (const s of [-1, 1]) {
+    m.col(P.SIGN_POLE).tubeBetween(s * 0.06, 1.62, 0, s * 0.30, 1.80, 0, 0.030, 4);
+  }
+  m.col(P.SIGN_DARK).prism(0, 0, [[1.62, 0.86, 0.26], [1.72, 0.90, 0.30],
+    [3.24, 0.90, 0.30], [3.34, 0.86, 0.26]]);
   m.lit(P.NEON_PINK, 1, 1.0);
-  m.prism(0, 0.125, [[1.72, 0.72, 0.015], [3.20, 0.72, 0.015]]);
-  m.prism(0, -0.125, [[1.72, 0.72, 0.015], [3.20, 0.72, 0.015]]);
+  for (const s of [1, -1]) {
+    const z = s * 0.152;
+    // Neon tube frame, then five channel letters standing proud of the panel.
+    decal(m, 0, 3.20, z, 0.80, 0.045, s);
+    decal(m, 0, 1.76, z, 0.80, 0.045, s);
+    decal(m, -0.385, 2.48, z, 0.045, 1.44, s);
+    decal(m, 0.385, 2.48, z, 0.045, 1.44, s);
+  }
+  m.lit(P.NEON_WHITE, 1, 1.05);
+  for (let k = 0; k < 5; k++) {
+    const y = 2.98 - k * 0.28;
+    m.prism(0, 0, [[y - 0.10, 0.44 - (k % 2) * 0.10, 0.33], [y + 0.10, 0.44 - (k % 2) * 0.10, 0.33]]);
+  }
+  m.lit(P.NEON_YELLOW, 1, 1.0);
+  for (let k = 0; k < 6; k++) {
+    const y = 1.86 + k * 0.26;
+    for (const s of [-1, 1]) m.tube(s * 0.42, 0, [[y, 0.035], [y + 0.05, 0.03]], 4, { capTop: true });
+  }
   m.lit(P.NEON_AQUA, 1, 1.0).prism(0, 0, [[3.34, 0.90, 0.28], [3.44, 0.86, 0.24]]);
 }
 
-/** Outdoor bar counter with a lit toe strip and a back shelf of bottles. */
+/**
+ * Outdoor bar. Ten vertical timber battens with visible gaps and varied tone
+ * across the front — that alone converts a box into a bar — a brass foot rail
+ * on brackets, a counter that overhangs 8 cm on the customer side with a
+ * bullnose in a contrasting dark stone, and a back-bar gantry of two shelves
+ * carrying twelve bottles at mixed heights plus a row of hanging stemware.
+ */
 function gOutdoorBar(m) {
-  m.col(P.WOOD_DARK).prism(0, 0, [
-    [0.06, 2.60, 0.72], [0.14, 2.66, 0.78], [1.02, 2.66, 0.78],
-  ], { capTop: false });
-  m.col(P.TEAK).prism(0, 0, [[1.02, 2.80, 0.92], [1.10, 2.74, 0.86]]);
-  m.lit(P.NEON_AQUA, 1, 0.85).prism(0, 0, [[0, 2.62, 0.74], [0.06, 2.62, 0.74]]);
-  m.col(P.STEEL_DARK).prism(0, -0.42, [[1.10, 2.20, 0.24], [1.44, 2.16, 0.20]]);
-  for (let k = 0; k < 3; k++) {
-    m.col([P.GLASS_MINT, P.TERRACOTTA, P.STUCCO_BUTTER][k]);
-    m.tube(-0.6 + k * 0.6, -0.42, [[1.44, 0.07], [1.70, 0.05]], 5, { capTop: true });
+  m.col(0x5f4630).prism(0, 0, [[0, 2.62, 0.74], [0.06, 2.66, 0.78]]);
+  m.col(P.WOOD_DARK).prism(0, 0, [[0.06, 2.66, 0.78], [1.02, 2.66, 0.78]], { capTop: false });
+  const tones = [P.WOOD_DARK, 0x9a7048, 0x7d5c38, P.TEAK];
+  for (let k = 0; k < 10; k++) {
+    m.col(tones[k % 4]);
+    m.prism(-1.17 + k * 0.26, 0.40, [[0.08, 0.20, 0.04], [1.00, 0.20, 0.04]]);
+  }
+  m.col(P.ACCENT_SUN);
+  m.tubeBetween(-1.10, 0.20, 0.46, 1.10, 0.20, 0.46, 0.028, 5);
+  for (const s of [-1, 1]) m.tubeBetween(s * 1.00, 0.20, 0.39, s * 1.00, 0.20, 0.46, 0.022, 4);
+  m.col(0x30363a).prism(0, 0.06, [[1.02, 2.84, 0.98], [1.06, 2.86, 1.00], [1.10, 2.82, 0.96]]);
+  m.lit(P.NEON_AQUA, 1, 0.85).prism(0, 0, [[0, 2.62, 0.75], [0.06, 2.62, 0.75]]);
+  // Back-bar gantry: two shelves, mixed bottles, hanging stemware.
+  m.col(P.STEEL_DARK);
+  m.prism(0, -0.42, [[1.10, 2.24, 0.26], [1.14, 2.24, 0.26]]);
+  m.prism(0, -0.42, [[1.44, 2.20, 0.24], [1.48, 2.20, 0.24]]);
+  for (const s of [-1, 1]) m.tubeBetween(s * 1.06, 1.10, -0.42, s * 1.06, 1.80, -0.42, 0.028, 4);
+  m.prism(0, -0.42, [[1.76, 2.20, 0.20], [1.80, 2.20, 0.20]]);
+  const glass = [P.GLASS_MINT, P.TERRACOTTA, P.STUCCO_BUTTER, P.GLASS_TEAL, 0x8c1a2c, P.FLOWER_WHITE];
+  for (let k = 0; k < 12; k++) {
+    m.col(glass[k % 6]);
+    const y = k < 6 ? 1.14 : 1.48;
+    const x = -0.95 + (k % 6) * 0.38;
+    m.tube(x, -0.42, [[y, 0.062], [y + 0.16 + (k % 3) * 0.04, 0.05], [y + 0.24 + (k % 3) * 0.04, 0.022]],
+      5, { capTop: true });
+  }
+  m.col(P.GLASS_MINT);
+  for (let k = 0; k < 5; k++) {
+    m.tube(-0.60 + k * 0.30, -0.42, [[1.62, 0.02], [1.70, 0.075]], 5, { capTop: false });
   }
 }
 
-/** Rooftop-lounge DJ booth, at street level where the game can reach it. */
+/**
+ * DJ booth. The lit front is recessed 4 cm behind a frame so the glow has a
+ * hard edge instead of floating, there is a black mesh grille band under the
+ * counter, and the top carries two turntables with platters and tone arms, a
+ * mixer with a fader strip and a laptop on a stand — plus a coiled cable off
+ * the back to the floor.
+ */
 function gDjBooth(m) {
-  m.col(P.SIGN_DARK).prism(0, 0, [[0, 1.86, 0.74], [0.08, 1.78, 0.66], [1.04, 1.78, 0.66]]);
-  m.lit(P.NEON_PURPLE, 1, 1.0).prism(0, 0.345, [[0.16, 1.56, 0.02], [0.92, 1.56, 0.02]]);
-  m.col(P.STEEL_DARK).prism(0, 0, [[1.04, 1.86, 0.74], [1.10, 1.82, 0.70]]);
+  m.col(P.SIGN_DARK);
+  m.oct(0, 0, [[0, 1.88, 0.76, 0.05], [0.08, 1.80, 0.68, 0.05],
+    [1.04, 1.80, 0.68, 0.05]], { capTop: false });
+  m.col(0x15181b).prism(0, 0.325, [[0.14, 1.62, 0.03], [0.96, 1.62, 0.03]]);
+  m.lit(P.NEON_PURPLE, 1, 1.0); decal(m, 0, 0.55, 0.345, 1.54, 0.74);
+  m.col(0x1b1f26);
+  for (let k = 0; k < 6; k++) decal(m, 0, 0.99 - k * 0.022, 0.352, 1.66, 0.012);
+  m.col(P.STEEL_DARK).prism(0, 0, [[1.04, 1.90, 0.78], [1.08, 1.92, 0.80], [1.12, 1.86, 0.74]]);
   for (const s of [-1, 1]) {
-    m.col(P.ALUMINIUM).prism(s * 0.52, 0, [[1.10, 0.56, 0.42], [1.16, 0.52, 0.38]]);
+    m.col(0x2a2f3a).prism(s * 0.52, 0, [[1.12, 0.58, 0.44], [1.17, 0.54, 0.40]]);
+    m.col(P.ALUMINIUM).tube(s * 0.52, 0, [[1.17, 0.17], [1.185, 0.17]], 8, { capTop: true });
+    m.col(P.CHROME).tubeBetween(s * 0.52 + 0.20, 1.19, -0.14, s * 0.52 + 0.02, 1.19, 0.10, 0.012, 3);
   }
-  m.lit(P.NEON_AQUA, 1, 0.9).prism(0, 0, [[1.10, 0.44, 0.30], [1.20, 0.40, 0.26]]);
+  m.col(0x1b1f26).prism(0, 0, [[1.12, 0.42, 0.30], [1.17, 0.40, 0.28]]);
+  m.lit(P.NEON_AQUA, 1, 0.9); decal(m, 0, 1.172, 0.02, 0.34, 0.05);
+  m.col(0x30363a).board(0, 0.36, 1.14, -0.20, 1.40, -0.30, 0.02);
+  m.lit(P.SIGN_FACE, 1, 0.7); rake(m, 0, 0.32, 1.16, -0.21, 1.38, -0.295, 0.014);
+  m.col(0x15181b);
+  m.tubeBetween(0.70, 1.06, -0.36, 0.78, 0.60, -0.44, 0.020, 3);
+  m.tubeBetween(0.78, 0.60, -0.44, 0.70, 0.04, -0.52, 0.020, 3);
 }
 
-/** PA stack on a pole. Two boxes, two paper cones, done. */
+/**
+ * PA stack. Two trapezoidal cabinets raked 8 degrees with a joint line between
+ * them, on a wheeled dolly rather than a plain plinth: recessed grille with a
+ * clear value break, two round driver bosses proud of it, a horn above them,
+ * handles on both flanks, rubber feet and a lighter trim edge.
+ */
 function gSpeakerStack(m) {
-  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.62, 0.62], [0.06, 0.50, 0.50]]);
-  m.col(P.SIGN_DARK).prism(0, 0, [[0.06, 0.44, 0.40], [1.34, 0.46, 0.42], [1.42, 0.42, 0.38]]);
-  m.col(0x14161a);
-  m.plate(0, 1.421, 0, 0.34, 0.30);
-  m.prism(0, 0.21, [[0.34, 0.34, 0.012], [0.72, 0.34, 0.012]]);
-  m.prism(0, 0.21, [[0.90, 0.28, 0.012], [1.16, 0.28, 0.012]]);
+  m.col(P.STEEL_DARK).prism(0, 0, [[0.06, 0.64, 0.60], [0.10, 0.56, 0.52]]);
+  m.col(0x15181b);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    m.tube(sx * 0.22, sz * 0.20, [[0, 0.055], [0.06, 0.055]], 5, { capTop: true });
+  }
+  for (let box = 0; box < 2; box++) {
+    const y0 = 0.10 + box * 0.68;
+    m.col(P.SIGN_DARK);
+    m.prism(0, -0.02, [[y0, 0.50, 0.44], [y0 + 0.03, 0.52, 0.46],
+      [y0 + 0.61, 0.50, 0.42], [y0 + 0.64, 0.46, 0.38]]);
+    m.col(0x9aa0a0);
+    m.prism(0, -0.02, [[y0 + 0.63, 0.52, 0.46], [y0 + 0.655, 0.50, 0.44]]);
+    m.col(0x14161a);
+    m.board(0, 0.44, y0 + 0.04, 0.205, y0 + 0.60, 0.165, 0.025);
+    m.col(0x2c3238);
+    for (const r of [0.32, 0.60]) {
+      m.tube(0, 0.21 - (r - 0.32) * 0.14, [[y0 + r * 0.5 + 0.06, 0.11], [y0 + r * 0.5 + 0.075, 0.10]],
+        6, { capTop: true });
+    }
+    m.col(0x1b1f26).prism(0, 0.19, [[y0 + 0.44, 0.34, 0.03], [y0 + 0.56, 0.34, 0.03]]);
+    m.col(0x15181b);
+    for (const s of [-1, 1]) m.prism(s * 0.26, -0.02, [[y0 + 0.30, 0.03, 0.20], [y0 + 0.36, 0.03, 0.20]]);
+  }
 }
 
 /* -- storefront dressing -------------------------------------------------- */
 
-/** Rolling clothes rail put out on the pavement. */
+/**
+ * Rolling clothes rail. Castors, a lower shelf of folded stock, six shaped
+ * garments on visible hangers at uneven lengths and hang angles with one turned
+ * outward, and a price card on the end — four flat vertical cards on a bare
+ * goalpost read as a flag stand.
+ */
 function gClothesRail(m) {
   m.col(P.STEEL);
   for (const s of [-1, 1]) {
-    m.beam(s * 0.52, 0.03, -0.28, s * 0.52, 0.03, 0.28, 0.05, 0.06);
-    m.beam(s * 0.52, 0.03, 0, s * 0.52, 1.48, 0, 0.05, 0.05, false);
+    m.tubeBetween(s * 0.52, 0.07, -0.28, s * 0.52, 0.07, 0.28, 0.026, 4);
+    m.tubeBetween(s * 0.52, 0.07, 0, s * 0.52, 1.48, 0, 0.028, 5);
+    m.col(P.STEEL_DARK);
+    for (const sz of [-1, 1]) {
+      m.tube(s * 0.52, sz * 0.28, [[0.03, 0.045], [0.07, 0.04]], 5, { capTop: true });
+      m.tube(s * 0.52, sz * 0.28, [[0, 0.05], [0.03, 0.05]], 5);
+    }
+    m.col(P.STEEL);
   }
-  m.beam(-0.54, 1.48, 0, 0.54, 1.48, 0, 0.045, 0.045, false);
-  const cols = [P.FABRIC_SKY, P.FABRIC_CORAL, P.FABRIC_LIME, P.FABRIC_PINK];
-  for (let k = 0; k < 4; k++) {
-    m.col(cols[k]);
-    m.prism(-0.39 + k * 0.26, 0, [[0.72, 0.23, 0.28], [1.42, 0.20, 0.24]], { capTop: false });
+  m.tubeBetween(-0.54, 1.48, 0, 0.54, 1.48, 0, 0.024, 5);
+  m.tubeBetween(-0.52, 0.34, 0, 0.52, 0.34, 0, 0.020, 4);
+  m.col(P.WOOD_LIGHT).prism(0, 0, [[0.34, 0.96, 0.40], [0.38, 0.96, 0.40]]);
+  m.col(P.FABRIC_AQUA).prism(-0.22, 0, [[0.38, 0.32, 0.28], [0.50, 0.30, 0.26]]);
+  m.col(P.FABRIC_SUN).prism(0.20, 0.03, [[0.38, 0.30, 0.26], [0.47, 0.28, 0.24]]);
+  const cols = [P.FABRIC_SKY, P.FABRIC_CORAL, P.FABRIC_LIME, P.FABRIC_PINK,
+    P.FABRIC_WHITE, P.FABRIC_AQUA];
+  for (let k = 0; k < 6; k++) {
+    garment(m, -0.42 + k * 0.17, 1.48, (k === 3 ? 0.10 : 0) + (k % 2 ? 0.03 : -0.03),
+      0.50 + (k % 3) * 0.10, cols[k], (k % 2 ? 1 : -1) * (1 + (k % 3)));
   }
+  m.col(P.SIGN_FACE).prism(0.52, 0.14, [[1.28, 0.02, 0.18], [1.44, 0.02, 0.18]]);
+  m.col(P.NEON_PINK).prism(0.522, 0.14, [[1.36, 0.01, 0.14], [1.40, 0.01, 0.14]]);
 }
 
-/** Tiered greengrocer display, canted toward the passer-by. */
+/**
+ * Greengrocer display. The goods were six 5-segment cones in three flat colours
+ * — traffic cones on a ramp. Each is now a shallow slatted tray of eight
+ * overlapping fruit at two sizes, with a chalk price card on a wire above it, a
+ * slatted back board behind the top shelf and a short striped awning over it.
+ */
 function gProduceStand(m) {
   m.col(P.WOOD_DARK);
-  for (const s of [-1, 1]) m.board(s * 0.62, 0.08, 0.02, -0.42, 1.02, 0.30, 0.09);
+  for (const s of [-1, 1]) {
+    m.board(s * 0.62, 0.10, 0.02, -0.42, 1.02, 0.30, 0.09);
+    m.beam(s * 0.62, 0.10, -0.40, s * 0.62, 0.62, 0.20, 0.06, 0.05, false);
+  }
   m.col(P.WOOD_LIGHT);
-  m.board(0, 1.20, 0.42, -0.34, 0.52, 0.10, 0.05);
-  m.board(0, 1.20, 0.74, -0.10, 1.00, 0.24, 0.05);
-  const goods = [[-0.34, P.FLOWER_ORANGE], [0.02, P.GRASS_LIGHT], [0.36, P.HYDRANT_RED]];
-  for (const [x, hex] of goods) {
-    m.col(hex);
-    m.tube(x, -0.12, [[0.54, 0.17], [0.66, 0.08]], 5, { capTop: true });
-    m.tube(x, 0.14, [[0.86, 0.15], [0.96, 0.07]], 5, { capTop: true });
+  m.board(0, 1.24, 0.42, -0.34, 0.52, 0.10, 0.05);
+  m.board(0, 1.24, 0.74, -0.10, 1.00, 0.24, 0.05);
+  m.col(P.WOOD_DECK);
+  for (let k = 0; k < 4; k++) {
+    m.prism(0, -0.44 + k * 0.05, [[1.02 + k * 0.10, 1.20, 0.035], [1.08 + k * 0.10, 1.20, 0.035]]);
+  }
+  const sets = [
+    [-0.38, 0.50, 0.24, [P.FLOWER_ORANGE, 0xff8a2a]],
+    [0.00, 0.52, 0.20, [P.CAR_LIME, P.GRASS_LIGHT]],
+    [0.38, 0.50, 0.24, [P.HYDRANT_RED, 0xd9382c]],
+    [-0.38, 0.86, 0.10, [P.FLOWER_YELLOW, P.STUCCO_BUTTER]],
+    [0.00, 0.88, 0.06, [0x8a5aa8, P.FLOWER_MAGENTA]],
+    [0.38, 0.86, 0.10, [P.GRASS_LIGHT, P.CAR_LIME]],
+  ];
+  for (const [x, y, z, hexes] of sets) {
+    m.col(P.WOOD_LIGHT);
+    m.prism(x, z - 0.02, [[y - 0.05, 0.34, 0.26], [y, 0.36, 0.28]], { capTop: false });
+    berries(m, x, y - 0.02, z - 0.02, 0.052, 0.115, 7, hexes);
+    m.col(P.SIGN_DARK).prism(x, z - 0.14, [[y + 0.16, 0.16, 0.012], [y + 0.28, 0.16, 0.012]]);
+    m.col(P.SIGN_FACE); decal(m, x, y + 0.22, z - 0.147, 0.11, 0.03, -1);
+    m.col(P.STEEL_DARK).tubeBetween(x, y + 0.16, z - 0.14, x, y + 0.02, z - 0.10, 0.008, 3);
+  }
+  // Striped awning over the top shelf.
+  for (let k = 0; k < 6; k++) {
+    m.col(k % 2 ? P.FABRIC_CORAL : P.FABRIC_WHITE);
+    m.board(-0.55 + k * 0.22, 0.21, 1.26, -0.44, 1.14, -0.02, 0.04);
   }
 }
 
-/** Florist's bucket rack. The most saturated thing on any pavement. */
+/**
+ * Market flower stand. There was no stand — two planks leaning at 60 degrees
+ * against nothing, with three smooth capsules on sticks behind them. This is an
+ * A-frame with two slatted shelves, six galvanised buckets with darker rim
+ * bands, loose bunches of short stems topped with three-tier bloom cones at
+ * jittered heights, a chalk price board on the front rail and a striped valance.
+ */
 function gFlowerStand(m) {
   m.col(P.WOOD_DARK);
-  for (const s of [-1, 1]) m.board(s * 0.56, 0.08, 0.02, -0.36, 0.96, 0.26, 0.09);
-  m.col(P.WOOD_LIGHT).board(0, 1.08, 0.52, -0.28, 0.78, 0.06, 0.05);
-  const blooms = [[-0.36, P.FLOWER_MAGENTA], [0, P.FLOWER_YELLOW], [0.36, P.FLOWER_WHITE]];
-  for (const [x, hex] of blooms) {
-    m.col(P.ALUMINIUM).tube(x, 0.02, [[0.62, 0.16], [0.92, 0.18]], 5, { capTop: false });
-    m.col(hex).tube(x, 0.02, [[0.90, 0.20], [1.10, 0.22], [1.26, 0.09]], 5, { capTop: true });
+  for (const s of [-1, 1]) {
+    m.beam(s * 0.56, 0, -0.30, s * 0.56, 1.02, 0.06, 0.075, 0.075, false);
+    m.beam(s * 0.56, 0, 0.30, s * 0.56, 1.02, 0.06, 0.075, 0.075, false);
+    m.beam(s * 0.56, 0.42, -0.20, s * 0.56, 0.42, 0.20, 0.06, 0.05, false);
+  }
+  for (const [y, dz] of [[0.55, 0.10], [0.95, 0.02]]) {
+    m.col(P.WOOD_LIGHT);
+    slats(m, 0, dz, y, 1.18, 4, 0.10, 0.02, 0.035, [P.WOOD_LIGHT, 0xd0aa7c]);
+    m.col(P.WOOD_DARK);
+    m.prism(0, dz + 0.24, [[y, 1.22, 0.05], [y + 0.07, 1.22, 0.05]]);
+  }
+  const blooms = [P.FLOWER_MAGENTA, P.FLOWER_YELLOW, P.FLOWER_WHITE, P.FLOWER_ORANGE,
+    P.FLOWER_PINK, P.FLOWER_MAGENTA];
+  for (let k = 0; k < 6; k++) {
+    const x = -0.38 + (k % 3) * 0.38, y = k < 3 ? 0.585 : 0.985;
+    const z = (k < 3 ? 0.10 : 0.02) - 0.02;
+    m.col(P.ALUMINIUM).tube(x, z, [[y, 0.11], [y + 0.26, 0.13]], 5, { capTop: false });
+    m.col(0x9aa09c).tube(x, z, [[y + 0.26, 0.135], [y + 0.29, 0.13]], 5);
+    m.col(P.GRASS_LIGHT);
+    for (let s = 0; s < 4; s++) {
+      const a = (s / 4) * TAU + k;
+      m.tubeBetween(x, y + 0.24, z, x + Math.cos(a) * 0.07, y + 0.40 + (s % 2) * 0.05,
+        z + Math.sin(a) * 0.07, 0.012, 3);
+    }
+    m.col(blooms[k]);
+    const h = y + 0.40 + (k % 3) * 0.05;
+    m.tube(x, z, [[h, 0.14], [h + 0.09, 0.16], [h + 0.17, 0.11], [h + 0.24, 0.04]], 5,
+      { capTop: true });
+  }
+  m.col(P.SIGN_DARK).board(0, 0.30, 0.34, 0.30, 0.56, 0.24, 0.03);
+  m.col(P.SIGN_FACE);
+  rake(m, 0, 0.24, 0.40, 0.288, 0.44, 0.283, 0.02);
+  rake(m, -0.03, 0.16, 0.48, 0.283, 0.51, 0.279, 0.02);
+  for (let k = 0; k < 6; k++) {
+    m.col(k % 2 ? P.FABRIC_CORAL : P.FABRIC_WHITE);
+    m.prism(-0.50 + k * 0.20, 0.28, [[1.02, 0.18, 0.04], [1.20, 0.18, 0.04]]);
   }
 }
 
-/** Shrink-wrapped delivery still on its pallet outside the back door. */
+/**
+ * Shrink-wrapped delivery on its pallet. The pallet underneath was already
+ * good; the load was one blank block with a strap. It is now six cartons in a
+ * 3x2 stack with deliberately uneven edges, wrapped in a pale sheet that
+ * follows the stepped silhouette rather than smoothing it, two straps crossing
+ * at 90 degrees and a shipping label on the front face.
+ */
 function gDeliveryStack(m) {
-  m.col(P.WOOD_LIGHT).prism(0, 0, [[0.10, 1.10, 0.92], [0.15, 1.10, 0.92]]);
+  m.col(P.WOOD_LIGHT);
+  slats(m, 0, 0, 0.10, 1.10, 4, 0.19, 0.035, 0.05, [P.WOOD_LIGHT, P.WOOD_DECK]);
   m.col(P.WOOD_DARK);
-  for (const s of [-1, 1]) m.prism(s * 0.44, 0, [[0, 0.18, 0.88], [0.10, 0.18, 0.88]]);
-  m.col(0xd9dcd6).prism(0, 0, [[0.15, 1.00, 0.82], [0.94, 0.98, 0.80], [1.00, 0.90, 0.72]]);
-  m.col(P.SIGN_BLUE).prism(0, 0, [[0.54, 1.02, 0.84], [0.62, 1.02, 0.84]]);
+  for (const s of [-1, 0, 1]) m.prism(s * 0.44, 0, [[0, 0.18, 0.90], [0.10, 0.18, 0.90]]);
+  const tones = [0xd9d2c2, 0xf0ece2, 0xc9b795];
+  for (let k = 0; k < 6; k++) {
+    const col = k % 3, row = Math.floor(k / 3);
+    m.col(tones[(k + row) % 3]);
+    m.prism(-0.30 + col * 0.30 + (row ? 0.03 : -0.02), (row ? -0.03 : 0.03),
+      [[0.15 + row * 0.40, 0.30, 0.74], [0.53 + row * 0.40, 0.29, 0.72]]);
+  }
+  // Wrap: a pale sheet following the stepped silhouette.
+  m.col(0xdde2dc, 1.04);
+  m.prism(0, 0.02, [[0.16, 0.98, 0.80], [0.54, 0.96, 0.78]], { capTop: false });
+  m.prism(0, -0.02, [[0.54, 0.99, 0.80], [0.93, 0.94, 0.76], [0.97, 0.86, 0.68]]);
+  m.col(P.SIGN_BLUE);
+  m.prism(0, 0, [[0.52, 1.02, 0.84], [0.60, 1.02, 0.84]]);
+  m.xform(Math.PI / 2, 0, 0, 0);
+  m.prism(0, 0, [[0.70, 0.86, 0.98], [0.78, 0.86, 0.98]]);
+  m.reset();
+  m.col(P.SIGN_FACE); decal(m, 0, 0.76, 0.402, 0.26, 0.18);
+  m.col(P.SIGN_DARK); decal(m, 0, 0.82, 0.404, 0.20, 0.03);
 }
 
 /* -- kerbside clutter ----------------------------------------------------- */
 
-/** Commercial skip. Body left pale so the instance hex paints it. */
+/**
+ * Commercial skip. Sloped front face, four pressed ribs a side, fork pockets
+ * across the bottom, a lifting bar at each end, four castors, two lid leaves
+ * with visible hinge barrels and grab handles — one of them left half open —
+ * a hauler name stencilled on the flank and a scraped band along the top edge.
+ */
 function gDumpster(m) {
-  m.col(0xf0f0f0).prism(0, 0, [
-    [0, 2.16, 1.24], [0.16, 2.34, 1.32], [1.14, 2.58, 1.40],
-  ], { capTop: false });
-  m.col(0xdcdcdc).prism(0, 0, [[1.14, 2.52, 1.34], [1.22, 2.52, 1.34]]);
-  m.col(0x5b544a);
-  m.tube(-0.5, 0.1, [[1.10, 0.44, 0.36], [1.34, 0.20, 0.16]], 5, { capTop: true });
-  m.tube(0.62, -0.14, [[1.10, 0.38, 0.32], [1.28, 0.16, 0.14]], 5, { capTop: true });
+  m.col(0x2b2f33);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.tubeBetween(sx * 0.92 - 0.06, 0.10, sz * 0.52, sx * 0.92 + 0.06, 0.10, sz * 0.52, 0.10, 6, true);
+    }
+  }
+  m.col(0x3a4046);
+  for (const sz of [-1, 1]) m.prism(0, sz * 0.42, [[0.14, 2.10, 0.22], [0.24, 2.10, 0.22]]);
+  m.col(0xf0f0f0);
+  m.prism(0, 0, [[0.20, 2.16, 1.24], [0.28, 2.24, 1.28], [1.14, 2.58, 1.40]], { capTop: false });
+  m.col(0xdedede);
+  for (let k = 0; k < 4; k++) {
+    const x = -0.86 + k * 0.58;
+    for (const sz of [-1, 1]) decal(m, x, 0.68, sz * 0.68, 0.10, 0.80, sz);
+  }
+  m.col(0xbdbdbd).prism(0, 0, [[1.02, 2.54, 1.37], [1.10, 2.57, 1.39]]);
+  m.col(0xe8e8e8).prism(0, 0, [[1.14, 2.52, 1.34], [1.19, 2.52, 1.34]]);
+  // Lid leaves: one flat, one propped half open, with hinge barrels and grabs.
+  m.col(0x3a4046);
+  m.tubeBetween(-1.22, 1.20, 0, 1.22, 1.20, 0, 0.055, 5);
+  m.col(0xdcdcdc);
+  m.prism(0, -0.62, [[1.20, 2.44, 1.20], [1.25, 2.42, 1.18]]);
+  m.board(0, 2.44, 1.22, 0.06, 1.72, 0.86, 0.06);
+  m.col(0x3a4046);
+  m.tubeBetween(-0.50, 1.24, -1.14, 0.50, 1.24, -1.14, 0.035, 4);
+  m.tubeBetween(-0.50, 1.72, 0.88, 0.50, 1.72, 0.88, 0.035, 4);
+  // Lifting bars at each end, and a stencilled hauler name.
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * 1.30, 0.62, -0.34, s * 1.30, 0.62, 0.34, 0.045, 5);
+    m.tubeBetween(s * 1.22, 0.62, -0.34, s * 1.30, 0.62, -0.34, 0.035, 4);
+    m.tubeBetween(s * 1.22, 0.62, 0.34, s * 1.30, 0.62, 0.34, 0.035, 4);
+  }
+  m.col(0x30363a);
+  decal(m, -0.30, 0.72, 0.702, 0.86, 0.13);
+  m.col(0x9aa0a0);
+  decal(m, 0.62, 0.70, 0.702, 0.28, 0.09);
 }
 
-/** Advertising bench — a seat and a backlit poster in one. */
+/**
+ * Advertising bench. Slatted seat, and an ad panel that is DOUBLE-SIDED with a
+ * bezel lip and real poster content on both faces — two colour blocks and a
+ * headline bar, which is what advertising reads as from three metres. The old
+ * one was blank navy from the street and lit only on the far side.
+ */
 function gBusBench(m) {
-  m.col(P.CONCRETE_DARK);
-  for (const s of [-1, 1]) m.prism(s * 0.84, 0, [[0, 0.16, 0.52], [0.44, 0.14, 0.48]]);
-  m.col(P.TEAK).prism(0, 0, [[0.44, 1.86, 0.50], [0.50, 1.82, 0.46]]);
-  m.col(P.SIGN_DARK).prism(0, -0.22, [[0.50, 1.86, 0.09], [1.14, 1.86, 0.09]]);
-  m.lit(P.SIGN_FACE, 1, 0.55).prism(0, -0.275, [[0.56, 1.72, 0.012], [1.08, 1.72, 0.012]]);
-}
-
-/** Solar pay-and-display machine. Taller and squarer than a coin meter. */
-function gPayStation(m) {
-  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.50, 0.44], [0.09, 0.42, 0.36], [0.62, 0.42, 0.36]]);
-  m.col(P.PARKING_METER).prism(0, 0, [[0.62, 0.52, 0.42], [1.58, 0.50, 0.40]]);
-  m.lit(P.NEON_AQUA, 1, 0.9).prism(0, 0.205, [[1.14, 0.34, 0.015], [1.42, 0.34, 0.015]]);
-  m.col(P.SIGN_DARK).board(0, 0.54, 1.58, -0.16, 1.72, 0.18, 0.05);
-}
-
-/** Lit wayfinding pylon. Reads as a city that has been designed. */
-function gWayfindTotem(m) {
-  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 0.62, 0.40], [0.09, 0.54, 0.32]]);
-  m.col(P.SIGN_DARK).prism(0, 0, [[0.09, 0.50, 0.28], [2.70, 0.52, 0.30], [2.82, 0.44, 0.22]]);
-  m.lit(P.SIGN_FACE, 1, 0.58);
-  m.prism(0, 0.152, [[0.60, 0.40, 0.012], [2.40, 0.40, 0.012]]);
-  m.prism(0, -0.152, [[0.60, 0.40, 0.012], [2.40, 0.40, 0.012]]);
-  m.lit(P.NEON_AQUA, 1, 1.0).prism(0, 0, [[2.44, 0.54, 0.32], [2.54, 0.54, 0.32]]);
-}
-
-/** Corner newsstand: a kiosk, an awning and a rack of magazines. */
-function gNewsKiosk(m) {
-  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 2.10, 1.44], [0.10, 2.00, 1.34]]);
-  m.col(P.NEWSSTAND).prism(0, 0, [[0.10, 1.96, 1.30], [2.24, 2.00, 1.34], [2.34, 1.90, 1.24]]);
-  m.col(P.SIGN_DARK).prism(0, 0.655, [[0.92, 1.60, 0.03], [1.86, 1.60, 0.03]]);
-  m.lit(P.LAMP_GLOW, 1, 0.8).prism(0, 0.63, [[0.96, 1.48, 0.02], [1.78, 1.48, 0.02]]);
-  m.col(P.FABRIC_CORAL).prism(0, 0.30, [
-    [2.06, 2.20, 1.90], [2.20, 2.10, 1.80],
-  ]);
-  // Magazine rack against the front, canted up so the covers face the street.
-  m.col(P.WOOD_DARK).board(0, 1.70, 0.10, 0.64, 0.92, 1.02, 0.08);
-  for (let k = 0; k < 3; k++) {
-    m.col([P.FABRIC_SKY, P.FABRIC_SUN, P.FABRIC_PINK][k]);
-    m.board(-0.56 + k * 0.56, 0.48, 0.36, 0.72, 0.90, 1.00, 0.03);
+  m.col(0xd8d0be);
+  for (const s of [-1, 1]) {
+    m.prism(s * 0.84, 0, [[0, 0.20, 0.56], [0.05, 0.17, 0.52], [0.42, 0.16, 0.50], [0.45, 0.19, 0.53]]);
+  }
+  slats(m, 0, 0.02, 0.45, 1.80, 4, 0.10, 0.02, 0.05, [P.TEAK, 0xc08a52]);
+  m.col(P.SIGN_DARK);
+  m.prism(0, -0.24, [[0.50, 1.90, 0.10], [0.56, 1.94, 0.12], [1.10, 1.94, 0.12], [1.16, 1.90, 0.10]]);
+  for (const s of [1, -1]) {
+    const z = -0.24 + s * 0.062;
+    m.lit(P.SIGN_FACE, 1, 0.55); decal(m, 0, 0.83, z, 1.72, 0.50, s);
+    m.col(P.FABRIC_CORAL); decal(m, -0.48, 0.86, z + s * 0.004, 0.66, 0.40, s);
+    m.col(P.NEON_AQUA); decal(m, 0.46, 0.94, z + s * 0.004, 0.62, 0.22, s);
+    m.col(P.SIGN_DARK); decal(m, 0.46, 0.70, z + s * 0.004, 0.62, 0.10, s);
   }
 }
 
-/** Temporary mesh fence panel on concrete feet. */
+/**
+ * Pay-and-display machine. Recessed screen behind a chrome bezel, a keypad, a
+ * card-reader lip, a coin funnel and a ticket slot with a shelf under it, a
+ * printed instruction panel and a municipal logo block, every vertical edge
+ * chamfered, a three-part value break and a solar panel on the canted top —
+ * which is both correct for Miami and a strong silhouette cue from above.
+ */
+function gPayStation(m) {
+  m.col(P.STEEL_DARK);
+  m.oct(0, 0, [[0, 0.52, 0.46, 0.04], [0.09, 0.44, 0.38, 0.035],
+    [0.60, 0.44, 0.38, 0.035]], { capTop: false });
+  m.col(P.PARKING_METER);
+  m.oct(0, 0, [[0.60, 0.50, 0.40, 0.04], [0.66, 0.54, 0.44, 0.04],
+    [1.56, 0.52, 0.42, 0.04]], { capTop: false });
+  m.col(P.ALUMINIUM); borderBoth(m, 0, 1.28, 0.215, 0.30, 0.22, 0.02);
+  m.lit(P.NEON_AQUA, 1, 0.9); decal(m, 0, 1.28, 0.216, 0.26, 0.18);
+  m.col(0x30363a);
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 4; c++) decal(m, -0.10 + c * 0.068, 1.06 + r * 0.05, 0.213, 0.05, 0.03);
+  }
+  m.col(0x15181b);
+  decal(m, 0.14, 1.14, 0.213, 0.03, 0.06);
+  decal(m, -0.02, 0.86, 0.213, 0.22, 0.025);
+  m.col(P.ALUMINIUM);
+  m.prism(-0.02, 0.20, [[0.80, 0.26, 0.05], [0.84, 0.25, 0.05]]);
+  m.tube(0.14, 0.20, [[0.94, 0.045], [0.97, 0.04]], 5, { capTop: true });
+  m.col(P.SIGN_BLUE); decal(m, 0, 1.46, 0.213, 0.36, 0.10);
+  m.col(P.SIGN_FACE); decal(m, 0, 1.46, 0.215, 0.28, 0.03);
+  m.col(P.SIGN_DARK).board(0, 0.54, 1.56, -0.18, 1.70, 0.18, 0.05);
+  m.col(0x2a3a4a); rake(m, 0, 0.46, 1.575, -0.155, 1.685, 0.155, 0.03);
+}
+
+/**
+ * Wayfinding totem. The blank white lightbox is now an information layout: a
+ * coloured header band, a dark map over the upper two thirds with four route
+ * lines, and three directional arrow blades that project 5 cm proud of the body
+ * edge — that projection is what makes a totem read as wayfinding from the
+ * NARROW side too, where the old one was just a dark monolith. Top chamfered
+ * into a wedge, stainless kick plate, and the panel emissive dropped so it
+ * stops reading as a lightbox at noon.
+ */
+function gWayfindTotem(m) {
+  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 0.64, 0.42], [0.09, 0.56, 0.34]]);
+  m.col(P.ALUMINIUM).prism(0, 0, [[0.09, 0.54, 0.32], [0.22, 0.54, 0.32]]);
+  m.col(P.SIGN_DARK);
+  m.oct(0, 0, [[0.22, 0.52, 0.30, 0.04], [2.58, 0.52, 0.30, 0.04],
+    [2.82, 0.44, 0.22, 0.03]], { capTop: true });
+  for (const s of [1, -1]) {
+    const z = s * 0.152;
+    m.lit(P.SIGN_FACE, 1, 0.35); decal(m, 0, 1.52, z, 0.40, 1.80, s);
+    m.col(P.NEON_AQUA); decal(m, 0, 2.31, z + s * 0.004, 0.40, 0.22, s);
+    m.col(0x2c3238); decal(m, 0, 1.72, z + s * 0.004, 0.36, 0.94, s);
+    m.col(P.HYDRANT_RED); decal(m, -0.05, 1.90, z + s * 0.006, 0.24, 0.02, s);
+    m.col(P.SIGN_BLUE); decal(m, 0.02, 1.64, z + s * 0.006, 0.28, 0.02, s);
+    m.col(P.SIGN_GREEN); decal(m, -0.02, 1.46, z + s * 0.006, 0.30, 0.02, s);
+    m.col(P.ACCENT_SUN); decal(m, 0.04, 2.02, z + s * 0.006, 0.20, 0.02, s);
+  }
+  // Directional blades, proud of the body on both edges.
+  for (let k = 0; k < 3; k++) {
+    const y = 0.86 + k * 0.19;
+    m.col(k % 2 ? P.SIGN_BLUE : P.SIGN_GREEN);
+    m.prism(0, 0, [[y, 0.62, 0.34], [y + 0.14, 0.62, 0.34]]);
+    m.col(P.SIGN_FACE);
+    for (const s of [1, -1]) decal(m, k % 2 ? 0.10 : -0.10, y + 0.07, s * 0.172, 0.24, 0.05, s);
+  }
+  m.lit(P.NEON_AQUA, 1, 0.9).prism(0, 0, [[2.44, 0.54, 0.32], [2.52, 0.54, 0.32]]);
+}
+
+/**
+ * Corner newsstand. The awning is raked and striped with a valance hanging 20
+ * cm below the front edge, a serving hatch is cut into the front with a counter
+ * shelf and a rolled shutter above it, the signboard carries a masthead block
+ * and two colour bars, and the magazine rack is a canted tier of nine covers.
+ */
+function gNewsKiosk(m) {
+  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 2.12, 1.46], [0.10, 2.02, 1.36]]);
+  m.col(P.NEWSSTAND);
+  m.oct(0, 0, [[0.10, 1.96, 1.30, 0.08], [0.18, 2.00, 1.34, 0.08],
+    [2.24, 2.00, 1.34, 0.08]], { capTop: false });
+  m.col(0xa8402e);
+  for (let k = 0; k < 6; k++) decal(m, -0.85 + k * 0.34, 1.20, 0.672, 0.05, 1.80);
+  // Serving hatch: a recessed dark opening, a counter shelf, a rolled shutter.
+  m.col(0x1b1f22).prism(0, 0.64, [[1.02, 1.10, 0.05], [1.72, 1.10, 0.05]]);
+  m.col(P.ALUMINIUM).prism(0, 0.78, [[0.98, 1.16, 0.30], [1.03, 1.16, 0.30]]);
+  m.col(0x9aa0a0).tubeBetween(-0.56, 1.78, 0.70, 0.56, 1.78, 0.70, 0.085, 6, true);
+  m.col(P.SIGN_DARK).prism(0, 0.685, [[1.86, 1.60, 0.03], [2.16, 1.60, 0.03]]);
+  m.lit(P.LAMP_GLOW, 1, 0.8); decal(m, -0.28, 2.01, 0.703, 0.90, 0.16);
+  m.col(P.NEON_AQUA); decal(m, 0.50, 2.05, 0.703, 0.42, 0.08);
+  m.col(P.ACCENT_SUN); decal(m, 0.50, 1.94, 0.703, 0.42, 0.06);
+  // Raked striped awning with a valance.
+  for (let k = 0; k < 8; k++) {
+    m.col(k % 2 ? P.FABRIC_CORAL : P.FABRIC_WHITE);
+    m.board(-0.98 + k * 0.28, 0.28, 2.22, -0.30, 2.02, 1.02, 0.05);
+    m.prism(-0.98 + k * 0.28, 1.02, [[1.82, 0.28, 0.05], [2.02, 0.28, 0.05]]);
+  }
+  // Canted tiered magazine rack, nine covers in two rows.
+  m.col(P.WOOD_DARK).board(0, 1.70, 0.10, 0.72, 0.92, 1.10, 0.08);
+  const covers = [P.FABRIC_SKY, P.FABRIC_SUN, P.FABRIC_PINK, P.FABRIC_LIME, P.FABRIC_AQUA];
+  for (let k = 0; k < 9; k++) {
+    const row = Math.floor(k / 5), col = k % 5;
+    const x = -0.62 + col * 0.31 + row * 0.15;
+    const y0 = row ? 0.62 : 0.30, y1 = row ? 0.86 : 0.56;
+    const z0 = row ? 0.92 : 1.04, z1 = row ? 0.80 : 0.92;
+    m.col(covers[(k + row) % 5]);
+    m.board(x, 0.26, y0, z0, y1, z1, 0.025);
+    m.col(P.SIGN_DARK);
+    rake(m, x, 0.24, y1 - 0.05, z1 + 0.01, y1, z1, 0.016);
+  }
+  m.col(0xd9d2c2).prism(0.80, 0.98, [[0, 0.36, 0.28], [0.14, 0.34, 0.26]]);
+}
+
+/**
+ * Site fence panel. The defining feature of a site fence is that you can SEE
+ * THROUGH it and the infill was a solid aluminium slab. The mesh is now nine
+ * vertical and six horizontal 20 mm bars welded inside a round 40 mm frame with
+ * radiused corners, on moulded concrete feet with a lifting slot and post
+ * sockets, plus orange clamp couplers at the post positions.
+ */
 function gMeshFence(m) {
   m.col(P.CONCRETE_DARK);
-  for (const s of [-1, 1]) m.prism(s * 0.92, 0, [[0, 0.44, 0.36], [0.12, 0.38, 0.30]]);
+  for (const s of [-1, 1]) {
+    m.prism(s * 0.92, 0, [[0, 0.46, 0.38], [0.05, 0.44, 0.36], [0.12, 0.38, 0.30]]);
+    m.col(0x9a9280); decal(m, s * 0.92, 0.07, 0.152, 0.18, 0.04);
+    m.col(0x6f6a5e);
+    for (const sz of [-1, 1]) m.tube(s * 0.92, sz * 0.10, [[0.11, 0.055], [0.13, 0.05]], 5, { capTop: true });
+    m.col(P.CONCRETE_DARK);
+  }
   m.col(P.STEEL);
-  for (const s of [-1, 1]) m.beam(s * 0.98, 0.06, 0, s * 0.98, 1.94, 0, 0.06, 0.06, false);
-  m.beam(-1.02, 1.94, 0, 1.02, 1.94, 0, 0.06, 0.06, false);
-  m.beam(-1.02, 0.14, 0, 1.02, 0.14, 0, 0.05, 0.05, false);
-  m.col(P.ALUMINIUM, 0.86).prism(0, 0, [[0.18, 1.92, 0.02], [1.90, 1.92, 0.02]]);
+  for (const s of [-1, 1]) m.tubeBetween(s * 0.98, 0.10, 0, s * 0.98, 1.94, 0, 0.040, 6);
+  m.tubeBetween(-0.98, 1.94, 0, 0.98, 1.94, 0, 0.040, 6);
+  m.tubeBetween(-0.98, 0.16, 0, 0.98, 0.16, 0, 0.036, 5);
+  m.col(0x9aa4a2);
+  for (let k = 0; k < 9; k++) {
+    const x = -0.78 + k * 0.195;
+    m.tubeBetween(x, 0.18, 0, x, 1.92, 0, 0.011, 3);
+  }
+  for (let k = 0; k < 6; k++) {
+    const y = 0.42 + k * 0.29;
+    m.tubeBetween(-0.96, y, 0, 0.96, y, 0, 0.011, 3);
+  }
+  m.col(P.BARRIER_ORANGE);
+  for (const s of [-1, 1]) {
+    for (const y of [0.62, 1.60]) m.tube(s * 0.98, 0, [[y, 0.065], [y + 0.11, 0.062]], 5);
+  }
+  m.col(P.SIGN_FACE).prism(0.42, 0.02, [[1.10, 0.34, 0.02], [1.50, 0.34, 0.02]]);
+  m.col(P.SIGN_BLUE); decal(m, 0.42, 1.42, 0.031, 0.30, 0.06);
+  m.col(P.SIGN_DARK);
+  for (let k = 0; k < 3; k++) decal(m, 0.42, 1.30 - k * 0.06, 0.031, 0.26, 0.025);
 }
 
 /* -- park ----------------------------------------------------------------- */
 
-/** Teak bench with armrests — the park's second bench, not a copy of the first. */
+/**
+ * Teak bench. A teak bench is defined by its JOINERY, and this one had a solid
+ * prism for a seat and a solid prism for a back. Five seat boards and three
+ * back boards with gaps, rounded arm ends, and brass bolt heads at every
+ * board-to-frame junction.
+ */
 function gBenchTeak(m) {
-  m.col(P.TEAK);
-  m.prism(0, 0.02, [[0.42, 1.72, 0.50], [0.48, 1.70, 0.48]]);
-  m.col(P.TEAK, 0.92).board(0, 1.70, 0.50, -0.22, 0.96, -0.30, 0.07);
-  m.col(P.WOOD_DARK);
+  slats(m, 0, 0.02, 0.42, 1.68, 5, 0.088, 0.018, 0.05, [0xffffff, 0xe8dcc6]);
+  for (let k = 0; k < 3; k++) {
+    m.col(k % 2 ? 0xe8dcc6 : 0xffffff);
+    const t = k / 2;
+    m.board(0, 1.68, 0.54 + t * 0.30, -0.21 - t * 0.055, 0.60 + t * 0.30, -0.235 - t * 0.055, 0.048);
+  }
+  m.col(0x7a5636);
   for (const s of [-1, 1]) {
-    m.beam(s * 0.78, 0, 0.20, s * 0.78, 0.44, 0.18, 0.08, 0.08, false);
-    m.beam(s * 0.78, 0, -0.20, s * 0.78, 0.50, -0.20, 0.08, 0.08, false);
-    m.beam(s * 0.78, 0.66, 0.20, s * 0.78, 0.72, -0.24, 0.07, 0.07, false);
-    m.beam(s * 0.78, 0.46, 0.20, s * 0.78, 0.66, 0.20, 0.06, 0.06, false);
+    const x = s * 0.78;
+    m.prism(x, 0, [[0, 0.13, 0.52], [0.03, 0.11, 0.48]]);
+    m.tubeBetween(x, 0.02, 0.20, x, 0.42, 0.185, 0.048, 4);
+    m.tubeBetween(x, 0.02, -0.20, x, 0.50, -0.195, 0.048, 4);
+    m.tubeBetween(x, 0.50, -0.20, x, 0.66, -0.24, 0.045, 4);
+    m.tubeBetween(x, 0.66, -0.24, x, 0.70, 0.20, 0.045, 4);
+    m.tubeBetween(x, 0.70, 0.20, x, 0.68, 0.26, 0.045, 4, true);
+    m.tubeBetween(x, 0.47, 0.20, x, 0.70, 0.20, 0.040, 4);
+  }
+  m.tubeBetween(-0.78, 0.18, 0, 0.78, 0.18, 0, 0.032, 4);
+  m.col(P.ACCENT_SUN);
+  for (const s of [-1, 1]) {
+    for (const z of [-0.20, -0.10, 0, 0.10, 0.20]) m.plate(s * 0.78, 0.471, z, 0.035, 0.035);
   }
 }
 
-/** Chess table and two stools. The detail that says "people come here". */
+/**
+ * Chess table. The board was a plain navy square, which removed the only reason
+ * the object exists — the chequer is now an 8x8 alternating grid inlaid inside
+ * a raised precast border. A fluted stem, weathered tone bands, and two capped
+ * stools with domed seats on tapered stems (all three of which rendered as
+ * hollow open shells before the capTop fix).
+ */
 function gChessTable(m) {
-  m.col(P.PRECAST).tube(0, 0, [[0, 0.30], [0.08, 0.22], [0.68, 0.24]], 6);
-  m.tube(0, 0, [[0.68, 0.52], [0.74, 0.50]], 8, { capTop: true });
-  m.col(P.SIGN_DARK).plate(0, 0.745, 0, 0.52, 0.52);
-  m.col(P.CONCRETE);
+  m.col(0xd8d0be).tube(0, 0, [[0, 0.32], [0.06, 0.30], [0.10, 0.24]], 8, { capTop: false });
+  m.col(0xf2ece0);
+  m.tube(0, 0, [[0.10, 0.22], [0.30, 0.20], [0.60, 0.21], [0.66, 0.26]], 6,
+    { cols: [0xe8e0ce, 0xf2ece0, 0xe8e0ce] });
+  m.tube(0, 0, [[0.66, 0.54], [0.70, 0.56], [0.745, 0.55]], 8, { capTop: true });
+  // Inlaid chequer: 64 quads, and it is the whole point of the object.
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      m.col((r + c) % 2 ? 0x2a2f3a : 0xf6f0e2);
+      m.plate(-0.28 + c * 0.08, 0.748, -0.28 + r * 0.08, 0.078, 0.078);
+    }
+  }
+  m.col(0xcfc6b0);
   for (const s of [-1, 1]) {
-    m.tube(s * 0.86, 0, [[0, 0.20], [0.06, 0.16], [0.44, 0.17]], 5);
-    m.tube(s * 0.86, 0, [[0.44, 0.26], [0.48, 0.25]], 6, { capTop: true });
+    m.tube(s * 0.86, 0, [[0, 0.22], [0.05, 0.20], [0.09, 0.15]], 6, { capTop: false });
+    m.tube(s * 0.86, 0, [[0.09, 0.14], [0.36, 0.13], [0.42, 0.17]], 5, { capTop: false });
+    m.tube(s * 0.86, 0, [[0.42, 0.26], [0.46, 0.275], [0.50, 0.255]], 8, { capTop: true });
   }
 }
 
-/** Park barbecue on a post. */
+/**
+ * Park barbecue. The grate is now SEVEN parallel bars across the firebox rather
+ * than one dark plate, with a swing handle on the lid, height-adjustment
+ * notches cut into the post, an ash-pan lip under the firebox, a concrete
+ * footing pad, and a sooty gradient up the inner walls — a park grill that has
+ * never been used is the tell.
+ */
 function gBbqGrill(m) {
-  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.30, 0.30], [0.06, 0.20, 0.20], [0.72, 0.18, 0.18]]);
-  m.col(P.SIGN_DARK).prism(0, 0, [[0.72, 0.78, 0.52], [0.94, 0.82, 0.56]], { capTop: false });
-  m.col(0x3a332c).plate(0, 0.90, 0, 0.72, 0.46);
-  m.col(P.ALUMINIUM).board(0, 0.80, 0.94, -0.28, 1.28, -0.12, 0.05);
+  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 0.42, 0.42], [0.05, 0.36, 0.36]]);
+  m.col(P.STEEL_DARK).prism(0, 0, [[0.05, 0.26, 0.26], [0.10, 0.20, 0.20], [0.76, 0.18, 0.18]]);
+  m.col(0x59615f);
+  for (let k = 0; k < 5; k++) decal(m, 0, 0.24 + k * 0.11, 0.101, 0.10, 0.02);
+  m.col(0x3a332c);
+  m.prism(0, 0, [[0.72, 0.80, 0.54], [0.78, 0.84, 0.58], [0.96, 0.86, 0.60]], { capTop: false });
+  m.col(0x241f19).disc(0, 0.80, 0, 0.34, 4, Math.PI / 4);
+  m.col(P.STEEL_DARK).prism(0, 0, [[0.68, 0.86, 0.60], [0.72, 0.82, 0.56]]);
+  m.col(0x9aa0a0);
+  for (let k = 0; k < 7; k++) {
+    const z = -0.21 + k * 0.07;
+    m.tubeBetween(-0.38, 0.955, z, 0.38, 0.955, z, 0.016, 3);
+  }
+  m.col(P.ALUMINIUM).board(0, 0.82, 0.98, -0.30, 1.30, -0.14, 0.05);
+  m.col(P.STEEL_DARK);
+  m.tubeBetween(-0.14, 1.16, -0.20, 0.14, 1.16, -0.20, 0.020, 4);
+  m.tubeBetween(-0.14, 1.16, -0.20, -0.14, 1.10, -0.24, 0.016, 3);
+  m.tubeBetween(0.14, 1.16, -0.20, 0.14, 1.10, -0.24, 0.016, 3);
 }
 
-/** Big clipped topiary in a square pot — a vertical for a doorway. */
+/**
+ * Square-potted topiary. Pot with a proud rolled rim, a reveal band and a base
+ * plinth; a tapered leaning trunk with two pruning stubs and bark shading; and
+ * a ball built as an inner dome under a scatter of overlapping leaf clumps, so
+ * the silhouette is lumpy rather than a six-facet gem.
+ */
 function gPottedFicus(m) {
-  m.col(P.PLANTER).prism(0, 0, [
-    [0, 0.76, 0.76], [0.06, 0.70, 0.70], [0.82, 0.82, 0.82],
-  ], { cols: [P.PLANTER_DARK, P.PLANTER], capTop: false });
-  m.col(P.MULCH).plate(0, 0.78, 0, 0.74, 0.74);
-  m.col(P.PALM_TRUNK_DARK).tube(0, 0, [[0.74, 0.09], [1.34, 0.075]], 5);
-  shrub(m, 0, 1.20, 0, 0.52, P.TREE_CANOPY, 6);
+  m.prism(0, 0, [
+    [0, 0.80, 0.80], [0.06, 0.72, 0.72], [0.52, 0.70, 0.70],
+    [0.60, 0.675, 0.675], [0.66, 0.72, 0.72], [0.74, 0.84, 0.84], [0.80, 0.82, 0.82],
+  ], { capTop: false, cols: [0xb4a890, 0xf6f2e8, 0xece6d8, 0xf2ece0, 0xfaf6ec, 0xece6d8] });
+  m.col(P.MULCH).plate(0, 0.68, 0, 0.64, 0.64);
+  m.col(P.PALM_TRUNK_DARK);
+  m.tube(0, 0, [[0.66, 0.098], [0.98, 0.086]], 5, { cols: [0x6e5436] });
+  m.tube(0.03, 0.01, [[0.98, 0.082], [1.32, 0.070]], 5);
+  m.tubeBetween(0.02, 1.04, 0, 0.14, 1.12, 0.04, 0.024, 3, true);
+  m.tubeBetween(0.01, 0.88, 0, -0.10, 0.96, -0.04, 0.022, 3, true);
+  m.col(P.TREE_CANOPY_DARK);
+  m.tube(0.04, 0.01, [[0.96, 0.30], [1.20, 0.40], [1.52, 0.26]], 6, { capTop: true });
+  bush(m, 0.04, 1.02, 0.01, 0.44, P.TREE_CANOPY, P.TREE_CANOPY_LIGHT, 5, 3, 1.05);
 }
 
-/** Classic urn on a plinth, with the trailing bloom that stops it reading as
- *  a bollard from above. The second planter MODEL, not a recolour: the round
- *  pot is the single most repeated silhouette on any pavement in the city. */
+/**
+ * Cast-stone urn. A rolled rim torus at the bowl lip and a matching foot ring
+ * where the bowl meets the plinth — two rings, and they are what make cast
+ * stone read as cast stone — eight shallow flutes cut into the bowl as
+ * alternating facet tone (free relief), the plinth stepped into two courses,
+ * and the blooms pushed out over the rim so they trail.
+ */
 function gPlanterUrn(m) {
-  m.col(P.PRECAST).prism(0, 0, [[0, 0.58, 0.58], [0.09, 0.50, 0.50]],
-    { cols: [P.CONCRETE_DARK] });
-  // Six segments, same as gPlanterRound: it is now placed 500 times and the
-  // extra two segments cost 16 triangles each for a silhouette nobody can tell
-  // apart at any distance the game camera ever gets to.
-  m.tube(0, 0, [[0.09, 0.21], [0.28, 0.17], [0.46, 0.31], [0.74, 0.46], [0.82, 0.44]], 6, {
-    cols: [P.PRECAST, P.PRECAST, P.PRECAST, P.CONCRETE_DARK],
-  });
-  m.col(P.MULCH).plate(0, 0.80, 0, 0.78, 0.78);
-  shrub(m, 0, 0.74, 0, 0.32, P.HEDGE_LIGHT, 6);
+  m.prism(0, 0, [[0, 0.60, 0.60], [0.06, 0.55, 0.55], [0.13, 0.53, 0.53], [0.18, 0.48, 0.48]],
+    { cols: [0xb4a890, 0xf2ece0, 0xece6d8] });
+  // Foot ring, fluted ogee bowl, rolled rim torus.
+  m.tube(0, 0, [[0.18, 0.185], [0.23, 0.215], [0.27, 0.185]], 8,
+    { cols: [0xe4dccc, 0xf2ece0] });
+  m.tube(0, 0, [[0.27, 0.175], [0.42, 0.255], [0.66, 0.415], [0.76, 0.455]], 8,
+    { cols: [0xf6f2e8, 0xfaf6ee, 0xf2ece0] });
+  m.tube(0, 0, [[0.76, 0.475], [0.80, 0.495], [0.84, 0.465]], 8,
+    { cols: [0xfdfaf2, 0xece6d8] });
+  m.col(P.MULCH).disc(0, 0.79, 0, 0.44, 8);
+  shrub(m, 0, 0.76, 0, 0.30, P.HEDGE_LIGHT, 5, 2);
   m.col(P.FLOWER_MAGENTA);
   for (let k = 0; k < 3; k++) {
     const a = (k / 3) * TAU + 0.9;
-    m.tube(Math.cos(a) * 0.40, Math.sin(a) * 0.40, [[0.70, 0.08], [0.90, 0.13]], 5, { capTop: true });
+    m.tube(Math.cos(a) * 0.44, Math.sin(a) * 0.44, [[0.74, 0.09], [0.82, 0.12], [0.88, 0.05]], 5,
+      { capTop: true });
   }
 }
 
-/** Tapered steel trough of ornamental grass — flat blades, no dome. A dome on
- *  a box is just the round planter again wearing a different coat. */
+/**
+ * Fabricated steel trough. Reads as folded plate now: a 25 mm returned top lip
+ * all round, a fold line down each corner, a recessed shadow gap at the base
+ * instead of a plinth, four levelling feet, and a real value break — dark body,
+ * lighter top lip, warmer bottom third. The seven splinter beams are replaced
+ * by three crossed grass fans plus three straw seed-head spikes, so the
+ * planting has a mass and a top silhouette.
+ */
 function gPlanterModern(m) {
-  m.col(P.BOLLARD_DARK).prism(0, 0, [
-    [0, 1.34, 0.54], [0.06, 1.26, 0.46], [0.86, 1.08, 0.38],
-  ], { cols: [P.STEEL_DARK, P.BOLLARD_DARK], capTop: false });
-  m.col(P.MULCH).plate(0, 0.82, 0, 1.02, 0.34);
+  m.col(0x22262a);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    m.prism(sx * 0.56, sz * 0.18, [[0, 0.12, 0.12], [0.055, 0.10, 0.10]]);
+  }
+  m.prism(0, 0, [
+    [0.055, 1.28, 0.48], [0.11, 1.32, 0.52], [0.34, 1.24, 0.46],
+    [0.80, 1.10, 0.40], [0.86, 1.14, 0.44],
+  ], { capTop: false, cols: [0x3a4046, 0x565f5c, 0x49514f, 0x8f9694] });
+  m.col(0x9aa0a0).prism(0, 0, [[0.86, 1.16, 0.46], [0.885, 1.10, 0.40]]);
+  m.col(0x2c3234);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) decal(m, sx * 0.60, 0.48, sz * 0.232, 0.02, 0.72, sz);
+  }
+  m.col(P.MULCH).plate(0, 0.82, 0, 1.04, 0.34);
   const blades = [P.GRASS_DRY, P.GRASS_LIGHT, P.GRASS];
-  for (let k = 0; k < 7; k++) {
+  for (let k = 0; k < 6; k++) {
     m.col(blades[k % 3]);
-    const x = -0.42 + k * 0.14;
-    const lean = (k % 2 ? 1 : -1) * (0.13 + (k % 3) * 0.05);
-    m.beam(x, 0.78, 0, x + lean, 1.42 + (k % 3) * 0.10, lean * 0.5, 0.09, 0.02, false);
+    const x = -0.44 + k * 0.176;
+    const lean = (k % 2 ? 1 : -1) * (0.14 + (k % 3) * 0.06);
+    m.beam(x, 0.78, 0, x + lean, 1.34 + (k % 3) * 0.12, lean * 0.5, 0.16, 0.02, false);
+    m.beam(x, 0.78, 0, x - lean * 0.6, 1.20 + (k % 2) * 0.10, -lean * 0.4, 0.13, 0.02, false);
+  }
+  m.col(0xc9bb7a);
+  for (let k = 0; k < 3; k++) {
+    const x = -0.32 + k * 0.32;
+    m.tubeBetween(x, 0.82, 0, x + 0.04, 1.62, 0.03, 0.012, 3);
+    m.tube(x + 0.04, 0.03, [[1.58, 0.045], [1.68, 0.05], [1.76, 0.02]], 4, { capTop: true });
   }
 }
 
 /* -- terrace shade, service and the closed-up look ------------------------ */
 
 /**
- * Freestanding terrace awning: four posts, a raked fabric and a valance.
- *
- * Spans along local x and rakes DOWN toward +z, i.e. out over the tables and
- * toward the kerb once the placer has turned it to face the frontage. Four
- * posts rather than a cantilever because a cantilevered awning is fixed to a
- * building, and nothing this module makes is allowed to depend on a wall it
- * does not own — its contact patch has to be four feet on the pavement.
- *
- * Fabric is authored near-white so the per-instance tint colours it. A street
- * of terraces under one shade of coral is exactly the repetition this exists
- * to break, and it costs nothing: one hex per instance, same pool, same draw.
+ * Freestanding terrace awning. From the top-down camera the old one was a
+ * single flat rectangle of acid lime with no camber, no rafters and no stripe.
+ * It is now five bays defined by visible rafters underneath, each cambered with
+ * a 5 cm mid-span sag so the top surface is not one plane, a front edge
+ * scalloped into five half-round lappets with a 0.22 m valance hung off it, a
+ * ridge beam and tie rods — and the fabric is authored as an alternating
+ * near-white STRIPE so the per-instance tint produces a striped canopy, which
+ * is the actual Miami note.
  */
 function gTerraceAwning(m) {
   const HX = 1.90, BZ = -0.92, FZ = 0.86, TOP = 2.58, LIP = 2.14;
@@ -3050,103 +4322,234 @@ function gTerraceAwning(m) {
       m.tube(sx * HX, z, [[0, 0.19], [0.06, 0.15]], 6, { capTop: true });
       m.tube(sx * HX, z, [[0.06, 0.072], [h + 0.06, 0.062]], 6, { capTop: true });
     }
+    m.tubeBetween(sx * HX, TOP, BZ, sx * HX, LIP + 0.30, FZ, 0.024, 4);   // tie rod
   }
-  m.beam(-HX, TOP + 0.02, BZ, HX, TOP + 0.02, BZ, 0.08, 0.08, false);
-  m.beam(-HX, LIP + 0.02, FZ, HX, LIP + 0.02, FZ, 0.08, 0.08, false);
-  m.col(0xffffff);
-  m.board(0, HX * 2 + 0.36, TOP + 0.07, BZ - 0.12, LIP + 0.07, FZ + 0.24, 0.06);
-  m.col(0xf0f0f0);
-  m.prism(0, FZ + 0.26, [[LIP - 0.16, HX * 2 + 0.36, 0.05], [LIP + 0.07, HX * 2 + 0.36, 0.05]]);
-  // Awning downlights. Without these a terrace goes completely dark at night
-  // while the shopfront behind it is lit, which reads as a closed restaurant.
+  m.tubeBetween(-HX, TOP + 0.02, BZ, HX, TOP + 0.02, BZ, 0.045, 5);
+  m.tubeBetween(-HX, LIP + 0.02, FZ, HX, LIP + 0.02, FZ, 0.045, 5);
+  // Five cambered bays on visible rafters, striped across the width.
+  const N = 5, W = (HX * 2 + 0.36) / N;
+  for (let k = 0; k < N; k++) {
+    const x = -HX - 0.18 + W * (k + 0.5);
+    m.col(k % 2 ? 0xffffff : 0xdddddd);
+    m.board(x, W, TOP + 0.07, BZ - 0.12, LIP + 0.12, (BZ + FZ) / 2, 0.05);
+    m.board(x, W, LIP + 0.12, (BZ + FZ) / 2, LIP + 0.07, FZ + 0.24, 0.05);
+    m.col(P.STEEL_DARK);
+    m.tubeBetween(-HX - 0.18 + W * k, TOP + 0.03, BZ - 0.12,
+      -HX - 0.18 + W * k, LIP + 0.03, FZ + 0.24, 0.026, 4);
+  }
+  m.col(P.STEEL_DARK);
+  m.tubeBetween(-HX - 0.18, LIP + 0.03, FZ + 0.24, HX + 0.18, LIP + 0.03, FZ + 0.24, 0.026, 4);
+  // Scalloped front edge and a valance hung off it.
+  for (let k = 0; k < N; k++) {
+    const x = -HX - 0.18 + W * (k + 0.5);
+    m.col(k % 2 ? 0xffffff : 0xdddddd);
+    m.prism(x, FZ + 0.26, [[LIP - 0.16, W * 0.94, 0.045], [LIP + 0.07, W * 0.94, 0.045]]);
+    m.col(0xeeeeee);
+    m.tube(x, FZ + 0.26, [[LIP - 0.16, W * 0.30, 0.03], [LIP - 0.10, W * 0.46, 0.03]], 5);
+  }
   m.lit(P.LAMP_GLOW, 1, 1.1);
   for (const x of [-1.15, 0, 1.15]) {
     m.tube(x, 0.06, [[2.18, 0.05], [2.26, 0.06]], 5, { capTop: true });
   }
 }
 
-/** Champagne bucket on a folding tripod — the smallest thing on a terrace and
- *  the one that says somebody is actually being served. */
+/**
+ * Champagne bucket on a tripod. An eight-sided flare with a rolled rim ring and
+ * two cast ring handles, five ice chunks standing proud of the rim rather than
+ * one flat disc, a real bottle — six-sided with a shoulder taper, a neck and a
+ * foil capsule — leaning 20 degrees, and a brace ring joining the three legs.
+ */
 function gIceBucket(m) {
   m.col(P.STEEL_DARK);
   for (let k = 0; k < 3; k++) {
     const a = (k / 3) * TAU + 0.5;
-    m.beam(Math.cos(a) * 0.25, 0, Math.sin(a) * 0.25,
-      Math.cos(a) * 0.09, 0.58, Math.sin(a) * 0.09, 0.045, 0.045, false);
+    m.tubeBetween(Math.cos(a) * 0.26, 0.02, Math.sin(a) * 0.26,
+      Math.cos(a) * 0.09, 0.58, Math.sin(a) * 0.09, 0.024, 4);
+    m.tube(Math.cos(a) * 0.26, Math.sin(a) * 0.26, [[0, 0.045], [0.025, 0.04]], 4, { capTop: true });
+  }
+  for (let k = 0; k < 3; k++) {
+    const a0 = (k / 3) * TAU + 0.5, a1 = ((k + 1) / 3) * TAU + 0.5;
+    m.tubeBetween(Math.cos(a0) * 0.20, 0.22, Math.sin(a0) * 0.20,
+      Math.cos(a1) * 0.20, 0.22, Math.sin(a1) * 0.20, 0.016, 3);
   }
   m.col(P.CHROME);
-  m.tube(0, 0, [[0.56, 0.19], [0.62, 0.20], [0.88, 0.24]], 8, { capTop: false });
-  m.col(P.SEA_FOAM).plate(0, 0.86, 0, 0.36, 0.36);
-  m.col(P.GLASS_MINT).beam(0.05, 0.84, 0.02, 0.15, 1.14, 0.07, 0.085, 0.085, false);
-}
-
-/** Gelato counter: a low case with a canted hood and a row of lit tubs. The
- *  pastry case is a vertical cabinet; this is the horizontal one. */
-function gGelatoCase(m) {
-  m.col(P.STEEL_DARK).prism(0, 0, [[0, 1.36, 0.86], [0.09, 1.28, 0.78], [0.82, 1.28, 0.78]]);
-  m.col(P.ALUMINIUM).prism(0, 0, [[0.82, 1.36, 0.86], [0.88, 1.32, 0.82]]);
-  const tubs = [P.STUCCO_BUTTER, P.FLOWER_PINK, P.TERRACOTTA, P.SEA_FOAM, P.WOOD_DARK];
-  for (let k = 0; k < 5; k++) {
-    m.lit(tubs[k], 1, 0.42);
-    m.prism(-0.48 + k * 0.24, 0, [[0.88, 0.21, 0.54], [0.98, 0.21, 0.54]]);
+  m.tube(0, 0, [[0.54, 0.175], [0.62, 0.205], [0.86, 0.245]], 8, { capTop: false });
+  m.tube(0, 0, [[0.86, 0.255], [0.90, 0.248]], 8);
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * 0.245, 0.78, 0, s * 0.295, 0.74, 0, 0.024, 4);
+    m.tubeBetween(s * 0.295, 0.74, 0, s * 0.28, 0.66, 0, 0.022, 4, true);
   }
-  m.col(P.GLASS_SKY, 1.05).board(0, 1.32, 0.94, -0.36, 1.42, 0.32, 0.04);
-  m.lit(P.LAMP_GLOW, 1, 0.75).prism(0, -0.38, [[1.36, 1.22, 0.05], [1.42, 1.22, 0.05]]);
+  m.col(P.SEA_FOAM).disc(0, 0.855, 0, 0.235, 8);
+  m.col(0xf4ffff);
+  for (let k = 0; k < 5; k++) {
+    const a = (k / 5) * TAU + 0.3;
+    m.tube(Math.cos(a) * 0.13, Math.sin(a) * 0.13,
+      [[0.84, 0.055], [0.90, 0.045]], 4, { capTop: true, rot: k });
+  }
+  // Bottle: six sides, shoulder, neck, foil capsule, leaning 20 degrees.
+  m.col(P.GLASS_MINT);
+  m.tubeBetween(0.05, 0.82, 0.02, 0.11, 1.02, 0.05, 0.075, 6);
+  m.tubeBetween(0.11, 1.02, 0.05, 0.14, 1.10, 0.06, 0.045, 6);
+  m.col(P.ACCENT_SUN);
+  m.tubeBetween(0.14, 1.10, 0.06, 0.16, 1.18, 0.07, 0.038, 6, true);
 }
 
 /**
- * Post-and-rope terrace divider. Authored along local x with a 1.0 m half-span
- * so it packs end to end on the boundary line exactly the way the hedge and
- * the glass screen do — a terrace edge that reads as a dotted line is the one
- * thing a terrace edge must not be.
+ * Gelato counter. The old one hid all five tubs — the entire point of the
+ * object — under an opaque parallelogram plate stabbing out of the cabinet. The
+ * well is now recessed into the top holding eight pans in two rows of four,
+ * each with a mounded top and a scoop handle; the hood is three short chamfered
+ * bands stepping FORWARD and constrained inside the cabinet footprint, in pale
+ * glass with aluminium frames at both edges; and the fascia carries a lit price
+ * strip, a row of flavour cards and a cone stack on one end.
+ */
+function gGelatoCase(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 1.60, 0.84], [0.10, 1.52, 0.76]]);
+  m.col(P.ALUMINIUM).prism(0, 0, [[0.10, 1.50, 0.74], [0.16, 1.54, 0.78]]);
+  m.col(0xe8e4da);
+  m.oct(0, 0, [[0.16, 1.54, 0.78, 0.05], [0.86, 1.54, 0.78, 0.05]], { capTop: false });
+  m.col(P.CHROME).prism(0, 0, [[0.86, 1.60, 0.84], [0.92, 1.56, 0.80]]);
+  m.col(0x9aa0a0).prism(0, 0, [[0.84, 1.46, 0.70], [0.88, 1.46, 0.70]]);
+  const tubs = [P.STUCCO_BUTTER, P.FLOWER_PINK, P.TERRACOTTA, P.SEA_FOAM,
+    P.WOOD_DARK, P.FLOWER_WHITE, P.STUCCO_BUTTER, P.FLOWER_PINK];
+  for (let k = 0; k < 8; k++) {
+    const col = k % 4, row = Math.floor(k / 4);
+    const x = -0.54 + col * 0.36, z = -0.14 + row * 0.30;
+    m.col(P.ALUMINIUM).prism(x, z, [[0.84, 0.34, 0.28], [0.88, 0.32, 0.26]], { capTop: false });
+    m.col(tubs[k]);
+    m.prism(x, z, [[0.86, 0.30, 0.24], [0.93, 0.28, 0.22], [0.96, 0.20, 0.15]]);
+    m.col(P.CHROME);
+    m.tubeBetween(x + 0.10, 0.95, z, x + 0.14, 1.06, z - 0.04, 0.016, 3, true);
+  }
+  // Curved hood: three bands stepping forward, inside the cabinet footprint.
+  const hood = [[0.96, 0.36, 1.16, 0.40], [1.16, 0.40, 1.32, 0.30], [1.32, 0.30, 1.40, 0.10]];
+  for (const [y0, z0, y1, z1] of hood) {
+    m.col(P.GLASS_SKY, 1.28);
+    m.board(0, 1.46, y0, z0, y1, z1, 0.03);
+  }
+  m.col(P.ALUMINIUM);
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * 0.74, 0.96, 0.36, s * 0.74, 1.32, 0.30, 0.026, 4);
+    m.tubeBetween(s * 0.74, 1.32, 0.30, s * 0.74, 1.40, 0.10, 0.026, 4);
+  }
+  m.lit(P.LAMP_GLOW, 1, 0.75).prism(0, -0.38, [[1.34, 1.30, 0.05], [1.42, 1.30, 0.05]]);
+  // Lit price strip, flavour cards and a cone stack on the fascia.
+  m.lit(P.LAMP_GLOW, 1, 0.6); decal(m, 0, 0.72, 0.392, 1.36, 0.10);
+  m.col(P.SIGN_DARK);
+  for (let k = 0; k < 6; k++) decal(m, -0.55 + k * 0.22, 0.50, 0.392, 0.16, 0.20);
+  m.col(P.SIGN_FACE);
+  for (let k = 0; k < 6; k++) decal(m, -0.55 + k * 0.22, 0.55, 0.394, 0.12, 0.05);
+  m.col(P.WOOD_LIGHT);
+  for (let k = 0; k < 3; k++) {
+    m.tube(0.66, 0.16, [[0.92 + k * 0.10, 0.075], [1.00 + k * 0.10, 0.045]], 5, { capTop: true });
+  }
+}
+
+/**
+ * Post-and-rope terrace divider. Round rope on five chords so the sag is smooth
+ * (0.045 square-section beams kinked at each joint and read as bent sticks),
+ * turned timber bollards with a bead below the finial and a brass ferrule at
+ * the base, and whipped rope ends with an eye-splice over each finial.
  */
 function gTerraceRope(m) {
   const S = 1.00;
   for (const s of [-1, 1]) {
-    m.col(P.WOOD_DARK).prism(s * S, 0, [[0, 0.36, 0.36], [0.07, 0.29, 0.29]]);
-    m.col(P.TEAK).tube(s * S, 0, [[0.07, 0.075], [1.00, 0.065]], 6, { capTop: false });
-    m.col(P.CHROME).tube(s * S, 0, [[1.00, 0.085], [1.08, 0.05]], 6, { capTop: true });
+    m.col(P.ACCENT_SUN).tube(s * S, 0, [[0, 0.12], [0.05, 0.115]], 6, { capTop: false });
+    m.col(P.WOOD_DARK);
+    m.tube(s * S, 0, [[0.05, 0.105], [0.18, 0.088], [0.62, 0.078], [0.80, 0.086]], 6);
+    m.col(P.TEAK).tube(s * S, 0, [[0.80, 0.094], [0.86, 0.088], [0.94, 0.070]], 6);
+    m.col(P.CHROME).tube(s * S, 0, [[0.94, 0.086], [1.00, 0.092], [1.08, 0.040]], 6, { capTop: true });
   }
   m.col(P.SAND_WET);
-  for (const [yEnd, yMid] of [[0.90, 0.72], [0.58, 0.44]]) {
-    const pts = [[-S, yEnd], [-S * 0.34, yMid], [S * 0.34, yMid], [S, yEnd]];
-    for (let k = 0; k < 3; k++) {
-      m.beam(pts[k][0], pts[k][1], 0, pts[k + 1][0], pts[k + 1][1], 0, 0.045, 0.045, false);
+  ropeRun(m, -S, S, 0, 0.90, 0.68, 0.042, 6);
+  ropeRun(m, -S, S, 0, 0.58, 0.40, 0.038, 6);
+  m.col(0xb09a72);
+  for (const s of [-1, 1]) {
+    for (const y of [0.90, 0.58]) {
+      m.tube(s * S, 0, [[y - 0.05, 0.062], [y + 0.05, 0.062]], 5);
     }
   }
 }
 
-/** Chairs stacked for the night. Nothing else in the catalogue says "closed",
- *  and a terrace that is identical at 3am and 3pm is a diorama. */
+/**
+ * Chairs stacked for the night. Rebuilt from the café chair: five nested
+ * copies, each raised 0.10, rotated 3 degrees and offset, with the bottom
+ * chair's legs actually reaching the ground and the back frames overlapping
+ * into one continuous leaning silhouette — the old one was four trays floating
+ * above two slabs with a detached panel over them. A strap round the middle,
+ * and the whole stack leans 3 degrees off vertical.
+ */
 function gChairStack(m) {
-  for (let k = 0; k < 4; k++) {
-    const y = 0.42 + k * 0.13;
+  const LEAN = 0.035;
+  m.col(0xe6e0d0);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    m.tubeBetween(sx * 0.22, 0, sz * 0.22, sx * 0.185, 0.43, sz * 0.185, 0.024, 4);
+  }
+  for (let k = 0; k < 5; k++) {
+    const y = 0.42 + k * 0.10;
+    const dz = k * LEAN;
     m.col(k % 2 ? 0xf2ede1 : P.CHAIR);
-    m.xform((k - 1.5) * 0.05, 0, 0, k * 0.035);
-    m.prism(0, 0, [[y, 0.44, 0.42], [y + 0.05, 0.42, 0.40]]);
+    m.xform((k - 2) * 0.052, 0, 0, dz);
+    m.prism(0, 0, [[y, 0.40, 0.38], [y + 0.03, 0.44, 0.42], [y + 0.06, 0.395, 0.375]]);
+    m.col(k % 2 ? P.CHAIR : 0xe2ddd0);
+    for (const sx of [-1, 1]) {
+      m.tubeBetween(sx * 0.185, y + 0.01, -0.185, sx * 0.165, y + 0.46, -0.235, 0.023, 4);
+    }
+    for (let b = 0; b < 2; b++) {
+      m.beam(-0.175, y + 0.17 + b * 0.20, -0.205 - b * 0.02,
+        0.175, y + 0.17 + b * 0.20, -0.205 - b * 0.02, 0.075, 0.03, false);
+    }
     m.reset();
   }
-  m.col(P.CHAIR, 0.95).board(0, 0.44, 0.86, -0.14, 1.34, -0.30, 0.06);
-  m.col(0xe2ddd0);
-  for (const sx of [-1, 1]) m.board(sx * 0.20, 0.06, 0, -0.18, 0.44, -0.20, 0.36);
+  m.col(P.SIGN_DARK);
+  m.tubeBetween(-0.22, 0.74, 0.10, 0.22, 0.74, 0.10, 0.018, 4);
+  m.tubeBetween(0.22, 0.74, 0.10, 0.22, 0.70, -0.24, 0.018, 4);
+  m.tubeBetween(-0.22, 0.74, 0.10, -0.22, 0.70, -0.24, 0.018, 4);
 }
 
-/** Barrel high-top. A round table on a fat base reads completely differently
- *  from a round table on a stem, which is the only reason it is here. */
+/**
+ * Barrel high-top. The hoops are now PROUD 2 cm steel bands at the quarter
+ * points and at both chimes so the barrel reads as bound rather than painted,
+ * the bottom chime tucks in with a visible rim instead of flaring into a dark
+ * cone, the staves alternate two adjacent timber tones around the eight
+ * segments, and the candle holder stands upright and central on the top.
+ */
 function gBarrelTable(m) {
-  m.tube(0, 0, [[0, 0.29], [0.14, 0.33], [0.54, 0.36], [0.94, 0.33], [1.04, 0.30]], 8, {
-    cols: [P.WOOD_DARK, P.WOOD_DECK, P.WOOD_DECK, P.WOOD_DARK],
-  });
+  const secs = [[0, 0.295], [0.06, 0.315], [0.16, 0.335], [0.54, 0.362],
+    [0.92, 0.335], [1.02, 0.312]];
+  // Staves drawn segment by segment so adjacent tones cut vertical stave lines.
+  for (let g = 0; g < secs.length - 1; g++) {
+    const [y0, r0] = secs[g], [y1, r1] = secs[g + 1];
+    for (let k = 0; k < 8; k++) {
+      const a0 = (k / 8) * TAU, a1 = ((k + 1) / 8) * TAU;
+      m.col(k % 2 ? P.WOOD_DECK : 0xb1854f);
+      m.quad([Math.cos(a0) * r0, y0, Math.sin(a0) * r0],
+        [Math.cos(a0) * r1, y1, Math.sin(a0) * r1],
+        [Math.cos(a1) * r1, y1, Math.sin(a1) * r1],
+        [Math.cos(a1) * r0, y0, Math.sin(a1) * r0]);
+    }
+  }
   m.col(P.STEEL_DARK);
-  for (const y of [0.20, 0.84]) m.tube(0, 0, [[y, 0.355], [y + 0.05, 0.355]], 8);
-  m.col(P.TEAK).tube(0, 0, [[1.04, 0.47], [1.10, 0.45]], 8, { capTop: true });
-  m.col(P.SIGN_FACE).tube(0.18, 0.10, [[1.10, 0.045], [1.22, 0.05]], 5, { capTop: true });
+  for (const [y, r] of [[0.05, 0.318], [0.30, 0.352], [0.78, 0.352], [0.98, 0.322]]) {
+    m.tube(0, 0, [[y, r], [y + 0.045, r]], 8);
+  }
+  m.col(P.TEAK).tube(0, 0, [[1.02, 0.44], [1.06, 0.47], [1.10, 0.455]], 10);
+  m.col(0xc78d52).disc(0, 1.098, 0, 0.455, 10);
+  m.col(P.STEEL_DARK).tube(0, 0, [[1.098, 0.075], [1.13, 0.07]], 6);
+  m.col(P.SIGN_FACE).tube(0, 0, [[1.13, 0.055], [1.24, 0.05]], 6, { capTop: true });
+  m.lit(P.LAMP_GLOW, 1, 1.1).tube(0, 0, [[1.24, 0.045], [1.28, 0.02]], 5, { capTop: true });
 }
 
 /* -- hotel + lounge ------------------------------------------------------- */
 
-/** Bell cart. Chrome frame, carpeted deck, three bags that do not match —
- *  luggage never does, and matching it is the tell. */
+/**
+ * Bell cart. The structure was already right; the tubes were spindly squares
+ * and the bags were three plain boxes. The frame is 0.07 m round tube with
+ * corner elbows, there is a hanging garment rail across the top, a push handle
+ * at one end and a bumper rail round the deck — and every bag has one piece of
+ * hardware: a grab handle, a zip band, a corner patch, or a retractable handle
+ * stub with two wheels.
+ */
 function gLuggageCart(m) {
   m.col(P.TYRE);
   for (const sx of [-1, 1]) {
@@ -3158,87 +4561,188 @@ function gLuggageCart(m) {
   m.col(P.CHROME);
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      m.beam(sx * 0.54, 0.20, sz * 0.36, sx * 0.54, 1.44, sz * 0.36, 0.055, 0.055, false);
+      m.tubeBetween(sx * 0.54, 0.20, sz * 0.36, sx * 0.54, 1.40, sz * 0.36, 0.035, 5);
+      m.tubeBetween(sx * 0.54, 1.40, sz * 0.36, sx * 0.50, 1.44, sz * 0.32, 0.035, 5);
     }
-    m.beam(sx * 0.54, 1.44, -0.36, sx * 0.54, 1.44, 0.36, 0.055, 0.055, false);
+    m.tubeBetween(sx * 0.50, 1.44, -0.32, sx * 0.50, 1.44, 0.32, 0.035, 5);
+    m.tubeBetween(sx * 0.54, 0.24, -0.36, sx * 0.54, 0.24, 0.36, 0.030, 4);
   }
-  m.beam(-0.54, 1.44, -0.36, 0.54, 1.44, -0.36, 0.055, 0.055, false);
-  m.beam(-0.54, 1.44, 0.36, 0.54, 1.44, 0.36, 0.055, 0.055, false);
+  m.tubeBetween(-0.50, 1.44, -0.36, 0.50, 1.44, -0.36, 0.035, 5);
+  m.tubeBetween(-0.50, 1.44, 0.36, 0.50, 1.44, 0.36, 0.035, 5);
+  m.tubeBetween(-0.50, 1.34, 0, 0.50, 1.34, 0, 0.028, 5);      // garment rail
+  m.tubeBetween(-0.66, 0.90, -0.20, -0.66, 0.90, 0.20, 0.030, 5, true);  // push handle
+  m.tubeBetween(-0.54, 0.90, 0, -0.66, 0.90, 0, 0.024, 4);
+  m.tubeBetween(-0.56, 0.24, -0.36, -0.56, 0.24, 0.36, 0.026, 4);
+  // Three mismatched bags, each with one piece of hardware.
   m.col(P.CAR_NAVY).prism(-0.28, 0, [[0.26, 0.50, 0.36], [0.86, 0.48, 0.34]]);
+  m.col(0x1a3050); decal(m, -0.28, 0.74, 0.182, 0.46, 0.05);
+  m.col(P.CHROME).tubeBetween(-0.40, 0.87, 0, -0.16, 0.87, 0, 0.020, 4);
   m.col(P.STUCCO_CORAL).prism(0.24, 0.08, [[0.26, 0.50, 0.34], [0.70, 0.48, 0.32]]);
-  m.col(P.WOOD_DARK).prism(0.18, -0.14, [[0.70, 0.40, 0.26], [0.96, 0.38, 0.24]]);
+  m.col(0xd05a44); decal(m, 0.24, 0.44, 0.242, 0.14, 0.14);
+  m.col(P.CHROME);
+  m.tubeBetween(0.14, 0.70, 0.08, 0.14, 0.90, 0.08, 0.014, 4);
+  m.tubeBetween(0.34, 0.70, 0.08, 0.34, 0.90, 0.08, 0.014, 4);
+  m.tubeBetween(0.14, 0.90, 0.08, 0.34, 0.90, 0.08, 0.014, 4);
+  m.col(P.WOOD_DARK);
+  m.tube(0.18, -0.16, [[0.70, 0.23, 0.14], [0.86, 0.21, 0.13], [0.94, 0.14, 0.09]], 6,
+    { capTop: true, rot: 0.4 });
+  m.col(P.ACCENT_SUN).prism(0.54, -0.30, [[0.80, 0.10, 0.02], [0.92, 0.10, 0.02]]);
 }
 
-/** Galvanised drinks tub on a stand — the pop-up bar's ice station. */
+/**
+ * Galvanised drinks tub. A rolled top rim and two riveted side handles, three
+ * pressed ribs round the body, an ice mass with seven bottle necks poking
+ * through at varied angles, a lower cross-brace ring between the legs, and a
+ * folded towel over the rim.
+ */
 function gDrinksTub(m) {
   m.col(P.STEEL_DARK);
   for (let k = 0; k < 4; k++) {
     const a = (k / 4) * TAU + 0.78;
-    m.beam(Math.cos(a) * 0.40, 0, Math.sin(a) * 0.40,
-      Math.cos(a) * 0.30, 0.52, Math.sin(a) * 0.30, 0.05, 0.05, false);
+    m.tubeBetween(Math.cos(a) * 0.40, 0.02, Math.sin(a) * 0.40,
+      Math.cos(a) * 0.30, 0.52, Math.sin(a) * 0.30, 0.026, 4);
+    m.tube(Math.cos(a) * 0.40, Math.sin(a) * 0.40, [[0, 0.05], [0.025, 0.045]], 4, { capTop: true });
   }
-  m.col(P.ALUMINIUM).tube(0, 0, [[0.50, 0.36], [0.58, 0.40], [0.84, 0.46]], 8, { capTop: false });
-  m.col(P.SEA_FOAM).plate(0, 0.82, 0, 0.70, 0.70);
-  const bottles = [P.GLASS_MINT, P.TERRACOTTA, P.STUCCO_BUTTER, P.GLASS_TEAL];
   for (let k = 0; k < 4; k++) {
-    const a = (k / 4) * TAU + 0.4;
-    m.col(bottles[k]);
-    m.tube(Math.cos(a) * 0.20, Math.sin(a) * 0.20, [[0.80, 0.055], [1.00, 0.042]], 5, { capTop: true });
+    const a0 = (k / 4) * TAU + 0.78, a1 = ((k + 1) / 4) * TAU + 0.78;
+    m.tubeBetween(Math.cos(a0) * 0.355, 0.22, Math.sin(a0) * 0.355,
+      Math.cos(a1) * 0.355, 0.22, Math.sin(a1) * 0.355, 0.018, 3);
   }
+  m.col(P.ALUMINIUM);
+  m.tube(0, 0, [[0.48, 0.35], [0.58, 0.40], [0.84, 0.46]], 8, { capTop: false });
+  m.tube(0, 0, [[0.84, 0.475], [0.885, 0.465]], 8);
+  m.col(0x9aa09c);
+  for (const y of [0.58, 0.70]) m.tube(0, 0, [[y, 0.425 + (y - 0.58) * 0.42], [y + 0.03, 0.43 + (y - 0.58) * 0.42]], 8);
+  for (const s of [-1, 1]) {
+    m.tubeBetween(s * 0.46, 0.74, 0, s * 0.52, 0.70, 0, 0.028, 4);
+    m.tube(s * 0.44, 0, [[0.72, 0.035], [0.76, 0.03]], 4, { capTop: true });
+  }
+  m.col(P.SEA_FOAM).disc(0, 0.845, 0, 0.45, 8);
+  m.col(0xf4ffff);
+  for (let k = 0; k < 5; k++) {
+    const a = (k / 5) * TAU + 0.4;
+    m.tube(Math.cos(a) * 0.26, Math.sin(a) * 0.26, [[0.82, 0.075], [0.88, 0.06]], 4,
+      { capTop: true, rot: k });
+  }
+  const bottles = [P.GLASS_MINT, P.TERRACOTTA, P.STUCCO_BUTTER, P.GLASS_TEAL,
+    P.HYDRANT_RED, P.FLOWER_WHITE, P.CAR_LIME];
+  for (let k = 0; k < 7; k++) {
+    const a = (k / 7) * TAU + 0.4, r = 0.13 + (k % 3) * 0.08;
+    m.col(bottles[k]);
+    m.tubeBetween(Math.cos(a) * r, 0.80, Math.sin(a) * r,
+      Math.cos(a) * (r + 0.05) + 0.02, 1.00 + (k % 3) * 0.04, Math.sin(a) * (r + 0.05),
+      0.042, 5, true);
+  }
+  m.col(P.FABRIC_WHITE);
+  m.tubeBetween(0.30, 0.86, -0.34, 0.44, 0.62, -0.30, 0.065, 5, true);
 }
 
 /**
- * Outdoor lounge sofa. The brief asks for rooftop lounge furniture; roofs are
- * buildings.js's ground and nothing standing on one has a contact patch this
- * module can measure, so the lounge lives where the game can actually reach
- * it — hotel forecourts, plazas and the bar corner. Cushions are near-white so
- * the instance tint sets the scheme.
+ * Lounge table. A slatted teak top — five boards with 8 mm gaps inside a mitred
+ * perimeter frame — on an apron rail, tapered square legs with feet, and a lower
+ * shelf with a stack of two magazines. The two blobs on top are now a tumbler
+ * with a straw leaning 20 degrees and a candle lantern with a glowing pane.
  */
-function gLoungeSofa(m) {
-  m.col(P.WOOD_DARK).prism(0, 0, [[0, 1.96, 0.88], [0.10, 1.90, 0.82], [0.34, 1.90, 0.82]]);
-  m.col(0xf4f1e8);
-  for (let k = 0; k < 3; k++) {
-    m.prism(-0.62 + k * 0.62, 0.04, [[0.34, 0.58, 0.74], [0.49, 0.56, 0.72]]);
-  }
-  m.col(0xece8dc).board(0, 1.90, 0.49, -0.30, 0.88, -0.41, 0.16);
-  m.col(P.TEAK);
-  for (const s of [-1, 1]) m.prism(s * 0.99, 0, [[0.34, 0.10, 0.86], [0.64, 0.10, 0.86]]);
-}
-
-/** Low lounge table — the thing that turns two sofas into a seating group. */
 function gLoungeTable(m) {
   m.col(P.WOOD_DARK);
   for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    m.beam(sx * 0.40, 0, sz * 0.24, sx * 0.38, 0.34, sz * 0.22, 0.06, 0.06, false);
+    m.prism(sx * 0.40, sz * 0.24, [[0, 0.075, 0.075], [0.03, 0.065, 0.065], [0.34, 0.05, 0.05]]);
   }
-  m.col(P.TEAK).prism(0, 0, [[0.34, 0.96, 0.60], [0.40, 0.92, 0.56]]);
-  m.col(P.GLASS_MINT).tube(0.26, 0.02, [[0.40, 0.07], [0.58, 0.055]], 5, { capTop: true });
-  m.col(P.FLOWER_WHITE).tube(-0.22, 0.04, [[0.40, 0.10], [0.52, 0.11], [0.60, 0.05]], 5, { capTop: true });
+  m.prism(0, 0, [[0.16, 0.86, 0.50], [0.20, 0.86, 0.50]]);       // lower shelf
+  m.col(P.SIGN_FACE).prism(-0.16, 0.04, [[0.20, 0.28, 0.20], [0.24, 0.27, 0.19]]);
+  m.col(P.FABRIC_CORAL).prism(-0.13, 0.02, [[0.24, 0.26, 0.19], [0.27, 0.25, 0.18]]);
+  m.col(P.WOOD_DARK).prism(0, 0, [[0.28, 0.90, 0.54], [0.34, 0.90, 0.54]]);   // apron
+  m.col(P.TEAK);
+  m.prism(0, 0, [[0.34, 0.96, 0.60], [0.40, 0.94, 0.58]], { capTop: false });
+  slats(m, 0, 0, 0.35, 0.88, 5, 0.092, 0.008, 0.05, [0xb07a44, 0xc08a52]);
+  m.col(P.GLASS_MINT).tube(0.26, 0.02, [[0.40, 0.07], [0.58, 0.062]], 6, { capTop: true });
+  m.col(P.FABRIC_CORAL).tubeBetween(0.26, 0.54, 0.02, 0.33, 0.70, 0.06, 0.010, 3);
+  m.col(P.STEEL_DARK);
+  m.prism(-0.22, 0.04, [[0.40, 0.16, 0.16], [0.44, 0.14, 0.14]]);
+  m.prism(-0.22, 0.04, [[0.60, 0.16, 0.16], [0.64, 0.13, 0.13]]);
+  for (const [dx, dz] of [[-0.06, 0], [0.06, 0], [0, -0.06], [0, 0.06]]) {
+    m.tubeBetween(-0.22 + dx, 0.44, 0.04 + dz, -0.22 + dx, 0.60, 0.04 + dz, 0.010, 3);
+  }
+  m.lit(P.LAMP_GLOW, 1, 1.2).prism(-0.22, 0.04, [[0.46, 0.10, 0.10], [0.58, 0.10, 0.10]]);
 }
 
 /* -- ironwork in the pavement --------------------------------------------- */
 /* Covers and hatches sit PROUD of the paving on their own frames, never flush.
    A plate coplanar with the sidewalk z-fights, and z-fighting anywhere is an
-   automatic review failure — the 5-7 cm of frame is also what a real cover
-   has, so the honest model and the safe model are the same model. */
+   automatic review failure — the frame is also what a real cover has, so the
+   honest model and the safe model are the same model. */
 
+/**
+ * Manhole cover. The old plate was 0x5c554c — near-identical in value to the
+ * asphalt — 8-sided, and stood 7 cm proud, so all that read was a black X
+ * apparently floating on the road. This is a 12-sided disc sitting 1.5 cm proud
+ * inside a sunken cast frame ring that is DARKER than the road, so the cover
+ * reads as a lighter disc against a dark ring; the face carries a raised waffle
+ * grid, a centre boss and two pick slots, and the iron is a warm rust rather
+ * than road grey.
+ */
 function gManholeCover(m) {
-  m.col(0x5c554c).tube(0, 0, [[0, 0.44], [0.035, 0.44]], 8, { capTop: true });
-  m.col(0x6e675c).tube(0, 0, [[0.035, 0.40], [0.07, 0.39]], 8, { capTop: true });
-  m.col(0x4c463e);
-  for (const a of [0.5, 1.55]) {
-    m.beam(Math.cos(a) * -0.29, 0.076, Math.sin(a) * -0.29,
-      Math.cos(a) * 0.29, 0.076, Math.sin(a) * 0.29, 0.055, 0.016, false);
+  m.col(0x4a4038);
+  m.tube(0, 0, [[0, 0.42], [0.012, 0.415], [0.02, 0.36]], 12, { capTop: false });
+  m.col(0x7a6a58);
+  m.tube(0, 0, [[0.008, 0.355], [0.028, 0.352]], 12);
+  m.col(0x8a7864).disc(0, 0.030, 0, 0.352, 12);
+  m.col(0x6b5c4c);
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 4; c++) {
+      const x = -0.19 + c * 0.127, z = -0.19 + r * 0.127;
+      if (x * x + z * z > 0.10) continue;
+      m.plate(x, 0.038, z, 0.098, 0.098);
+    }
+  }
+  m.col(0x8a7864).tube(0, 0, [[0.030, 0.075], [0.046, 0.068]], 8, { capTop: true });
+  m.col(0x2f2822);
+  for (const a of [0.4, 0.4 + Math.PI]) {
+    m.plate(Math.cos(a) * 0.24, 0.039, Math.sin(a) * 0.24, 0.07, 0.03);
   }
 }
 
-function gDrainGrate(m) {
-  m.col(0x6a6259).prism(0, 0, [[0, 0.76, 0.54], [0.06, 0.76, 0.54]]);
-  m.col(0x2e2a26).plate(0, 0.062, 0, 0.60, 0.40);
-  m.col(0x5f584f);
-  for (let k = 0; k < 4; k++) {
-    m.prism(-0.21 + k * 0.14, 0, [[0.062, 0.08, 0.40], [0.085, 0.08, 0.40]]);
+/**
+ * Square gully cover. The second manhole MODEL, not a recolour: 529 identical
+ * round plates on a road is the repetition, and a square utility-valve plate on
+ * the same sunken frame breaks it from directly above, which is the only angle
+ * that matters for pavement ironwork.
+ */
+function gManholeSquare(m) {
+  m.col(0x4a4038);
+  m.prism(0, 0, [[0, 0.72, 0.62], [0.012, 0.70, 0.60], [0.02, 0.60, 0.50]], { capTop: false });
+  m.col(0x7a6a58).prism(0, 0, [[0.008, 0.58, 0.48], [0.028, 0.575, 0.475]]);
+  m.col(0x6b5c4c);
+  for (let k = 0; k < 5; k++) {
+    m.plate(0, 0.031, -0.18 + k * 0.09, 0.50, 0.055);
   }
+  m.col(0x8a7864);
+  for (const s of [-1, 1]) m.plate(s * 0.22, 0.031, 0, 0.06, 0.44);
+  m.col(0x2f2822);
+  for (const s of [-1, 1]) m.plate(s * 0.16, 0.033, 0, 0.07, 0.03);
+}
+
+/**
+ * Gully grate. Sunk flush into a recessed cast frame with a 4 cm lip rather
+ * than lying proud on the middle of a paving slab, seven slots with a central
+ * cross-rib, near-black voids so the openings actually read, two bolt bosses
+ * and a hinge lug, and a silt stain painted on the paving around it.
+ */
+function gDrainGrate(m) {
+  m.col(P.SIDEWALK, 0.90).plate(0, 0.004, 0, 1.02, 0.78);
+  m.col(0x5a5249);
+  m.prism(0, 0, [[0, 0.80, 0.58], [0.02, 0.78, 0.56], [0.055, 0.72, 0.50]], { capTop: false });
+  m.col(0x1b1814).plate(0, 0.030, 0, 0.70, 0.48);
+  m.col(0x6a6259);
+  for (let k = 0; k < 8; k++) {
+    m.prism(-0.30 + k * 0.086, 0, [[0.030, 0.042, 0.48], [0.052, 0.040, 0.48]]);
+  }
+  m.prism(0, 0, [[0.030, 0.68, 0.05], [0.052, 0.68, 0.05]]);
+  m.col(0x4d463e);
+  for (const s of [-1, 1]) {
+    m.tube(s * 0.32, 0, [[0.052, 0.045], [0.066, 0.038]], 5, { capTop: true });
+  }
+  m.prism(0, -0.26, [[0.052, 0.14, 0.05], [0.068, 0.13, 0.05]]);
 }
 
 /** Steel cellar doors outside a shop — the delivery hatch every old retail
@@ -3253,44 +4757,118 @@ function gCellarHatch(m) {
 
 /* -- more kerbside -------------------------------------------------------- */
 
-/** Bus stop flag: the pole-and-blade version, for the stops that do not get a
- *  shelter. Lit blade, so a stop is still findable after dark. */
+/**
+ * Bus stop flag. The blade carries a BUS GLYPH now — a white rounded rectangle
+ * with two dark window bars and two wheel dots, which reads as a bus at any
+ * distance and costs six quads — plus a route-number band under it, a 2 cm
+ * frame lip on both faces so it is not a decal on a slab, a bracket where the
+ * blade meets the pole, and a cast cap on the pole top.
+ */
 function gBusStopFlag(m) {
-  pole(m, 2.74, 0.055, P.SIGN_POLE);
-  m.col(P.SIGN_BLUE).prism(0, 0, [[2.10, 0.54, 0.06], [2.78, 0.54, 0.06]]);
-  m.lit(P.SIGN_FACE, 1, 0.60).prism(0, 0.036, [[2.18, 0.44, 0.015], [2.50, 0.44, 0.015]]);
-  m.lit(P.NEON_AQUA, 1, 0.90).prism(0, 0.036, [[2.54, 0.44, 0.015], [2.70, 0.44, 0.015]]);
+  pole(m, 2.78, 0.055, P.SIGN_POLE);
+  m.col(P.SIGN_BLUE);
+  m.prism(0, 0, [[2.10, 0.54, 0.045], [2.13, 0.56, 0.065], [2.75, 0.56, 0.065], [2.78, 0.54, 0.045]]);
+  for (const s of [1, -1]) {
+    const z = s * 0.034;
+    m.lit(P.SIGN_FACE, 1, 0.60); decal(m, 0, 2.53, z, 0.40, 0.30, s);
+    m.col(P.SIGN_BLUE);
+    decal(m, -0.09, 2.60, z + s * 0.003, 0.13, 0.09, s);
+    decal(m, 0.09, 2.60, z + s * 0.003, 0.13, 0.09, s);
+    m.col(P.SIGN_DARK);
+    decal(m, -0.11, 2.41, z + s * 0.003, 0.07, 0.07, s);
+    decal(m, 0.11, 2.41, z + s * 0.003, 0.07, 0.07, s);
+    m.lit(P.NEON_AQUA, 1, 0.90); decal(m, 0, 2.71, z, 0.42, 0.10, s);
+    m.col(P.SIGN_FACE); decal(m, 0, 2.71, z + s * 0.003, 0.24, 0.045, s);
+  }
+  m.col(P.ALUMINIUM);
+  borderBoth(m, 0, 2.44, 0.036, 0.50, 0.62, 0.022);
+  bracket(m, 1.98, 0.14, 0.12, 0.12);
   m.col(P.SIGN_DARK).prism(0, 0.045, [[1.22, 0.42, 0.05], [1.88, 0.42, 0.05]]);
   m.lit(P.SIGN_FACE, 1, 0.50).prism(0, 0.072, [[1.28, 0.34, 0.012], [1.82, 0.34, 0.012]]);
-}
-
-/** Twin-stream recycling station. Two bodies, two lid colours, one frame. */
-function gBinTwin(m) {
-  m.col(P.BENCH_METAL).prism(0, 0, [[0, 1.18, 0.54], [0.09, 1.10, 0.46], [0.20, 1.10, 0.46]]);
-  m.col(0xf2f2f2);
-  for (const s of [-1, 1]) m.prism(s * 0.27, 0, [[0.20, 0.50, 0.44], [0.92, 0.52, 0.46]]);
-  m.col(P.BIN_GREEN).prism(-0.27, 0, [[0.92, 0.56, 0.50], [1.02, 0.50, 0.44]]);
-  m.col(P.BIN_BLUE).prism(0.27, 0, [[0.92, 0.56, 0.50], [1.02, 0.50, 0.44]]);
   m.col(P.SIGN_DARK);
-  for (const s of [-1, 1]) m.prism(s * 0.27, 0.235, [[0.58, 0.34, 0.02], [0.80, 0.34, 0.02]]);
+  for (let k = 0; k < 5; k++) decal(m, 0, 1.72 - k * 0.09, 0.079, 0.28, 0.025);
 }
 
-/** Roll cage of stock waiting to go in the back door. */
+/**
+ * Recycling point. The apertures are RECESSED 5 cm into the body so they read
+ * as holes rather than stickers, and shaped per stream — a round hole for
+ * bottles, a slot for paper — which is how a recycling point reads without
+ * text. Chamfered corners, a sloped shoulder under each lid, a pictogram on
+ * each stream panel, a base plinth and a shared back panel with a city mark.
+ */
+function gBinTwin(m) {
+  m.col(P.BENCH_METAL);
+  m.prism(0, 0, [[0, 1.22, 0.58], [0.06, 1.18, 0.54], [0.12, 1.12, 0.48], [0.22, 1.12, 0.48]]);
+  for (const [s, hex, lidHex] of [[-1, 0xf2f2f2, P.BIN_GREEN], [1, 0xf2f2f2, P.BIN_BLUE]]) {
+    m.col(hex);
+    m.oct(s * 0.27, 0, [[0.22, 0.50, 0.44, 0.03], [0.82, 0.52, 0.46, 0.03],
+      [0.92, 0.48, 0.42, 0.03]], { capTop: false });
+    m.col(lidHex);
+    m.prism(s * 0.27, 0, [[0.92, 0.56, 0.50], [0.98, 0.55, 0.49], [1.02, 0.48, 0.42]]);
+    // Recessed aperture: dark well, then the shaped opening.
+    m.col(0x15181b);
+    m.prism(s * 0.27, 0.17, [[0.56, 0.36, 0.06], [0.82, 0.36, 0.06]]);
+    m.col(0x0d0f11);
+    if (s < 0) m.tube(s * 0.27, 0.235, [[0.62, 0.115], [0.74, 0.115]], 6, { capTop: true });
+    else m.prism(s * 0.27, 0.235, [[0.66, 0.30, 0.02], [0.72, 0.30, 0.02]]);
+    // Stream panel with a pictogram.
+    m.col(lidHex); decal(m, s * 0.27, 0.42, 0.232, 0.38, 0.16);
+    m.col(P.SIGN_FACE);
+    if (s < 0) {
+      decal(m, s * 0.27, 0.40, 0.234, 0.07, 0.11);
+      decal(m, s * 0.27, 0.48, 0.234, 0.03, 0.05);
+    } else {
+      decal(m, s * 0.27 - 0.02, 0.42, 0.234, 0.11, 0.13);
+      decal(m, s * 0.27 + 0.05, 0.46, 0.234, 0.05, 0.05);
+    }
+  }
+  m.col(P.BENCH_METAL);
+  m.prism(0, -0.20, [[0.22, 1.10, 0.06], [1.02, 1.10, 0.06]]);
+  m.col(P.SIGN_FACE); decal(m, 0, 0.88, -0.232, 0.22, 0.10, -1);
+}
+
+/**
+ * Roll cage. The two side panels were solid aluminium sheets, so a roll cage
+ * rendered as a flat grey board on the pavement — the one thing a roll cage
+ * must never look like. They are now real mesh: six vertical and three
+ * horizontal bars you can see the cartons through. A hinged rear gate with a
+ * latch, castors as visible wheels in swivel forks, a shrink-wrapped top carton
+ * and a bungee across the open face.
+ */
 function gStockTrolley(m) {
-  m.col(P.TYRE);
+  m.col(P.STEEL_DARK);
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      m.tube(sx * 0.34, sz * 0.28, [[0, 0.08], [0.15, 0.08]], 5, { capTop: true });
+      m.prism(sx * 0.34, sz * 0.28, [[0.10, 0.09, 0.07], [0.15, 0.09, 0.07]]);
+      m.col(P.TYRE);
+      m.tubeBetween(sx * 0.34 - 0.05, 0.075, sz * 0.28, sx * 0.34 + 0.05, 0.075, sz * 0.28,
+        0.075, 6, true);
+      m.col(P.STEEL_DARK);
     }
   }
   m.col(P.STEEL).prism(0, 0, [[0.15, 0.86, 0.68], [0.21, 0.82, 0.64]]);
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      m.beam(sx * 0.40, 0.18, sz * 0.31, sx * 0.40, 1.50, sz * 0.31, 0.05, 0.05, false);
+      m.tubeBetween(sx * 0.40, 0.18, sz * 0.31, sx * 0.40, 1.50, sz * 0.31, 0.026, 5);
+    }
+    m.tubeBetween(sx * 0.40, 1.50, -0.31, sx * 0.40, 1.50, 0.31, 0.024, 4);
+  }
+  m.col(0x9aa4a2);
+  for (const s of [-1, 1]) {
+    for (let k = 0; k < 6; k++) {
+      const x = -0.33 + k * 0.132;
+      m.tubeBetween(x, 0.24, s * 0.31, x, 1.46, s * 0.31, 0.011, 3);
+    }
+    for (let k = 0; k < 3; k++) {
+      const y = 0.44 + k * 0.38;
+      m.tubeBetween(-0.38, y, s * 0.31, 0.38, y, s * 0.31, 0.011, 3);
     }
   }
-  m.col(P.ALUMINIUM, 0.9);
-  for (const s of [-1, 1]) m.prism(0, s * 0.31, [[0.24, 0.80, 0.02], [1.46, 0.80, 0.02]]);
+  // Hinged rear gate with a latch.
+  m.col(P.STEEL);
+  m.tubeBetween(-0.40, 0.24, -0.31, -0.40, 1.40, -0.31, 0.020, 4);
+  m.col(P.ACCENT_SUN);
+  m.tubeBetween(0.34, 0.80, -0.34, 0.42, 0.80, -0.30, 0.022, 4, true);
   const cartons = [P.WOOD_LIGHT, 0xd9dcd6, P.WOOD_DECK];
   for (let k = 0; k < 3; k++) {
     m.col(cartons[k]);
@@ -3298,20 +4876,51 @@ function gStockTrolley(m) {
     m.prism(0, 0, [[0.21 + k * 0.33, 0.66, 0.50], [0.52 + k * 0.33, 0.64, 0.48]]);
     m.reset();
   }
+  m.col(0xdde2dc, 1.04).prism(0, 0, [[1.18, 0.70, 0.54], [1.24, 0.68, 0.52]]);
+  m.col(0x2b2f33);
+  m.tubeBetween(-0.40, 1.06, 0.31, 0.40, 0.94, 0.31, 0.014, 3);
 }
 
-/** Poster A-board. The chalk board is the most-repeated object on any retail
- *  frontage in the game; this is the other half of that coin. */
+/**
+ * Poster A-board. Both faces were entirely blank cream. Each now carries a
+ * header bar, an image area of two colour blocks and a headline block inside a
+ * visible 2.5 cm aluminium snap frame, with a hinge barrel at the apex and a
+ * webbing strap between the leg pairs that stops the frame splaying.
+ */
 function gAboardPoster(m) {
   m.col(P.ALUMINIUM);
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       m.board(sx * 0.40, 0.07, 0.02, sz * 0.23, 1.04, sz * 0.055, 0.05);
+      m.prism(sx * 0.40, sz * 0.23, [[0, 0.10, 0.09], [0.03, 0.085, 0.075]]);
     }
   }
   for (const sz of [-1, 1]) {
-    m.lit(P.SIGN_FACE, 1, 0.50).board(0, 0.86, 0.18, sz * 0.20, 1.00, sz * 0.058, 0.03);
-    m.lit(P.NEON_PINK, 1, 0.80).board(0, 0.86, 1.00, sz * 0.058, 1.14, sz * 0.038, 0.03);
+    // Snap frame: four rails around the poster.
+    m.col(P.ALUMINIUM);
+    m.board(0, 0.86, 0.16, sz * 0.205, 0.20, sz * 0.199, 0.035);
+    m.board(0, 0.86, 1.00, sz * 0.062, 1.04, sz * 0.056, 0.035);
+    for (const sx of [-1, 1]) {
+      m.board(sx * 0.41, 0.04, 0.18, sz * 0.202, 1.02, sz * 0.059, 0.035);
+    }
+    m.lit(P.SIGN_FACE, 1, 0.50).board(0, 0.82, 0.19, sz * 0.20, 1.00, sz * 0.058, 0.02);
+    // Poster content: header bar, two image blocks, a headline block.
+    const off = sz * 0.014;
+    m.col(P.NEON_PINK);
+    rake(m, 0, 0.78, 0.90, sz * 0.075, 0.99, sz * 0.060, off);
+    m.col(P.FABRIC_AQUA);
+    rake(m, -0.18, 0.36, 0.54, sz * 0.153, 0.82, sz * 0.093, off);
+    m.col(P.FABRIC_SUN);
+    rake(m, 0.20, 0.32, 0.60, sz * 0.142, 0.82, sz * 0.093, off);
+    m.col(P.SIGN_DARK);
+    rake(m, 0, 0.62, 0.32, sz * 0.192, 0.40, sz * 0.178, off);
+    rake(m, -0.12, 0.34, 0.24, sz * 0.206, 0.29, sz * 0.197, off);
+  }
+  m.col(P.STEEL_DARK);
+  m.tubeBetween(-0.42, 1.06, 0, 0.42, 1.06, 0, 0.026, 5);
+  m.col(0x2b2f33);
+  for (const sx of [-1, 1]) {
+    m.tubeBetween(sx * 0.40, 0.38, -0.16, sx * 0.40, 0.34, 0.16, 0.012, 3);
   }
 }
 
@@ -3335,33 +4944,87 @@ const T = TIER;
  */
 const DEFS = {
   /* litter + kerb ------------------------------------------------------- */
-  cone: { g: gCone, tier: T.TINY, r: 0.30, h: 0.72, label: 'Traffic Cone', sv: 0.07, debris: P.CONE_ORANGE },
-  bollard: { g: gBollard, tier: T.TINY, r: 0.16, h: 0.95, label: 'Bollard', sv: 0.06, debris: P.BOLLARD_DARK },
-  bollardStone: { g: gBollardStone, tier: T.TINY, r: 0.20, h: 0.88, label: 'Stone Bollard', sv: 0.07, debris: P.PRECAST },
+  cone: {
+    g: gCone, tier: T.TINY, r: 0.30, h: 0.72, label: 'Traffic Cone', sv: 0.07,
+    /* Near-white multipliers: the cone is authored in its real orange with a
+       white sleeve, and a multiplicative instance hex cannot invent contrast it
+       does not have — but it can scuff one. +-8% is a coned-off run that has
+       been on site a while rather than one freshly delivered. */
+    tint: [0xffffff, 0xf4f0ec, 0xe6e2dc, 0xfffaf0], debris: P.CONE_ORANGE,
+  },
+  bollard: {
+    g: gBollard, tier: T.TINY, r: 0.16, h: 0.95, label: 'Bollard', sv: 0.06,
+    tint: [0xdfe4e2, 0x6f7876, 0x4a5250, 0x8d938f, 0x4a5250], debris: P.BOLLARD_DARK,
+  },
+  bollardStone: {
+    g: gBollardStone, tier: T.TINY, r: 0.20, h: 0.88, label: 'Stone Bollard', sv: 0.07,
+    /* Warm limestone, grey granite, coral stone — all a value or two DARKER
+       than SIDEWALK, because 350 posts at the pavement's own luminance is
+       exactly the separation failure the art direction calls out. */
+    tint: [0xc8bda4, 0xb2aea4, 0xd0b8a4, 0xbfb49c], debris: P.PRECAST,
+  },
   bollardBell: { g: gBollardBell, tier: T.TINY, r: 0.19, h: 0.96, label: 'Bell Bollard', sv: 0.07, debris: P.BENCH_METAL },
-  hydrant: { g: gHydrant, tier: T.TINY, r: 0.25, h: 0.80, label: 'Fire Hydrant', sv: 0.05, debris: P.HYDRANT_RED },
+  hydrant: {
+    g: gHydrant, tier: T.TINY, r: 0.25, h: 0.84, label: 'Fire Hydrant', shadow: true, sv: 0.05,
+    /* Bonnet and outlet caps are authored WHITE over a red body, so the hex
+       repaints the caps and only deepens the body: yellow-bonnet, white-bonnet
+       and cream-bonnet hydrants out of one geometry. */
+    tint: [P.HYDRANT_YELLOW, P.HYDRANT_YELLOW, 0xffffff, 0xffe9b0, 0xdfe4e2],
+    debris: P.HYDRANT_RED,
+  },
   standpipe: { g: gStandpipe, tier: T.SMALL, r: 0.25, h: 1.06, label: 'Standpipe', sv: 0.05, debris: P.HYDRANT_RED },
   uplighter: { g: gUplighter, tier: T.TINY, r: 0.16, h: 0.22, label: 'Uplighter', sv: 0.08, debris: P.STEEL_DARK },
-  cleat: { g: gMooringCleat, tier: T.TINY, r: 0.22, h: 0.25, label: 'Mooring Cleat', debris: P.STEEL_DARK },
+  cleat: {
+    g: gMooringCleat, tier: T.TINY, r: 0.26, h: 0.25, label: 'Mooring Cleat',
+    tint: [0xffffff, 0xc8d8c8, 0xd0b8a0], debris: P.STEEL_DARK,
+  },
 
   /* bins ----------------------------------------------------------------- */
-  binMuni: { g: gBinMuni, tier: T.SMALL, r: 0.40, h: 1.00, label: 'Litter Bin', sv: 0.05, debris: P.BIN_GREEN },
+  binMuni: {
+    g: gBinMuni, tier: T.SMALL, r: 0.42, h: 1.00, label: 'Litter Bin', sv: 0.05,
+    tint: [P.BIN_GREEN, 0x2f7d55, P.BIN_GREY, P.BIN_GREEN, 0x4f8f6a], debris: P.BIN_GREEN,
+  },
   binWheelie: {
     g: gBinWheelie, tier: T.SMALL, r: 0.34, h: 1.06, label: 'Wheelie Bin',
     tint: [P.BIN_GREEN, P.BIN_BLUE, P.BIN_GREY, P.BIN_GREEN, P.BIN_BLUE], debris: P.BIN_GREEN,
   },
-  binMesh: { g: gBinMesh, tier: T.SMALL, r: 0.28, h: 0.88, label: 'Wire Bin', sv: 0.05, debris: P.BENCH_METAL },
-  trashBags: { g: gTrashBags, tier: T.TINY, r: 0.64, h: 0.86, label: 'Rubbish Sacks', sv: 0.10, debris: 0x353a3d },
+  binMesh: {
+    g: gBinMesh, tier: T.SMALL, r: 0.33, h: 0.88, label: 'Wire Bin', sv: 0.05,
+    tint: [0xffffff, 0xdfe4e2, 0xc8d0cc], debris: P.BENCH_METAL,
+  },
+  trashBags: {
+    g: gTrashBags, tier: T.TINY, r: 0.72, h: 0.86, label: 'Rubbish Sacks', sv: 0.10,
+    tint: [0xffffff, 0xc4d2e0, 0xc8dcc4, 0xe0d8cc], debris: 0x2b2f33,
+  },
 
   /* seating -------------------------------------------------------------- */
-  benchSlat: { g: gBenchSlat, tier: T.SMALL, r: 1.00, h: 0.90, label: 'Bench', shadow: true, sv: 0.05, debris: P.BENCH_WOOD },
-  benchCurve: { g: gBenchCurve, tier: T.SMALL, r: 1.34, h: 0.89, label: 'Civic Bench', shadow: true, sv: 0.05, crumbles: true, debris: P.PRECAST },
-  benchConcrete: { g: gBenchConcrete, tier: T.SMALL, r: 1.12, h: 0.56, label: 'Stone Bench', shadow: true, crumbles: true, debris: P.PRECAST },
-  benchBackless: { g: gBenchBackless, tier: T.SMALL, r: 0.88, h: 0.46, label: 'Park Bench', sv: 0.05, debris: P.WOOD_DECK },
-  picnicTable: { g: gPicnicTable, tier: T.MEDIUM, r: 1.10, h: 0.76, label: 'Picnic Table', shadow: true, sv: 0.05, debris: P.WOOD_DECK },
+  benchSlat: {
+    g: gBenchSlat, tier: T.SMALL, r: 1.00, h: 0.90, label: 'Bench', shadow: true, sv: 0.05,
+    /* Slats authored near-white so the hex is the timber species; the cast-iron
+       ends are authored dark and land as dark warm iron under any of them. */
+    tint: [P.BENCH_WOOD, P.TEAK, P.WOOD_DARK, P.WOOD_DECK], debris: P.BENCH_WOOD,
+  },
+  benchCurve: {
+    g: gBenchCurve, tier: T.SMALL, r: 1.40, h: 0.95, label: 'Civic Bench', shadow: true,
+    sv: 0.05, crumbles: true,
+    tint: [0xffffff, 0xf0e2cc, 0xe6ddc8, 0xfaf2e2], debris: P.PRECAST,
+  },
+  benchConcrete: {
+    g: gBenchConcrete, tier: T.SMALL, r: 1.12, h: 0.56, label: 'Stone Bench', shadow: true,
+    crumbles: true, tint: [0xffffff, 0xece4d2, 0xdcd6c6], debris: P.PRECAST,
+  },
+  benchBackless: {
+    g: gBenchBackless, tier: T.SMALL, r: 0.88, h: 0.46, label: 'Park Bench', sv: 0.05,
+    tint: [P.WOOD_DECK, P.BENCH_WOOD, P.TEAK], debris: P.WOOD_DECK,
+  },
+  picnicTable: {
+    g: gPicnicTable, tier: T.MEDIUM, r: 1.10, h: 0.76, label: 'Picnic Table', shadow: true,
+    sv: 0.05, tint: [0xffffff, 0xd6d2c6, 0xf0d8b0, 0xd8a884], debris: P.WOOD_DECK,
+  },
   lounger: {
     g: gLounger, tier: T.MEDIUM, r: 1.00, h: 0.90, label: 'Sun Lounger', shadow: true, sv: 0.04,
-    tint: [0xffffff, 0xffffff, P.STUCCO_SKY, P.FABRIC_AQUA], debris: 0xf2f2f2,
+    tint: [0xffffff, 0xffffff, P.STUCCO_SKY, P.FABRIC_AQUA, P.FABRIC_CORAL, P.STUCCO_BUTTER],
+    debris: 0xf2f2f2,
   },
 
   /* signage -------------------------------------------------------------- */
@@ -3370,28 +5033,64 @@ const DEFS = {
   signOneWay: { g: gSignOneWay, tier: T.SMALL, r: 0.28, h: 2.50, label: 'One Way Sign', debris: P.SIGN_DARK },
   signParking: { g: gSignParking, tier: T.SMALL, r: 0.22, h: 2.60, label: 'Parking Sign', debris: P.SIGN_BLUE },
   signStreet: { g: gSignStreet, tier: T.SMALL, r: 0.34, h: 2.90, label: 'Street Sign', debris: P.SIGN_GREEN },
-  sandwichBoard: { g: gSandwichBoard, tier: T.SMALL, r: 0.42, h: 0.95, label: 'Sandwich Board', sv: 0.06, debris: P.SIGN_DARK },
+  sandwichBoard: {
+    g: gSandwichBoard, tier: T.SMALL, r: 0.46, h: 0.99, label: 'Sandwich Board', sv: 0.06,
+    tint: [0xffffff, 0xf0e6d4, 0xdcd6c8, 0xfaf2e0], debris: P.SIGN_DARK,
+  },
   valetStand: { g: gValetStand, tier: T.SMALL, r: 0.40, h: 1.46, label: 'Valet Stand', debris: P.SIGN_DARK },
-  stanchion: { g: gStanchion, tier: T.SMALL, r: 0.18, h: 1.02, label: 'Rope Post', debris: P.CHROME },
+  stanchion: {
+    g: gStanchion, tier: T.SMALL, r: 0.19, h: 1.02, label: 'Rope Post',
+    tint: [0xffffff, 0xffe0a0, 0xdfe4e2, 0xffffff], debris: P.CHROME,
+  },
 
   /* kerb machines --------------------------------------------------------- */
   mailbox: { g: gMailbox, tier: T.SMALL, r: 0.40, h: 1.20, label: 'Mailbox', tint: [P.MAILBOX, P.MAILBOX, 0x2f6fb0], debris: P.MAILBOX },
-  meter: { g: gParkingMeter, tier: T.SMALL, r: 0.20, h: 1.48, label: 'Parking Meter', debris: P.PARKING_METER },
+  meter: {
+    g: gParkingMeter, tier: T.SMALL, r: 0.22, h: 1.60, label: 'Parking Meter', sv: 0.04,
+    tint: [0xffffff, 0xdfe8e6, 0xcac6b6, 0xe8ecec], debris: P.PARKING_METER,
+  },
   newsBox: { g: gNewsBox, tier: T.SMALL, r: 0.32, h: 1.10, label: 'Newspaper Box', tint: [P.NEWSSTAND, P.SIGN_BLUE, P.ACCENT_SUN, P.BIN_GREEN], debris: P.NEWSSTAND },
-  utilityBox: { g: gUtilityBox, tier: T.SMALL, r: 0.50, h: 1.32, label: 'Utility Cabinet', debris: P.ALUMINIUM },
+  utilityBox: {
+    g: gUtilityBox, tier: T.SMALL, r: 0.50, h: 1.32, label: 'Utility Cabinet',
+    tint: [P.ALUMINIUM, 0x6f7a63, 0xc9c2b2, 0x7e8480], debris: P.ALUMINIUM,
+  },
   atmKiosk: { g: gAtmKiosk, tier: T.MEDIUM, r: 0.60, h: 2.22, label: 'ATM Kiosk', shadow: true, debris: 0xf0ece2 },
   phoneKiosk: { g: gPhoneKiosk, tier: T.MEDIUM, r: 0.38, h: 2.40, label: 'Charging Kiosk', debris: P.STEEL_DARK },
-  fountain: { g: gDrinkFountain, tier: T.SMALL, r: 0.28, h: 1.12, label: 'Drinking Fountain', debris: P.PRECAST },
-  dogStation: { g: gDogStation, tier: T.SMALL, r: 0.22, h: 1.56, label: 'Dog Waste Station', debris: P.BIN_GREEN },
+  fountain: {
+    g: gDrinkFountain, tier: T.SMALL, r: 0.32, h: 1.22, label: 'Drinking Fountain',
+    tint: [0xffffff, 0xd8f0f0, 0xffd8c8], debris: P.PRECAST,
+  },
+  dogStation: {
+    g: gDogStation, tier: T.SMALL, r: 0.24, h: 1.82, label: 'Dog Waste Station',
+    debris: P.BIN_GREEN,
+  },
 
   /* planting -------------------------------------------------------------- */
-  planterRound: { g: gPlanterRound, tier: T.SMALL, r: 0.62, h: 1.45, label: 'Planter', sv: 0.09, debris: P.PLANTER },
-  planterSquare: { g: gPlanterSquare, tier: T.SMALL, r: 0.78, h: 1.45, label: 'Planter', sv: 0.09, debris: P.PLANTER },
-  planterTrough: { g: gPlanterTrough, tier: T.SMALL, r: 1.00, h: 1.10, label: 'Flower Trough', shadow: true, sv: 0.06, debris: P.PLANTER },
-  pottedPalm: { g: gPottedPalm, tier: T.MEDIUM, r: 0.80, h: 1.90, label: 'Potted Palm', sv: 0.10, debris: P.PALM_FROND },
+  planterRound: {
+    g: gPlanterRound, tier: T.SMALL, r: 0.62, h: 1.45, label: 'Planter', sv: 0.09,
+    /* Restrained near-white multipliers, not four saturated pot colours: the
+       instance hex multiplies the WHOLE prop, so a terracotta tint would take
+       the foliage with it and turn the planting muddy. */
+    tint: [0xffffff, 0xf2e2c8, 0xdedad0, 0xfaf2e4], debris: P.PLANTER,
+  },
+  planterSquare: {
+    g: gPlanterSquare, tier: T.SMALL, r: 0.78, h: 1.45, label: 'Planter', sv: 0.09,
+    tint: [0xffffff, 0xf0dcc0, 0xdcd8d0, 0xc8c0b4], debris: P.PLANTER,
+  },
+  planterTrough: {
+    g: gPlanterTrough, tier: T.SMALL, r: 1.00, h: 1.10, label: 'Flower Trough', shadow: true,
+    sv: 0.06, tint: [0xffffff, 0xf2e6cc, 0xdcd8d0], debris: P.PLANTER,
+  },
+  pottedPalm: {
+    g: gPottedPalm, tier: T.MEDIUM, r: 0.80, h: 1.90, label: 'Potted Palm', sv: 0.10,
+    tint: [0xffffff, 0xf4e8dc, 0xdcecf4, 0xfaf4ea], debris: P.PALM_FROND,
+  },
 
   /* café terrace ---------------------------------------------------------- */
-  cafeTable: { g: gCafeTable, tier: T.SMALL, r: 0.46, h: 0.78, label: 'Café Table', sv: 0.05, debris: P.TABLE_TOP },
+  cafeTable: {
+    g: gCafeTable, tier: T.SMALL, r: 0.40, h: 0.78, label: 'Café Table', sv: 0.05,
+    tint: [0xffffff, 0xffffff, P.TEAK, 0xe6ddc8], debris: P.TABLE_TOP,
+  },
   cafeTableCloth: { g: gCafeTableCloth, tier: T.SMALL, r: 0.71, h: 0.96, label: 'Dressed Table', sv: 0.05, debris: P.FABRIC_WHITE },
   cafeTableSquare: { g: gCafeTableSquare, tier: T.SMALL, r: 0.52, h: 0.94, label: 'Bistro Table', sv: 0.05, debris: P.TEAK },
   cafeChair: {
@@ -3403,20 +5102,39 @@ const DEFS = {
   },
   bistroChair: {
     g: gBistroChair, tier: T.SMALL, r: 0.26, h: 0.88, label: 'Bistro Chair', sv: 0.06,
-    tint: [0xffffff, P.FABRIC_PINK, P.FABRIC_LIME, P.STUCCO_BUTTER], debris: P.CHAIR,
+    /* Pale hues on purpose. The frame is authored light and the seat almost
+       white, so a pastel hex paints the frame and leaves the seat reading as
+       the lightest thing on the chair — one model in four colours, which is
+       what a terrace looks like, rather than four blocks of colour. */
+    tint: [0xffffff, 0xffd6e2, 0xdcf0c0, 0xffeec0, 0xcfeef0], debris: P.CHAIR,
   },
-  barStool: { g: gBarStool, tier: T.SMALL, r: 0.40, h: 0.76, label: 'Bar Stool', sv: 0.05, debris: P.TEAK },
-  menuBoard: { g: gMenuBoard, tier: T.SMALL, r: 0.30, h: 1.66, label: 'Menu Board', sv: 0.05, debris: P.SIGN_DARK },
-  hostStand: { g: gHostStand, tier: T.SMALL, r: 0.35, h: 1.38, label: 'Host Stand', debris: P.WOOD_DARK },
+  barStool: {
+    g: gBarStool, tier: T.SMALL, r: 0.34, h: 0.76, label: 'Bar Stool', sv: 0.05,
+    tint: [0xffffff, 0xffdca0, 0xf0f0f0, 0xd8dcdc], debris: P.TEAK,
+  },
+  menuBoard: {
+    g: gMenuBoard, tier: T.SMALL, r: 0.34, h: 1.70, label: 'Menu Board', sv: 0.05,
+    tint: [0xffffff, 0xf0dcb8, 0xd8dce0, 0xfaf0e0], debris: P.SIGN_DARK,
+  },
+  hostStand: {
+    g: gHostStand, tier: T.SMALL, r: 0.35, h: 1.38, label: 'Host Stand',
+    tint: [0xffffff, 0xe8cba4, 0xf6f2ea], debris: P.WOOD_DARK,
+  },
   pastryCase: { g: gPastryCase, tier: T.MEDIUM, r: 0.65, h: 1.50, label: 'Pastry Case', shadow: true, debris: P.GLASS_SKY },
   serviceStation: { g: gServiceStation, tier: T.SMALL, r: 0.54, h: 1.12, label: 'Service Station', debris: P.WOOD_DARK },
   terraceRail: { g: gTerraceRail, tier: T.SMALL, r: 0.99, h: 1.06, label: 'Terrace Screen', debris: P.ALUMINIUM },
-  terraceHedge: { g: gTerraceHedge, tier: T.SMALL, r: 1.06, h: 1.00, label: 'Terrace Hedge', shadow: true, sv: 0.05, debris: P.HEDGE },
+  terraceHedge: {
+    g: gTerraceHedge, tier: T.SMALL, r: 1.08, h: 1.00, label: 'Terrace Hedge', shadow: true,
+    sv: 0.05, tint: [0xffffff, 0xe4e8b8, 0xc8ece0], debris: P.HEDGE,
+  },
   /* No `sv` for the same reason as the rope: it packs on a boundary line. */
   plantScreen: { g: gPlantScreen, tier: T.MEDIUM, r: 0.99, h: 2.02, label: 'Planted Screen', shadow: true, debris: P.HEDGE },
   /* No `sv` on the rope: it packs end to end on the boundary line, and a 5%
      length change there opens a visible gap between every pair. */
-  terraceRope: { g: gTerraceRope, tier: T.SMALL, r: 1.02, h: 1.08, label: 'Rope Divider', debris: P.TEAK },
+  terraceRope: {
+    g: gTerraceRope, tier: T.SMALL, r: 1.02, h: 1.08, label: 'Rope Divider',
+    tint: [0xffffff, 0xdcc4a0, 0xf2eee6], debris: P.TEAK,
+  },
   stringArch: { g: gStringArch, tier: T.MEDIUM, r: 2.20, h: 3.27, label: 'Festoon Lights', shadow: true, sv: 0.04, debris: P.WOOD_DARK },
   terraceAwning: {
     g: gTerraceAwning, tier: T.MEDIUM, r: 2.34, h: 2.65, label: 'Terrace Awning', shadow: true, sv: 0.04,
@@ -3427,16 +5145,32 @@ const DEFS = {
   iceBucket: { g: gIceBucket, tier: T.TINY, r: 0.38, h: 1.14, label: 'Ice Bucket', sv: 0.06, debris: P.CHROME },
   gelatoCase: { g: gGelatoCase, tier: T.MEDIUM, r: 0.81, h: 1.42, label: 'Gelato Counter', shadow: true, sv: 0.04, debris: P.ALUMINIUM },
   chairStack: { g: gChairStack, tier: T.SMALL, r: 0.31, h: 1.34, label: 'Stacked Chairs', sv: 0.06, debris: P.CHAIR },
-  barrelTable: { g: gBarrelTable, tier: T.SMALL, r: 0.47, h: 1.22, label: 'Barrel Table', sv: 0.05, debris: P.WOOD_DECK },
+  barrelTable: {
+    g: gBarrelTable, tier: T.SMALL, r: 0.47, h: 1.28, label: 'Barrel Table', sv: 0.05,
+    tint: [0xffffff, 0xe4cfae, 0xc9ab86], debris: P.WOOD_DECK,
+  },
 
   /* nightlife + hotel ------------------------------------------------------ */
   porteCochere: { g: gPorteCochere, tier: T.LARGE, r: 3.35, h: 4.45, label: 'Entrance Canopy', shadow: true, crumbles: true, debris: P.CONCRETE },
   carpetRunner: { g: gCarpetRunner, tier: T.MEDIUM, r: 1.58, h: 0.98, label: 'Red Carpet', shadow: true, debris: 0xb4243c },
-  velvetRope: { g: gVelvetRope, tier: T.SMALL, r: 1.13, h: 1.00, label: 'Rope Line', debris: P.CHROME },
-  bouncerPodium: { g: gBouncerPodium, tier: T.SMALL, r: 0.42, h: 1.14, label: 'Door Podium', debris: P.SIGN_DARK },
+  velvetRope: {
+    g: gVelvetRope, tier: T.SMALL, r: 1.13, h: 1.08, label: 'Rope Line',
+    tint: [0xffffff, 0xffe0a8, 0x9aa8cc, 0xd8d8d8], debris: P.CHROME,
+  },
+  bouncerPodium: {
+    g: gBouncerPodium, tier: T.SMALL, r: 0.42, h: 1.16, label: 'Door Podium',
+    tint: [0xffffff, 0xd8dce4, 0xffc0b8], debris: P.SIGN_DARK,
+  },
   keyBoard: { g: gKeyBoard, tier: T.SMALL, r: 0.33, h: 1.62, label: 'Valet Key Board', debris: P.ALUMINIUM },
   cigBin: { g: gCigBin, tier: T.TINY, r: 0.28, h: 1.02, label: 'Ash Bin', sv: 0.05, debris: P.STEEL_DARK },
-  lightboxSign: { g: gLightboxSign, tier: T.MEDIUM, r: 0.36, h: 3.44, label: 'Neon Sign', shadow: true, sv: 0.07, debris: P.NEON_PINK },
+  lightboxSign: {
+    g: gLightboxSign, tier: T.MEDIUM, r: 0.36, h: 3.44, label: 'Neon Sign', shadow: true,
+    sv: 0.07,
+    /* Rolls the whole sign's hue: the panel is authored dark so it stays dark,
+       and the neon frame and channel letters take the colour. A strip of bars
+       is no longer one pink swatch repeated 129 times. */
+    tint: [0xffffff, 0x8affe8, 0xffe07a, 0xc79aff, 0xffffff], debris: P.NEON_PINK,
+  },
   outdoorBar: { g: gOutdoorBar, tier: T.MEDIUM, r: 1.35, h: 1.70, label: 'Outdoor Bar', shadow: true, debris: P.TEAK },
   djBooth: { g: gDjBooth, tier: T.MEDIUM, r: 1.00, h: 1.20, label: 'DJ Booth', shadow: true, sv: 0.04, debris: P.NEON_PURPLE },
   speakerStack: { g: gSpeakerStack, tier: T.SMALL, r: 0.44, h: 1.42, label: 'Speaker Stack', sv: 0.05, debris: P.SIGN_DARK },
@@ -3455,34 +5189,74 @@ const DEFS = {
   flowerStand: { g: gFlowerStand, tier: T.SMALL, r: 0.61, h: 1.26, label: 'Flower Stand', sv: 0.05, debris: P.FLOWER_MAGENTA },
   deliveryStack: { g: gDeliveryStack, tier: T.SMALL, r: 0.69, h: 1.00, label: 'Delivery Pallet', sv: 0.06, debris: P.WOOD_LIGHT },
   stockTrolley: { g: gStockTrolley, tier: T.MEDIUM, r: 0.58, h: 1.52, label: 'Stock Cage', shadow: true, sv: 0.05, debris: P.STEEL },
-  aboardPoster: { g: gAboardPoster, tier: T.SMALL, r: 0.48, h: 1.14, label: 'A-Board', sv: 0.07, debris: P.ALUMINIUM },
+  aboardPoster: {
+    g: gAboardPoster, tier: T.SMALL, r: 0.48, h: 1.14, label: 'A-Board', sv: 0.07,
+    tint: [0xffffff, 0xffd8e4, 0xd8f0e8, 0xffeec8], debris: P.ALUMINIUM,
+  },
 
   /* extra kerbside --------------------------------------------------------- */
   dumpster: {
     g: gDumpster, tier: T.MEDIUM, r: 1.25, h: 1.34, label: 'Skip', shadow: true, sv: 0.05,
     tint: [P.BIN_GREEN, P.CAR_YELLOW, P.BIN_BLUE, P.RUST, P.BIN_GREY], debris: P.BIN_GREY,
   },
-  busBench: { g: gBusBench, tier: T.SMALL, r: 0.96, h: 1.14, label: 'Advertising Bench', shadow: true, sv: 0.04, debris: P.TEAK },
+  busBench: {
+    g: gBusBench, tier: T.SMALL, r: 0.98, h: 1.16, label: 'Advertising Bench', shadow: true,
+    sv: 0.04, tint: [0xffffff, 0xffd8e0, 0xd8f0ff, 0xfff0c8], debris: P.TEAK,
+  },
   payStation: { g: gPayStation, tier: T.SMALL, r: 0.33, h: 1.75, label: 'Pay Station', debris: P.PARKING_METER },
   wayfindTotem: { g: gWayfindTotem, tier: T.MEDIUM, r: 0.37, h: 2.82, label: 'Wayfinding Pylon', shadow: true, sv: 0.05, debris: P.SIGN_DARK },
   newsKiosk: { g: gNewsKiosk, tier: T.MEDIUM, r: 1.27, h: 2.34, label: 'Newsstand', shadow: true, debris: P.NEWSSTAND },
-  meshFence: { g: gMeshFence, tier: T.SMALL, r: 1.03, h: 1.97, label: 'Site Fence', debris: P.STEEL },
-  pottedFicus: { g: gPottedFicus, tier: T.MEDIUM, r: 0.54, h: 1.72, label: 'Topiary', shadow: true, sv: 0.07, debris: P.TREE_CANOPY },
-  binTwin: { g: gBinTwin, tier: T.SMALL, r: 0.64, h: 1.02, label: 'Recycling Point', sv: 0.04, debris: P.BIN_GREEN },
+  meshFence: {
+    g: gMeshFence, tier: T.SMALL, r: 1.03, h: 1.97, label: 'Site Fence',
+    tint: [0xffffff, 0xe4ece4, 0xd0dcd0], debris: P.STEEL,
+  },
+  pottedFicus: {
+    g: gPottedFicus, tier: T.MEDIUM, r: 0.56, h: 1.80, label: 'Topiary', shadow: true, sv: 0.07,
+    tint: [0xffffff, 0xf4e2cc, 0xdcdcd4, 0xd8f0ec], debris: P.TREE_CANOPY,
+  },
+  binTwin: {
+    g: gBinTwin, tier: T.SMALL, r: 0.64, h: 1.02, label: 'Recycling Point', sv: 0.04,
+    tint: [0xffffff, 0xe8ece8, 0xf0e8d8], debris: P.BIN_GREEN,
+  },
   busStopFlag: { g: gBusStopFlag, tier: T.SMALL, r: 0.12, h: 2.78, label: 'Bus Stop', debris: P.SIGN_BLUE },
   /* Ironwork. TINY on purpose: a cover is the very first thing a fresh hole
      should be able to take, and it is 8 cm tall — anything else would mean a
      manhole surviving a hole that has already swallowed the pavement it is in. */
-  manholeCover: { g: gManholeCover, tier: T.TINY, r: 0.62, h: 0.09, label: 'Manhole Cover', sv: 0.06, debris: 0x5c554c },
-  drainGrate: { g: gDrainGrate, tier: T.TINY, r: 0.47, h: 0.09, label: 'Drain Grate', sv: 0.06, debris: 0x6a6259 },
+  manholeCover: {
+    g: gManholeCover, tier: T.TINY, r: 0.44, h: 0.05, label: 'Manhole Cover', sv: 0.06,
+    tint: [0xffffff, 0xe8dcd0, 0xd0c4b4, 0xf0e8dc], debris: 0x7a6a58,
+  },
+  /* Second manhole MODEL. See VARIANTS: `manholeCover` placements roll between
+     the two, so 529 pieces of pavement ironwork are not one shape. */
+  manholeSquare: {
+    g: gManholeSquare, tier: T.TINY, r: 0.40, h: 0.05, label: 'Utility Cover', sv: 0.06,
+    tint: [0xffffff, 0xe8dcd0, 0xd0c4b4], debris: 0x7a6a58,
+  },
+  drainGrate: {
+    g: gDrainGrate, tier: T.TINY, r: 0.51, h: 0.07, label: 'Drain Grate', sv: 0.06,
+    tint: [0xffffff, 0xeae4dc, 0xd8d0c6], debris: 0x6a6259,
+  },
   cellarHatch: { g: gCellarHatch, tier: T.TINY, r: 0.81, h: 0.16, label: 'Cellar Hatch', sv: 0.05, debris: P.ALUMINIUM },
-  planterUrn: { g: gPlanterUrn, tier: T.SMALL, r: 0.41, h: 1.36, label: 'Stone Urn', sv: 0.08, crumbles: true, debris: P.PRECAST },
-  planterModern: { g: gPlanterModern, tier: T.SMALL, r: 0.72, h: 1.52, label: 'Grass Trough', shadow: true, sv: 0.07, debris: P.BOLLARD_DARK },
+  planterUrn: {
+    g: gPlanterUrn, tier: T.SMALL, r: 0.50, h: 1.36, label: 'Stone Urn', sv: 0.08,
+    crumbles: true, tint: [0xffffff, 0xe8e2d2, 0xf4e6cc, 0xfaf6ee], debris: P.PRECAST,
+  },
+  planterModern: {
+    g: gPlanterModern, tier: T.SMALL, r: 0.72, h: 1.76, label: 'Grass Trough', shadow: true,
+    sv: 0.07, tint: [0xffffff, 0xdca882, 0xd8dcd8, 0x9ce0d8], debris: P.BOLLARD_DARK,
+  },
 
   /* park ------------------------------------------------------------------- */
-  benchTeak: { g: gBenchTeak, tier: T.SMALL, r: 0.85, h: 0.96, label: 'Teak Bench', shadow: true, sv: 0.04, debris: P.TEAK },
+  benchTeak: {
+    g: gBenchTeak, tier: T.SMALL, r: 0.85, h: 0.96, label: 'Teak Bench', shadow: true, sv: 0.04,
+    /* New honey teak through to silvered grey — a weathered teak bench and a
+       new one are never the same colour, and all 235 were one flat TEAK. */
+    tint: [P.TEAK, 0xd8a86c, 0xa89a86, 0xc08a52], debris: P.TEAK,
+  },
   chessTable: { g: gChessTable, tier: T.SMALL, r: 1.10, h: 0.74, label: 'Chess Table', shadow: true, crumbles: true, debris: P.PRECAST },
-  bbqGrill: { g: gBbqGrill, tier: T.SMALL, r: 0.21, h: 1.28, label: 'Park Grill', debris: P.SIGN_DARK },
+  bbqGrill: {
+    g: gBbqGrill, tier: T.SMALL, r: 0.44, h: 1.32, label: 'Park Grill', debris: P.SIGN_DARK,
+  },
   umbrella: {
     g: gUmbrella, tier: T.MEDIUM, r: 1.30, h: 2.56, label: 'Patio Umbrella', shadow: true,
     tint: [P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_SUN, P.FABRIC_SKY, P.FABRIC_PINK, P.FABRIC_WHITE],
@@ -3498,21 +5272,42 @@ const DEFS = {
       P.STUCCO_PEACH, P.FABRIC_AQUA],
     debris: P.FABRIC_WHITE,
   },
-  heater: { g: gPatioHeater, tier: T.MEDIUM, r: 0.62, h: 2.10, label: 'Patio Heater', debris: P.ALUMINIUM },
-  stringPole: { g: gStringPole, tier: T.MEDIUM, r: 0.26, h: 3.30, label: 'String-Light Pole', shadow: true, debris: P.WOOD_DARK },
+  heater: {
+    g: gPatioHeater, tier: T.MEDIUM, r: 0.62, h: 2.16, label: 'Patio Heater',
+    tint: [0xffffff, 0x8f9694, 0xdfe4e2], debris: P.ALUMINIUM,
+  },
+  stringPole: {
+    g: gStringPole, tier: T.MEDIUM, r: 0.28, h: 3.30, label: 'String-Light Pole', shadow: true,
+    sv: 0.06, tint: [0xffffff, 0xe4cba8, 0xd8d0c4], debris: P.WOOD_DARK,
+  },
 
   /* micromobility --------------------------------------------------------- */
   bicycle: { g: gBicycle, tier: T.MEDIUM, r: 0.75, h: 1.05, label: 'Bicycle', tint: [0xf2f2f2, P.CAR_TEAL, P.CAR_CORAL, P.CAR_YELLOW, P.CAR_MINT], debris: P.STEEL },
-  bikeRack: { g: gBikeRack, tier: T.SMALL, r: 0.48, h: 0.75, label: 'Bike Rack', debris: P.STEEL },
+  bikeRack: {
+    g: gBikeRack, tier: T.SMALL, r: 0.62, h: 0.75, label: 'Bike Rack',
+    tint: [0xdfe4e2, 0x8fae94, 0xb7bdbb], debris: P.STEEL,
+  },
   scooter: { g: gScooter, tier: T.MEDIUM, r: 0.52, h: 1.05, label: 'E-Scooter', tint: [0xf4f4f4, P.NEON_AQUA, P.ACCENT_HOT, P.CAR_LIME], debris: P.NEON_AQUA },
 
   /* lighting -------------------------------------------------------------- */
-  lampModern: { g: gLampModern, tier: T.MEDIUM, r: 0.30, h: 7.00, label: 'Street Light', shadow: true, debris: P.LAMP_POST },
-  lampDeco: { g: gLampDeco, tier: T.MEDIUM, r: 0.42, h: 5.06, label: 'Deco Lamp Post', shadow: true, debris: P.BENCH_METAL },
+  lampModern: {
+    g: gLampModern, tier: T.MEDIUM, r: 0.30, h: 7.00, label: 'Street Light', shadow: true,
+    sv: 0.04, tint: [0xffffff, 0xc8ccc8, 0xd8c8b0], debris: P.LAMP_POST,
+  },
+  lampDeco: {
+    g: gLampDeco, tier: T.MEDIUM, r: 0.48, h: 4.72, label: 'Deco Lamp Post', shadow: true,
+    sv: 0.04, tint: [0xffffff, 0xbcd4c0, 0xd8c8a8, 0xc8ccc8], debris: P.BENCH_METAL,
+  },
   /* Same post with its flower baskets modelled in. See gLampDeco for why they
      are not props of their own any more. */
-  lampDecoBasket: { g: gLampDecoBasket, tier: T.MEDIUM, r: 0.42, h: 5.06, label: 'Deco Lamp Post', shadow: true, debris: P.BENCH_METAL },
-  lampPark: { g: gLampPark, tier: T.MEDIUM, r: 0.26, h: 4.05, label: 'Park Lamp', shadow: true, debris: P.BENCH_METAL },
+  lampDecoBasket: {
+    g: gLampDecoBasket, tier: T.MEDIUM, r: 0.52, h: 4.72, label: 'Deco Lamp Post', shadow: true,
+    sv: 0.04, tint: [0xffffff, 0xffd8e8, 0xffe0c8, 0xbcd4c0], debris: P.BENCH_METAL,
+  },
+  lampPark: {
+    g: gLampPark, tier: T.MEDIUM, r: 0.26, h: 3.98, label: 'Park Lamp', shadow: true, sv: 0.04,
+    tint: [0xffffff, 0xbcd4c0, 0xd8c8a8], debris: P.BENCH_METAL,
+  },
 
   /* transit + vending ----------------------------------------------------- */
   busShelter: { g: gBusShelter, tier: T.LARGE, r: 2.30, h: 2.62, label: 'Bus Shelter', shadow: true, debris: P.ALUMINIUM },
@@ -3522,16 +5317,43 @@ const DEFS = {
   produceCrate: { g: gProduceCrate, tier: T.SMALL, r: 0.40, h: 0.52, label: 'Produce Crate', debris: P.WOOD_LIGHT },
 
   /* construction ---------------------------------------------------------- */
-  jersey: { g: gJersey, tier: T.MEDIUM, r: 1.05, h: 0.80, label: 'Jersey Barrier', shadow: true, crumbles: true, debris: P.PRECAST },
-  waterBarrier: { g: gWaterBarrier, tier: T.SMALL, r: 0.36, h: 1.02, label: 'Water Barrier', tint: [0xffffff, P.BARRIER_ORANGE, 0xffffff], debris: P.BARRIER_ORANGE },
-  aframe: { g: gAframe, tier: T.SMALL, r: 0.60, h: 1.05, label: 'Barricade', debris: P.BARRIER_ORANGE },
-  barrel: { g: gTrafficBarrel, tier: T.SMALL, r: 0.36, h: 0.92, label: 'Traffic Barrel', sv: 0.05, debris: P.BARRIER_ORANGE },
-  crate: { g: gCrate, tier: T.SMALL, r: 0.56, h: 0.68, label: 'Crate', sv: 0.09, debris: P.WOOD_DECK },
-  pallet: { g: gPallet, tier: T.SMALL, r: 0.75, h: 0.48, label: 'Pallet Stack', sv: 0.07, debris: P.WOOD_LIGHT },
+  jersey: {
+    g: gJersey, tier: T.MEDIUM, r: 1.05, h: 0.80, label: 'Jersey Barrier', shadow: true,
+    crumbles: true, tint: [0xffffff, 0xe2ded2, 0xf2ede0, 0xd4cec0], debris: P.PRECAST,
+  },
+  waterBarrier: {
+    g: gWaterBarrier, tier: T.SMALL, r: 0.95, h: 1.14, label: 'Water Barrier',
+    tint: [0xffffff, P.BARRIER_ORANGE, 0xffffff, P.ACCENT_SUN], debris: P.BARRIER_ORANGE,
+  },
+  aframe: {
+    g: gAframe, tier: T.SMALL, r: 0.60, h: 1.05, label: 'Barricade',
+    tint: [0xffffff, 0xece6d6, 0xd8d2c2], debris: P.BARRIER_ORANGE,
+  },
+  barrel: {
+    g: gTrafficBarrel, tier: T.SMALL, r: 0.43, h: 0.92, label: 'Traffic Barrel', sv: 0.05,
+    tint: [0xffffff, 0xffeadc, 0xe0d8cc], debris: P.BARRIER_ORANGE,
+  },
+  crate: {
+    g: gCrate, tier: T.SMALL, r: 0.56, h: 0.73, label: 'Crate', sv: 0.09,
+    tint: [0xffffff, 0xe8dcc8, 0xd6c4a8, 0xf4ece0], debris: P.WOOD_DECK,
+  },
+  pallet: {
+    g: gPallet, tier: T.SMALL, r: 0.75, h: 0.50, label: 'Pallet Stack', sv: 0.07,
+    tint: [0xffffff, 0xd8d4cc, 0xc8d4e0, 0xf0e2cc], debris: P.WOOD_LIGHT,
+  },
   scaffold: { g: gScaffold, tier: T.MEDIUM, r: 0.75, h: 1.96, label: 'Scaffold Tower', shadow: true, sv: 0.06, debris: P.SCAFFOLD },
-  cableDrum: { g: gCableDrum, tier: T.MEDIUM, r: 0.77, h: 1.56, label: 'Cable Reel', shadow: true, sv: 0.08, debris: P.WOOD_DECK },
-  sandbags: { g: gSandbags, tier: T.SMALL, r: 0.48, h: 0.57, label: 'Sandbags', sv: 0.09, debris: P.SAND },
-  portaloo: { g: gPortaloo, tier: T.MEDIUM, r: 0.80, h: 2.26, label: 'Portaloo', shadow: true, debris: 0xffffff },
+  cableDrum: {
+    g: gCableDrum, tier: T.MEDIUM, r: 0.80, h: 1.56, label: 'Cable Reel', shadow: true, sv: 0.08,
+    tint: [0xffffff, 0xe4d0b0, 0xcbb08a], debris: P.WOOD_DECK,
+  },
+  sandbags: {
+    g: gSandbags, tier: T.SMALL, r: 0.56, h: 0.50, label: 'Sandbags', sv: 0.09,
+    tint: [0xffffff, 0xe8dcc0, 0xd8ccb4], debris: P.SAND,
+  },
+  portaloo: {
+    g: gPortaloo, tier: T.MEDIUM, r: 0.82, h: 2.30, label: 'Portaloo', shadow: true,
+    tint: [0xffffff, 0xe6eef2, 0xdce2de], debris: 0xffffff,
+  },
 };
 
 /** Which material each pool renders with. */
@@ -3547,7 +5369,7 @@ const MAT_OF = {
   terraceAwning: 'fabric', loungeSofa: 'fabric',
   iceBucket: 'metal', drinksTub: 'metal', luggageCart: 'metal',
   stockTrolley: 'metal', binTwin: 'metal', gelatoCase: 'gloss',
-  manholeCover: 'metal', drainGrate: 'metal', cellarHatch: 'metal',
+  manholeCover: 'metal', manholeSquare: 'metal', drainGrate: 'metal', cellarHatch: 'metal',
 };
 
 const _geoCache = new Map();
@@ -3606,6 +5428,20 @@ function contactBox(key) {
 const contactRadius = (key) => contactBox(key).r;
 
 /* ========================================================== placer ====== */
+
+/**
+ * Kinds that exist as more than one MODEL.
+ *
+ * Per-instance colour and scale break a repeat up to a point; past a few
+ * hundred copies the SHAPE is what the eye locks onto, and 529 identical
+ * round plates on a road is the single most countable repeat in the module.
+ * Rather than thread a second key through twenty weighted placement tables,
+ * `put` rolls the family here — every existing call site keeps working and
+ * gets model variety for free.
+ */
+const VARIANTS = {
+  manholeCover: ['manholeCover', 'manholeCover', 'manholeSquare'],
+};
 
 const SIDE_ROT = { n: Math.PI, s: 0, w: -Math.PI / 2, e: Math.PI / 2 };
 
@@ -3930,6 +5766,8 @@ class Placer {
    * @returns {boolean} placed
    */
   put(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, onRoad = false) {
+    const fam = VARIANTS[key];
+    if (fam) key = fam[Math.floor(this.rng() * fam.length)];
     const d = DEFS[key];
     if (!d) return false;
     this.tried++;
@@ -5527,10 +7365,15 @@ function constructionYard(pl, b, r, band) {
     const len = edgeLen(b, s);
     const rot = SIDE_ROT[s];
     const kind = r.weighted([['jersey', 5], ['waterBarrier', 4], ['meshFence', 4]]);
-    const step = kind === 'jersey' ? 2.15 : kind === 'meshFence' ? 2.12 : 1.05;
+    const step = kind === 'jersey' ? 2.06 : kind === 'meshFence' ? 2.04 : 1.90;
+    /* Reserve a fraction of the unit rather than its bounding circle. These
+       three are LINE props authored end to end along local x, and a circle
+       through the corners of a 2 m barrier is 1.05 m — so on the default
+       reservation every second one refused itself and a continuous hoarding
+       came out as a dotted one. */
     for (let u = 1.6; u < len - 1.6; u += step) {
       const p = edgePt(b, s, u, 1.25);
-      pl.put(kind, p.x, p.z, rot + Math.PI / 2);
+      pl.put(kind, p.x, p.z, rot + Math.PI / 2, 1, null, step * 0.40);
     }
     // Cones and barrels punctuate the line.
     for (let u = 3 + r() * 4; u < len - 3; u += 7 + r() * 6) {

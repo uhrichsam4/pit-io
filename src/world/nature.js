@@ -47,7 +47,7 @@ import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { TIER, PALETTE, WORLD } from '../config.js';
 import { makeRNG } from '../core/rng.js';
-import { Textures, ground, foliage, painted } from '../core/materials.js';
+import { Textures, ground, foliage } from '../core/materials.js';
 import { applyHoleCut, holeUniforms } from '../render/groundShader.js';
 import { ZONE, ROAD_CLASS } from './cityLayout.js';
 
@@ -1635,7 +1635,11 @@ function atlasTexture() {
 
   drawFrond(g, CELL.frondA, 0x0fa17e, PALETTE.PALM_FROND_LIGHT, PALETTE.PALM_FROND, PALETTE.PALM_FROND_DARK, 0.04);
   drawFrond(g, CELL.frondB, 0x77c210, PALETTE.PALM_FROND, PALETTE.PALM_FROND_DARK, PALETTE.TREE_CANOPY_DARK, 0.09);
-  drawFan(g, CELL.fanA, 0x31ab77);
+  /* contrast 1.5: the sabal and the palmetto both read as one green mass from
+     the overhead camera because the fan's 13 wedges sat inside a value range
+     barely a stop wide. Alternating light and dark fills blade to blade plus a
+     much darker basal band is what separates them at that distance. */
+  drawFan(g, CELL.fanA, 0x31ab77, { contrast: 1.5, costa: true });
   drawShrub(g, CELL.shrubA, 0x5b2d91);
   drawSeagrape(g, CELL.seagrape, 0x1188cd);
   drawGrassTuft(g, CELL.grassTuft, 0x4411aa);
@@ -2955,8 +2959,14 @@ function makePalm(spec) {
        contact band worldBuild measures and hand a knee-high shrub a car's pass
        radius (see fanShort's own note). */
     const fan3d = fanCell && trunkH > 3.0;
-    const len = spec.frondLen * (inner ? 0.72 : 1) * (0.86 + rng() * 0.3) * (1 + bias * 0.24);
-    const spread = fan3d ? 1.15 : 0.45;
+    /* PER-BLADE LENGTH ROLL. `lenVar` widens it well past the default for the
+       two species whose crowns were tiling into one plate: a Bismarckia read as
+       a stack of overlapping flat discs and a sabal as a solid dark blob, and
+       in both cases the fans were all finishing on the same circle. */
+    const lv = spec.lenVar ?? 0.30;
+    const len = spec.frondLen * (inner ? 0.72 : 1)
+      * (1.01 - lv * 0.5 + rng() * lv) * (1 + bias * 0.24);
+    const spread = fan3d ? 1.15 : (spec.pitchVar ?? 0.45);
     const pitch = (inner ? 0.95 + rng() * 0.4 : spec.pitch + (rng() - 0.5) * spread) + bias * 0.58;
     const f = frondGeo(len, len * spec.frondW, cell, {
       // Per-blade ARC as well as per-blade angle. Blades that all bend by the
@@ -2964,7 +2974,10 @@ function makePalm(spec) {
       // pitched, which is the half of the plate that pitch alone cannot break.
       rise: (inner ? 0.75 : spec.rise) * (fan3d ? 0.82 + rng() * 0.50 : 1),
       droop: (inner ? 0.7 : spec.droop) * (fan3d ? 0.74 + rng() * 0.56 : 1),
-      roll: 0.30 + rng() * 0.25,
+      // `fanRoll` is a per-blade INDEPENDENT roll. A fan blade with no roll is
+      // a flat plate; a dozen flat plates leaving one bud stack, whatever their
+      // pitch. This is the other half of un-stacking a Bismarckia's crown.
+      roll: 0.30 + rng() * (spec.fanRoll ?? 0.25),
       alongV: fanCell,
     });
     _m4.makeRotationZ(pitch);
@@ -2984,11 +2997,19 @@ function makePalm(spec) {
   const skirtN = spec.skirt || 0;
   for (let i = 0; i < skirtN; i++) {
     const a = (i / skirtN) * TAU + rng() * 0.5;
-    const len = spec.frondLen * (0.34 + rng() * 0.16);
+    /* THE PETTICOAT HAS TO ACTUALLY READ AS A COLLAR.
+       At -0.95 to -1.35 rad the shed fronds hung at 54-77 degrees below
+       horizontal, which on a sabal put them inside the live crown's own cone —
+       so the seven fronds the code asks for were not visible at all and the
+       palm read as a cabbage on a smooth pole. `skirtSteep` takes them to
+       100-140 degrees, i.e. collapsed hard against the trunk BELOW the crown,
+       which is where a real petticoat hangs and where it can be seen. */
+    const steep = spec.skirtSteep ?? 1.15;
+    const len = spec.frondLen * (spec.skirtLen ?? 0.34) * (0.86 + rng() * 0.32);
     const f = frondGeo(len, len * Math.min(0.8, spec.frondW), 'frondDead', {
       rise: 0.10, droop: 0.30, roll: 0.55 + rng() * 0.3,
     });
-    _m4.makeRotationZ(-(0.95 + rng() * 0.40));
+    _m4.makeRotationZ(-(steep + rng() * 0.42));
     f.applyMatrix4(_m4);
     _m4.makeRotationY(a);
     f.applyMatrix4(_m4);
@@ -3019,6 +3040,95 @@ function makePalm(spec) {
     return Math.pow(up, 1.9) * (0.55 + 0.85 * rad);
   });
   uplight(geo, crownY);
+  return geo;
+}
+
+/**
+ * SAW PALMETTO — the highest instance count in the slice at 149, and it was
+ * reading as a green artichoke.
+ *
+ * Three faults, and the first is the species itself: it carried a 1.15 m bare
+ * fibrous TRUNK, which a saw palmetto has not got. That made it a mini palm
+ * tree rather than the clumping ground-level shrub it is labelled, and from the
+ * overhead camera it was 13 broad smooth-edged wedges inside a value range
+ * barely a stop wide, mushing into one blob with a big flat lighter card
+ * visible straight through the middle.
+ *
+ * So it gets its own builder rather than another pass through `makePalm`:
+ *   - the trunk is a 25-40 cm stub, and GONE on two variants in five, so the
+ *     fronds spring from ground level — that is what makes it a palmetto;
+ *   - roughly twice as many blades at 0.75 of the old width, so the crown is a
+ *     radiating fan of blades and not a stack of paddles;
+ *   - three or four fronds noticeably longer and lower than the rest, so no two
+ *     clumps share an outline from above;
+ *   - one dead brown frond hanging, and a cluster of dark fibrous boot stubs at
+ *     the base.
+ */
+function makePalmetto(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const stub = spec.stub;
+  if (stub > 0.05) {
+    parts.push(trunkGeo(stub, spec.rBot, spec.rBot * 0.86, 'barkFib',
+      { sides: 6, rings: 1, bulge: 0.22 }));
+  }
+  /* Boot stubs: the dark sheared petiole bases that ring the crown of every
+     palmetto. Four of them, and they are most of why the plant reads as
+     clumping rather than as a small tree. */
+  for (let i = 0; i < 4; i++) {
+    const a = i * 1.63 + rng() * 0.6;
+    const b = trunkGeo(0.16 + rng() * 0.10, 0.055, 0.03, 'barkFib', { sides: 3, rings: 1 });
+    _m4.makeRotationZ(0.5 + rng() * 0.5);
+    b.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    b.applyMatrix4(_m4);
+    b.translate(0, Math.max(0.02, stub * 0.5), 0);
+    parts.push(b);
+  }
+  const n = spec.blades;
+  let top = stub;
+  for (let i = 0; i < n; i++) {
+    // Golden angle, so the fan never falls into a rosette.
+    const a = i * 2.39996 + rng() * 0.22;
+    // Three or four blades are deliberately much longer AND much lower.
+    const outlier = i % 5 === 0;
+    /* The floor on pitch is a PHYSICS floor, not an aesthetic one. A blade that
+       leaves the bud shallower than ~0.36 rad has its tip inside the lowest
+       fifth of the geometry a metre out, and worldBuild measures that band as
+       the contact footprint — which is how a knee-high shrub ends up declaring
+       1.43 m and demanding a car-sized hole to fall through. */
+    const pitch = Math.max(0.36,
+      (outlier ? spec.pitch - 0.16 : spec.pitch) + (rng() - 0.5) * 0.42);
+    const len = spec.len * (outlier ? 1.30 : 1) * (0.78 + rng() * 0.44);
+    const cell = spec.cells[i % spec.cells.length];
+    const f = frondGeo(len, len * spec.frondW, cell, {
+      segs: 2, rise: 0.52 * (0.8 + rng() * 0.5), droop: 0.50 * (0.7 + rng() * 0.7),
+      roll: 0.28 + rng() * 0.34, alongV: true,
+    });
+    _m4.makeRotationZ(pitch);
+    f.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    f.applyMatrix4(_m4);
+    f.translate(0, stub, 0);
+    parts.push(f);
+    top = Math.max(top, stub + len * Math.sin(Math.max(0, pitch)) * 0.9);
+  }
+  // One dead frond hanging: the plant is never entirely fresh. Short and hung
+  // from well up the crown, for the same contact-band reason as the pitch floor.
+  const dead = frondGeo(spec.len * 0.42, spec.len * 0.44, 'frondDead',
+    { segs: 2, rise: 0.06, droop: 0.34, roll: 0.5, alongV: false });
+  _m4.makeRotationZ(-0.24);
+  dead.applyMatrix4(_m4);
+  _m4.makeRotationY(rng() * 6.283);
+  dead.applyMatrix4(_m4);
+  dead.translate(0, stub + 0.34, 0);
+  parts.push(dead);
+
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  radialNormals(geo, 0, stub + spec.len * 0.25, 0, 0.45);
+  liftNormals(geo, 0.30);
+  windAttr(geo, (x, y) => Math.pow(Math.min(1, Math.max(0, y) / Math.max(0.5, top)), 1.6) * 0.5);
+  uplight(geo, Math.max(0.6, top * 0.7));
   return geo;
 }
 
@@ -3269,6 +3379,7 @@ function makeTree(spec) {
   }
   c.translate(tipX, cy, tipZ);
   parts.push(c);
+  const treeTop = Math.max(trunkH, cy + cb.max.y);
 
   /* BLOSSOM CLUSTERS standing proud of the crown edge — jacaranda, tabebuia.
      A flowering tree whose bloom is only ever painted INSIDE the canopy cell
@@ -3292,14 +3403,22 @@ function makeTree(spec) {
   }
 
   /* SPANISH MOSS hanging off the limbs. Two triangles each and it is the single
-     loudest "this is a live oak in Florida" signal there is. */
+     loudest "this is a live oak in Florida" signal there is.
+     The FLOOR is not decoration: worldBuild measures the lowest fifth of the
+     geometry as the physics footprint, and a moss curtain hanging off a 5 m
+     horizontal limb reaches down INTO that band five metres out from the trunk
+     — which took the live oak's measured contact radius to 2.51 m against a
+     2.2 m ceiling the first time this was built. Clamped to 28% of the tree's
+     height, comfortably clear of the 20% band. */
   for (let i = 0; i < (spec.moss || 0) && limbEnds.length; i++) {
     const e = limbEnds[i % limbEnds.length];
-    const w = spec.canopyR * 0.16, hgt = spec.canopyR * (0.30 + rng() * 0.30);
+    const anchor = Math.max(e.y, treeTop * 0.42);
+    const hgt = Math.max(0.55, Math.min(anchor - treeTop * 0.29, spec.canopyR * 0.42));
+    const w = Math.min(0.95, spec.canopyR * 0.17);
     const g = cardGeo(w, hgt, 'moss');
     g.translate(0, -hgt, 0);
     g.rotateY(rng() * 3.14);
-    g.translate(e.x * (0.7 + rng() * 0.4), e.y + hgt * 0.10, e.z * (0.7 + rng() * 0.4));
+    g.translate(e.x * (0.62 + rng() * 0.3), anchor, e.z * (0.62 + rng() * 0.3));
     parts.push(g);
   }
 
@@ -3314,15 +3433,26 @@ function makeTree(spec) {
     const a = i * 2.39996 + rng() * 0.5;
     // Two or three have already thickened into secondary trunks.
     const heavy = i < (spec.rootTrunks || 0);
-    const rr = spec.rootR * (heavy ? 0.62 + rng() * 0.22 : 0.42 + rng() * 0.58);
+    /* ONLY THE THICKENED ONES REACH THE GROUND, and the rest hang.
+       That is what a banyan actually looks like — a curtain of roots still on
+       their way down, with two or three that have already made it and become
+       secondary trunks — and it is also the only version the physics can carry:
+       every root that lands puts geometry in the lowest fifth of the mesh at
+       its full radius, and a nine-root cage landing at 1.55 m took the banyan's
+       pass radius from 0.7 m to 1.8. Three landing at 0.8 m keeps it at 1.0. */
+    const rr = spec.rootR * (heavy ? 0.34 + rng() * 0.14 : 0.55 + rng() * 0.55);
     const fromY = cy - spec.canopyR * spec.canopyF * (0.10 + rng() * 0.35);
-    const r0 = spec.rTop * (heavy ? 0.55 : 0.16) * (0.8 + rng() * 0.5);
+    // A dangling root has to stop ABOVE the 20% band as well as above the
+    // ground, or it counts toward the footprint at its full radius.
+    const toY = heavy ? 0
+      : Math.max(treeTop * 0.26, fromY * (0.34 + rng() * 0.26));
+    const r0 = spec.rTop * (heavy ? 0.55 : 0.15) * (0.8 + rng() * 0.5);
     const pts = [];
     for (let k = 0; k <= 3; k++) {
       const t = k / 3;
       pts.push({
         x: tipX * (1 - t) + Math.cos(a) * rr * Math.pow(t, 0.7),
-        y: fromY * (1 - t * t) ,
+        y: fromY - (fromY - toY) * t * t,
         z: tipZ * (1 - t) + Math.sin(a) * rr * Math.pow(t, 0.7),
       });
     }
@@ -3338,21 +3468,27 @@ function makeTree(spec) {
     const sr = spec.stiltR || 0.95;
     for (let i = 0; i < stiltN; i++) {
       const a = i * 2.39996 + rng() * 0.4;
-      const rr = sr * (0.62 + rng() * 0.42);
+      // Four land and six are still on their way down — same reason as the
+      // banyan's aerial roots. Ten landing at 0.9 m put the mangrove's pass
+      // radius at 1.15 m; four landing at 0.62 keeps it at 0.65.
+      const lands = i < 4;
+      const rr = sr * (lands ? 0.50 + rng() * 0.14 : 0.66 + rng() * 0.44);
       const fromY = trunkH * (0.30 + rng() * 0.42);
+      const toY = lands ? 0
+        : Math.max(treeTop * 0.26, fromY * (0.30 + rng() * 0.24));
       const pts = [];
       for (let k = 0; k <= 3; k++) {
         const t = k / 3;
         // Arched: out fast, then down — a rhizophora stands in a basket.
         pts.push({
           x: tipX * (1 - t) + Math.cos(a) * rr * Math.sin(t * 1.35),
-          y: fromY * (1 - t * t * 0.98),
+          y: fromY - (fromY - toY) * t * t,
           z: tipZ * (1 - t) + Math.sin(a) * rr * Math.sin(t * 1.35),
         });
       }
       parts.push(pipeGeo(pts, (t) => spec.rBot * 0.30 * (1 - t * 0.25), 3, spec.bark));
     }
-    const mound = domeGeo('sw_shade', [[0, sr * 0.92], [0.16, sr * 0.72], [0.28, sr * 0.34]], 6,
+    const mound = domeGeo('sw_shade', [[0, sr * 0.66], [0.16, sr * 0.54], [0.28, sr * 0.26]], 6,
       { lobes: 3, amp: 0.24, rng, jitter: 0.2 });
     parts.push(mound);
     // Pneumatophores: the breathing spikes that stand out of the mud.
@@ -3365,9 +3501,8 @@ function makeTree(spec) {
 
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   liftNormals(geo, 0.18);
-  const top = cy + cb.max.y;
   windAttr(geo, (x, y) => {
-    const up = Math.min(1, Math.max(0, y / top));
+    const up = Math.min(1, Math.max(0, y / treeTop));
     return Math.pow(up, 2.1) * 0.85;
   });
   uplight(geo, cy);
@@ -3412,7 +3547,13 @@ function makeHedge(spec) {
     [-0.50, 0.075], [-0.50, sh], [-0.31, 0.985], [0, 1.04],
     [0.31, 0.985], [0.50, sh], [0.50, 0.075],
   ];
-  const spans = 4;
+  /* 3 spans, and that number is a BUDGET not a taste. This is the most numerous
+     object in the city by a factor of eight: at 4 spans the unit is 78 tris and
+     2,354 of them are 184 k, at 3 it is 64 and they are 151 k. Neighbouring
+     units are different variants with independent wobble, so the run still
+     undulates at 3.2 m centres even where a single unit only breaks three
+     times. */
+  const spans = 3;
   parts.push(loftGeo(sec, L, D, H, spans, [
     { from: 0, to: 1, cell: 'shrubA' },      // flank
     { from: 1, to: 5, cell: 'shrubTop' },    // shoulders + crown, a stop lighter
@@ -3430,7 +3571,7 @@ function makeHedge(spec) {
 
   /* FRINGE over the crown edge and the corners. Short — 12-16 cm — so it frays
      the silhouette without ever becoming the silhouette. */
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 3; i++) {
     const fh = H * (0.11 + rng() * 0.05);
     const g = cardGeo(L * 0.30, fh, 'shrubA');
     g.translate(0, -fh * 0.55, 0);
@@ -3464,8 +3605,13 @@ function makeShrubMass(spec) {
   const rng = makeRNG(spec.seed);
   const parts = [];
   const H = spec.h, R = spec.w * 0.5;
+  /* The base ring is 0.84 R, not 1.0. The dome is the lowest geometry in the
+     object, so it IS the physics footprint — at full radius plus a 26% lobe
+     bulge the pass radius came out 16% wider than the crossed cards it
+     replaced, which would have made every shrub in the city fractionally
+     harder to swallow than it used to be for no visual gain. */
   parts.push(domeGeo('shrubA', [
-    [0, R * 0.94], [H * 0.38, R * 1.02], [H * 0.72, R * 0.82], [H, R * 0.30],
+    [0, R * 0.84], [H * 0.38, R * 1.02], [H * 0.72, R * 0.82], [H, R * 0.30],
   ], 6, {
     lobes: 2 + Math.floor(rng() * 3), amp: 0.26, rng, jitter: 0.24,
     // One lobe pushed a third higher than the rest, so no two read alike even
@@ -3473,9 +3619,9 @@ function makeShrubMass(spec) {
     highSeg: Math.floor(rng() * 6), highK: 1.22 + rng() * 0.22,
   }));
   for (let i = 0; i < 3; i++) {
-    const g = cardGeo(spec.w * (0.86 + rng() * 0.24), H * (0.74 + rng() * 0.24), 'shrubA');
+    const g = cardGeo(spec.w * (0.80 + rng() * 0.22), H * (0.70 + rng() * 0.26), 'shrubA');
     g.rotateY((i / 3) * Math.PI + rng() * 0.45);
-    g.translate((rng() - 0.5) * R * 0.36, H * 0.16, (rng() - 0.5) * R * 0.36);
+    g.translate((rng() - 0.5) * R * 0.30, H * 0.24, (rng() - 0.5) * R * 0.30);
     parts.push(g);
   }
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
@@ -3534,9 +3680,13 @@ function makeGroundcoverMound(spec) {
   const rng = makeRNG(spec.seed);
   const parts = [];
   const R = spec.w * 0.5, H = spec.h;
-  parts.push(collar(R * 1.14, 8, 0.01, 'mulchTex'));
+  // The collar sits just INSIDE the foliage. It has to: it is the lowest
+  // geometry in the object, so worldBuild measures it as the whole footprint,
+  // and a mulch disc wider than the plant would hand a 40 cm mat the pass
+  // radius of a park bench.
+  parts.push(collar(R * 0.90, 8, 0.01, 'mulchTex'));
   parts.push(domeGeo('groundcov', [
-    [0.05, R], [H * 0.43, R * 0.94], [H * 0.81, R * 0.65], [H, R * 0.26],
+    [0.05, R * 0.88], [H * 0.43, R * 0.94], [H * 0.81, R * 0.65], [H, R * 0.26],
   ], 7, {
     lobes: 2 + Math.floor(rng() * 3), amp: 0.24 + rng() * 0.10, rng, jitter: 0.24,
     highSeg: Math.floor(rng() * 7), highK: 1.18,
@@ -4138,17 +4288,19 @@ function makeSculpture(seed) {
   const rng = makeRNG(seed);
   const parts = [];
   // Two chamfered stone courses, in cream and grey — NOT the accent colour.
-  parts.push(bevelBox(3.0, 0.30, 3.0, 0.075, 'stoneFine', 'stoneCope'));
-  parts.push(bevelBox(2.5, 0.34, 2.5, 0.065, 'stoneCope', 'stoneCope').translate(0, 0.30, 0));
+  // Kept to the old 2.6 m plinth footprint: it is the lowest geometry, so it is
+  // what the consumption physics measures.
+  parts.push(bevelBox(2.6, 0.28, 2.6, 0.070, 'stoneFine', 'stoneCope'));
+  parts.push(bevelBox(2.15, 0.32, 2.15, 0.060, 'stoneCope', 'stoneCope').translate(0, 0.28, 0));
   // The engraved plaque.
-  const pl = bevelBox(0.62, 0.30, 0.05, 0.012, 'bronze', 'bronze');
-  pl.translate(0, 0.22, 1.27);
+  const pl = bevelBox(0.62, 0.28, 0.05, 0.012, 'bronze', 'bronze');
+  pl.translate(0, 0.20, 1.09);
   parts.push(pl);
 
-  let y = 0.64;
+  let y = 0.60;
   const pierced = 1 + Math.floor(rng() * 2);
   for (let i = 0; i < 3; i++) {
-    const w0 = 2.0 - i * 0.36, d0 = 0.90 - i * 0.13;
+    const w0 = 1.9 - i * 0.34, d0 = 0.88 - i * 0.13;
     const h = 1.5 + rng() * 1.5;
     if (i === pierced) {
       parts.push(piercedSlab(w0, h, d0, Math.min(w0, h) * 0.24, rng));
@@ -4465,8 +4617,8 @@ function makePlayground() {
     r.translate(1.90 + s * 0.44, 1.42, 1.05);
     parts.push(r);
   }
-  parts.push(bevelBox(0.86, 0.10, 0.70, 0.02, 'sw_pink', 'sw_pink')
-    .translate(1.90, 0.30, 2.55));
+  parts.push(bevelBox(0.86, 0.10, 0.62, 0.02, 'sw_pink', 'sw_pink')
+    .translate(1.90, 0.30, 2.16));
   // A-frame swing beside it.
   for (const sx of [-1, 1]) {
     const l = bevelBox(0.15, 2.62, 0.15, 0.026, 'sw_teal', 'sw_teal');
@@ -4516,9 +4668,9 @@ function makeFlagpole(cell, seed = 3) {
   const parts = [];
   const H = 9.5;
   // Stepped chamfered precast base instead of a raw cube.
-  parts.push(bevelBox(0.92, 0.16, 0.92, 0.05, 'stoneFine', 'stoneCope'));
-  parts.push(bevelBox(0.70, 0.14, 0.70, 0.04, 'stoneFine', 'stoneCope').translate(0, 0.16, 0));
-  parts.push(bevelBox(0.50, 0.22, 0.50, 0.035, 'stoneCope', 'stoneCope').translate(0, 0.30, 0));
+  parts.push(bevelBox(0.80, 0.15, 0.80, 0.045, 'stoneFine', 'stoneCope'));
+  parts.push(bevelBox(0.62, 0.14, 0.62, 0.04, 'stoneFine', 'stoneCope').translate(0, 0.15, 0));
+  parts.push(bevelBox(0.46, 0.21, 0.46, 0.035, 'stoneCope', 'stoneCope').translate(0, 0.29, 0));
   parts.push(trunkGeo(H, 0.105, 0.055, 'sw_steel', { sides: 8, rings: 3 }).translate(0, 0.50, 0));
   // Truck ball finial.
   const ball = new THREE.SphereGeometry(0.095, 6, 4);
@@ -4678,6 +4830,35 @@ function palmVariant(b, r) {
     gapDir: r() * 6.283,
     spiral: r() < 0.42,
     skirt: b.skirt ? Math.round(b.skirt * (0.55 + r() * 0.9)) : 0,
+    skirtSteep: b.skirtSteep,
+    skirtLen: b.skirtLen,
+    fanRoll: b.fanRoll,
+    lenVar: b.lenVar,
+    pitchVar: b.pitchVar,
+    cells,
+  });
+}
+
+/**
+ * Saw palmetto: the variant's loudest choice is whether it has a trunk at all.
+ * Two in five have none, which is what a real palmetto colony looks like.
+ */
+function palmettoVariant(b, r) {
+  const trunkless = r() < 0.40;
+  const cells = b.cells.slice();
+  if (b.swap && r() < (b.swapP ?? 0.34)) cells[0] = b.swap;
+  return makePalmetto({
+    seed: b.seed * 31 + Math.floor(r() * 8192),
+    stub: trunkless ? 0.12 : 0.30 + r() * 0.14,
+    rBot: b.rBot * (0.86 + r() * 0.30),
+    blades: 20 + Math.round(r() * 7),
+    len: 1.45 * (0.84 + r() * 0.34),
+    // 0.75 of the old frondW: the blades were paddles and they mushed together.
+    frondW: 0.98 * (0.86 + r() * 0.28),
+    // A trunkless clump has to hold its blades STEEPER, or their tips land in
+    // the contact band worldBuild measures and a knee-high shrub is handed the
+    // pass radius of a car.
+    pitch: trunkless ? 0.74 + r() * 0.22 : 0.56 + r() * 0.22,
     cells,
   });
 }
@@ -4723,6 +4904,10 @@ function treeVariant(b, r) {
   const h = b.h * (0.80 + r() * 0.44);
   const la = r() * 6.283;
   const lk = (b.lean || 0.04) * (0.2 + r() * 1.7);
+  // `crownVar` widens the per-variant roll on crown width. The mangroves needed
+  // it: 101 of them stand shoulder to shoulder on the waterfront and neighbours
+  // were sharing a silhouette, which is the one thing the eye catches in a row.
+  const cv = b.crownVar ?? 0.30;
   return makeTree({
     seed: b.seed * 31 + Math.floor(r() * 8192),
     h,
@@ -4730,11 +4915,30 @@ function treeVariant(b, r) {
     rBot: b.rBot * (0.85 + r() * 0.32),
     rTop: b.rTop * (0.85 + r() * 0.32),
     bark: b.bark,
+    trunkSides: b.trunkSides,
+    flute: b.flute,
+    flare: b.flare,
     bend: Math.cos(la) * lk,
     sway: Math.sin(la) * lk,
     limbs: Math.max(1, b.limbs + (r() < 0.4 ? 1 : 0)),
-    canopyR: h * b.crownF * (0.86 + r() * 0.30),
+    limbPitch: b.limbPitch,
+    limbLen: b.limbLen,
+    limbAt: b.limbAt,
+    canopyR: h * b.crownF * (1.01 - cv * 0.5 + r() * cv),
     canopyF: b.canopyF * (0.84 + r() * 0.34),
+    canopyCards: b.canopyCards,
+    canopyCaps: b.canopyCaps,
+    canopyLobes: b.canopyLobes,
+    cellCore: b.cellCore,
+    cellTop: b.cellTop,
+    blossom: b.blossom,
+    blossomCell: b.blossomCell,
+    moss: b.moss,
+    roots: b.roots,
+    rootR: b.rootR,
+    rootTrunks: b.rootTrunks,
+    stilts: b.stilts,
+    stiltR: b.stiltR,
     cell: b.cells && r() < 0.3 ? b.cells[Math.floor(r() * b.cells.length)] : b.cell,
   });
 }
@@ -4867,13 +5071,19 @@ const SPECIES = {
     debris: PALETTE.PALM_FROND, variants: 6, tints: 'palm', rBase: 0.40, contactMax: 1.6,
     make: palmVariant,
     base: {
-      // frondW 1.02, not 1.25. `palmVariant` multiplies it by 0.84-1.18, so at
-      // 1.25 a blade came out up to 1.5x WIDER than it is long and fourteen of
-      // them tiled the crown solid whatever their pitch. A costapalmate fan is
-      // about as wide as long; at 1.02 the blades read as blades.
-      seed: 53, h: 8.4, rBot: 0.40, rTop: 0.35, bark: 'barkFib', crownshaft: false,
-      lean: 0.030, bulge: 0, fronds: 14, frondVar: 5, crownF: 0.37, frondW: 1.02,
+      /* frondW 0.85, not 1.02, and crownF 0.44, not 0.37. Even at 1.02 the 14
+         costapalmate fans TILED into one solid dark blob and the palm read as a
+         cabbage on a smooth brown pole. Narrower blades on a longer petiole
+         separate; `pitchVar` splays each one +-0.25 rad so the crown outline is
+         ragged rather than a circle; and the trunk tapers harder (rTop 0.28
+         against rBot 0.44) so it is not a cylinder.
+         The straw petticoat is the one thing that names a sabal at 60 m and it
+         was not visible at all — see `skirtSteep` in makePalm. */
+      seed: 53, h: 8.4, rBot: 0.44, rTop: 0.28, bark: 'barkFib', crownshaft: false,
+      lean: 0.030, bulge: 0, fronds: 14, frondVar: 5, crownF: 0.44, frondW: 0.85,
       pitch: 0.34, rise: 0.58, droop: 0.80, cells: ['fanA'],
+      pitchVar: 0.50, lenVar: 0.42, fanRoll: 0.34,
+      skirtSteep: 1.85, skirtLen: 0.46,
       /* One variant in six carries the silver fan instead of the green one.
          There are only a dozen park parcels in the whole city, so however hard
          a park weights a Bismarckia there will never be many of them — and a
@@ -4898,19 +5108,13 @@ const SPECIES = {
   fanShort: {
     label: 'Saw Palmetto', tier: TIER.SMALL, h: 2.1, rad: 1.5, cap: 1100, clear: 1.2, sep: 0.85,
     debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.34, contactMax: 1.2,
-    make: palmVariant,
+    make: palmettoVariant,
     base: {
-      seed: 67, h: 1.15, rBot: 0.34, rTop: 0.30, bark: 'barkFib', crownshaft: false,
-      lean: 0.16, bulge: 0, fronds: 13, frondVar: 5, crownF: 1.15, frondW: 1.30,
-      // Pitched up and barely drooping, and a gentle flag. On a 1.1 m trunk the
-      // contact band is only ~40 cm off the ground, so a frond that sagged the
-      // way a coconut's does would land IN it and hand a waist-high shrub the
-      // pass radius of a car.
-      // Silver saw palmetto is the commonest glaucous plant in south Florida
-      // and it puts the hue at ankle height, against paving, where a plaza
-      // border otherwise reads as one green texture with dots in it.
-      pitch: 0.42, rise: 0.60, droop: 0.62, cells: ['fanA'], flag: 0.35,
-      swap: 'fanBlue', swapP: 0.30,
+      seed: 67, rBot: 0.34, cells: ['fanA'],
+      // The silver form is the commonest glaucous plant in south Florida and it
+      // puts a non-green hue at ankle height against paving, so it needs to
+      // actually turn up in a run: 0.42, not 0.30.
+      swap: 'fanBlue', swapP: 0.42,
     },
   },
   arecaClump: {
@@ -4985,7 +5189,12 @@ const SPECIES = {
       // also what keeps a 5 m crown out of the contact band the physics
       // measures on a trunk only 7.6 m tall.
       pitch: 0.46, rise: 0.52, droop: 0.44, cells: ['fanBlue'],
-      flag: 0.20,
+      // The crown read as a stack of overlapping flat plates. `fanRoll` gives
+      // every blade its own independent roll and `lenVar` a much wider length
+      // roll, so the plates neither stack nor finish on a common circle; the
+      // costa spine painted into fanBlue does the rest. Two persistent dead
+      // fronds hang under it, which every real Bismarckia carries.
+      flag: 0.20, fanRoll: 0.55, lenVar: 0.55, skirt: 2,
     },
   },
 
@@ -4995,8 +5204,20 @@ const SPECIES = {
     make: treeVariant,
     base: {
       seed: 71, h: 13.0, trunkF: 0.42, rBot: 0.95, rTop: 0.55, bark: 'barkOak',
-      lean: 0.03, limbs: 3, crownF: 0.49, canopyF: 0.92,
+      lean: 0.03, limbs: 4, crownF: 0.49, canopyF: 0.92,
       cell: 'canopyA', cells: ['canopyA', 'canopyOlive'],
+      /* A banyan is 41 copies at 18.8 m — a landmark tree — and it read as a
+         big spreading tree rather than as a banyan, because the two features
+         that name the species were both missing. Nine aerial roots dropping
+         from the limbs, three of them already thickened into secondary trunks,
+         and a buttressed root plate instead of a clean cylinder.
+         `rootR` is capped at 1.55: worldBuild measures the lowest fifth of the
+         geometry as the physics footprint, so a root cage at the crown's full
+         spread would treble the hole a banyan needs to fall through. */
+      roots: 9, rootR: 1.75, rootTrunks: 3, flare: 1.55, flute: 0.10, trunkSides: 7,
+      limbPitch: 0.72, limbLen: 0.34, limbAt: 0.86,
+      // Opaque from directly above: 12 flank cards and 5 caps over the core.
+      canopyCards: 12, canopyCaps: 5, canopyLobes: 2,
     },
   },
   liveOak: {
@@ -5005,8 +5226,14 @@ const SPECIES = {
     make: treeVariant,
     base: {
       seed: 83, h: 10.5, trunkF: 0.46, rBot: 0.60, rTop: 0.36, bark: 'barkOak',
-      lean: 0.045, limbs: 2, crownF: 0.45, canopyF: 1.0,
+      // canopyF 0.72, not 1.0: the species read is a WIDE, LOW, SPREADING crown
+      // on heavy horizontal limbs, and at 1.0 it was a ball. crownF up to match,
+      // so the tree gets wider rather than smaller.
+      lean: 0.045, limbs: 4, crownF: 0.54, canopyF: 0.72,
       cell: 'canopyB', cells: ['canopyB', 'canopyA', 'canopyOlive'],
+      cellTop: 'canopyA',
+      limbPitch: 0.42, limbLen: 0.40, limbAt: 0.78, flare: 1.35, flute: 0.09,
+      canopyCards: 10, canopyCaps: 4, moss: 4,
     },
   },
   mahogany: {
@@ -5015,8 +5242,18 @@ const SPECIES = {
     make: treeVariant,
     base: {
       seed: 89, h: 12.0, trunkF: 0.55, rBot: 0.62, rTop: 0.34, bark: 'barkOak',
-      lean: 0.035, limbs: 3, crownF: 0.38, canopyF: 0.80,
+      lean: 0.035, limbs: 4, crownF: 0.38, canopyF: 0.80,
       cell: 'canopyOlive', cells: ['canopyOlive', 'canopyB'],
+      /* 36 copies at 17 m — skyline objects on the street — and the trunk was a
+         smooth pale untapered pole with no bark relief, no root flare and no
+         branch structure below the canopy. All three are here: a buttressed
+         flare, fluted facets that give the prism a 6-8% value break so it reads
+         as bark rather than plastic, and four primary limbs rising visibly out
+         of the trunk into the crown. The canopy is three stacked lobes at
+         different heights, with a lighter cell on the lit top faces. */
+      flare: 1.55, flute: 0.13, trunkSides: 6,
+      limbPitch: 0.95, limbLen: 0.34, limbAt: 0.70,
+      canopyLobes: 3, canopyCards: 10, canopyCaps: 4, cellTop: 'canopyB',
     },
   },
   tabebuia: {
@@ -5033,10 +5270,20 @@ const SPECIES = {
     debris: PALETTE.CAR_RED, variants: 3, tints: 'bloom', rBase: 0.55, contactMax: 2.0,
     make: treeVariant,
     base: {
-      // The flame tree: a wide, flat, umbrella crown on a short fluted trunk.
-      // canopyF well under 1 is what makes it spread rather than mound.
-      seed: 103, h: 9.4, trunkF: 0.44, rBot: 0.55, rTop: 0.34, bark: 'barkOak',
-      lean: 0.05, limbs: 3, crownF: 0.55, canopyF: 0.62, cell: 'canopyRed',
+      /* The flame tree: a wide, flat, umbrella crown on a short fluted trunk.
+         In the park overview it read as a flat magenta-red mass, because the
+         bloom colour was doing all the work and the shape underneath was a
+         mound. canopyF 0.44 makes the crown genuinely wider than it is tall,
+         and four heavy limbs branching LOW out to the crown edge put the
+         species' visible limb spread back — that spread is the read.
+         The bloom is now mixed roughly half and half with a green fern-leaf
+         cell, with the red concentrated on the sunlit upper caps and the green
+         underneath, so it stops being a red blob on a stick. */
+      seed: 103, h: 9.4, trunkF: 0.40, rBot: 0.55, rTop: 0.34, bark: 'barkOak',
+      lean: 0.05, limbs: 4, crownF: 0.66, canopyF: 0.44, cell: 'fernLeaf',
+      cellTop: 'canopyRed', cellCore: 'fernLeaf',
+      limbPitch: 0.50, limbLen: 0.40, limbAt: 0.72, flute: 0.14, flare: 1.40,
+      canopyCards: 10, canopyCaps: 5, blossom: 6, blossomCell: 'canopyRed',
     },
   },
   jacaranda: {
@@ -5045,7 +5292,11 @@ const SPECIES = {
     make: treeVariant,
     base: {
       seed: 107, h: 8.8, trunkF: 0.50, rBot: 0.40, rTop: 0.24, bark: 'barkOak',
-      lean: 0.055, limbs: 2, crownF: 0.46, canopyF: 0.74, cell: 'canopyPurple',
+      lean: 0.055, limbs: 3, crownF: 0.46, canopyF: 0.74, cell: 'canopyPurple',
+      // Eight blossom clusters standing proud of the crown edge, so the purple
+      // breaks the outline instead of only ever being painted inside it.
+      limbPitch: 0.80, limbLen: 0.32, limbAt: 0.78, flute: 0.10, flare: 1.25,
+      canopyCards: 9, canopyCaps: 4, blossom: 8, blossomCell: 'canopyPurple',
     },
   },
   bougain: {
@@ -5076,13 +5327,30 @@ const SPECIES = {
       lean: 0.11, limbs: 3, crownF: 0.52, canopyF: 0.58, cell: 'seagrape',
     },
   },
+  /* 101 copies on the waterfront, where they are the closest planting to the
+     camera in every bay frame — and they read as bright lime-green cabbages on
+     thin reddish stilts standing on top of the water. Three separate faults and
+     all three are fixed here: the tint set was `canopy` (near-white multipliers
+     that cannot darken anything) and is now a genuinely deep, cool, desaturated
+     set; the cell was `canopyB`, the LIGHTEST canopy in the atlas, and is now
+     the dark glossy one; and there was no root mass and no mud at all, so 10
+     arched stilt roots, a mud mound and four pneumatophores go in.
+     `stiltR` 0.92 rather than the 1.6 m skirt a real rhizophora throws:
+     worldBuild measures the lowest fifth as the physics footprint, and 1.6
+     would put the contact radius at 2.26 m against a 1.5 m ceiling. */
   mangrove: {
     label: 'Mangrove', tier: TIER.MEDIUM, h: 4.2, rad: 1.8, cap: 550, clear: 2.6, sep: 1.1,
-    debris: PALETTE.TREE_CANOPY_DARK, variants: 3, tints: 'canopy', rBase: 0.40, contactMax: 1.5,
+    debris: PALETTE.TREE_CANOPY_DARK, variants: 4, tints: 'mangrove', rBase: 0.40, contactMax: 1.5,
     make: treeVariant,
     base: {
       seed: 127, h: 4.2, trunkF: 0.50, rBot: 0.40, rTop: 0.16, bark: 'barkMang',
-      lean: 0.14, limbs: 4, crownF: 0.60, canopyF: 0.70, cell: 'canopyB',
+      lean: 0.19, limbs: 4, crownF: 0.60, canopyF: 0.70, cell: 'canopyOlive',
+      cells: ['canopyOlive', 'canopyA'], cellTop: 'canopyB',
+      // A much wider crown roll, so two neighbours in a fringe cannot share a
+      // silhouette — the defect the review named first.
+      crownVar: 0.62,
+      stilts: 10, stiltR: 0.92, limbPitch: 0.62, limbLen: 0.30, limbAt: 0.74,
+      canopyCards: 9, canopyCaps: 3,
     },
   },
 
@@ -5092,24 +5360,32 @@ const SPECIES = {
      costs two extra pools and nothing per frame. */
   hedge: {
     label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 4200, clear: 0.0, sep: 1.05,
-    debris: PALETTE.HEDGE, variants: 4, tints: 'shrub', contactMax: 2.1,
-    // 1.1 m deep: a clipped municipal hedge, not a topiary cube. See makeBush.
+    debris: PALETTE.HEDGE, variants: 6, tints: 'shrub', contactMax: 2.1,
+    // 1.05 m deep: a clipped municipal hedge, not a topiary cube. See makeHedge.
     make: bushVariant,
-    base: { seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2, depth: 1.1, hVar: 0.62 },
+    base: {
+      seed: 131, w: 3.2, h: 1.25, cell: 'shrubA', depth: 1.05, hVar: 0.50,
+      build: makeHedge,
+    },
   },
   shrub: {
     label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2800, clear: 0.7, sep: 0.6,
-    debris: PALETTE.HEDGE, variants: 4, tints: 'shrub', contactMax: 1.6,
+    debris: PALETTE.HEDGE, variants: 5, tints: 'shrub', contactMax: 1.6,
     make: bushVariant,
-    base: { seed: 137, w: 1.9, h: 1.5, cell: 'shrubA', cards: 3 },
+    // hVar 0.55: hull height 0.9-1.7 m, so no two read alike before the
+    // per-instance scale is applied on top.
+    base: { seed: 137, w: 1.8, h: 1.4, cell: 'shrubA', hVar: 0.55, build: makeShrubMass },
   },
   hibiscus: {
     label: 'Hibiscus', tier: TIER.SMALL, h: 1.7, rad: 1.0, cap: 2000, clear: 0.7, sep: 0.62,
-    debris: PALETTE.CAR_RED, variants: 3, tints: 'none', contactMax: 1.7,
-    // Like the croton, the cell already carries its own colour — a tint
-    // multiplier would only wash the flowers back toward the leaves.
+    debris: PALETTE.CAR_RED, variants: 4, tints: 'none', contactMax: 1.7,
+    // Four variants, four bloom colours — the tint set stays 'none' because the
+    // multiply cannot recolour a flower, so the roll happens at build time.
     make: bushVariant,
-    base: { seed: 191, w: 2.0, h: 1.7, cell: 'hibiscus', cards: 3 },
+    base: {
+      seed: 191, w: 1.7, h: 1.6, cell: 'hibiscus', build: makeHibiscusBush,
+      blooms: ['hibBloomA', 'hibBloomB', 'hibBloomC', 'hibBloomD'],
+    },
   },
   sago: {
     label: 'Sago Palm', tier: TIER.SMALL, h: 1.1, rad: 0.9, cap: 1600, clear: 0.7, sep: 0.6,
@@ -5134,67 +5410,78 @@ const SPECIES = {
   croton: {
     label: 'Croton', tier: TIER.SMALL, h: 1.35, rad: 0.9, cap: 2400, clear: 0.6, sep: 0.58,
     debris: PALETTE.FLOWER_ORANGE, variants: 4, tints: 'none', contactMax: 1.5,
-    // No tint set: the whole point of a croton is that the atlas cell is
-    // already five colours, and multiplying a variegated leaf just greys it.
+    // No tint set: a croton's cells are already five colours each, and there
+    // are now THREE of them mixed inside a single clump, so a multiply could
+    // only grey the variegation it exists to show.
     make: bushVariant,
-    base: { seed: 139, w: 1.8, h: 1.35, cell: 'croton', cards: 3 },
+    base: { seed: 139, w: 1.7, h: 1.30, cell: 'croton', build: makeCrotonClump },
   },
-  // sep 0.8, not 0.45: a bloom clump is a 2.2 m card, so anything closer than
-  // ~1.6 m is one clump standing inside another. That was the map's single
-  // biggest cluster of overlapping props before the bed grid was widened, and
-  // the spacing set is what keeps it fixed when a new planting pattern lands.
+  // sep 0.8: two bloom clumps closer than ~1.6 m is one clump standing inside
+  // another. That was the map's single biggest cluster of overlapping props
+  // before the bed grid was widened, and the spacing set is what keeps it fixed
+  // when a new planting pattern lands.
   flowerPink: {
     label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2200, clear: 0.6, sep: 0.8,
-    debris: PALETTE.FLOWER_PINK, variants: 2, tints: 'bloom', contactMax: 1.95,
+    debris: PALETTE.FLOWER_PINK, variants: 3, tints: 'bloom', contactMax: 1.95,
     make: bushVariant,
-    base: { seed: 149, w: 2.2, h: 0.95, cell: 'canopyPink', cards: 2 },
+    // w 1.1, not 2.2: a bed has to be SMALLER than the paving module it sits on
+    // or it reads as a splash of colour dropped on the ground.
+    base: {
+      seed: 149, w: 1.1, h: 0.50, build: makeFlowerBed,
+      bedCell: 'bedPink', bloomCell: 'bloomPink',
+    },
   },
   flowerYellow: {
     label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2200, clear: 0.6, sep: 0.8,
-    debris: PALETTE.FLOWER_YELLOW, variants: 2, tints: 'bloom', contactMax: 1.95,
+    debris: PALETTE.FLOWER_YELLOW, variants: 3, tints: 'bloom', contactMax: 1.95,
     make: bushVariant,
-    base: { seed: 151, w: 2.2, h: 0.95, cell: 'canopyYel', cards: 2 },
+    base: {
+      seed: 151, w: 1.1, h: 0.50, build: makeFlowerBed,
+      bedCell: 'bedYel', bloomCell: 'bloomYel',
+    },
   },
   ornGrass: {
     label: 'Ornamental Grass', tier: TIER.TINY, h: 1.15, rad: 0.6, cap: 3000, clear: 0.5, sep: 0.36,
-    debris: PALETTE.GRASS_DRY, variants: 3, tints: 'shrub', contactMax: 1.3,
+    debris: PALETTE.GRASS_DRY, variants: 4, tints: 'shrub', contactMax: 1.3,
     make: bushVariant,
-    base: { seed: 157, w: 1.5, h: 1.15, cell: 'grassTuft', cards: 3, top: false },
+    // hVar 0.52 and a wider width roll: a bed of 263 of these must not be a
+    // repeating unit, and scale plus yaw alone was not enough.
+    base: { seed: 157, w: 1.45, h: 1.15, hVar: 0.52, build: makeGrassClump },
   },
   groundcover: {
     label: 'Groundcover', tier: TIER.TINY, h: 0.42, rad: 1.2, cap: 2600, clear: 0.0, sep: 0.85,
-    debris: PALETTE.HEDGE, variants: 2, tints: 'shrub', contactMax: 2.4,
-    // A mat, so it is built as a slab (depth) rather than crossed cards, and it
-    // keeps its top card — from the game camera the top card IS the plant.
-    //
-    // AND THAT IS EXACTLY WHY IT HAD TO SHRINK. At w 2.6 / depth 2.0 the ridge
-    // cards makeBush lays on top are a 2.5 x 2.4 m near-horizontal rectangle
-    // 35 cm off the ground, and under-planting drops these beside street trees
-    // — which on a plaza means on the paving. On the `crowd` preset that read
-    // as four hard-edged bright green rectangles lying on the pavement with
-    // nothing under them: a misplaced object, not a plant. At 1.7 x 1.3 m a mat
-    // is smaller than the paving module it sits on and reads as a clump, and
-    // where several land together (sep 0.85) they still merge into a bed.
+    debris: PALETTE.HEDGE, variants: 4, tints: 'shrub', contactMax: 2.4,
+    /* It is a MOUND now, not a slab of cards. The old build kept a horizontal
+       top card on the argument that "from the game camera the top card IS the
+       plant" — which was true, and was exactly the problem: a hard-edged
+       rectangle of dotted green lying on the paving with four visible corners
+       and nothing underneath. Four variants, each with a different lobe count
+       and radius jitter, and always on a mulch disc. */
     make: bushVariant,
-    base: { seed: 163, w: 1.7, h: 0.42, cell: 'groundcov', cards: 2, depth: 1.3 },
+    // w 1.4, not 1.7: a mound rests on its whole footprint where a pair of
+    // crossed cards only rested on their 1.3 m depth, so the same nominal width
+    // would have taken the pass radius from 0.66 m to 1.41 and made a
+    // groundcover mat harder to swallow than a bollard.
+    base: { seed: 163, w: 1.4, h: 0.40, build: makeGroundcoverMound },
   },
   agave: {
     label: 'Agave', tier: TIER.SMALL, h: 1.25, rad: 0.7, cap: 900, clear: 0.6, sep: 0.62,
-    debris: PALETTE.GRASS_DRY, variants: 3, tints: 'none', contactMax: 1.4,
-    make: (b, r) => makeRosette(b.cell, b.w * (0.82 + r() * 0.4), b.h * (0.8 + r() * 0.45),
-      2 + Math.floor(r() * 2.9)),
-    base: { seed: 167, w: 1.7, h: 1.25, cell: 'agave' },
+    debris: PALETTE.GRASS_DRY, variants: 4, tints: 'agave', contactMax: 1.4,
+    make: bushVariant,
+    base: { seed: 167, w: 1.7, h: 1.05, hVar: 0.30, build: makeAgave },
   },
 
   planterS: {
     label: 'Planter', tier: TIER.MEDIUM, h: 2.0, rad: 1.0, cap: 900, clear: 1.3, sep: 1.0,
-    debris: PALETTE.PLANTER, tints: 'shrub',
-    geo: () => makePlanter(2.0, 2.0, 0.85),
+    debris: PALETTE.PLANTER, tints: 'shrub', variants: 3,
+    make: (b, r) => makePlanter(2.0, 2.0, 0.85, Math.floor(r() * 8192) + 1, false),
+    base: {},
   },
   planterL: {
     label: 'Raised Planter', tier: TIER.MEDIUM, h: 2.6, rad: 2.4, cap: 700, clear: 2.6, sep: 1.4,
-    debris: PALETTE.PLANTER, tints: 'shrub',
-    geo: () => makePlanter(5.0, 2.2, 1.05),
+    debris: PALETTE.PLANTER, tints: 'shrub', variants: 3,
+    make: (b, r) => makePlanter(5.0, 2.2, 1.05, Math.floor(r() * 8192) + 1, true),
+    base: {},
   },
   pergola: {
     label: 'Shade Structure', tier: TIER.XLARGE, h: 3.2, rad: 3.4, cap: 140, clear: 3.6, sep: 2.2,
@@ -5231,15 +5518,21 @@ const SPECIES = {
     debris: PALETTE.LAMP_POST,
     geo: () => makeParkLamp(),
   },
+  /* Three variants each, and the only thing they roll is the fly angle and the
+     amplitude of the wave — a civic plaza plants these in rows of three, and
+     three identical flags frozen at the identical fold is what the review saw
+     before it noticed anything else. */
   flagUS: {
     label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 100, clear: 1.2, sep: 0.5,
-    debris: PALETTE.STEEL,
-    geo: () => makeFlagpole('sw_coral'),
+    debris: PALETTE.STEEL, variants: 3, tints: 'none',
+    make: (b, r) => makeFlagpole('flagUS', Math.floor(r() * 8192) + 1),
+    base: {},
   },
   flagCity: {
     label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 110, clear: 1.2, sep: 0.5,
-    debris: PALETTE.STEEL,
-    geo: () => makeFlagpole('sw_aqua'),
+    debris: PALETTE.STEEL, variants: 3, tints: 'none',
+    make: (b, r) => makeFlagpole('flagMiami', Math.floor(r() * 8192) + 1),
+    base: {},
   },
 };
 
@@ -5331,6 +5624,14 @@ const BUCKET_MATS = {
   }, 4),
   mulch: () => layer({ map: Textures.sand(), color: 0x8a6a4c, roughness: 1.0 }, 4),
   sandPit: () => layer({ map: Textures.sand(), roughness: 1.0 }, 4),
+  /* The playground's poured-rubber safety surface.
+     Deliberately a merged GROUND bucket rather than part of the playground
+     geometry: worldBuild measures the lowest fifth of a prop's mesh to derive
+     its physics footprint, so a 12 x 8 m mat welded to the frame would take the
+     playground's pass radius from ~1.2 m to over 3 and quietly make it one of
+     the hardest objects in the city to swallow. As a surface it costs nothing
+     and reads exactly the same. */
+  safetyMat: () => layer({ map: Textures.sand(), color: 0x9d6a8c, roughness: 0.98 }, 4),
   courtHard: () => layer({ color: PALETTE.PATINA, roughness: 0.82 }, 4),
   courtClay: () => layer({ color: PALETTE.TERRACOTTA, roughness: 0.95 }, 4),
   courtLine: () => layer({ color: PALETTE.ROAD_LINE, roughness: 0.7 }, 6),
@@ -6526,9 +6827,14 @@ function parkFeature(ctx, B, b, rng, y) {
     }
     stats.features++;
   } else if (small > 20 && roll < 0.62) {
-    /* Playground on sand. */
+    /* Playground on sand, with a poured-rubber safety surface under the frame
+       itself in a contrasting colour — the thing every municipal playground
+       has under the fall zone, and the thing that stops the frame reading as
+       furniture standing loose in a sandpit. */
     const pw = Math.min(16, b.w * 0.5), pd = Math.min(12, b.d * 0.5);
     B.add('sandPit', tile(pw, pd, cx, cz, y + 0.055, 5));
+    B.add('safetyMat', tile(Math.min(pw - 0.6, 11.5), Math.min(pd - 0.6, 7.5),
+      cx + 0.2, cz, y + 0.062, 4));
     B.add('kerb', box(pw + 0.4, 0.26, 0.3, cx, y + 0.13, cz - pd / 2, 1));
     B.add('kerb', box(pw + 0.4, 0.26, 0.3, cx, y + 0.13, cz + pd / 2, 1));
     B.add('kerb', box(0.3, 0.26, pd, cx - pw / 2, y + 0.13, cz, 1));
@@ -6818,9 +7124,17 @@ function plazaBlock(ctx, B, b, rng) {
 }
 
 function placeSculpture(ctx, x, z, rng, force = false, dy = 0) {
+  /* THE ACCENT IS PER INSTANCE, AND THE PLINTH IS NOT.
+     Every sculpture in the city was one flat hot pink from the plinth up,
+     because the old material was `painted(0xffffff)` and an instance colour on
+     that multiplies EVERYTHING. Moving it onto the shared atlas material means
+     the vertex tag can separate them: the stone courses are skinned in
+     stoneFine/stoneCope (aTint 0, so untouched) and only the slabs carry
+     paintTop/paintSide/paintDark, which are in SOLID_TINTABLE. */
   const hex = rng.pick([
     PALETTE.ACCENT_HOT, PALETTE.ACCENT_SUN, PALETTE.ACCENT_AQUA,
     PALETTE.STUCCO_CORAL, PALETTE.ACCENT_LILAC, PALETTE.PATINA,
+    PALETTE.CAR_TEAL, PALETTE.FLOWER_ORANGE,
   ]);
   // Same invariants as plant(): public art is not exempt from the bay or a
   // building, and `force` only ever overrules the occupancy grid.
@@ -6829,9 +7143,12 @@ function placeSculpture(ctx, x, z, rng, force = false, dy = 0) {
   if (!force && !ctx.isFree(x, z, 2.6)) return null;
   ctx.occupy(x, z, 2.6);
   sepTake(x, z, 1.9);
-  const c = ctx.addInstanced('nat-sculpture', () => ({
-    geometry: makeSculpture(0x5c17),
-    material: painted(0xffffff, 0.46, 0.10),
+  // Three geometries rather than one: a plaza landmark repeated ninety times
+  // from one mesh is a row of identical assets wherever two are in frame.
+  const v = posHash(x, z) % 3;
+  const c = ctx.addInstanced(`nat-sculpture-v${v}`, () => ({
+    geometry: makeSculpture(0x5c17 + v * 977),
+    material: atlasMaterial(),
   }), {
     position: _v3.set(x, ctx.Y_WALK + dy, z),
     rotationY: rng() * 6.283,
@@ -6842,7 +7159,7 @@ function placeSculpture(ctx, x, z, rng, force = false, dy = 0) {
     height: 5.4,
     label: 'Public Art',
     kind: 'sculpture',
-    capacity: 90,
+    capacity: 40,
     castShadow: true,
     debrisColor: hex,
   });

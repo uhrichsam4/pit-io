@@ -109,7 +109,7 @@ import * as THREE from 'three';
 import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
 import { WORLD, PALETTE } from '../config.js';
 import { LIGHTING } from '../core/quality.js';
-import { Textures, solid, ground } from '../core/materials.js';
+import { Textures, solid, ground, emissive } from '../core/materials.js';
 import { applyHoleCut } from '../render/groundShader.js';
 import { makeRNG } from '../core/rng.js';
 
@@ -654,6 +654,156 @@ function box(w, hgt, d, x, y, z, rotY = 0) {
   if (rotY) g.rotateY(rotY);
   g.translate(x, y, z);
   return g;
+}
+
+/* ------------------------------------------------ vertex-colour props ---
+ *
+ * WHY EVERY PROP IN HERE IS PAINTED PER VERTEX RATHER THAN PER MESH
+ *
+ * An instanced pool is ONE geometry and ONE material — that is the whole point
+ * of it, and it is why 154 bollards cost one draw call. But a bollard that is
+ * a single flat hex is exactly the defect this pass exists to remove: a cast
+ * iron shaft, a salt-stained foot, a polished rope-wear ring and four bolt
+ * heads are four different values, and they cannot be four materials.
+ *
+ * So the geometry carries them. three multiplies THREE things into the final
+ * albedo — material.color x the geometry's `color` attribute x the instance
+ * colour — which splits cleanly into the three jobs that actually exist:
+ *
+ *   material.color   white. It is only there to get out of the way.
+ *   vertex colour    WHERE the object is light and dark, baked once. Relative,
+ *                    so the same geometry works for a black iron bollard and a
+ *                    painted white one.
+ *   instance colour  WHAT this particular copy is made of, chosen at placement.
+ *
+ * Note the interaction with three's shader defines: the FRAGMENT shader only
+ * multiplies vColor in when USE_COLOR is defined, and WebGLProgram defines that
+ * from `vertexColors || instancingColor`. A material with vertexColors:true
+ * therefore needs every geometry merged into it to HAVE a colour attribute, or
+ * the missing attribute reads as (0,0,0) and that part renders black.
+ */
+
+const _pc = new THREE.Color();
+
+/** Flood a geometry with one linear RGB colour (optionally scaled). */
+function paint(geo, hex, mul = 1) {
+  _pc.set(hex);
+  const n = geo.attributes.position.count;
+  const c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    c[i * 3] = _pc.r * mul;
+    c[i * 3 + 1] = _pc.g * mul;
+    c[i * 3 + 2] = _pc.b * mul;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return geo;
+}
+
+/**
+ * Greyscale a geometry by height, keyed off a lathe/extrusion profile.
+ * `stops` is [[y, multiplier], ...]; each vertex takes the multiplier of the
+ * profile row it belongs to. Matching on y is exact for a lathe (every ring
+ * sits at a profile point's height) and robust to three changing its vertex
+ * ordering, which index arithmetic would not be.
+ */
+function paintByHeight(geo, stops) {
+  const pos = geo.attributes.position;
+  const n = pos.count;
+  const c = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const y = pos.getY(i);
+    let k = stops[0][1], bd = Infinity;
+    for (let s = 0; s < stops.length; s++) {
+      const d = Math.abs(stops[s][0] - y);
+      if (d < bd) { bd = d; k = stops[s][1]; }
+    }
+    c[i * 3] = k; c[i * 3 + 1] = k; c[i * 3 + 2] = k;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  return geo;
+}
+
+/** A square-section bar running from a to b. Used for lattice and rigging. */
+function strut(a, b, w) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+  const len = Math.hypot(dx, dy, dz) || 1e-4;
+  const g = new THREE.BoxGeometry(w, len, w);
+  const q = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    new THREE.Vector3(dx / len, dy / len, dz / len)
+  );
+  g.applyQuaternion(q);
+  g.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+  return g;
+}
+
+/**
+ * Triangular prism running along X — the gable mass of a pitched roof.
+ * Built with duplicated corners and an identity index so its arrises stay hard
+ * under computeVertexNormals AND it still merges with the indexed boxes around
+ * it (mergeGeometries refuses a mixed indexed/non-indexed set).
+ */
+function triPrismX(len, halfZ, hgt) {
+  const L = len / 2, hz = halfZ, h = hgt;
+  const A = [-L, 0, -hz], B = [-L, 0, hz], C = [-L, h, 0];
+  const D = [L, 0, -hz], E = [L, 0, hz], F = [L, h, 0];
+  const tris = [
+    A, B, C,          // west gable
+    D, F, E,          // east gable
+    B, E, F, B, F, C, // south slope
+    A, C, F, A, F, D, // north slope
+    A, D, E, A, E, B, // soffit
+  ];
+  const pos = new Float32Array(tris.length * 3);
+  const uv = new Float32Array(tris.length * 2);
+  for (let i = 0; i < tris.length; i++) {
+    pos[i * 3] = tris[i][0]; pos[i * 3 + 1] = tris[i][1]; pos[i * 3 + 2] = tris[i][2];
+    uv[i * 2] = tris[i][0] * 0.5; uv[i * 2 + 1] = tris[i][1] * 0.5;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(Array.from({ length: tris.length }, (_, i) => i));
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * Box with WORLD-SCALED UVs.
+ *
+ * BoxGeometry maps 0..1 across every face, so a 20 m finger dock wearing a
+ * seven-board timber map got seven boards THREE METRES WIDE — which is why the
+ * marina decking reviewed as "a flat slab with a wood map and no plank seams".
+ * Scaling the UVs by the face's real size against a fixed tile puts the planks
+ * back at their actual width, and `swapTop` turns the deck's boards 90 degrees
+ * so they always run ACROSS the walkway whichever axis the walkway runs on.
+ */
+function deckBox(w, hgt, d, x, y, z, tile, swapTop = false) {
+  const g = new THREE.BoxGeometry(w, hgt, d);
+  const uv = g.attributes.uv;
+  const spans = [[d, hgt], [d, hgt], [w, d], [w, d], [w, hgt], [w, hgt]];
+  for (let f = 0; f < 6; f++) {
+    const top = f === 2 || f === 3;
+    const sa = spans[f][0], sb = spans[f][1];
+    for (let k = 0; k < 4; k++) {
+      const i = f * 4 + k;
+      const u = uv.getX(i), v = uv.getY(i);
+      if (top && swapTop) uv.setXY(i, (v * sb) / tile, (u * sa) / tile);
+      else uv.setXY(i, (u * sa) / tile, (v * sb) / tile);
+    }
+  }
+  uv.needsUpdate = true;
+  g.translate(x, y, z);
+  return g;
+}
+
+/** Nudge a hex a few percent per instance so a family is not one exact value. */
+function jitterHex(hex, rng, amt = 0.14) {
+  const k = 1 - amt / 2 + rng() * amt;
+  const r = Math.min(255, Math.round(((hex >> 16) & 255) * k));
+  const g = Math.min(255, Math.round(((hex >> 8) & 255) * (k + (rng() - 0.5) * 0.05)));
+  const b = Math.min(255, Math.round((hex & 255) * (k + (rng() - 0.5) * 0.05)));
+  return (r << 16) | (Math.max(0, g) << 8) | Math.max(0, b);
 }
 
 /* ============================================================== shader === */
@@ -1885,9 +2035,11 @@ export function buildWater(ctx) {
 
   console.info(
     `[water] ${rects} surface rects | ${shores.length} shorelines / ` +
-    `${Math.round(stats.length)} m of seawall | ${stats.bollards} bollards | ` +
+    `${Math.round(stats.length)} m of seawall | ${stats.bollards} bollards ` +
+    `(${stats.coils} with a coiled line) | ` +
     `${stats.piers} bridge piers | ${stats.steps} step flights | ` +
-    `${marina.pontoons} pontoons / ${marina.piles} piles`
+    `${marina.pontoons} pontoons / ${marina.piles} piles / ` +
+    `${marina.fenders} fenders | ${marina.buoys} channel markers`
   );
   return g;
 }
@@ -1947,6 +2099,7 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
   const vergeGeos = [];
   let totalLen = 0;
   let bollards = 0;
+  let coils = 0;
   let steps = 0;
 
   const layout = ctx.layout;
@@ -2106,9 +2259,16 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
       const t = 0.3 + rng() * 0.4;
       const px = a.x + (b.x - a.x) * t, pz = a.z + (b.z - a.z) * t;
       const nv = nrm[i];
+      /* One hex for 154 bollards is a wallpaper, so each one picks a material
+         out of BOLLARD_FAMILY and then gets jittered a few percent on top. The
+         vertex colours baked into the model are RELATIVE, so the rope-wear
+         ring, the chamfer highlight and the dirty foot survive whichever family
+         this copy lands in. */
       ctx.addInstanced('sea-bollard', bollardFactory, {
         position: new THREE.Vector3(px - nv.x * 0.35, SEAWALL_TOP - 0.02, pz - nv.z * 0.35),
         rotationY: rng() * 6.28,
+        hex: jitterHex(BOLLARD_FAMILY[(rng() * BOLLARD_FAMILY.length) | 0], rng, 0.13),
+        scale: 0.94 + rng() * 0.13,
         capacity: 900,
         tier: ctx.TIER.SMALL,
         radius: 0.36, height: 0.82,
@@ -2121,6 +2281,24 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
         castShadow: true, receiveShadow: true,
       });
       bollards++;
+
+      /* One bollard in four has a line coiled on the coping beside it. Cheapest
+         big win on this whole edge: 164 triangles of rope turns a row of
+         identical castings into a quay somebody ties boats to. Set back from
+         the parapet so it lands on paving rather than half over the water. */
+      if (rng() < 0.26) {
+        ctx.addInstanced('mooring-coil', ropeCoilFactory, {
+          position: new THREE.Vector3(
+            px - nv.x * 1.12, SEAWALL_TOP - 0.01, pz - nv.z * 1.12
+          ),
+          rotationY: rng() * 6.28,
+          scale: 0.88 + rng() * 0.28,
+          capacity: 120,
+          decor: true,
+          castShadow: true, receiveShadow: false,
+        });
+        coils++;
+      }
 
       // One bollard in six has a gull on it. Cheap, and it is the thing that
       // makes a stone edge read as a waterfront.
@@ -2226,7 +2404,7 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
     for (const q of vergeGeos) q.dispose();
   }
 
-  return { length: totalLen, bollards, steps, piers: piers.count };
+  return { length: totalLen, bollards, coils, steps, piers: piers.count };
 }
 
 /* -------------------------------------------------------- bridge piers --- */
@@ -2303,25 +2481,121 @@ function buildBridgePiers(layout, field) {
 /* ---------------------------------------------------- prop factories --- */
 
 /**
- * Cast-iron mooring bollard. Segment counts are deliberately mean: this is the
- * most-instanced thing the module owns (150+ of them along 3 km of quay), so
- * every triangle here is paid for a hundred and fifty times.
+ * Cast-iron mooring bollard — 154 of them along 3 km of quay, which makes this
+ * the most-instanced thing the module owns and the one place where triangles
+ * genuinely have to be argued for.
+ *
+ * WHAT WAS WRONG, AND WHAT EACH ADDITION BUYS
+ * The massing was already right: tapered shaft, mushroom head, flange base.
+ * What it had none of was the evidence that it is a cast object that has been
+ * outdoors for forty years with ropes dragged over it. Four things fix that,
+ * and three of them are free:
+ *
+ *   the chamfer   the flange used to be a raw cylinder with a razor arris — the
+ *                 art bible's number one tell. The profile now steps out to a
+ *                 cast rim, back in over a chamfer, and only then meets the
+ *                 shaft. Zero extra triangles: it is two more rows of a lathe
+ *                 that was already being swept.
+ *   the wear      a bollard's head is polished bright exactly where mooring
+ *                 lines rub it and filthy where the shaft meets the coping.
+ *                 Both are vertex colour on rows the lathe already had.
+ *   the bolts     four heads on the flange. THIS is the only part that costs
+ *                 anything (48 tris) and it is the one that reads at three
+ *                 metres as "bolted down" instead of "extruded".
+ *   the family    154 copies of one hex is a wallpaper. Cast iron black,
+ *                 weathered rust and painted harbour white are chosen per
+ *                 instance and multiplied over the same vertex colours.
+ *
+ * PROFILE: [radius, height, vertex-colour multiplier].
+ * 8 radial segments, so the flange is a true octagon rather than a coarse
+ * circle — and the lowest fifth of the object (the flange) is what the physics
+ * measures as the ground contact, which is exactly what actually rests on the
+ * coping.
  */
+const BOLLARD_PROFILE = [
+  [0.400, 0.000, 0.64],   // foot, in the dirt line against the coping
+  [0.420, 0.062, 0.72],   // cast rim
+  [0.335, 0.126, 1.12],   // chamfer — the bright arris that kills the razor edge
+  [0.248, 0.142, 0.82],   // flange top face, into the shaft
+  [0.186, 0.560, 1.00],   // shaft, tapering
+  [0.254, 0.650, 0.92],   // head underside flare (self-shadowed)
+  [0.252, 0.756, 1.22],   // ROPE WEAR: polished where lines rub
+  [0.000, 0.836, 1.04],   // crown
+];
+
 function bollardFactory() {
   const parts = [];
-  const shaft = new THREE.CylinderGeometry(0.19, 0.25, 0.62, 8, 1);
-  shaft.translate(0, 0.31, 0);
-  parts.push(shaft);
-  const head = new THREE.SphereGeometry(0.24, 8, 3, 0, Math.PI * 2, 0, Math.PI * 0.55);
-  head.scale(1, 0.75, 1);
-  head.translate(0, 0.62, 0);
-  parts.push(head);
-  const foot = new THREE.CylinderGeometry(0.34, 0.38, 0.10, 8, 1);
-  foot.translate(0, 0.05, 0);
-  parts.push(foot);
+  const body = new THREE.LatheGeometry(
+    BOLLARD_PROFILE.map((p) => new THREE.Vector2(p[0], p[1])), 8
+  );
+  paintByHeight(body, BOLLARD_PROFILE.map((p) => [p[1], p[2]]));
+  parts.push(body);
+
+  // Four bolt heads, seated on the flats of the flange top rather than the
+  // corners, so none of them hangs over the chamfer.
+  for (let i = 0; i < 4; i++) {
+    const a = Math.PI / 4 + i * Math.PI / 2;
+    const b = new THREE.BoxGeometry(0.062, 0.028, 0.062);
+    b.rotateY(a);
+    b.translate(Math.sin(a) * 0.295, 0.140, Math.cos(a) * 0.295);
+    parts.push(paint(b, 0xffffff, 0.74));
+  }
+
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   for (const p of parts) p.dispose();
-  return { geometry: geo, material: solid({ color: PALETTE.BOLLARD_DARK, roughness: 0.55, metalness: 0.25 }) };
+  return {
+    geometry: geo,
+    // White base: the family colour arrives per instance, the light-and-dark
+    // arrives from the vertex colours above. See the block at the top of the
+    // prop helpers for why it has to be split that way.
+    material: solid({
+      color: 0xffffff, vertexColors: true,
+      roughness: 0.52, metalness: 0.20, envMapIntensity: 0.55,
+      name: 'quay-bollard',
+    }),
+  };
+}
+
+/**
+ * What 154 bollards are made of. Weighted: a working quay is mostly cast iron,
+ * with rust where the paint has gone and a few painted white ones at the
+ * visitor berths.
+ */
+const BOLLARD_FAMILY = [
+  0x4a5250, 0x4a5250, 0x4a5250, 0x4a5250, 0x434b49, 0x3d4644,  // cast iron
+  0x7d5843, 0x8c6147, 0x6e4e3c,                                 // weathered rust
+  0xe2dac6, 0xd6ccb6,                                           // painted white
+  0x2f3a3c,                                                     // tarred black
+];
+
+/**
+ * Coiled mooring line on the coping. The cheapest possible way to say that the
+ * quay is used by somebody: two flat rings of rope and a tail, on one bollard
+ * in four, at 164 triangles.
+ */
+function ropeCoilFactory() {
+  const parts = [];
+  const outer = new THREE.TorusGeometry(0.34, 0.045, 4, 10);
+  outer.rotateX(Math.PI / 2);
+  outer.translate(0, 0.046, 0);
+  parts.push(paint(outer, 0xcbb188, 1.00));
+  const inner = new THREE.TorusGeometry(0.235, 0.044, 4, 9);
+  inner.rotateX(Math.PI / 2);
+  inner.translate(0.035, 0.104, -0.02);
+  parts.push(paint(inner, 0xcbb188, 0.86));
+  const tail = new THREE.BoxGeometry(0.072, 0.072, 0.36);
+  tail.rotateY(0.62);
+  tail.translate(0.30, 0.040, 0.28);
+  parts.push(paint(tail, 0xcbb188, 0.93));
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
+  return {
+    geometry: geo,
+    material: solid({
+      color: 0xffffff, vertexColors: true,
+      roughness: 0.92, metalness: 0.0, name: 'mooring-rope',
+    }),
+  };
 }
 
 function ladderFactory() {
@@ -2385,60 +2659,461 @@ function gullFactory() {
   return { geometry: geo, material: solid({ color: 0xf6f2e6, roughness: 0.75, metalness: 0.0 }) };
 }
 
-function buoyFactory() {
+/* ------------------------------------------------------ channel markers --- */
+
+/**
+ * IALA region B lateral marks, built as TWO GENUINELY DIFFERENT OBJECTS.
+ *
+ * The thing that was here before was a cylinder with a cone on it, 48
+ * triangles, tinted red or green per instance — a saturated traffic cone
+ * bobbing in the bay. Colour was the only thing separating a port mark from a
+ * starboard one, which is backwards: on the water you read the SHAPE first,
+ * because at dusk and at distance the colour has gone long before the
+ * silhouette has. So there are two models:
+ *
+ *   green CAN   flat-topped cylinder, square/can topmark. Port hand.
+ *   red NUN     conical shoulder, cone topmark. Starboard hand.
+ *
+ * and they alternate by which bank of the channel they sit on, not by a hex.
+ *
+ * WHAT EACH PIECE IS FOR
+ *   the waterline   a float is wider below the surface than above it and it is
+ *                   stained where it sits. A wetted collar in algae green, a
+ *                   dark boot-top band straddling the surface and a clean
+ *                   painted topside above it is the single detail that stops
+ *                   this reading as a cone stuck in a plane of water.
+ *   the number      a bone plate bolted to two sides with a dark numeral. Real
+ *                   marks are numbered and it is what you see from a boat.
+ *   the lattice     four tapered legs and a ring. A mark carries its light on
+ *                   an open steel frame, and that openwork against the sky is
+ *                   most of the silhouette from the game camera.
+ *   the reflector   crossed radar plates under the lantern.
+ *   the lantern     housing here, LENS IN A SEPARATE EMISSIVE POOL — a pool is
+ *                   one material, and the one thing on this object that has to
+ *                   glow after dark cannot be the same material as the paint.
+ *   the pennant     a slack mooring line sagging from a hull lug into the
+ *                   water. Deliberately kept above the lowest fifth of the
+ *                   geometry so it does not inflate the measured footprint.
+ *
+ * Ten copies in the whole city, so this can afford ~520 triangles where the
+ * bollard cannot afford 160.
+ */
+
+/** Local height of the water surface through the buoy. Placement subtracts it. */
+const BUOY_WL = 0.40;
+
+function buoyFactory(kind) {
+  const red = kind === 'red';
   const parts = [];
-  const body = new THREE.CylinderGeometry(0.34, 0.42, 1.0, 8, 1);
-  body.translate(0, 0.5, 0);
-  parts.push(body);
-  const top = new THREE.ConeGeometry(0.30, 0.62, 8);
-  top.translate(0, 1.28, 0);
-  parts.push(top);
+  const SEG = 12;
+
+  const HULL = red ? 0xcf3a2e : 0x2f9b52;   // deep signal red / channel green
+  const ALGAE = 0x4f5b40;                   // the stain at the tide line
+  const BOOT = 0x23282b;                    // boot-top band
+  const STEEL = 0x9aa19e;                   // galvanised lattice
+  const DARK = 0x4e5658;                    // lantern housing, fittings
+  const PLATE = 0xe9e1cd;                   // number board
+  const INK = 0x262b2f;                     // the numeral
+  const CHAIN = 0x6d5b4b;                   // rusted pennant
+
+  /** Open tube (no caps) between two heights. */
+  const tube = (rTop, rBot, y0, y1, hex, mul, seg = SEG) => {
+    const g = new THREE.CylinderGeometry(rTop, rBot, y1 - y0, seg, 1, true);
+    g.translate(0, (y0 + y1) / 2, 0);
+    parts.push(paint(g, hex, mul));
+  };
+  /** Capped drum. */
+  const drum = (rTop, rBot, y0, y1, hex, mul, seg = SEG) => {
+    const g = new THREE.CylinderGeometry(rTop, rBot, y1 - y0, seg, 1, false);
+    g.translate(0, (y0 + y1) / 2, 0);
+    parts.push(paint(g, hex, mul));
+  };
+  const plate = (w, h, d, x, y, z, hex, mul) =>
+    parts.push(paint(box(w, h, d, x, y, z), hex, mul));
+
+  /* ---- float: wetted collar, boot-top, clean topside ---- */
+  tube(0.58, 0.44, -0.28, 0.18, ALGAE, 0.62);      // submerged skirt
+  tube(0.58, 0.58, 0.18, 0.52, ALGAE, 1.00);       // stained collar, straddles WL
+  tube(0.575, 0.575, 0.52, 0.62, BOOT, 1.00);      // boot-top band
+
+  /* ---- hull: the shape that tells you which side of the channel you are on */
+  let deckTop;
+  if (red) {
+    tube(0.50, 0.55, 0.62, 1.06, HULL, 1.00);      // barrel
+    tube(0.215, 0.50, 1.06, 1.42, HULL, 0.94);     // nun shoulder
+    drum(0.215, 0.215, 1.42, 1.49, HULL, 0.86);
+    deckTop = 1.49;
+  } else {
+    tube(0.55, 0.55, 0.62, 1.14, HULL, 1.00);      // can
+    drum(0.55, 0.55, 1.14, 1.21, HULL, 0.86);
+    deckTop = 1.21;
+  }
+
+  /* ---- number board on two sides ---- */
+  const plateY = 0.90;
+  for (const s of [1, -1]) {
+    plate(0.05, 0.34, 0.40, s * 0.535, plateY, 0, PLATE, 1.00);
+    // A stylised numeral: a stem and a foot. Two bars read as a digit from the
+    // game camera and as signage from the deck of a boat.
+    plate(0.022, 0.19, 0.055, s * 0.567, plateY + 0.035, -0.04, INK, 1.00);
+    plate(0.022, 0.045, 0.16, s * 0.567, plateY - 0.075, 0.00, INK, 1.00);
+  }
+
+  /* ---- lattice mast ---- */
+  const m0 = deckTop, m1 = deckTop + 0.60;
+  const legBase = 0.19, legTop = 0.085;
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    parts.push(paint(strut(
+      [dx * legBase, m0, dz * legBase], [dx * legTop, m1, dz * legTop], 0.05
+    ), STEEL, 1.00));
+  }
+  const ringY = m0 + 0.28;
+  const rr = legBase + (legTop - legBase) * (0.28 / 0.60);
+  for (let i = 0; i < 4; i++) {
+    const a = [[rr, 0], [0, rr], [-rr, 0], [0, -rr]][i];
+    const b = [[0, rr], [-rr, 0], [0, -rr], [rr, 0]][i];
+    parts.push(paint(strut([a[0], ringY, a[1]], [b[0], ringY, b[1]], 0.038), STEEL, 0.90));
+  }
+
+  /* ---- radar reflector: crossed plates, wider than the mast on purpose ---- */
+  const rfY = m0 + 0.44;
+  plate(0.34, 0.28, 0.018, 0, rfY, 0, STEEL, 1.06);
+  plate(0.018, 0.28, 0.34, 0, rfY, 0, STEEL, 0.94);
+
+  /* ---- lantern (the lens itself is a separate emissive pool) ---- */
+  plate(0.24, 0.045, 0.24, 0, m1 + 0.022, 0, DARK, 1.00);
+  drum(0.085, 0.105, m1 + 0.045, m1 + 0.145, DARK, 0.92, 8);
+  drum(0.100, 0.100, m1 + 0.275, m1 + 0.315, DARK, 1.06, 8);   // cap over the lens
+
+  /* ---- topmark: cone on the nun, can on the can ---- */
+  parts.push(paint(strut([0, m1 + 0.315, 0], [0, m1 + 0.42, 0], 0.05), STEEL, 1.00));
+  if (red) {
+    const t = new THREE.ConeGeometry(0.26, 0.38, 10);
+    t.translate(0, m1 + 0.61, 0);
+    parts.push(paint(t, HULL, 1.00));
+  } else {
+    const t = new THREE.CylinderGeometry(0.225, 0.225, 0.34, 10);
+    t.translate(0, m1 + 0.59, 0);
+    parts.push(paint(t, HULL, 1.00));
+  }
+
+  /* ---- slack mooring pennant ---- */
+  plate(0.09, 0.11, 0.13, 0.51, 0.80, 0, CHAIN, 1.00);
+  const sag = [[0.52, 0.79], [0.68, 0.66], [0.80, 0.54], [0.87, 0.45], [0.91, 0.39]];
+  for (let i = 1; i < sag.length; i++) {
+    parts.push(paint(strut(
+      [sag[i - 1][0], sag[i - 1][1], 0], [sag[i][0], sag[i][1], 0], 0.055
+    ), CHAIN, i % 2 ? 1.00 : 0.86));
+  }
+
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   for (const p of parts) p.dispose();
-  return { geometry: geo, material: solid({ color: 0xffffff, roughness: 0.55, metalness: 0.05 }) };
+  return {
+    geometry: geo,
+    material: solid({
+      color: 0xffffff, vertexColors: true,
+      roughness: 0.62, metalness: 0.08, envMapIntensity: 0.6,
+      name: `nav-buoy-${kind}`,
+    }),
+  };
+}
+
+/** Where the lantern lens sits above the buoy's own origin. */
+function buoyLensY(kind) {
+  return (kind === 'red' ? 1.49 : 1.21) + 0.60 + 0.21;
+}
+
+/**
+ * The lens. Its own pool because it is the one part of a channel marker that
+ * has to be a light rather than a painted surface, and a pool is one material.
+ * MeshBasicMaterial ignores the sun, so it holds its value as the rig winds
+ * down and the markers are still visibly lit at the darkest stop — which is
+ * the whole point of putting a lantern on a buoy.
+ */
+function buoyLensFactory() {
+  const g = new THREE.CylinderGeometry(0.095, 0.095, 0.13, 10);
+  return { geometry: g, material: emissive(0xffffff, 1.0) };
 }
 
 /* ------------------------------------------------------------ marinas --- */
 
 /**
- * Floating pontoons in the basins cityLayout notched into the shore. Decking
- * for one basin is merged into a single consumable mesh — the fingers are all
- * one structure, so they are eaten as one — and the piles and cleats are slots
- * in the global instanced pools.
+ * Vertical dock fender hung off the outboard edge of a finger, at 3 m spacing.
+ * The bottom third sits under the surface, so it reads as floating against the
+ * dock rather than as a stick glued to it.
+ */
+function dockFenderFactory() {
+  const parts = [];
+  const body = new THREE.CylinderGeometry(0.115, 0.105, 0.46, 8, 1);
+  body.translate(0, -0.24, 0);
+  parts.push(paint(body, 0x24262a, 1.0));
+  const cap = new THREE.CylinderGeometry(0.075, 0.115, 0.06, 8, 1);
+  cap.translate(0, 0.02, 0);
+  parts.push(paint(cap, 0x24262a, 1.28));
+  const lanyard = new THREE.BoxGeometry(0.035, 0.20, 0.035);
+  lanyard.translate(0, 0.12, 0);
+  parts.push(paint(lanyard, 0xcbb188, 1.0));
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  for (const p of parts) p.dispose();
+  return {
+    geometry: geo,
+    material: solid({
+      color: 0xffffff, vertexColors: true,
+      roughness: 0.86, metalness: 0.0, name: 'dock-fender',
+    }),
+  };
+}
+
+/** Plank tile. 7 boards over 1.05 m puts the seams at 15 cm, which is decking. */
+const PLANK_TILE = 1.05;
+
+/**
+ * THE FUEL DOCK.
+ *
+ * What stood here was a 2.2 m cube wearing the same timber map as the deck —
+ * a crate on the pontoon, and the single worst object in this module. A fuel
+ * dock is a small building and a machine, so it is built as both: a clapboard
+ * hut with corner boards, a real pitched roof with a ridge and eaves, a
+ * serving hatch with its shutter propped open on struts, a pump with a display
+ * panel and a hose slung to its holster, and a sign.
+ *
+ * Everything except the timber goes into `trim`, which is one white material
+ * with vertex colours — see the prop-helper header. That keeps a hut, a roof,
+ * a machine, a life ring and a sign at ONE extra draw call per marina.
+ */
+function buildFuelDock(deck, trim, cx, cz, y0) {
+  const WHITE = 0xf4efe2;      // clapboard
+  const TRIM = 0xfdf8ec;       // corner boards, fascia, joinery
+  const ROOF = 0x2b8f8a;       // Miami marina teal
+  const DARK = 0x39424a;       // openings, hardware
+  const METAL = 0x8d9694;
+  const ACCENT = PALETTE.NEON_YELLOW;
+  const INK = PALETTE.SIGN_DARK;
+  const RING = PALETTE.BARRIER_ORANGE;
+
+  const T = (w, h, d, x, y, z, hex, mul = 1, rotY = 0) =>
+    trim.push(paint(box(w, h, d, cx + x, y, cz + z, rotY), hex, mul));
+
+  /* ---- hut ---------------------------------------------------------- */
+  const wallY0 = y0 + 0.08, wallY1 = wallY0 + 1.95;
+  deck.push(withFlatColour(
+    deckBox(2.30, 0.08, 2.20, cx, y0 + 0.04, cz, PLANK_TILE), 0.86
+  ));
+  T(2.10, 1.95, 2.00, 0, (wallY0 + wallY1) / 2, 0, WHITE, 1.00);
+
+  // Lapped siding: one proud band per course, which gives every wall the same
+  // shadow line for six boxes rather than six per face.
+  for (let k = 0; k < 6; k++) {
+    T(2.16, 0.045, 2.06, 0, wallY0 + 0.28 * (k + 1), 0, WHITE, 0.86);
+  }
+  // Corner boards — the trim that makes siding read as siding.
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      T(0.10, 1.95, 0.10, sx * 1.04, (wallY0 + wallY1) / 2, sz * 0.99, TRIM, 1.04);
+    }
+  }
+
+  /* ---- roof --------------------------------------------------------- */
+  T(2.44, 0.10, 2.30, 0, wallY1 + 0.05, 0, TRIM, 1.06);             // fascia
+  const eaveY = wallY1 + 0.10;
+  const gable = triPrismX(2.10, 1.00, 0.56);
+  gable.translate(cx, eaveY, cz);
+  trim.push(paint(gable, WHITE, 0.98));
+  /* Roof planes, laid ON the gable rather than near it. Each is slid down its
+     own slope so it finishes flush at the ridge and oversails at the eave, then
+     lifted along the slope NORMAL by half its thickness — do it with a vertical
+     offset instead and a 29 degree plane sinks into the mass it is covering. */
+  const pitch = Math.atan2(0.56, 1.00);
+  const slopeLen = Math.hypot(0.56, 1.00);
+  const planeLen = 1.46;
+  const slide = (planeLen - slopeLen) / 2;
+  for (const s of [1, -1]) {
+    const g = new THREE.BoxGeometry(2.52, 0.08, planeLen);
+    g.rotateX(s * pitch);
+    g.translate(
+      cx,
+      eaveY + 0.28 - Math.sin(pitch) * slide + Math.cos(pitch) * 0.045,
+      cz + s * (0.50 + Math.cos(pitch) * slide + Math.sin(pitch) * 0.045)
+    );
+    trim.push(paint(g, ROOF, s > 0 ? 1.00 : 0.88));
+  }
+  T(2.56, 0.10, 0.20, 0, eaveY + 0.58, 0, ROOF, 1.14);              // ridge cap
+
+  /* ---- serving hatch, facing the fingers ----------------------------- */
+  const winY = wallY0 + 0.98;
+  T(0.09, 0.72, 1.10, 1.03, winY, 0, DARK, 0.85);                   // the opening
+  for (const s of [-1, 1]) T(0.07, 0.86, 0.09, 1.07, winY, s * 0.595, TRIM, 1.02);
+  T(0.07, 0.09, 1.28, 1.07, winY + 0.435, 0, TRIM, 1.02);           // head
+  T(0.24, 0.09, 1.32, 1.14, winY - 0.435, 0, TRIM, 1.06);           // sill
+  deck.push(withFlatColour(
+    deckBox(0.34, 0.06, 1.24, cx + 1.20, winY - 0.36, cz, PLANK_TILE), 1.04
+  ));                                                                // counter
+  // Shutter propped open above the hatch, on two struts.
+  {
+    const sh = new THREE.BoxGeometry(0.86, 0.06, 1.24);
+    sh.rotateZ(0.56);
+    sh.translate(cx + 1.05 + 0.36, winY + 0.50 + 0.23, cz);
+    trim.push(paint(sh, TRIM, 1.08));
+    for (const s of [-1, 1]) {
+      trim.push(paint(strut(
+        [cx + 1.06, winY + 0.22, cz + s * 0.50],
+        [cx + 1.42, winY + 0.74, cz + s * 0.50], 0.045
+      ), METAL, 1.0));
+    }
+  }
+
+  /* ---- door, sign, life ring ---------------------------------------- */
+  T(0.86, 1.72, 0.07, -0.28, wallY0 + 0.86, -1.02, ROOF, 0.80);
+  T(0.07, 0.07, 0.07, 0.06, wallY0 + 0.92, -1.07, METAL, 1.10);
+  T(0.10, 0.40, 1.40, 1.10, wallY1 - 0.28, 0, ACCENT, 1.00);        // sign board
+  T(0.04, 0.13, 1.02, 1.16, wallY1 - 0.28, 0, INK, 1.00);           // lettering
+  {
+    // Hung flat on the landward wall: a torus is born in the XY plane, so it
+    // has to be turned onto the wall BEFORE it is moved onto it.
+    const ring = new THREE.TorusGeometry(0.23, 0.055, 4, 10);
+    ring.rotateY(Math.PI / 2);
+    ring.translate(cx - 1.09, wallY0 + 1.22, cz + 0.52);
+    trim.push(paint(ring, RING, 1.0));
+  }
+
+  /* ---- the pump ------------------------------------------------------ */
+  const px = 0.52, pz = 1.90;
+  T(0.66, 0.09, 0.54, px, y0 + 0.045, pz, METAL, 0.80);
+  T(0.54, 1.28, 0.44, px, y0 + 0.09 + 0.64, pz, WHITE, 1.00);
+  T(0.05, 0.40, 0.32, px + 0.28, y0 + 1.05, pz, DARK, 0.90);        // display
+  T(0.58, 0.10, 0.48, px, y0 + 0.78, pz, ACCENT, 1.00);             // band
+  T(0.60, 0.12, 0.50, px, y0 + 1.43, pz, METAL, 1.06);              // cap
+  T(0.13, 0.30, 0.15, px - 0.30, y0 + 0.92, pz + 0.10, DARK, 1.0);  // holster
+  {
+    const hose = new THREE.TorusGeometry(0.26, 0.035, 4, 8, Math.PI);
+    hose.rotateZ(Math.PI);
+    hose.translate(cx + px - 0.04, y0 + 1.26, cz + pz + 0.24);
+    trim.push(paint(hose, 0x2a2c30, 1.0));
+  }
+
+  /* ---- hose reel on the other side of the hut ------------------------ */
+  const rx = -0.55, rz = -1.50;
+  for (const s of [-1, 1]) T(0.09, 0.66, 0.09, rx, y0 + 0.33, rz + s * 0.22, METAL, 0.92);
+  {
+    const dr = new THREE.CylinderGeometry(0.24, 0.24, 0.34, 10);
+    dr.rotateX(Math.PI / 2);
+    dr.translate(cx + rx, y0 + 0.66, cz + rz);
+    trim.push(paint(dr, DARK, 1.0));
+    for (const s of [-1, 1]) {
+      const fl = new THREE.CylinderGeometry(0.29, 0.29, 0.03, 10);
+      fl.rotateX(Math.PI / 2);
+      fl.translate(cx + rx, y0 + 0.66, cz + rz + s * 0.19);
+      trim.push(paint(fl, ACCENT, 0.92));
+    }
+  }
+}
+
+/**
+ * Floating pontoons in the basins cityLayout notched into the shore.
+ *
+ * There are only two of these in the city and each one is a whole marina, so
+ * this is the one place in the module where geometry is worth spending. What
+ * the reviewed version was missing was not massing — the spine, fingers,
+ * gangway and piles were all right — but every cue that a pontoon FLOATS:
+ *
+ *   the strake     a rubbing rail standing 5 cm proud all round every deck,
+ *                  with its top above the walking surface. That lip and the
+ *                  shadow under it is what separates a floating dock from a
+ *                  plank lying on the water.
+ *   the freeboard  the float below the deck is inset, so the deck edge
+ *                  oversails it and there is a dark reveal at the waterline
+ *                  instead of one flush slab face.
+ *   the planks     see deckBox(). The wood map was stretched one tile per
+ *                  face, i.e. 3 m boards.
+ *   the fenders    black cylinders at 3 m along both outboard edges of every
+ *                  finger, half in the water.
+ *
+ * The decking for one basin merges into a single consumable object — the
+ * fingers are one structure, so they are eaten as one — while the piles,
+ * cleats and fenders are slots in global instanced pools.
  */
 function buildMarinas(ctx, group, layout, rng) {
   const basins = layout.basins || [];
   let pontoons = 0;
   let piles = 0;
+  let fenders = 0;
 
   const deckMat = solid({
     map: Textures.wood(512, PALETTE.WOOD_DECK, 7),
+    vertexColors: true,
     roughness: 0.88,
     metalness: 0.0,
+  });
+  /* Everything on the dock that is not timber: hut, roof, pump, sign, ring.
+     One material, coloured per vertex, so a marina costs two draw calls. */
+  const trimMat = solid({
+    color: 0xffffff, vertexColors: true,
+    roughness: 0.58, metalness: 0.10, envMapIntensity: 0.7,
+    name: 'marina-trim',
   });
 
   const DECK_TOP = WATER_Y + 0.42;
   const DECK_BOT = WATER_Y - 0.16;
-  const DECK_H = DECK_TOP - DECK_BOT;
-  const DECK_Y = (DECK_TOP + DECK_BOT) / 2;
+  const SLAB_BOT = DECK_TOP - 0.20;      // walking slab; the float sits below it
+  const STRAKE_TOP = DECK_TOP + 0.05;    // the 5 cm lip
 
   for (const bs of basins) {
-    const parts = [];
+    const deck = [];
+    const trim = [];
     const inset = 5;
     const zA = bs.z0 + inset, zB = bs.z1 - inset;
     const xA = bs.x0 + 6;
     const spineZ0 = zA, spineZ1 = zB;
     if (spineZ1 - spineZ0 < 6) continue;
 
-    // Main walkway, running along the sheltered (landward) side of the basin.
-    parts.push(box(2.4, DECK_H, spineZ1 - spineZ0, xA, DECK_Y, (spineZ0 + spineZ1) / 2));
+    /** Rubbing strake round one deck rectangle: four rails, 5 cm proud. */
+    const strake = (x0, z0, x1, z1) => {
+      const yc = STRAKE_TOP - 0.10;
+      for (const x of [x0, x1]) {
+        deck.push(withFlatColour(
+          deckBox(0.10, 0.20, (z1 - z0) + 0.10, x, yc, (z0 + z1) / 2, PLANK_TILE), 1.14
+        ));
+      }
+      for (const z of [z0, z1]) {
+        deck.push(withFlatColour(
+          deckBox((x1 - x0) + 0.10, 0.20, 0.10, (x0 + x1) / 2, yc, z, PLANK_TILE), 1.14
+        ));
+      }
+    };
 
-    // Finger docks projecting toward the bay mouth.
+    /* ---- spine: the main walkway along the sheltered side of the basin --- */
+    const spineW = 2.4;
+    const spineL = spineZ1 - spineZ0;
+    const spineC = (spineZ0 + spineZ1) / 2;
+    deck.push(withFlatColour(
+      deckBox(spineW, DECK_TOP - SLAB_BOT, spineL, xA, (DECK_TOP + SLAB_BOT) / 2, spineC,
+        PLANK_TILE), 1.0
+    ));
+    deck.push(withFlatColour(
+      deckBox(spineW - 0.28, SLAB_BOT - DECK_BOT, spineL - 0.28, xA,
+        (SLAB_BOT + DECK_BOT) / 2, spineC, PLANK_TILE), 0.58
+    ));
+    strake(xA - spineW / 2, spineZ0, xA + spineW / 2, spineZ1);
+
+    /* ---- fingers -------------------------------------------------------- */
     const fingerLen = Math.min(20, (bs.x1 - xA) - 8);
-    const nFingers = Math.max(2, Math.floor((spineZ1 - spineZ0) / 9));
+    const nFingers = Math.max(2, Math.floor(spineL / 9));
     for (let i = 0; i < nFingers; i++) {
-      const z = spineZ0 + ((i + 0.5) / nFingers) * (spineZ1 - spineZ0);
-      parts.push(box(fingerLen, DECK_H, 1.5, xA + 1.2 + fingerLen / 2, DECK_Y, z));
+      const z = spineZ0 + ((i + 0.5) / nFingers) * spineL;
+      const fx0 = xA + 1.2, fx1 = fx0 + fingerLen, fcx = (fx0 + fx1) / 2;
+      const fw = 1.5;
+      // swapTop: the boards turn 90 degrees so they still run ACROSS the
+      // walkway on a finger that runs along X.
+      deck.push(withFlatColour(
+        deckBox(fingerLen, DECK_TOP - SLAB_BOT, fw, fcx, (DECK_TOP + SLAB_BOT) / 2, z,
+          PLANK_TILE, true), 0.97
+      ));
+      deck.push(withFlatColour(
+        deckBox(fingerLen - 0.28, SLAB_BOT - DECK_BOT, fw - 0.28, fcx,
+          (SLAB_BOT + DECK_BOT) / 2, z, PLANK_TILE), 0.56
+      ));
+      strake(fx0, z - fw / 2, fx1, z + fw / 2);
+
       // Piles at the outboard end and midway: what actually holds a pontoon.
       for (const fx of [xA + 3, xA + fingerLen]) {
         ctx.addInstanced('dock-pile', pileFactory, {
@@ -2451,20 +3126,50 @@ function buildMarinas(ctx, group, layout, rng) {
         ctx.addInstanced('dock-cleat', cleatFactory, {
           position: new THREE.Vector3(xA + 4 + c * (fingerLen / 3.4), DECK_TOP, z + 0.62),
           rotationY: Math.PI / 2,
-          capacity: 500, decor: true, castShadow: false, receiveShadow: false,
+          capacity: 700, decor: true, castShadow: false, receiveShadow: false,
         });
+      }
+      // Fenders on both berthing edges, 3 m apart.
+      for (let f = 0; ; f++) {
+        const fxp = fx0 + 1.4 + f * 3;
+        if (fxp > fx1 - 0.7) break;
+        for (const s of [-1, 1]) {
+          ctx.addInstanced('dock-fender', dockFenderFactory, {
+            position: new THREE.Vector3(fxp, DECK_TOP - 0.02, z + s * (fw / 2 + 0.10)),
+            rotationY: rng() * 6.28,
+            scale: 0.92 + rng() * 0.18,
+            capacity: 400, decor: true, castShadow: true, receiveShadow: false,
+          });
+          fenders++;
+        }
       }
     }
 
-    // Gangway from the quay to the spine — the thing that makes it read as
-    // floating rather than as a plank lying on the water.
-    parts.push(box(7.0, 0.22, 1.5, bs.x0 + 1.5, DECK_TOP + 0.16, (spineZ0 + spineZ1) / 2));
+    /* ---- gangway from the quay, with treads ---------------------------- */
+    deck.push(withFlatColour(
+      deckBox(7.0, 0.20, 1.6, bs.x0 + 1.5, DECK_TOP + 0.16, spineC, PLANK_TILE), 1.04
+    ));
+    for (const s of [-1, 1]) {
+      deck.push(withFlatColour(
+        deckBox(7.0, 0.16, 0.10, bs.x0 + 1.5, DECK_TOP + 0.30, spineC + s * 0.80,
+          PLANK_TILE), 1.16
+      ));
+    }
 
-    // Fuel dock: a small kiosk at the head of the spine.
-    parts.push(box(2.2, 2.0, 2.2, xA, WATER_Y + 1.4, spineZ0 + 1.4));
+    /* ---- cleats along the spine, between the fingers -------------------- */
+    for (let cz = spineZ0 + 3; cz < spineZ1 - 2; cz += 5.5) {
+      ctx.addInstanced('dock-cleat', cleatFactory, {
+        position: new THREE.Vector3(xA - spineW / 2 + 0.42, DECK_TOP, cz),
+        rotationY: 0,
+        capacity: 700, decor: true, castShadow: false, receiveShadow: false,
+      });
+    }
+
+    /* ---- the fuel dock at the head of the spine ------------------------- */
+    buildFuelDock(deck, trim, xA, spineZ0 + 2.4, DECK_TOP);
 
     for (let i = 0; i <= 4; i++) {
-      const z = spineZ0 + (i / 4) * (spineZ1 - spineZ0);
+      const z = spineZ0 + (i / 4) * spineL;
       ctx.addInstanced('dock-pile', pileFactory, {
         position: new THREE.Vector3(xA - 1.5, WATER_Y - 1.4, z),
         capacity: 400, decor: true, castShadow: true, receiveShadow: false,
@@ -2472,17 +3177,25 @@ function buildMarinas(ctx, group, layout, rng) {
       piles++;
     }
 
-    const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-    for (const p of parts) p.dispose();
-    const mesh = new THREE.Mesh(geo, deckMat);
-    mesh.name = `pontoon-${bs.name}`;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    ctx.addMesh(mesh, {
+    /* A GROUP, not a Mesh, because the kiosk is white-painted joinery and the
+       decking is timber and those cannot be one material. Consumable's mesh
+       backing only ever touches object.position/quaternion/scale/visible, so a
+       Group falls into the hole exactly as the single mesh did. */
+    const obj = new THREE.Group();
+    obj.name = `pontoon-${bs.name}`;
+    for (const [parts, mat] of [[deck, deckMat], [trim, trimMat]]) {
+      if (!parts.length) continue;
+      const m = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(parts, false), mat);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      obj.add(m);
+      for (const p of parts) p.dispose();
+    }
+    ctx.addMesh(obj, {
       group: 'water',
       position: new THREE.Vector3((bs.x0 + bs.x1) / 2, DECK_TOP, (bs.z0 + bs.z1) / 2),
       radius: Math.max(bs.x1 - bs.x0, bs.z1 - bs.z0) * 0.42,
-      height: 2.4,
+      height: 3.4,
       tier: ctx.TIER.HUGE,
       label: bs.name,
       kind: 'pontoon',
@@ -2492,27 +3205,47 @@ function buildMarinas(ctx, group, layout, rng) {
     pontoons++;
   }
 
-  /* Channel markers down the river. Cheap, and they tell you at a glance that
-     the bend is a navigable channel rather than a puddle. */
+  /* Channel markers down the river. Red nun on one bank, green can on the
+     other — TWO MODELS, alternating by side, so the pair reads as a marked
+     channel rather than as one prop tinted two ways. */
   const river = layout.river;
+  let buoys = 0;
   for (let x = -180; x < BAY - 20; x += 96) {
     const c = river.centerAt(x), h = river.halfAt(x);
     for (const s of [-1, 1]) {
       if (rng() < 0.35) continue;
-      ctx.addInstanced('nav-buoy', buoyFactory, {
-        position: new THREE.Vector3(x + rng() * 20, WATER_Y - 0.28, c + s * (h - 5)),
+      const kind = s < 0 ? 'red' : 'green';
+      const bx = x + rng() * 20;
+      const bz = c + s * (h - 5);
+      const sc = 0.94 + rng() * 0.12;
+      // The model's own waterline sits BUOY_WL above its origin, so the hull
+      // stain lands exactly on the surface rather than near it. Both offsets
+      // are scaled by the SAME per-instance factor — a lantern sitting at the
+      // unscaled height floats off the top of a buoy that shrank.
+      ctx.addInstanced(`nav-buoy-${kind}`, () => buoyFactory(kind), {
+        position: new THREE.Vector3(bx, WATER_Y - BUOY_WL * sc, bz),
         rotationY: rng() * 6.28,
-        hex: s < 0 ? 0xe8433a : 0x37c05a,
-        capacity: 60,
+        scale: sc,
+        capacity: 40,
         tier: ctx.TIER.MEDIUM,
-        radius: 0.45, height: 1.9,
+        radius: 0.82, height: 2.6,
         label: 'Channel marker', kind: 'buoy',
         castShadow: true, receiveShadow: false,
       });
+      ctx.addInstanced('nav-lantern', buoyLensFactory, {
+        position: new THREE.Vector3(
+          bx, WATER_Y + (buoyLensY(kind) - BUOY_WL) * sc, bz
+        ),
+        scale: sc,
+        hex: s < 0 ? 0xff5a44 : 0x4dff8e,
+        capacity: 40, decor: true,
+        castShadow: false, receiveShadow: false,
+      });
+      buoys++;
     }
   }
 
-  return { pontoons, piles };
+  return { pontoons, piles, fenders, buoys };
 }
 
 /**
