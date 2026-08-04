@@ -24,10 +24,19 @@ const r = await p.evaluate(() => {
 
   const pools = [], groups = new Map();
   let instTris = 0, instCasters = 0, meshTris = 0, meshCount = 0, meshCasters = 0;
+  let dormantPools = 0, dormantTris = 0;
+
+  // A pool that is mounted but hidden costs nothing per frame. The fall-pose
+  // pools are leased on demand and sit hidden until somebody is actually
+  // falling, so counting their geometry alongside the pools that draw every
+  // frame reads as 365 k triangles of waste that is not being spent. Report
+  // them, separately.
+  const drawn = (n) => { let p = n; while (p) { if (!p.visible) return false; p = p.parent; } return true; };
 
   s.traverse((n) => {
     if (n.isInstancedMesh) {
       const t = tri(n.geometry) * n.count;
+      if (!drawn(n)) { dormantPools++; dormantTris += t; return; }
       instTris += t;
       if (n.castShadow) instCasters += t;
       pools.push({ name: n.name || 'inst', count: n.count, triEach: Math.round(tri(n.geometry)),
@@ -51,6 +60,7 @@ const r = await p.evaluate(() => {
   return {
     reported: { drawCalls: info.render.calls, triangles: info.render.triangles },
     instanced: { pools: pools.length, tris: Math.round(instTris), shadowTris: Math.round(instCasters) },
+    dormant: { pools: dormantPools, tris: Math.round(dormantTris) },
     meshes: { count: meshCount, tris: Math.round(meshTris), shadowTris: Math.round(meshCasters) },
     topPools: pools.slice(0, 8),
     topCasters: casters.slice(0, 18),
@@ -60,6 +70,7 @@ const r = await p.evaluate(() => {
 });
 console.log('reported  ', JSON.stringify(r.reported));
 console.log('instanced ', JSON.stringify(r.instanced));
+console.log('dormant   ', JSON.stringify(r.dormant), ' (hidden pools — no draw calls, no per-frame triangles)');
 console.log('meshes    ', JSON.stringify(r.meshes));
 console.log('\ntop pools by triangles:');
 for (const x of r.topPools) console.log(`  ${String(x.name).padEnd(22)} ${String(x.count).padStart(6)} x ${String(x.triEach).padStart(5)} = ${String(x.tris).padStart(8)}  shadow:${x.shadow}`);
