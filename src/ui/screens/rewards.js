@@ -10,7 +10,8 @@
  * claim functions — it never computes a reward itself.
  */
 
-import { esc, shortNum, page, wireNav } from '../shell.js';
+import { esc, shortNum, page, wireNav, icon } from '../shell.js';
+import '../css/rewards.css';
 import { profile } from '../../meta/profile.js';
 import * as progression from '../../meta/progression.js';
 
@@ -98,7 +99,7 @@ function challengeCard(c, i, prog) {
         <div class="bar ch-bar"><i style="width:${pct(p / Math.max(1, c.goal))}"></i></div>
         <div class="ch-foot">
           <span class="num ch-prog">${fmtGoal(p, c)} / ${fmtGoal(c.goal, c)}</span>
-          <span class="ch-rew">+${c.reward.xp} XP<i>·</i>🪙 ${c.reward.coins}</span>
+          <span class="ch-rew">+${c.reward.xp} XP<i>·</i>${icon('coin')} ${c.reward.coins}</span>
         </div>
         ${modeChip}
       </div>
@@ -181,7 +182,7 @@ function tierRewardHtml(reward) {
         <span class="tr-item-name">${esc(reward.item.name)}</span>
       </div>`;
   }
-  if (reward.coins) return `<div class="tr-coins">🪙 <b class="num">${reward.coins}</b></div>`;
+  if (reward.coins) return `<div class="tr-coins">${icon('coin')} <b class="num">${reward.coins}</b></div>`;
   if (reward.xp) return `<div class="tr-xp">⭐ <b class="num">${reward.xp}</b> XP</div>`;
   return '<div class="tr-coins">—</div>';
 }
@@ -311,7 +312,7 @@ export function registerRewards(shell, deps = {}) {
       return page({
         title: 'Rewards',
         actions: `
-          <span class="chip sun coin-chip">🪙 <b class="num" data-coins>${shortNum(profile.data.coins)}</b></span>
+          <span class="chip sun coin-chip">${icon('coin')} <b class="num" data-coins>${shortNum(profile.data.coins)}</b></span>
           <button class="icon-btn" data-nav="settings" aria-label="Settings">⚙</button>`,
         body: bodyHtml(prog, true),
       });

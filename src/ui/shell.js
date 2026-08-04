@@ -21,6 +21,12 @@
  * transitions honour prefers-reduced-motion. Nothing here assumes a mouse.
  */
 
+// The design system travels with the shell rather than with index.html. Every
+// screen depends on this module, so importing it here means the tokens cannot
+// be forgotten by whoever wires the page up — and forgetting them does not
+// degrade gracefully, it renders the entire meta layer as unstyled text.
+import './css/tokens.css';
+
 const MIN_TAP_PX = 44;
 
 export class Shell {
@@ -199,14 +205,24 @@ export class Shell {
   }
 
   /**
-   * Anything interactive must be reachable with a thumb. Enforced rather than
-   * trusted, because a 30 px button is invisible as a bug on a desktop review
-   * and infuriating on a phone.
+   * Normalise controls a screen just rendered.
+   *
+   * The 44 px tap floor is NOT applied here — it lives in tokens.css. This pass
+   * runs once, at mount, so any control a screen builds afterwards (in mount(),
+   * on a tab switch, from a fetch) was created after the pass had already gone
+   * by and kept whatever height its padding gave it. Worse, stamping an inline
+   * min-height beats a screen's own stylesheet, so mounted controls and
+   * dynamically added ones ended up obeying different rules. A stylesheet rule
+   * has no such window and no such asymmetry; CSS owns size, this owns
+   * semantics.
+   *
+   * A <button> inside a form defaults to type=submit, which reloads the page.
+   * There is no form here today, and that is exactly the kind of assumption
+   * that stops being true quietly.
    */
   _enforceTapTargets(el) {
-    for (const b of el.querySelectorAll('button, .tappable, [role="button"]')) {
-      b.style.minHeight = b.style.minHeight || 'var(--tap)';
-      if (!b.hasAttribute('type') && b.tagName === 'BUTTON') b.setAttribute('type', 'button');
+    for (const b of el.querySelectorAll('button:not([type])')) {
+      b.setAttribute('type', 'button');
     }
   }
 
@@ -270,6 +286,60 @@ export function shortNum(n) {
   if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
   if (v >= 1e4) return `${(v / 1e3).toFixed(1)}k`;
   return String(Math.round(v));
+}
+
+/**
+ * Inline SVG icons for the glyphs that are NOT safe as emoji.
+ *
+ * Most of the emoji in this UI are old enough to render everywhere (🏆 👑 🔥 🎯
+ * are all Emoji 1.0). Two are not: 🪙 is Emoji 13.0 (2020) and 🪪 is Emoji 14.0
+ * (2021), so on an Android below 11 or an iOS below 14.2 they are a tofu box —
+ * and the coin is the game's CURRENCY, on screen in the lobby, the store and
+ * the reward summary. A currency symbol that silently becomes ☐ on someone's
+ * phone is not something to leave to a font.
+ *
+ * Drawn rather than imported, like every other asset in this project.
+ *
+ * The coin has a HOLE punched through it. That is the store's idea, not mine,
+ * and it is a better one than a generic currency disc — the whole game is about
+ * being a hole, so the money should be too. Kept as the single shared drawing
+ * rather than one per screen.
+ *
+ * @param {'coin'|'card'} name
+ * @param {string} size  any CSS length; pass null to let a class own the size
+ * @param {string} cls   optional class, for screens that size it in their CSS
+ */
+export function icon(name, size = '1em', cls = '') {
+  const dim = size ? ` width="${size}" height="${size}"` : '';
+  const box = `class="md-ico ${cls}"${dim} viewBox="0 0 24 24" aria-hidden="true" focusable="false"`;
+  if (name === 'coin') {
+    return `<svg ${box}>
+      <defs>
+        <linearGradient id="mdCoinF" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffe27a"/><stop offset=".55" stop-color="#ffc93c"/>
+          <stop offset="1" stop-color="#dd9105"/>
+        </linearGradient>
+      </defs>
+      <circle cx="12" cy="12" r="10.2" fill="url(#mdCoinF)"/>
+      <circle cx="12" cy="12" r="10.2" fill="none" stroke="#a86c00" stroke-width="1.4"/>
+      <circle cx="12" cy="12" r="7.6" fill="none" stroke="#a86c00" stroke-width=".9" opacity=".45"/>
+      <ellipse cx="12" cy="12.3" rx="4.1" ry="4.7" fill="#2e1d00"/>
+      <ellipse cx="12" cy="11.2" rx="4.1" ry="4.7" fill="#000" opacity=".55"/>
+      <path d="M6.3 8.4a7.1 7.1 0 0 1 6.2-3.3" fill="none" stroke="#fff6d5"
+            stroke-width="1.5" stroke-linecap="round" opacity=".85"/>
+    </svg>`;
+  }
+  if (name === 'card') {
+    return `<svg ${box}>
+      <rect x="2.5" y="5" width="19" height="14" rx="2.6" fill="#2b3d5e" stroke="#7d92b5" stroke-width="1.1"/>
+      <circle cx="8.2" cy="10.8" r="2.4" fill="#ffc93c"/>
+      <path d="M4.7 16.8c.7-1.8 2-2.7 3.5-2.7s2.8.9 3.5 2.7z" fill="#ffc93c"/>
+      <rect x="13.8" y="9" width="5.6" height="1.5" rx=".75" fill="#8fa6c8"/>
+      <rect x="13.8" y="12" width="5.6" height="1.5" rx=".75" fill="#8fa6c8" opacity=".7"/>
+      <rect x="13.8" y="15" width="3.5" height="1.5" rx=".75" fill="#8fa6c8" opacity=".45"/>
+    </svg>`;
+  }
+  return '';
 }
 
 /** Standard page scaffold: title bar with back, then a scrolling body. */

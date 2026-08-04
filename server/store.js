@@ -57,22 +57,42 @@ const KNOWN_MODES = new Set([
    from that point on and can visually rewrite the rows around it. */
 const NASTY = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
 
+/**
+ * Coerce to a string WITHOUT invoking user-controlled conversion.
+ *
+ * `String(x)` and `Number(x)` both run ToPrimitive, and a JSON body is allowed
+ * to contain `{"name": {"toString": "x"}}` — an object whose toString is not
+ * callable. Converting that throws "Cannot convert object to primitive value",
+ * and thrown from inside the request handler it took the whole server down,
+ * live matches and all. A name is a string or it is nothing.
+ */
+function asPrimitiveString(s) {
+  if (s == null) return '';
+  const t = typeof s;
+  if (t === 'string') return s;
+  if (t === 'number' || t === 'boolean') return String(s);
+  return '';
+}
+
 /** Clamp by CODE POINT, so slicing never leaves a lone surrogate behind. */
 export function cleanText(s, max = MAX_NAME) {
-  const t = String(s == null ? '' : s).replace(NASTY, '').trim();
+  const t = asPrimitiveString(s).replace(NASTY, '').trim();
   const cps = Array.from(t);
   return (cps.length > max ? cps.slice(0, max).join('') : t).trim();
 }
 
 export function cleanNum(n, { min = 0, max = 1e12, def = 0 } = {}) {
-  const v = Number(n);
+  // Same hazard as above: Number({toString:'x'}) throws rather than returning
+  // NaN, so anything that is not already a number gets one safe conversion.
+  const t = typeof n;
+  const v = t === 'number' ? n : (t === 'string' || t === 'boolean' ? Number(n) : NaN);
   if (!Number.isFinite(v)) return def;
   return Math.min(max, Math.max(min, Math.round(v * 1000) / 1000));
 }
 
 /** Player / room identifiers: uppercase, alphanumeric, short. */
 export function cleanCode(s, max = 12) {
-  return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, max);
+  return asPrimitiveString(s).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, max);
 }
 
 /**
@@ -81,7 +101,7 @@ export function cleanCode(s, max = 12) {
  * screens, where a stray quote is all an injection needs.
  */
 export function cleanSlug(s, max = 24) {
-  return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, max);
+  return asPrimitiveString(s).toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, max);
 }
 
 export function cleanMode(s) {
@@ -91,7 +111,7 @@ export function cleanMode(s) {
 
 /** Room names come off the WebSocket query string and can be anything. */
 function cleanRoomName(s) {
-  return String(s == null ? '' : s).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'miami';
+  return asPrimitiveString(s).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24) || 'miami';
 }
 
 function randomCode() {

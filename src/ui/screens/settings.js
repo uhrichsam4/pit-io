@@ -13,7 +13,8 @@
  * preference all come back.
  */
 
-import { esc, page, wireNav } from '../shell.js';
+import { esc, page, wireNav, icon } from '../shell.js';
+import '../css/settings.css';
 import { profile } from '../../meta/profile.js';
 
 /* ========================================================================= */
@@ -234,7 +235,7 @@ function bodyHtml() {
         <h3>Account</h3>
         <div class="st-row st-block">
           <div class="st-label">
-            <span class="st-ico" aria-hidden="true">🪪</span>
+            <span class="st-ico" aria-hidden="true">${icon('card')}</span>
             <span class="st-text"><b>Friend code</b><small>Give this to a friend so they can add you</small></span>
           </div>
           <button class="code-copy" data-copy="${esc(code)}">

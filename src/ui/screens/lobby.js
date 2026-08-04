@@ -22,7 +22,7 @@
  */
 
 import '../css/lobby.css';
-import { esc, shortNum } from '../shell.js';
+import { esc, shortNum, icon } from '../shell.js';
 import { profile as sharedProfile, xpForLevel } from '../../meta/profile.js';
 import { getMode, listModes, activeEvent } from '../../gameplay/modes.js';
 
@@ -59,7 +59,7 @@ const TILES = [
   { key: 'modes',   ico: '🎯', name: 'Game Modes',      cc: '#8b5cf6', to: ['modes', {}] },
   { key: 'board',   ico: '🏆', name: 'Leaderboards',    cc: '#ffc93c', to: ['leaderboard', {}] },
   { key: 'store',   ico: '🛍️', name: 'Store',           cc: '#4dff9e', to: ['store', {}] },
-  { key: 'profile', ico: '🪪', name: 'Profile',         cc: '#4dd2ff', to: ['profile', {}] },
+  { key: 'profile', ico: icon('card'), name: 'Profile',         cc: '#4dd2ff', to: ['profile', {}] },
 ];
 
 const AVATAR_COLORS = ['#ff3d8b', '#ffc93c', '#37e6d5', '#4dff9e', '#8b5cf6', '#4dd2ff', '#ff9430', '#c58cff'];
@@ -282,7 +282,7 @@ export function registerLobby(shell, deps = {}) {
         </div>
 
         <button class="lob-coins" data-go="store" aria-label="Coins — open the store">
-          <span class="ci" aria-hidden="true">🪙</span>
+          <span class="ci" aria-hidden="true">${icon('coin')}</span>
           <span class="cv num">${fmtCoins(d.coins)}</span>
         </button>
 

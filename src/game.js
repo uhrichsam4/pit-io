@@ -18,13 +18,78 @@ import { ConsumeSystem } from './gameplay/consume.js';
 import { Input } from './gameplay/input.js';
 import { spawnBots } from './gameplay/ai.js';
 import { Match, PHASE } from './gameplay/match.js';
+import { getMode } from './gameplay/modes.js';
 import { buildWorld } from './world/worldBuild.js';
-import { HUD } from './ui/hud.js';
+import { HUD, uiState } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
 import { NetClient, readNetConfig } from './net/client.js';
+import { installMeta } from './ui/meta.js';
+import { profile } from './meta/profile.js';
+import * as progression from './meta/progression.js';
+import * as leaderboard from './meta/leaderboard.js';
 
 /** Scratch, so the per-frame window update allocates nothing. */
 const _bufSize = new THREE.Vector2();
+
+/**
+ * Kind matchers for the daily-challenge tracks. progression.js counts
+ * 'vehicles' / 'people' / 'buildings' from the swallow path (everything else it
+ * derives itself at match end), and modes.js keeps its equivalents private, so
+ * the patterns are restated here. Keep them in step with modes.js RX.
+ */
+const CH = {
+  vehicle: /car|sedan|suv|taxi|van|truck|bus|pickup|hatch|sport|convert|police|ambul|shuttle|mixer|excav|loader|dumper|flatbed|garbage|motor|scooter|bike|bicycle|exotic|super|luxur/i,
+  person: /ped|person|tourist|worker|office|jogger|cyclist|dog|busker|vendor|crowd|diner|waiter/i,
+  building: /tower|midrise|storefront|garage|construction|landmark|building|block/i,
+};
+
+/**
+ * Team Devour identities. Two teams, both drawn from the game's own accents so
+ * a teammate's rim reads as "mine" at a glance from the gameplay camera.
+ */
+const TEAMS = [
+  { id: 0, name: 'Team Flamingo', hex: 0xff3d8b },
+  { id: 1, name: 'Team Riptide', hex: 0x37e6d5 },
+];
+
+/**
+ * Last Hole Standing's closing ring.
+ *
+ * Centred on the middle of the LAND, not of the coordinate system: the bay
+ * takes everything east of WORLD.BAY_EDGE, so a ring centred on the origin
+ * would spend half its area over water. r0 covers the far corner of the map so
+ * the ring starts genuinely open.
+ */
+const RING_CX = (WORLD.BAY_EDGE - WORLD.SIZE) / 2;
+const RING_R0 = Math.hypot(WORLD.SIZE + RING_CX, WORLD.SIZE) + 20;
+/** Fraction of the match by which the ring has finished closing. */
+const RING_CLOSED_AT = 0.88;
+
+/**
+ * Score that puts a hole at exactly `r`. The inverse of Hole.radiusFor, which
+ * is the documented way to set a size without hardcoding one — see the note on
+ * HOLE.GROWTH_K in config.js. Modes set a starting DIAMETER-ish radius, and
+ * every hole in the match has to open on it.
+ */
+function scoreForRadius(r) {
+  const t = Math.max(1, (Number(r) || HOLE.START_RADIUS) / HOLE.START_RADIUS);
+  return Math.max(0, Math.round(HOLE.GROWTH_K * (Math.pow(t, 1 / HOLE.GROWTH_P) - 1)));
+}
+
+/**
+ * Names reach innerHTML in the kill feed, the HUD board and the end screen.
+ * Same rule as the lobby's editor: strip anything that could be *designed* to
+ * look like markup rather than relying on escaping at every destination.
+ */
+const NAME_BANNED = /[<>&"\u0027\u0060\\\u0000-\u001f\u007f]/g;
+
+function safeName(raw) {
+  return String(raw == null ? '' : raw)
+    .replace(NAME_BANNED, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 16)
+    .trim();
+}
 
 export class Game {
   constructor(canvas, uiRoot) {
@@ -42,6 +107,16 @@ export class Game {
     this.holes = [];
     this.bots = [];
     this.player = null;
+    /** The meta layer's Shell, once installed. Null if it failed to load. */
+    this.meta = null;
+    /** The mode the CURRENT round is being played under. Never null. */
+    this.mode = getMode('classic');
+    /** Match length in seconds for this round — mode.duration, not MATCH.DURATION. */
+    this.matchDuration = MATCH.DURATION;
+    /** Team roster when the mode has teams:2, else null. */
+    this.teams = null;
+    /** Last Hole Standing's closing ring, else null. */
+    this.shrink = null;
     this._acc = 0;
     this._frames = 0;
     this._fpsT = 0;
@@ -186,6 +261,7 @@ export class Game {
           }
           st.peakRadius = Math.max(st.peakRadius, hole.radius);
         }
+        this._trackChallenge(c);
       }
       if (hole.isPlayer) {
         if (c.crumbles || c.tier.id >= 6) audio.crumble(Math.min(1, c.radius / 22));
@@ -229,21 +305,56 @@ export class Game {
       h.reset(p.x, p.z, Math.round(h.score * HOLE.RESPAWN_KEEP));
     };
 
-    this.screens.onPlay = () => this.startMatch();
+    /* --- modes: the seams the mode data drives ---------------------------- */
+    // The clock the day/night cycle was on before a mode pinned it, so a round
+    // of Neon Nights does not leave the whole game stuck at dusk afterwards.
+    this._bootTimeOfDay = eng.timeOfDay;
+    this._bootCyclePaused = !!eng.cyclePaused;
+    this._installTeamPvP();
+    // Cosmetics only decide what the player's hole LOOKS like, so a catalogue
+    // that fails to load must cost the colour and nothing else.
+    try { this._cosmetics = await import('./meta/cosmetics.js'); }
+    catch (e) { this._cosmetics = null; console.warn('[game] cosmetics unavailable', e); }
+
+    this.screens.onPlay = () => this.startMatch(this.mode && this.mode.id);
     this.screens.onLobby = () => this.returnToLobby();
+    this.screens.onMenu = () => this.showLobby();
+
+    /* --- the meta layer --------------------------------------------------- */
+    try {
+      this.meta = await installMeta(this, this.uiRoot);
+    } catch (err) {
+      // A front end that cannot boot must not cost the game. Screens keeps a
+      // one-button fallback title card for exactly this.
+      console.error('[game] meta layer failed to install', err);
+      this.meta = null;
+    }
+
     this.screens.clear();
-    this.screens.showMenu({ objects: this.registry.aliveCount.toLocaleString() });
+    this.screens.showMenu();
     this.match.phase = PHASE.MENU;
 
-    // Idle camera drifting over the skyline behind the menu.
+    // Idle camera drifting over the skyline behind the lobby.
     this._menuAngle = 0;
 
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'Space' && this.match.phase === PHASE.MENU) this.startMatch();
+      // Space is a shortcut for the fallback title card only. In the lobby the
+      // space bar belongs to the name field, and starting a match from under
+      // the store would be indistinguishable from a crash.
+      if (e.code !== 'Space' || this.match.phase !== PHASE.MENU) return;
+      if (this.meta && this.meta.visible) return;
+      this.startMatch();
     });
 
     const { installDevTools } = await import('./dev/devtools.js');
     installDevTools(this);
+
+    // Arriving with ?room= means the player followed an invite, and the world
+    // has already been built on that room's seed. Drop them straight in.
+    if (this.netCfg.enabled) {
+      const q = new URLSearchParams(location.search);
+      this.startMatch(q.get('mode') || undefined);
+    }
 
     this.loop = this.loop.bind(this);
     requestAnimationFrame(this.loop);
@@ -450,10 +561,27 @@ export class Game {
     return r;
   }
 
-  startMatch() {
+  /**
+   * Begin a round.
+   *
+   * @param {string} [modeId] a src/gameplay/modes.js id. Omitted keeps the mode
+   *   the last round was played under, which is what "Play Again" wants.
+   */
+  startMatch(modeId) {
+    const mode = getMode(modeId || (this.mode && this.mode.id));
+    this.mode = mode;
+    if (this.meta) this.meta.hide();
+    uiState.reset();
+    // Mode-locked dailies filter on this, and it must be set BEFORE the first
+    // swallow reports a challenge track.
+    try { progression.setActiveMode(mode.id); }
+    catch (e) { console.warn('[game] setActiveMode failed', e); }
+
     // Rewind the city before anything else, so the new match starts on a
     // complete map rather than on the leftovers of the last one.
     this.resetWorld();
+    this._applyModeScoring(mode);
+    this._applyModeTimeOfDay(mode);
 
     for (const h of this.holes) {
       this.engine.scene.remove(h.group);
@@ -462,11 +590,12 @@ export class Game {
     this.holes.length = 0;
     this.bots.length = 0;
 
+    const startScore = scoreForRadius(mode.startRadius);
     const p = this._spawnPoint(this.net ? this.net.id : 0);
     this.player = new Hole({
       type: 'player',
-      name: this.net ? this.netCfg.name : 'You',
-      color: PALETTE.ACCENT_HOT,
+      name: this.playerName(),
+      color: this._playerColor(),
       x: p.x, z: p.z,
     });
     if (this.net) this.player.netId = this.net.id;
@@ -479,7 +608,8 @@ export class Game {
       this._syncPeerHoles();
     } else {
       this.bots = spawnBots(
-        MATCH.BOT_COUNT, this.registry, this.rng, () => this._spawnPoint(), this.layout
+        Math.max(0, mode.botCount ?? MATCH.BOT_COUNT),
+        this.registry, this.rng, () => this._spawnPoint(), this.layout
       );
       for (const b of this.bots) {
         this.engine.scene.add(b.hole.group);
@@ -487,11 +617,271 @@ export class Game {
       }
     }
 
+    // Every hole opens at the mode's starting size. reset() re-solves radius
+    // from score through the same curve the rest of the match uses, so nothing
+    // here can disagree with Hole.radiusFor.
+    if (startScore > 0) {
+      for (const h of this.holes) h.reset(h.position.x, h.position.z, startScore);
+    }
+
+    this._applyTeams(mode);
+
     this.consume.setFrenzy(false);
     this.match.start(this.holes);
+    this._applyModeDuration(mode);
+    this._startShrink(mode);
     this.engine._camTarget.copy(this.player.position);
     // A round must never open on a boom still retracted into last round's wall.
     this.engine._boom = 1;
+  }
+
+  /* ======================================================================= */
+  /*  MODES                                                                  */
+  /* ======================================================================= */
+
+  /**
+   * Stamp the mode's scoring onto the city.
+   *
+   * Every consumable carries the points it is worth, and the swallow path, the
+   * floating "+N", the HUD and the bot value function all read that one field.
+   * Rewriting it once per match is therefore the whole of `scoreFor` — no
+   * conditional anywhere in the hot path, and Car Crunch's worthless bench is
+   * still perfectly edible, it simply pays nothing.
+   */
+  _applyModeScoring(mode) {
+    const all = this.allConsumables;
+    if (!all || !all.length) return;
+    const scoreFor = typeof mode.scoreFor === 'function' ? mode.scoreFor : null;
+    let changed = 0;
+    for (const c of all) {
+      // The authored value, captured the first time we ever touch this object.
+      if (c.__baseScore === undefined) c.__baseScore = c.score;
+      // Restore before asking: modes.js's `base(c)` reads c.score, so handing
+      // it last round's already-modified number would compound every match.
+      c.score = c.__baseScore;
+      if (!scoreFor) continue;
+      let v;
+      try { v = scoreFor(c); }
+      catch { v = c.__baseScore; }
+      v = Math.max(0, Math.round(Number(v) || 0));
+      if (v !== c.score) { c.score = v; changed++; }
+    }
+    console.info(`[game] mode "${mode.id}": rescored ${changed}/${all.length} objects`);
+  }
+
+  /** Pin the clock for a mode that wants one, or hand it back to the cycle. */
+  _applyModeTimeOfDay(mode) {
+    if (typeof mode.timeOfDay === 'number') this.engine.setTimeOfDay(mode.timeOfDay, true);
+    else this.engine.setTimeOfDay(this._bootTimeOfDay ?? 0.35, this._bootCyclePaused);
+  }
+
+  /**
+   * Match length. Match.start() always arms MATCH.DURATION because that is the
+   * only length it knows about, so the mode's length is written straight after
+   * — the countdown phase does not touch the clock, so nothing is lost.
+   */
+  _applyModeDuration(mode) {
+    const dur = Math.max(30, Math.round(mode.duration || MATCH.DURATION));
+    this.matchDuration = dur;
+    this.match.timeLeft = dur;
+    // MATCH.ANNOUNCE_AT is in absolute seconds against the default length, so
+    // on a 90 s event round "2:00 remaining" would fire on the first tick.
+    // Marking the unreachable milestones as already spoken keeps the escalation
+    // honest without forking match.js.
+    for (const at of MATCH.ANNOUNCE_AT) {
+      if (at >= dur) this.match._announced.add(`t${at}`);
+    }
+  }
+
+  /**
+   * Deal holes into two teams and recolour them.
+   *
+   * The player is always on team 0 and the bots alternate from team 1, so an
+   * eight-hole lobby splits 4/4 with the player's side one bot short. Colour is
+   * not decoration here: it is the only way to tell at a glance whether the
+   * hole bearing down on you is a threat or a teammate.
+   */
+  _applyTeams(mode) {
+    if (mode.teams !== 2) {
+      this.teams = null;
+      for (const h of this.holes) h.team = 0;
+      return;
+    }
+    this.teams = TEAMS;
+    let n = 0;
+    for (const h of this.holes) {
+      h.team = h.isPlayer ? 0 : (n++ % 2 === 0 ? 1 : 0);
+      this._recolorHole(h, TEAMS[h.team].hex);
+    }
+  }
+
+  /** Repaint every surface that carries a hole's identity colour. */
+  _recolorHole(h, hex) {
+    h.color.setHex(hex);
+    if (h.pitMaterial) h.pitMaterial.uniforms.uTint.value.setHex(hex);
+    if (h.lipUniforms) h.lipUniforms.uOwner.value.setHex(hex);
+    if (h.burstMaterial) h.burstMaterial.color.setHex(hex);
+  }
+
+  /**
+   * Team Devour forbids swallowing a teammate, and consume.js resolves PvP
+   * against a flat list with no concept of teams.
+   *
+   * Rather than fork or duplicate that resolver — it owns the size ratio, the
+   * overlap test, the kill reward, the shockwave and the net claim — it is
+   * handed one CROSS-TEAM PAIR at a time. Same complexity, same rules, and a
+   * teammate is simply never a candidate. Installed once; free-for-all modes
+   * take the original path untouched.
+   */
+  _installTeamPvP() {
+    const base = ConsumeSystem.prototype._resolvePvP;
+    const pair = [null, null];
+    this.consume._resolvePvP = (holes) => {
+      if (!this.teams) { base.call(this.consume, holes); return; }
+      for (let i = 0; i < holes.length; i++) {
+        for (let j = i + 1; j < holes.length; j++) {
+          if (holes[i].team === holes[j].team) continue;
+          pair[0] = holes[i];
+          pair[1] = holes[j];
+          base.call(this.consume, pair);
+        }
+      }
+      pair[0] = pair[1] = null;
+    };
+  }
+
+  /* -------------------------------------------------- the closing ring --- */
+
+  _startShrink(mode) {
+    if (!mode.shrink) {
+      this.shrink = null;
+      if (this.ringGroup) this.ringGroup.visible = false;
+      return;
+    }
+    const from = this.matchDuration * Math.min(0.9, Math.max(0, mode.shrink.startAt ?? 0.25));
+    this.shrink = {
+      cx: RING_CX,
+      cz: 0,
+      r0: RING_R0,
+      r1: Math.max(40, mode.shrink.endRadius || 90),
+      from,
+      to: Math.max(from + 10, this.matchDuration * RING_CLOSED_AT),
+      radius: RING_R0,
+      announced: false,
+    };
+    this._ensureRing();
+    this.ringGroup.visible = false;      // only once it starts moving
+  }
+
+  /** Two additive rings on the ground: a hard line and a soft shoulder. */
+  _ensureRing() {
+    if (this.ringGroup) return;
+    const g = new THREE.Group();
+    g.name = 'shrink-ring';
+    const band = (inner, opacity) => {
+      const geo = new THREE.RingGeometry(inner, 1.0, 128, 1);
+      geo.rotateX(-Math.PI / 2);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+        color: 0xff3d8b,
+        transparent: true,
+        opacity,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }));
+      m.frustumCulled = false;
+      m.renderOrder = 5;
+      g.add(m);
+      return m;
+    };
+    // Widths are fractions of the ring radius, so the wall stays the same
+    // apparent thickness whether it is 600 m across or 90.
+    this.ringGlow = band(0.93, 0.16);
+    this.ringLine = band(0.988, 0.85);
+    g.position.y = 0.35;
+    g.visible = false;
+    this.engine.scene.add(g);
+    this.ringGroup = g;
+  }
+
+  /**
+   * Close the play area and hold every hole inside it.
+   *
+   * A hard wall rather than damage: this game has no health, and "you stop
+   * growing outside the ring" is enforced by there being no outside — pushed
+   * back onto the shrinking island, a hole that is losing has to fight for the
+   * same block as everyone else, which is the point of the mode.
+   */
+  _updateShrink(dt) {
+    const s = this.shrink;
+    if (!s) return;
+    const e = this.match.elapsed;
+    const k = Math.min(1, Math.max(0, (e - s.from) / Math.max(1, s.to - s.from)));
+    s.radius = s.r0 + (s.r1 - s.r0) * (k * k * (3 - 2 * k));
+
+    if (k > 0) {
+      if (!s.announced) {
+        s.announced = true;
+        if (this.hud) this.hud.pushFeed('<b>THE RING IS CLOSING</b>', '#ff3d8b');
+      }
+      this.ringGroup.visible = true;
+      this.ringGroup.position.set(s.cx, 0.35, s.cz);
+      this.ringGlow.scale.set(s.radius, 1, s.radius);
+      this.ringLine.scale.set(s.radius, 1, s.radius);
+    }
+
+    for (const h of this.holes) {
+      if (!h.alive) continue;
+      const dx = h.position.x - s.cx;
+      const dz = h.position.z - s.cz;
+      const d = Math.hypot(dx, dz);
+      // Measured to the hole's own rim, so a 30 m hole is not half outside.
+      const lim = Math.max(8, s.radius - h.radius);
+      if (d <= lim) continue;
+      const inv = lim / (d || 1);
+      h.position.x = s.cx + dx * inv;
+      h.position.z = s.cz + dz * inv;
+      h.velocity.x *= 0.2;
+      h.velocity.z *= 0.2;
+      h.syncVisual();
+    }
+  }
+
+  /* ------------------------------------------------------------ player --- */
+
+  /** The name this player's hole carries. Profile first, then the net config. */
+  playerName() {
+    let n = '';
+    try { n = safeName(profile.data.name); } catch { n = ''; }
+    if (!n && this.net) n = safeName(this.netCfg.name);
+    return n || 'You';
+  }
+
+  /** Equipped skin's rim colour, or the house pink if cosmetics are missing. */
+  _playerColor() {
+    if (!this._cosmetics) return PALETTE.ACCENT_HOT;
+    try {
+      const id = profile.data.equipped && profile.data.equipped.skin;
+      const c = this._cosmetics.skinColors(id);
+      return new THREE.Color(c.rim || c.glow || PALETTE.ACCENT_HOT).getHex();
+    } catch {
+      return PALETTE.ACCENT_HOT;
+    }
+  }
+
+  /** Fold one swallow into the daily challenges that count object kinds. */
+  _trackChallenge(c) {
+    const kind = String((c && c.kind) || '');
+    let track = null;
+    if (CH.vehicle.test(kind)) track = 'vehicles';
+    else if (CH.person.test(kind)) track = 'people';
+    else if (c && (c.crumbles || (c.tier && c.tier.id >= 6) || CH.building.test(kind))) {
+      track = 'buildings';
+    }
+    if (!track) return;
+    // A broken daily must never be able to interrupt a swallow.
+    try { progression.progressChallenge(track, 1); } catch { /* ignore */ }
   }
 
   _onPhase(p) {
@@ -501,11 +891,71 @@ export class Game {
       if (this.player) this.player.desiredDir.set(0, 0);
       for (const b of this.bots) b.hole.desiredDir.set(0, 0);
       audio.stopMusic();
-      this.screens.showResults(this.match.summary(this.player), this.player);
+      const summary = this._finalSummary();
+      this.screens.showResults(summary, this.player, this._grantRewards(summary));
     }
   }
 
-  /** Leave the match and go back to the title, on a fully restored city. */
+  /**
+   * How the round is reported.
+   *
+   * Free-for-all is whatever Match ranked. Team Devour is decided on POOLED
+   * score, so the placement the player is shown — and the placement their
+   * rewards, their win count and their leaderboard row are computed from — is
+   * their team's, not their own.
+   */
+  _finalSummary() {
+    const s = this.match.summary(this.player);
+    s.mode = this.mode;
+    if (!this.teams) return s;
+
+    const totals = [0, 0];
+    for (const h of this.holes) totals[h.team | 0] += h.score;
+    const mine = this.player ? (this.player.team | 0) : 0;
+    const other = mine === 1 ? 0 : 1;
+    s.teams = TEAMS
+      .map((t, i) => ({
+        id: t.id,
+        name: t.name,
+        color: `#${t.hex.toString(16).padStart(6, '0')}`,
+        score: Math.round(totals[i]),
+        mine: i === mine,
+      }))
+      .sort((a, b) => b.score - a.score);
+    s.won = totals[mine] > totals[other];
+    s.rank = totals[mine] >= totals[other] ? 1 : 2;
+    s.total = 2;
+    return s;
+  }
+
+  /**
+   * Pay the round out. Both halves are isolated: a progression bug or an
+   * unreachable leaderboard must cost the player their XP line, never their
+   * end screen.
+   */
+  _grantRewards(summary) {
+    let breakdown = null;
+    try {
+      breakdown = progression.grantMatchRewards({
+        ...summary,
+        mode: this.mode.id,
+        durationSec: Math.round(this.match.elapsed),
+      });
+    } catch (err) {
+      console.warn('[game] match rewards failed', err);
+    }
+    try {
+      const p = leaderboard.push();
+      if (p && typeof p.catch === 'function') {
+        p.catch((err) => console.warn('[game] leaderboard push failed', err));
+      }
+    } catch (err) {
+      console.warn('[game] leaderboard push failed', err);
+    }
+    return breakdown;
+  }
+
+  /** Leave the match and go back to the lobby, on a fully restored city. */
   returnToLobby() {
     this.resetWorld();
     for (const h of this.holes) {
@@ -517,9 +967,65 @@ export class Game {
     this.player = null;
     this.match.holes = [];
     this.match.phase = PHASE.MENU;
+    this.teams = null;
+    this.shrink = null;
+    if (this.ringGroup) this.ringGroup.visible = false;
+    // An event that pinned the clock must not leave the lobby stuck at dusk.
+    this.engine.setTimeOfDay(this._bootTimeOfDay ?? 0.35, this._bootCyclePaused);
     if (this.hud) this.hud.root.style.opacity = '0';
     this.screens.clear();
-    this.screens.showMenu({ objects: this.registry.aliveCount.toLocaleString() });
+    this.screens.showMenu();
+  }
+
+  /**
+   * Show the front end. Called by screens.showMenu(), which is the seam the
+   * rest of the game has always used for "go back to the title".
+   */
+  showLobby() {
+    if (this.meta) {
+      this.meta.show();
+      this.meta.reset('lobby');
+      return;
+    }
+    this.screens.showFallbackMenu(this.registry.aliveCount);
+  }
+
+  /**
+   * Join a room by invite code.
+   *
+   * The city is generated from the ROOM's seed and is built exactly once, at
+   * boot — that determinism is what lets the network replicate events instead
+   * of geometry. So joining is a reload onto the URL net/client.js already
+   * reads, which is the only way to guarantee every client in the room has a
+   * byte-identical city.
+   */
+  joinRoom(info = {}) {
+    const code = String(info.code || info.room || '').trim();
+    if (!code) {
+      if (this.meta) this.meta.toast('That room code is empty', 'bad');
+      return;
+    }
+    const q = new URLSearchParams();
+    q.set('room', code);
+    const name = this.playerName();
+    if (name) q.set('name', name);
+    if (info.mode) q.set('mode', String(info.mode));
+    location.search = q.toString();
+  }
+
+  /**
+   * Apply a Settings quality level. `tier` indexes core/quality.js QUALITY_TIERS
+   * and `adaptive` is the engine's own downward fallback — which has to be
+   * turned off for a fixed level, or the engine quietly overrides the choice.
+   */
+  applyQuality(level) {
+    if (!level) return;
+    try {
+      QUALITY.adaptive = !!level.adaptive;
+      this.engine.setQualityTier(level.tier | 0);
+    } catch (err) {
+      console.warn('[game] quality change failed', err);
+    }
   }
 
   /** One deterministic simulation tick. Safe to call outside the render loop. */

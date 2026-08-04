@@ -201,6 +201,13 @@
 [data-screen="play"] .rr-count.hot { color: var(--sun); }
 [data-screen="play"] .rr-go { flex: 0 0 auto; color: var(--dimmer); font-size: 1.3em; line-height: 1; }
 
+/* Full lobbies stay listed but are plainly not a target. */
+[data-screen="play"] .room-row.full { opacity: 0.5; cursor: default; }
+[data-screen="play"] .room-row.full:active { background: transparent; transform: none; }
+[data-screen="play"] .room-row.full .rr-go {
+  font-size: 0.62em; font-weight: 900; letter-spacing: 0.09em; color: var(--dim);
+}
+
 /* Loading placeholder. It resolves within the 3 s network timeout in every
    case, including "there is no server", so it can never become a dead spinner. */
 [data-screen="play"] .skel { padding: 0.3em 0; }

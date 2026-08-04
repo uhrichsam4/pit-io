@@ -54,21 +54,51 @@ function sendJson(res, status, body) {
   res.end(text);
 }
 
-/** Resolves to null on overflow or error rather than throwing into the server. */
-function readBody(req) {
+/**
+ * Resolves to the body text, to `null` if the request died, or to `undefined`
+ * to mean "over the limit, already answered, do not touch the response".
+ */
+function readBody(req, res) {
   return new Promise((resolve) => {
     let size = 0;
+    let answered = false;
     const chunks = [];
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) { chunks.length = 0; req.destroy(); finish(null); return; }
+      if (size > MAX_BODY) {
+        chunks.length = 0;
+        answered = true;
+        // Settle BEFORE destroying. destroy() can emit 'error' synchronously,
+        // and that handler would otherwise win the race and resolve with null —
+        // sending the caller down the "bad body" path, which writes a second
+        // set of headers onto a response that is already finished.
+        finish(undefined);
+        // Answer before hanging up: a bare connection reset is indistinguishable
+        // from the server being down, which is the one thing this client treats
+        // as "go offline".
+        try { sendJson(res, 413, { error: 'body too large' }); } catch { /* gone */ }
+        req.destroy();
+        return;
+      }
       chunks.push(c);
     });
     req.on('end', () => finish(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', () => finish(null));
-    req.on('aborted', () => finish(null));
+    req.on('error', () => finish(answered ? undefined : null));
+    req.on('aborted', () => finish(answered ? undefined : null));
+  });
+}
+
+/**
+ * Body handlers run in a promise, so a throw inside one is an UNHANDLED
+ * REJECTION — which, on modern Node, terminates the process and every match on
+ * it. One malformed POST must cost that request and nothing else.
+ */
+function guard(res, method, path, promise) {
+  promise.catch((e) => {
+    console.warn('[http]', method, path, e && e.message);
+    try { sendJson(res, 500, { error: 'server error' }); } catch { /* already sent */ }
   });
 }
 
@@ -160,7 +190,8 @@ export function createHttpHandler({ store, version = 0 }) {
 
     if (path === '/api/rooms' && method === 'POST') {
       if (overRate(req)) { sendJson(res, 429, { error: 'slow down' }); return; }
-      readBody(req).then((text) => {
+      guard(res, method, path, readBody(req, res).then((text) => {
+        if (text === undefined) return;     // oversized; already answered 413
         const body = parseJson(text) || {};
         // `code` is an extension the friends flow uses: a player asks for their
         // own profile id as the lobby code so "my code" and "my lobby" are the
@@ -172,7 +203,7 @@ export function createHttpHandler({ store, version = 0 }) {
           code: body.code,
         });
         sendJson(res, 200, { room: desc.name, code: desc.code, mode: desc.mode });
-      });
+      }));
       return;
     }
 
@@ -206,12 +237,13 @@ export function createHttpHandler({ store, version = 0 }) {
     /* ----------------------------------------------------------- profile --- */
     if (path === '/api/profile' && method === 'POST') {
       if (overRate(req)) { sendJson(res, 429, { error: 'slow down' }); return; }
-      readBody(req).then((text) => {
+      guard(res, method, path, readBody(req, res).then((text) => {
+        if (text === undefined) return;     // oversized; already answered 413
         const body = parseJson(text);
         const result = body && store.submitProfile(body);
         if (!result) { sendJson(res, 400, { error: 'bad profile' }); return; }
         sendJson(res, 200, { ok: true, rank: result.rank });
-      });
+      }));
       return;
     }
 

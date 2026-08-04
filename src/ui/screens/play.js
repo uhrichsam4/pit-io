@@ -21,6 +21,7 @@
  */
 
 import { esc, page, wireNav } from '../shell.js';
+import '../css/play.css';
 import { profile } from '../../meta/profile.js';
 import { listModes, activeEvent, getMode } from '../../gameplay/modes.js';
 import * as MM from '../../net/matchmaking.js';
@@ -164,9 +165,14 @@ function roomRow(r) {
   const m = modeOf(r.mode);
   const players = num(r.players);
   const max = num(r.max) || 12;
-  const nearly = players >= max - 2;
+  const full = players >= max;
+  const nearly = !full && players >= max - 2;
+  // A full lobby stays on the list, disabled. Dropping it would quietly shrink
+  // the board every time the game got popular, which reads as "nobody is
+  // playing" at exactly the moment the opposite is true.
   return `
-    <button class="row room-row" data-act="join-room" data-code="${esc(r.code)}"
+    <button class="row room-row${full ? ' full' : ''}" ${full ? 'disabled' : ''}
+            data-act="join-room" data-code="${esc(r.code)}"
             style="--cc:${esc(m.accent)}">
       <span class="rr-ico" aria-hidden="true">${esc(m.icon)}</span>
       <span class="rr-main">
@@ -174,7 +180,7 @@ function roomRow(r) {
         <span class="rr-sub tiny">#${esc(r.code)} · ${esc(phaseLabel({ ...r, players }))}</span>
       </span>
       <span class="rr-count num${nearly ? ' hot' : ''}">${players}<i>/${max}</i></span>
-      <span class="rr-go" aria-hidden="true">›</span>
+      <span class="rr-go" aria-hidden="true">${full ? 'FULL' : '›'}</span>
     </button>`;
 }
 
@@ -232,8 +238,13 @@ export function registerPlay(shell, deps = {}) {
   /* ------------------------------------------------------------ render --- */
 
   function render({ params }) {
-    ui.tab = params && params.intent === 'friends' ? 'friends' : (ui.tab || 'public');
-    if (params && params.mode && modeOf(params.mode)) ui.mode = modeOf(params.mode).id;
+    // An explicit intent always wins; without one we keep whichever tab the
+    // player was last on, because "Play" is a screen people bounce in and out
+    // of and re-selecting their tab every time is a small papercut.
+    const intent = params && params.intent;
+    if (intent === 'friends' || intent === 'public') ui.tab = intent;
+    else if (ui.tab !== 'friends') ui.tab = 'public';
+    if (params && params.mode) ui.mode = modeOf(params.mode).id;
 
     const body = `
       <div class="wrap play-wrap">
@@ -353,11 +364,17 @@ export function registerPlay(shell, deps = {}) {
       host.innerHTML = offlinePanel();
       return;
     }
-    const open = ctx.rooms.filter((r) => num(r.players) < (num(r.max) || 12));
+    // Joinable first, fullest first within that — the server sorts by headcount
+    // alone, which would float the unjoinable rooms to the top of the list.
+    const rooms = ctx.rooms.slice().sort((a, b) => {
+      const af = num(a.players) >= (num(a.max) || 12);
+      const bf = num(b.players) >= (num(b.max) || 12);
+      return (af - bf) || (num(b.players) - num(a.players));
+    });
     chip.className = 'chip net-chip live';
-    chip.textContent = open.length ? `${open.length} live` : 'Connected';
-    host.innerHTML = open.length
-      ? open.map(roomRow).join('')
+    chip.textContent = rooms.length ? `${rooms.length} live` : 'Connected';
+    host.innerHTML = rooms.length
+      ? rooms.map(roomRow).join('')
       : `<div class="empty">No public lobbies right now.<br>
            <span class="tiny">Quick Match will start one for you.</span></div>`;
   }
@@ -423,20 +440,29 @@ export function registerPlay(shell, deps = {}) {
     if (plus) plus.disabled = !b.on || b.count >= MAX_BOTS;
   }
 
+  const PRIMARY = {
+    // Known-offline relabels rather than sending the player into a search that
+    // cannot succeed.
+    offline: 'Play Offline vs AI',
+    quick: 'Quick Match',
+    'enter-lobby': 'Enter Lobby',
+    'create-lobby': 'Create Private Lobby',
+  };
+
+  /**
+   * Safe to call on every poll: it only touches the DOM when the button should
+   * actually change. Re-creating it unconditionally would swap the node out
+   * from under a thumb that is mid-press.
+   */
   function paintActions(ctx) {
     const host = q(ctx, '[data-el="actions"]');
     if (!host) return;
-    if (ui.tab === 'public') {
-      // Known-offline relabels rather than sending the player into a search
-      // that cannot succeed.
-      host.innerHTML = ctx.online === false
-        ? '<button class="btn btn-lg btn-block" data-act="offline">Play Offline vs AI</button>'
-        : '<button class="btn btn-lg btn-block" data-act="quick">Quick Match</button>';
-    } else {
-      host.innerHTML = ctx.lobby
-        ? '<button class="btn btn-lg btn-block" data-act="enter-lobby">Enter Lobby</button>'
-        : '<button class="btn btn-lg btn-block" data-act="create-lobby">Create Private Lobby</button>';
-    }
+    const want = ui.tab === 'public'
+      ? (ctx.online === false ? 'offline' : 'quick')
+      : (ctx.lobby ? 'enter-lobby' : 'create-lobby');
+    if (host.dataset.primary === want) return;
+    host.dataset.primary = want;
+    host.innerHTML = `<button class="btn btn-lg btn-block" data-act="${want}">${PRIMARY[want]}</button>`;
   }
 
   function paintTab(ctx) {
@@ -458,11 +484,10 @@ export function registerPlay(shell, deps = {}) {
       if (ui.tab === 'public') {
         const rooms = await MM.listRooms();
         if (!ctx.alive) return;
-        const was = ctx.online;
         ctx.online = rooms !== null;
         ctx.rooms = rooms || [];
         paintBrowser(ctx);
-        if (was !== ctx.online) paintActions(ctx);
+        paintActions(ctx);
       } else {
         ctx.ticks++;
         if (ctx.lobby) {
@@ -734,7 +759,9 @@ export function registerPlay(shell, deps = {}) {
         MM.health().then((ok) => {
           if (!ctx.alive) return;
           ctx.online = ok;
-          if (ok) poll(ctx); else { paintBrowser(ctx); paintActions(ctx); }
+          paintBrowser(ctx);
+          paintActions(ctx);
+          if (ok) poll(ctx);
         });
         break;
 

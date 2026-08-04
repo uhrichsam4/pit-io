@@ -16,7 +16,7 @@
  *     reward for spending is watching the number move.
  */
 
-import { esc, page, wireNav } from '../shell.js';
+import { esc, page, wireNav, icon } from '../shell.js';
 import { profile as defaultProfile } from '../../meta/profile.js';
 import {
   CATEGORIES, RARITY, RARITY_ORDER, SETS,
@@ -51,11 +51,24 @@ let onKeyDown = null;
 
 const catLabel = (kind) => (CATEGORIES.find((c) => c.kind === kind) || {}).label || kind;
 
-/** The equipped id for a kind. Emotes are a wheel, so slot 0 is "equipped". */
-function equippedId(kind) {
+/**
+ * Is this exact item equipped? Emotes are plural — several sit on a wheel —
+ * so the profile answers rather than the store guessing at the slot shape.
+ */
+function isEquipped(it) {
+  if (typeof P.isEquipped === 'function') return P.isEquipped(it.kind, it.id);
   const eq = P.data.equipped || {};
-  if (kind === 'emote') return eq.emote || (Array.isArray(eq.emotes) ? eq.emotes[0] : null);
-  return eq[kind];
+  const cur = eq[it.kind === 'emote' ? 'emotes' : it.kind];
+  return Array.isArray(cur) ? cur.includes(it.id) : cur === it.id;
+}
+
+/** How many emotes fit on the wheel. Mirrors MAX_EQUIPPED_EMOTES in
+ *  profile.js, which does not export it; only used for a warning line. */
+const EMOTE_WHEEL = 4;
+
+function wheelFull() {
+  const w = P.data.equipped && P.data.equipped.emotes;
+  return Array.isArray(w) && w.length >= EMOTE_WHEEL;
 }
 
 function unlockMet(unlock) {
@@ -67,7 +80,7 @@ function unlockMet(unlock) {
 
 /** Exactly one of: equipped | owned | locked | buy | claim. */
 function stateOf(it) {
-  if (P.owns(it.kind, it.id)) return equippedId(it.kind) === it.id ? 'equipped' : 'owned';
+  if (P.owns(it.kind, it.id)) return isEquipped(it) ? 'equipped' : 'owned';
   if (it.unlock && !unlockMet(it.unlock)) return 'locked';
   return it.price > 0 ? 'buy' : 'claim';
 }
@@ -75,7 +88,7 @@ function stateOf(it) {
 function shortReq(unlock) {
   if (!unlock) return 'Locked';
   if (unlock.level) return `Lv ${unlock.level}`;
-  return 'Feat';
+  return 'Achievement';
 }
 
 function longReq(unlock) {
@@ -85,14 +98,16 @@ function longReq(unlock) {
   return 'Complete an achievement';
 }
 
-/** A coin, drawn rather than fetched. Hole in the middle, naturally. */
+/**
+ * A coin, drawn rather than fetched. Hole in the middle, naturally.
+ *
+ * The drawing moved to shell.js icon() so the lobby, the profile and the reward
+ * summary show the SAME coin as the price tags — they were on the 🪙 emoji,
+ * which is Emoji 13.0 and renders as a tofu box on an Android below 11. Size
+ * still comes from store.css via the class, so nothing here had to change.
+ */
 function coinGlyph(cls = 'coin') {
-  return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">` +
-    `<circle cx="12" cy="12" r="10.4" fill="#ffc93c"/>` +
-    `<circle cx="12" cy="12" r="10.4" fill="none" stroke="#a97600" stroke-width="1.5"/>` +
-    `<ellipse cx="12" cy="12.4" rx="4.4" ry="5" fill="#3a2600"/>` +
-    `<path d="M6.4 8.6a7 7 0 0 1 6.4-3.2" fill="none" stroke="#fff6d5" stroke-width="1.4" ` +
-    `stroke-linecap="round" opacity="0.85"/></svg>`;
+  return icon('coin', null, cls);
 }
 
 /* ---------------------------------------------------------- card markup --- */
@@ -212,13 +227,24 @@ function bannerHTML() {
 function sheetFootHTML(it) {
   const st = stateOf(it);
   const coins = P.data.coins;
+  const emote = it.kind === 'emote';
   if (st === 'equipped') {
+    // An emote is one of four on a wheel, so "take it off" is a real action and
+    // the only one left for this item. Every other slot holds exactly one thing
+    // and unequipping it would leave the player with nothing in that slot.
+    if (emote && typeof P.unequip === 'function') {
+      return `<p class="sheet-note">On your emote wheel.</p>` +
+        `<button class="btn btn-ghost btn-block" data-act="unequip">Remove from wheel</button>`;
+    }
     return `<p class="sheet-note">Equipped right now.</p>` +
       `<button class="btn btn-block" disabled aria-disabled="true">Equipped</button>`;
   }
   if (st === 'owned') {
-    return `<p class="sheet-note">In your collection.</p>` +
-      `<button class="btn btn-aqua btn-block" data-act="equip">Equip</button>`;
+    const note = emote
+      ? (wheelFull() ? `Your wheel is full &mdash; this replaces the oldest.` : 'In your collection.')
+      : 'In your collection.';
+    return `<p class="sheet-note">${note}</p>` +
+      `<button class="btn btn-aqua btn-block" data-act="equip">${emote ? 'Add to wheel' : 'Equip'}</button>`;
   }
   if (st === 'locked') {
     return `<p class="sheet-note">&#128274; Not for sale &mdash; this one is earned.</p>` +
@@ -301,21 +327,21 @@ async function buy(it) {
 }
 
 function equip(it) {
+  // profile.equip owns the slot shapes, including pushing emotes onto the wheel
+  // and evicting the oldest — the store must not second-guess it.
   if (!P.equip(it.kind, it.id)) { shellRef.toast('You do not own that', 'bad'); return; }
   const d = P.data;
   // profile.publicRecord() reads d.icon and d.nameplate, not d.equipped.* — the
   // leaderboard row and the friends list are built from those, so both copies
   // move together or a bought icon never appears next to your name.
-  if (it.kind === 'icon') d.icon = it.id;
-  if (it.kind === 'nameplate') d.nameplate = it.id;
-  // The in-match emote wheel is the ARRAY equipped.emotes; equip() only writes
-  // the scalar. Newest equip takes slot 0, wheel capped at four.
-  if (it.kind === 'emote') {
-    const wheel = Array.isArray(d.equipped.emotes) ? d.equipped.emotes : [];
-    d.equipped.emotes = [it.id, ...wheel.filter((x) => x !== it.id)].slice(0, 4);
-  }
-  P.save();
-  shellRef.toast(`${it.name} equipped`, 'ok');
+  if (it.kind === 'icon') { d.icon = it.id; P.save(); }
+  if (it.kind === 'nameplate') { d.nameplate = it.id; P.save(); }
+  shellRef.toast(it.kind === 'emote' ? `${it.name} added` : `${it.name} equipped`, 'ok');
+}
+
+function unequip(it) {
+  if (typeof P.unequip !== 'function' || !P.unequip(it.kind, it.id)) return;
+  shellRef.toast(`${it.name} removed`, 'info');
 }
 
 /**
@@ -332,8 +358,8 @@ function revealTab(root) {
 
 /* -------------------------------------------------------- live patching --- */
 
-/** Motion the player has switched off, or cannot see, is not worth a tween. */
-function skipTween() {
+/** Motion the player has switched off, or cannot see, is not worth animating. */
+function noMotion() {
   if (typeof document !== 'undefined' && document.hidden) return true;
   try {
     return typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
@@ -347,7 +373,7 @@ function syncCoins(root) {
   const target = P.data.coins;
   // A hidden tab never services rAF: tweening there would freeze the balance on
   // a stale number until the next profile change. Snap instead.
-  if (shownCoins === null || shownCoins === target || skipTween()) {
+  if (shownCoins === null || shownCoins === target || noMotion()) {
     shownCoins = target;
     el.textContent = String(target);
     return;
@@ -475,7 +501,13 @@ export function registerStore(shell, deps = {}) {
 
         const dot = e.target.closest('[data-dot]');
         if (dot && rail) {
-          rail.scrollTo({ left: rail.clientWidth * Number(dot.dataset.dot), behavior: 'smooth' });
+          // Scroll to the CARD, not to a multiple of the rail width: a wide
+          // screen fits two collections per page and the two stop agreeing.
+          const card = rail.children[Number(dot.dataset.dot)];
+          if (card) {
+            const delta = card.getBoundingClientRect().left - rail.getBoundingClientRect().left;
+            rail.scrollTo({ left: rail.scrollLeft + delta, behavior: noMotion() ? 'auto' : 'smooth' });
+          }
           return;
         }
 
@@ -485,6 +517,7 @@ export function registerStore(shell, deps = {}) {
           if (!it) return;
           if (act.dataset.act === 'buy') await buy(it);
           else if (act.dataset.act === 'equip') equip(it);
+          else if (act.dataset.act === 'unequip') unequip(it);
           return;
         }
 
@@ -500,9 +533,17 @@ export function registerStore(shell, deps = {}) {
 
       if (rail) {
         rail.addEventListener('scroll', () => {
-          const i = Math.round(rail.scrollLeft / Math.max(1, rail.clientWidth));
+          // Whichever card starts closest to the left edge is the one being
+          // looked at, in both the one-up phone layout and the two-up desktop.
+          const x = rail.getBoundingClientRect().left;
+          let best = 0;
+          let bestD = Infinity;
+          [...rail.children].forEach((c, i) => {
+            const d = Math.abs(c.getBoundingClientRect().left - x);
+            if (d < bestD) { bestD = d; best = i; }
+          });
           for (const d of root.querySelectorAll('[data-dot]')) {
-            d.setAttribute('aria-current', String(Number(d.dataset.dot) === i));
+            d.setAttribute('aria-current', String(Number(d.dataset.dot) === best));
           }
         }, { passive: true });
       }

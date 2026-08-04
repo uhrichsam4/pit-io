@@ -13,7 +13,7 @@
  * page root, which survives that re-render.
  */
 
-import { page, esc, shortNum, wireNav } from '../shell.js';
+import { page, esc, shortNum, wireNav, icon } from '../shell.js';
 import { profile as globalProfile, xpForLevel } from '../../meta/profile.js';
 import { listModes, getMode } from '../../gameplay/modes.js';
 import { rankBadge } from '../../meta/leaderboard.js';
@@ -168,7 +168,7 @@ export function registerProfile(shell, deps = {}) {
             <h2 class="pf-name">${esc(d.name || 'Player')}</h2>
             <div class="pf-chips">
               <span class="tier-badge" style="--tc:${badge.color}"><i></i>${esc(badge.label)}</span>
-              <span class="chip sun">🪙 ${esc(shortNum(d.coins))}</span>
+              <span class="chip sun">${icon('coin')} ${esc(shortNum(d.coins))}</span>
               ${d.streak.days > 1 ? `<span class="chip hot">🔥 ${d.streak.days}-day streak</span>` : ''}
             </div>
             <div class="pf-xp">

@@ -125,6 +125,34 @@
 .wrap { width: 100%; max-width: 46em; margin: 0 auto; }
 .wrap-wide { width: 100%; max-width: 64em; margin: 0 auto; }
 
+/* ------------------------------------------------------------------------ */
+/* THE TAP FLOOR.                                                           */
+/*                                                                          */
+/* Stated in CSS, not only in JS. Shell._enforceTapTargets stamps an inline  */
+/* min-height when a screen mounts, but a screen that builds its controls    */
+/* afterwards — in mount(), on a tab switch, from a fetch — creates nodes    */
+/* the pass has already run past, and those shipped at whatever height their */
+/* padding happened to give them. A stylesheet rule has no such window.      */
+/*                                                                          */
+/* Deliberately specific enough to beat a screen's own accidental sizing and */
+/* deliberately overridable by one that sets min-height on purpose.          */
+/* ------------------------------------------------------------------------ */
+/* Inline SVG glyphs from shell.js icon(). Sits on the text baseline like the
+   emoji it replaced, so no screen has to adjust its layout for the swap. */
+.shell .md-ico {
+  display: inline-block;
+  vertical-align: -0.14em;
+  flex: 0 0 auto;
+}
+
+.shell button,
+.shell [role='button'],
+.shell .tappable,
+.shell select,
+.shell input:not([type='range']):not([type='checkbox']):not([type='radio']) {
+  min-height: var(--tap);
+}
+
 /* ======================================================================== */
 /* PANELS & CARDS                                                           */
 /* ======================================================================== */
@@ -264,8 +292,8 @@
 .rarity-mythic    { --rc: var(--r-mythic); }
 
 .tabs {
-  display: flex; gap: 0.3em;
-  padding: 0.3em;
+  display: flex; gap: 0.25em;
+  padding: 0.25em;
   background: var(--sunk);
   border: 1px solid var(--stroke);
   border-radius: var(--r-pill);
@@ -273,7 +301,11 @@
 }
 .tabs button {
   flex: 1 1 0; min-width: 0;
-  min-height: calc(var(--tap) - 0.6em);
+  /* The full 44px, not 44px minus the strip's own padding. Shaving the padding
+     off here made every tab in the app a 35px target — measured, on the six
+     screens that use tabs. The strip is allowed to be taller than 44; the thing
+     the thumb actually hits is not allowed to be shorter. */
+  min-height: var(--tap);
   padding: 0.45em 0.6em;
   border: 0; border-radius: var(--r-pill);
   background: transparent; color: var(--dim);

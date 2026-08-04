@@ -344,6 +344,16 @@ setInterval(() => {
   }
 }, 15000);
 
+// Last line of defence. This process is authoritative for the clock, the roster
+// and hole-vs-hole kills in every live match on it; a bug in one REST request
+// must never be able to end all of them. Log and keep serving.
+process.on('unhandledRejection', (e) => {
+  console.warn('[server] unhandled rejection:', (e && e.message) || e);
+});
+process.on('uncaughtException', (e) => {
+  console.warn('[server] uncaught exception:', (e && e.stack) || e);
+});
+
 // The leaderboard write is debounced, so a Ctrl-C between matches would
 // otherwise drop the last few minutes of play.
 let closing = false;
