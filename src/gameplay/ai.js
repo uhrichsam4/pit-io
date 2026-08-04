@@ -226,8 +226,16 @@ export class BotController {
 
     this.replanIn -= dt;
     if (this.mode === BOT_MODE.FARM && this.replanIn <= 0) {
-      // Sharper bots think more often, which is most of what "skill" reads as.
-      this.replanIn = 1.6 - 0.95 * this.skill + this.rng() * 0.35;
+      // Sharper bots think a little more often — but only a little.
+      //
+      // MEASURED. At 1.6 - 0.95*skill a skill-1.0 bot replanned every 0.65 s
+      // against a skill-0.2 bot's 1.6 s, and because `bestScore` is the MAX
+      // over `samples` candidates (which also grows with skill) it is biased
+      // high, so the sharp bot cleared the abandon ratchet far more often: 100
+      // goal changes a match against 63, for no extra ground covered (5117 m
+      // against 5487 m) and a worse finish. Skill has to buy judgement, not
+      // churn — the candidate count and the noise term below already do that.
+      this.replanIn = 1.35 - 0.45 * this.skill + this.rng() * 0.3;
       this._replan(holes);
     }
 
@@ -441,7 +449,12 @@ export class BotController {
       // bot visibly stutters between two directions.
       const dGoal = Math.hypot(this.goal.x - h.position.x, this.goal.y - h.position.z);
       const committed = dGoal > 14 && this.goalValue > 0;
-      if (!committed || bestScore > this.goalValue * 1.35) {
+      // Sample count biases `bestScore` upward, so a bot that considers more
+      // options must also demand more of them or it simply abandons its plan
+      // more often than a bot that considers fewer. Scaling the ratchet with
+      // `samples` makes the bar mean the same thing at every skill.
+      const ratchet = 1.25 + 0.05 * samples;
+      if (!committed || bestScore > this.goalValue * ratchet) {
         this.goal.set(best.x, best.z);
         this.goalValue = bestScore;
       }
@@ -491,6 +504,33 @@ export class BotController {
   }
 
   /* ------------------------------------------------------------ steer --- */
+
+  /**
+   * Is there water anywhere along `len` metres of this heading?
+   *
+   * Sampled at three points, not just the far end. Testing only the endpoint
+   * is what let bots clip the corner of a marina basin: at r=20 the guard
+   * reaches 24 m, and the far bank of a 10 m cut is dry, so the endpoint test
+   * cheerfully approved a heading that goes through the water to get there.
+   */
+  _wet(dx, dz, len) {
+    const h = this.hole;
+    for (let k = 3; k >= 1; k--) {
+      const d = (len * k) / 3;
+      if (isWaterAt(h.position.x + dx * d, h.position.z + dz * d, this.layout)) return true;
+    }
+    return false;
+  }
+
+  /** Highest-scoring heading whose whole `len` lookahead is dry, or -1. */
+  _driest(len) {
+    let bi = -1, bs = -1e9;
+    for (let i = 0; i < DIRS; i++) {
+      if (this._wet(DIR_X[i], DIR_Z[i], len)) continue;
+      if (_score[i] > bs) { bs = _score[i]; bi = i; }
+    }
+    return bi;
+  }
 
   _steer(dt, holes, t) {
     const h = this.hole;
@@ -592,14 +632,25 @@ export class BotController {
     // a bot on a peninsula has no legal move at all.
     const guard = 8 + r * 0.8;
     let vetoed = false;
-    if (isWaterAt(h.position.x + DIR_X[bestI] * guard, h.position.z + DIR_Z[bestI] * guard, this.layout)) {
+    if (this._wet(DIR_X[bestI], DIR_Z[bestI], guard)) {
       vetoed = true;
-      let safeI = -1, safeS = -1e9;
-      for (let i = 0; i < DIRS; i++) {
-        if (isWaterAt(h.position.x + DIR_X[i] * guard, h.position.z + DIR_Z[i] * guard, this.layout)) continue;
-        if (_score[i] > safeS) { safeS = _score[i]; safeI = i; }
+      let safeI = this._driest(guard);
+      // Nothing dry at full reach. A bot on the tip of a pier or against the
+      // inside corner of a marina basin genuinely has no clean 24 m move, and
+      // the old code just shrugged and drove into the water. Shorten the reach
+      // before giving up, and if the bot is ALREADY wet, forget the scores
+      // entirely and run for the nearest dry ground.
+      if (safeI < 0) safeI = this._driest(guard * 0.4);
+      if (safeI >= 0) {
+        bestI = safeI;
+      } else if (isWaterAt(h.position.x, h.position.z, this.layout)) {
+        const land = clampToLand(h.position.x, h.position.z, this.layout);
+        const lx = land.x - h.position.x, lz = land.z - h.position.z;
+        if (lx * lx + lz * lz > 1e-4) {
+          const a = Math.atan2(lz, lx);
+          bestI = ((Math.round((a / (Math.PI * 2)) * DIRS) % DIRS) + DIRS) % DIRS;
+        }
       }
-      if (safeI >= 0) bestI = safeI;
     }
 
     /* ---- 3. sub-sample the winner and slew toward it ----------------- */

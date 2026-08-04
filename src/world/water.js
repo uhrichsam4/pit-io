@@ -912,7 +912,7 @@ const WATER_BODY = /* glsl */ `
      Siltier, greener and DARKER than the bay. The tint alone was never enough:
      a 60 m strip of one flat colour held between two straight bulkheads is a
      swimming pool whatever colour it is painted, which is exactly what the
-     `river` preset rendered. Three things fix it, and none of them is a colour:
+     river preset rendered. Three things fix it, and none of them is a colour:
      depth across the channel, a current, and a shaded margin at the wall. */
   wCol = mix(wCol, uRiverC, wRiv * 0.92);
 
@@ -2485,7 +2485,7 @@ export function debugShore(layout) {
 }
 
 /*
- * NO BRIDGE PIERS HERE. streets.js's buildBridge() now sinks its own piers from
- * -6.5 up into the soffit; a second set in the same channel positions would be
- * duplicate geometry and a guaranteed z-fight.
+ * BRIDGE PIERS LIVE HERE, in buildBridgePiers() — streets.js owns the deck and
+ * defers everything standing in the channel to this module, because the pier
+ * has to be sized against a water height only this module knows.
  */

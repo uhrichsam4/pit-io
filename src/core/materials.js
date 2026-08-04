@@ -1124,8 +1124,8 @@ function stuccoShell(floors, bays, size) {
     for (let i = 1; i < bays; i++) {
       if (rand() > 0.42) continue;
       const px = i * bw - bw * 0.10, pw = bw * 0.20;
-      go.fillStyle = 'rgba(255,251,242,0.13)'; go.fillRect(px, 0, pw, size);
-      go.fillStyle = 'rgba(30,24,18,0.16)'; go.fillRect(px + pw, 0, bw * 0.045, size);
+      go.fillStyle = 'rgba(255,251,242,0.22)'; go.fillRect(px, 0, pw, size);
+      go.fillStyle = 'rgba(30,24,18,0.26)'; go.fillRect(px + pw, 0, bw * 0.05, size);
       gh.fillStyle = 'rgb(190,190,190)'; gh.fillRect(px, 0, pw, size);
       gh.fillStyle = 'rgb(74,74,74)'; gh.fillRect(px + pw, 0, bw * 0.045, size);
     }
@@ -1264,16 +1264,22 @@ function stuccoShell(floors, bays, size) {
 
         // Split unit hung on the wall under the sill. Miami has one of these
         // under about every third window and nothing else says "apartments".
-        if (c.ac && ((f * 3 + i * 5) % 7) < 3 && y + h + 10 < y0 + fh) {
-          const ax = x + w * 0.5 - bw * 0.10, ay = y + h + 5.5;
-          go.fillStyle = 'rgba(214,212,202,0.95)';
-          go.fillRect(ax, ay, bw * 0.20, fh * 0.075);
-          go.fillStyle = 'rgba(60,58,52,0.55)';
-          go.fillRect(ax + 1, ay + 1.4, bw * 0.20 - 2, fh * 0.030);
-          go.fillStyle = 'rgba(24,20,16,0.26)';
-          go.fillRect(ax, ay + fh * 0.075, bw * 0.20, 2.0);
-          gh.fillStyle = 'rgb(226,226,226)'; gh.fillRect(ax, ay, bw * 0.20, fh * 0.075);
-          gr.fillStyle = 'rgb(120,120,120)'; gr.fillRect(ax, ay, bw * 0.20, fh * 0.075);
+        if (c.ac && ((f * 3 + i * 5) % 7) < 3 && y + h + 12 < y0 + fh) {
+          // 0.8 m x 0.37 m at the tile's metre scale — a real split unit. The
+          // first pass drew it at half that and it read as a stray pink tick.
+          const aw = bw * 0.26, ahh = fh * 0.105;
+          const ax = x + w * 0.5 - aw * 0.5, ay = y + h + 6.0;
+          go.fillStyle = 'rgba(226,224,214,0.96)';
+          go.fillRect(ax, ay, aw, ahh);
+          go.fillStyle = 'rgba(70,68,62,0.62)';
+          go.fillRect(ax + 1.2, ay + 1.6, aw - 2.4, ahh * 0.52);
+          go.fillStyle = 'rgba(255,255,255,0.35)';
+          go.fillRect(ax, ay, aw, 1.4);
+          go.fillStyle = 'rgba(24,20,16,0.30)';
+          go.fillRect(ax, ay + ahh, aw, 2.4);
+          gh.fillStyle = 'rgb(232,232,232)'; gh.fillRect(ax, ay, aw, ahh);
+          gh.fillStyle = 'rgb(58,58,58)'; gh.fillRect(ax, ay + ahh, aw, 1.8);
+          gr.fillStyle = 'rgb(120,120,120)'; gr.fillRect(ax, ay, aw, ahh);
         }
       }
     }
@@ -1296,6 +1302,177 @@ function stuccoShell(floors, bays, size) {
       overlay: ov,
       windows,
       normalMap: dataTex(normalMapFromHeight(downscale(hgt, 256), 256, 1.1 * (size / 256))),
+      roughnessMap: dataTex(rgh),
+    };
+  });
+}
+
+/* ------------------------------------------------------ shopfront shell --- */
+
+/**
+ * The parts of a shopfront that are the same whatever the shop is painted:
+ * the display glazing, what is behind it, the joinery and the kick plate.
+ *
+ * WHY THERE IS NOW A SHOP IN THE WINDOW.
+ * The previous version filled the glazing with one vertical blue-grey gradient
+ * and seven soft warm blobs. At the street-level camera — which is a named
+ * review preset and the distance a player spends the whole early game at — that
+ * reads as a sheet of frosted perspex, not as a shop: no floor, no ceiling, no
+ * counter, nothing with an edge on it. The brief asks for "lobbies hinted
+ * behind glass", and a hint needs at least one straight line in it.
+ *
+ * Everything is drawn at real shop proportions for a 9 m x 5 m tile: the
+ * fascia is at head height, the transom is 2.1 m up, the counter is 1.05 m and
+ * the shop floor recedes to a back wall about 4 m in.
+ */
+function storefrontShell(size, tooth, patch) {
+  return cached(`tex-storefront-shell-${size}`, () => {
+    const rand = mulberry32(0x60d1f3);
+    const ov = canvas(size);
+    const go = ctx2d(ov);
+    const hgt = canvas(size);
+    const gh = paintGrey(hgt, size, 136, [{ f: tooth, amp: 0.6 }]);
+    const rgh = canvas(size);
+    const gr = paintGrey(rgh, size, 214, [{ f: patch, amp: 0.14 }]);
+
+    const P = (t) => size * t;
+    const gy = P(0.30), gH = P(0.60), gx = P(0.045), gW = size - P(0.09);
+
+    /* Height / roughness for the bands the colour pass paints per tint. */
+    gh.fillStyle = 'rgb(190,190,190)'; gh.fillRect(0, P(0.055), size, P(0.115));
+    gr.fillStyle = 'rgb(150,150,150)'; gr.fillRect(0, P(0.055), size, P(0.115));
+    gh.fillStyle = 'rgb(215,215,215)'; gh.fillRect(0, P(0.175), size, P(0.085));
+    gr.fillStyle = 'rgb(240,240,240)'; gr.fillRect(0, P(0.175), size, P(0.085));
+    gh.fillStyle = 'rgb(160,160,160)'; gh.fillRect(0, P(0.90), size, P(0.10));
+    // Pilasters stand proud of the frontage.
+    gh.fillStyle = 'rgb(196,196,196)';
+    gh.fillRect(0, P(0.26), P(0.045), P(0.64));
+    gh.fillRect(size - P(0.045), P(0.26), P(0.045), P(0.64));
+
+    /* --- what you can see through the window ------------------------------ */
+    go.save();
+    go.beginPath(); go.rect(gx, gy, gW, gH); go.clip();
+
+    // Room shell: dark ceiling, lit back wall, a floor running away from you.
+    const floorY = gy + gH * 0.74;
+    go.fillStyle = 'rgb(58,52,46)';
+    go.fillRect(gx, gy, gW, gH);
+    const back = go.createLinearGradient(0, gy, 0, floorY);
+    back.addColorStop(0.0, 'rgb(88,74,58)');          // ceiling, in shade
+    back.addColorStop(0.30, 'rgb(186,160,124)');
+    back.addColorStop(1.0, 'rgb(236,212,172)');       // back wall catching light
+    go.fillStyle = back;
+    go.fillRect(gx, gy, gW, floorY - gy);
+    const flr = go.createLinearGradient(0, floorY, 0, gy + gH);
+    flr.addColorStop(0, 'rgb(206,184,152)');
+    flr.addColorStop(1, 'rgb(146,126,102)');
+    go.fillStyle = flr;
+    go.fillRect(gx, floorY, gW, gy + gH - floorY);
+
+    // Shelving against the back wall — the vertical rhythm that says "shop".
+    for (let i = 0; i < 3; i++) {
+      const sw = gW * (0.13 + rand() * 0.09);
+      const sx = gx + gW * (0.08 + i * 0.32) + rand() * gW * 0.05;
+      const sh = (floorY - gy) * (0.52 + rand() * 0.26);
+      const sy = floorY - sh;
+      go.fillStyle = 'rgba(96,80,64,0.85)';
+      go.fillRect(sx, sy, sw, sh);
+      for (let k = 1; k < 4; k++) {
+        const ly = sy + (sh * k) / 4;
+        go.fillStyle = 'rgba(232,216,190,0.55)'; go.fillRect(sx, ly, sw, 1.6);
+        // Stock on the shelf: three or four blocks of saturated colour, which
+        // is the only chroma anywhere in the frontage and reads at 6 m.
+        const n = 2 + ((i + k) % 3);
+        for (let q = 0; q < n; q++) {
+          const bw2 = (sw / n) * (0.42 + rand() * 0.4);
+          go.fillStyle = `rgba(${120 + rand() * 130 | 0},${90 + rand() * 120 | 0},${80 + rand() * 130 | 0},0.75)`;
+          go.fillRect(sx + (sw / n) * q + 1, ly - 4.5, bw2, 4.5);
+        }
+      }
+    }
+
+    // Counter across the front third, with a till block on it.
+    const ctY = floorY - gH * 0.155;
+    go.fillStyle = 'rgba(74,60,48,0.92)';
+    go.fillRect(gx + gW * 0.42, ctY, gW * 0.44, floorY - ctY);
+    go.fillStyle = 'rgba(226,212,188,0.9)';
+    go.fillRect(gx + gW * 0.42, ctY, gW * 0.44, 3.0);
+    go.fillStyle = 'rgba(52,58,64,0.9)';
+    go.fillRect(gx + gW * 0.60, ctY - gH * 0.055, gW * 0.07, gH * 0.055);
+
+    // Pendant lights. Warm, small, and the thing that makes the interior read
+    // as switched on rather than as a dark hole.
+    for (let i = 0; i < 4; i++) {
+      const lx = gx + gW * (0.14 + i * 0.24);
+      const ly = gy + gH * 0.16;
+      go.strokeStyle = 'rgba(40,34,28,0.8)'; go.lineWidth = 1;
+      go.beginPath(); go.moveTo(lx, gy); go.lineTo(lx, ly); go.stroke();
+      const rg = go.createRadialGradient(lx, ly, 0, lx, ly, gH * 0.11);
+      rg.addColorStop(0, 'rgba(255,236,190,0.95)');
+      rg.addColorStop(0.35, 'rgba(255,226,168,0.42)');
+      rg.addColorStop(1, 'rgba(255,226,168,0)');
+      go.fillStyle = rg;
+      go.beginPath(); go.arc(lx, ly, gH * 0.11, 0, 7); go.fill();
+    }
+
+    // The door. One bay of the three is an entrance, so the frontage has a way
+    // in — the single most-missed detail on a procedural shop.
+    const dx = gx + gW * 0.055, dW = gW * 0.24;
+    go.fillStyle = 'rgba(30,38,46,0.55)';
+    go.fillRect(dx, gy + gH * 0.24, dW, gH - gH * 0.24);
+    go.fillStyle = 'rgba(212,206,192,0.9)';
+    go.fillRect(dx + dW * 0.62, gy + gH * 0.56, dW * 0.10, gH * 0.10);   // push bar
+
+    /* --- the glass itself, over everything behind it ---------------------- */
+    // A sheet of glass is mostly a mirror of the street. Two layers: an even
+    // sky wash that hides the interior toward the top, and one raking highlight.
+    // Weighted hard toward the head of the glass: that is where a shopfront
+    // actually mirrors the sky, and washing the whole sheet evenly is what
+    // turned the interior grey and killed the one warm note at street level.
+    const sky = go.createLinearGradient(0, gy, 0, gy + gH);
+    sky.addColorStop(0.0, 'rgba(206,236,250,0.88)');
+    sky.addColorStop(0.22, 'rgba(150,202,228,0.44)');
+    sky.addColorStop(0.55, 'rgba(112,164,192,0.15)');
+    sky.addColorStop(1.0, 'rgba(130,170,194,0.20)');
+    go.fillStyle = sky; go.fillRect(gx, gy, gW, gH);
+
+    go.fillStyle = 'rgba(255,255,255,0.17)';
+    go.beginPath();
+    go.moveTo(P(0.05), gy + gH); go.lineTo(P(0.42), gy);
+    go.lineTo(P(0.60), gy); go.lineTo(P(0.23), gy + gH);
+    go.closePath(); go.fill();
+    go.restore();
+
+    gh.fillStyle = 'rgb(84,84,84)'; gh.fillRect(gx, gy, gW, gH);
+    gr.fillStyle = 'rgb(36,36,36)'; gr.fillRect(gx, gy, gW, gH);
+
+    /* --- joinery ---------------------------------------------------------- */
+    const frame = css(srgb(PALETTE.MULLION), 0.95);
+    go.strokeStyle = frame; go.lineWidth = P(0.014);
+    go.strokeRect(gx, gy, gW, gH);
+    gh.strokeStyle = 'rgb(226,226,226)'; gh.lineWidth = P(0.014);
+    gh.strokeRect(gx, gy, gW, gH);
+    for (let i = 1; i < 3; i++) {
+      const x = gx + gW * (i / 3);
+      go.lineWidth = P(0.008); gh.lineWidth = P(0.008);
+      go.beginPath(); go.moveTo(x, gy); go.lineTo(x, gy + gH); go.stroke();
+      gh.beginPath(); gh.moveTo(x, gy); gh.lineTo(x, gy + gH); gh.stroke();
+    }
+    /* Transom over the door line. */
+    go.lineWidth = P(0.008);
+    go.beginPath(); go.moveTo(gx, gy + gH * 0.24); go.lineTo(gx + gW, gy + gH * 0.24); go.stroke();
+    /* Stall riser: the tiled kick plate a shopfront actually stands on. It is
+       the band the pavement grime collects against, and it stops the glazing
+       running straight into the ground. */
+    const rY = gy + gH * 0.90;
+    go.fillStyle = 'rgba(58,66,72,0.85)'; go.fillRect(gx, rY, gW, gH * 0.10);
+    go.fillStyle = 'rgba(240,236,224,0.30)'; go.fillRect(gx, rY, gW, 1.8);
+    gh.fillStyle = 'rgb(178,178,178)'; gh.fillRect(gx, rY, gW, gH * 0.10);
+    gr.fillStyle = 'rgb(120,120,120)'; gr.fillRect(gx, rY, gW, gH * 0.10);
+
+    return {
+      overlay: ov,
+      normalMap: dataTex(normalMapFromHeight(downscale(hgt, 256), 256, 1.0 * (size / 256))),
       roughnessMap: dataTex(rgh),
     };
   });
@@ -2130,8 +2307,24 @@ export const Textures = {
       const rand = mulberry32(0x1177ab ^ (hex | 0));
       const tint = srgb(hex);
       const lit = srgb(PALETTE.GLASS_LIT);
-      const spandrel = srgb(PALETTE.SPANDREL);
       const mullion = srgb(PALETTE.MULLION);
+      /*
+       * THE DARK HALF OF A CURTAIN WALL HAS TO KEEP THE TINT'S HUE.
+       *
+       * The sheets that mirror the city instead of the sky, the shadow under
+       * each transom and the opaque spandrel were all authored as one fixed
+       * blue-grey. On a teal or sky facade that is invisibly correct. On the
+       * bronze one it is not: a warm tan albedo crossed with a cold blue-grey
+       * dark lands on olive, and a 180 m olive-khaki slab in a bright Miami
+       * frame is the single muddiest thing the skyline can contain — measured
+       * on the downtown-wide preset, where two of them stood side by side.
+       *
+       * Both darks are now a shaded version of the facade's OWN tint pulled
+       * only part of the way toward the neutral city reflection, so a bronze
+       * tower reads as dark champagne and a teal tower is unchanged.
+       */
+      const deepRef = mix(shade(tint, 0.46), [38, 58, 76], 0.32);
+      const spandrel = mix(shade(tint, 0.52), srgb(PALETTE.SPANDREL), 0.34);
 
       const col = canvas(size);
       const gc = ctx2d(col);
@@ -2178,7 +2371,7 @@ export const Textures = {
           const k = paneAmp / 0.62;               // same falloff for the specials
           if (isLit) pane = mix(tint, lit, 0.55 + 0.45 * k);
           else if (isGlint) pane = mix(tint, [255, 253, 244], 0.62 * k);
-          else if (isDeep) pane = mix(tint, [26, 52, 70], 0.42 * k);
+          else if (isDeep) pane = mix(tint, deepRef, 0.58 * k);
           else pane = [
             clamp255(tint[0] * (1 + v)),
             clamp255(tint[1] * (1 + v)),
@@ -2194,7 +2387,7 @@ export const Textures = {
           grad.addColorStop(0.0, 'rgba(255,252,242,0.46)');
           grad.addColorStop(0.30, 'rgba(198,232,246,0.20)');
           grad.addColorStop(0.62, 'rgba(120,176,206,0.05)');
-          grad.addColorStop(1.0, 'rgba(24,52,72,0.34)');
+          grad.addColorStop(1.0, css(deepRef, 0.32));
           gc.fillStyle = grad;
           gc.fillRect(x, yTop, bw, visionH);
 
@@ -2216,12 +2409,17 @@ export const Textures = {
            is sub-pixel and THIS band is the only thing left carrying the
            storey rhythm, so it has to be the strongest mark on the facade. */
         const sy = yTop + visionH;
-        gc.fillStyle = css(mix(spandrel, tint, 0.28));
+        gc.fillStyle = css(spandrel);
         gc.fillRect(0, sy, size, spandrelH);
         const sg = gc.createLinearGradient(0, sy, 0, sy + spandrelH);
-        sg.addColorStop(0.0, 'rgba(10,18,24,0.42)');   // shadow cast by the transom
-        sg.addColorStop(0.22, 'rgba(255,255,255,0.14)');
-        sg.addColorStop(1.0, 'rgba(0,0,0,0.26)');
+        // 0.32, was 0.42. The band is 26% of every floor, so its shadow is 26%
+        // of the whole facade's value; at the old depth a glass shaft seen
+        // top-down from the rooftops preset read a full stop darker than the
+        // pastel city around it. The storey rhythm survives the trim because
+        // the band is still the darkest mark on the sheet.
+        sg.addColorStop(0.0, 'rgba(10,18,24,0.32)');   // shadow cast by the transom
+        sg.addColorStop(0.22, 'rgba(255,255,255,0.16)');
+        sg.addColorStop(1.0, 'rgba(0,0,0,0.22)');
         gc.fillStyle = sg; gc.fillRect(0, sy, size, spandrelH);
         gh.fillStyle = 'rgb(96,96,96)'; gh.fillRect(0, sy, size, spandrelH);
         gr.fillStyle = 'rgb(228,228,228)'; gr.fillRect(0, sy, size, spandrelH);
@@ -2322,24 +2520,21 @@ export const Textures = {
       // Fixed seeds, so identical for all eleven shop tints. Shared.
       const tooth = fields(`shop-tooth-${size}`, () => fbm(size, size >> 3, 2, mulberry32(0x2b)));
       const patch = fields(`shop-patch-${size}`, () => fbm(size, 5, 2, mulberry32(0x71)));
+      // Relief and gloss are the same on every shop whatever colour it is
+      // painted; only the albedo changes. See stuccoShell for the reasoning.
+      const shell = storefrontShell(size, tooth, patch);
 
       const col = canvas(size);
       const gc = paintBase(col, size, wall, [
         { f: patch, amp: 0.04, tint: [1.05, 1.0, 0.92] },
         { f: tooth, amp: 0.045 },
       ]);
-      const hgt = canvas(size);
-      const gh = paintGrey(hgt, size, 136, [{ f: tooth, amp: 0.6 }]);
-      const rgh = canvas(size);
-      const gr = paintGrey(rgh, size, 214, [{ f: patch, amp: 0.14 }]);
 
       const P = (t) => size * t;
 
       /* Signage band. */
       gc.fillStyle = css(srgb(PALETTE.SIGN_DARK));
       gc.fillRect(0, P(0.055), size, P(0.115));
-      gh.fillStyle = 'rgb(190,190,190)'; gh.fillRect(0, P(0.055), size, P(0.115));
-      gr.fillStyle = 'rgb(150,150,150)'; gr.fillRect(0, P(0.055), size, P(0.115));
       /* Illegible "lettering": blocks, not text — text at this size is mush.
          The neon colour varies per shop: one aqua sign repeated down a whole
          retail spine is the most countable repeat in the frame. */
@@ -2367,71 +2562,32 @@ export const Textures = {
       av.addColorStop(0, 'rgba(255,246,228,0.14)');
       av.addColorStop(1, 'rgba(40,30,24,0.34)');
       gc.fillStyle = av; gc.fillRect(0, ay, size, ah);
-      gh.fillStyle = 'rgb(215,215,215)'; gh.fillRect(0, ay, size, ah);
-      gr.fillStyle = 'rgb(240,240,240)'; gr.fillRect(0, ay, size, ah);
-      /* Shadow the awning throws on the glass below. */
+
+      /* Plinth. buildings.js pins its trim UVs to a texel inside this band —
+         keep it plain, unlit wall. Painted before the shell so the shell's
+         kick-plate shading lands on top of it. */
+      gc.fillStyle = css(shade(wall, 0.82));
+      gc.fillRect(0, P(0.90), size, P(0.10));
+      /* Pilasters flanking the frontage, tinted off the wall itself. */
+      gc.fillStyle = css(shade(wall, 1.05));
+      gc.fillRect(0, P(0.26), P(0.045), P(0.64));
+      gc.fillRect(size - P(0.045), P(0.26), P(0.045), P(0.64));
+
+      /* Glazing, shopfitting and joinery — all tint-free, all shared. */
+      gc.drawImage(shell.overlay, 0, 0);
+
+      /* Shadow the awning throws on the glass below. Last, so it lands on the
+         glazing rather than being painted over by it. */
       const ash = gc.createLinearGradient(0, ay + ah, 0, ay + ah + P(0.10));
       ash.addColorStop(0, 'rgba(38,30,26,0.42)');
       ash.addColorStop(1, 'rgba(38,30,26,0)');
       gc.fillStyle = ash; gc.fillRect(0, ay + ah, size, P(0.10));
 
-      /* Display glazing. */
-      const gy = P(0.30), gH = P(0.60);
-      const grad = gc.createLinearGradient(0, gy, 0, gy + gH);
-      grad.addColorStop(0.0, 'rgba(196,232,246,0.96)');
-      grad.addColorStop(0.30, 'rgba(126,190,216,0.94)');
-      grad.addColorStop(0.72, 'rgba(60,110,140,0.94)');
-      grad.addColorStop(1.0, 'rgba(96,140,164,0.94)');
-      gc.fillStyle = grad;
-      gc.fillRect(P(0.045), gy, size - P(0.09), gH);
-      gh.fillStyle = 'rgb(84,84,84)'; gh.fillRect(P(0.045), gy, size - P(0.09), gH);
-      gr.fillStyle = 'rgb(36,36,36)'; gr.fillRect(P(0.045), gy, size - P(0.09), gH);
-
-      /* A hint of interior: warm blobs behind the glass. */
-      for (let i = 0; i < 7; i++) {
-        const x = P(0.08) + rand() * size * 0.84;
-        const y = gy + gH * (0.35 + rand() * 0.5);
-        const r = P(0.02 + rand() * 0.05);
-        const rg = gc.createRadialGradient(x, y, 0, x, y, r);
-        rg.addColorStop(0, 'rgba(255,226,168,0.45)');
-        rg.addColorStop(1, 'rgba(255,226,168,0)');
-        gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
-      }
-      /* Raking highlight across the glass. */
-      gc.save();
-      gc.beginPath(); gc.rect(P(0.045), gy, size - P(0.09), gH); gc.clip();
-      gc.fillStyle = 'rgba(255,255,255,0.16)';
-      gc.beginPath();
-      gc.moveTo(P(0.05), gy + gH); gc.lineTo(P(0.42), gy);
-      gc.lineTo(P(0.60), gy); gc.lineTo(P(0.23), gy + gH);
-      gc.closePath(); gc.fill();
-      gc.restore();
-
-      /* Mullions + frame. */
-      const frame = css(srgb(PALETTE.MULLION), 0.95);
-      gc.strokeStyle = frame; gc.lineWidth = P(0.014);
-      gc.strokeRect(P(0.045), gy, size - P(0.09), gH);
-      gh.strokeStyle = 'rgb(226,226,226)'; gh.lineWidth = P(0.014);
-      gh.strokeRect(P(0.045), gy, size - P(0.09), gH);
-      const divs = 3;
-      for (let i = 1; i < divs; i++) {
-        const x = P(0.045) + (size - P(0.09)) * (i / divs);
-        gc.lineWidth = P(0.008); gh.lineWidth = P(0.008);
-        gc.beginPath(); gc.moveTo(x, gy); gc.lineTo(x, gy + gH); gc.stroke();
-        gh.beginPath(); gh.moveTo(x, gy); gh.lineTo(x, gy + gH); gh.stroke();
-      }
-      /* Transom over the door line. */
-      gc.lineWidth = P(0.008);
-      gc.beginPath(); gc.moveTo(P(0.045), gy + gH * 0.24); gc.lineTo(size - P(0.045), gy + gH * 0.24); gc.stroke();
-
-      /* Plinth. buildings.js pins its trim UVs to a texel inside this band —
-         keep it plain, unlit wall. */
-      gc.fillStyle = css(shade(wall, 0.82));
-      gc.fillRect(0, P(0.90), size, P(0.10));
-      gh.fillStyle = 'rgb(160,160,160)'; gh.fillRect(0, P(0.90), size, P(0.10));
-
-      return pack(col, hgt, rgh, size, {
-        normalStrength: 1.0, normalScale: 0.8, normalSize: 256, family: 'facade',
+      return pack(col, null, null, size, {
+        family: 'facade',
+        companions: {
+          normalMap: shell.normalMap, normalScale: 0.8, roughnessMap: shell.roughnessMap,
+        },
       });
     });
   },

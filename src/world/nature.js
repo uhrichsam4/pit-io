@@ -1322,11 +1322,23 @@ function installNatureShader(mat, key) {
                from the menu-hero distance still opens something you can see
                through. The radius at the hole widens with the hole: a 30 m
                late-game pit needs far more clear view than a 2 m starting one. */
-            float rIn = (uNatHole.w * 1.15 + 2.6) * max(t, 0.14);
-            float open = 1.0 - smoothstep(rIn, rIn * 2.05, d);
-            // Only what is actually tall enough to hide anything. A hedge does
-            // not occlude, and dissolving it just makes the pavement flicker.
-            open *= smoothstep(1.1, 3.4, vNatWorld.y);
+            float rIn = (uNatHole.w * 1.05 + 1.9) * max(t, 0.14);
+            float open = 1.0 - smoothstep(rIn, rIn * 1.80, d);
+            /* Only what is actually tall enough to hide anything. A hedge does
+               not occlude from a high 3/4 camera, and dissolving it just makes
+               the pavement flicker. Raised from 1.1-3.4: the whole knee-to-chest
+               layer — hedge, shrub, croton, palmetto, groundcover, which is
+               two thirds of everything this file plants — sat inside that ramp
+               and speckled every time the player walked past it. */
+            open *= smoothstep(1.9, 4.4, vNatWorld.y);
+            /* Fade the corridor out as it reaches the pit. Beyond t ~0.9 the
+               geometry is AT the hole rather than in front of it: a tree
+               standing on the rim projects above and beside the opening, never
+               over it, so dissolving it hides nothing and costs a screen-door
+               curtain hanging over the ground behind the hole. Measured on the
+               crowd frame, where a banyan rooted on the rim was stippling a
+               third of the visible park. */
+            open *= 1.0 - smoothstep(0.88, 0.99, t);
             /* 0.82, not 0.94: a GHOST always survives.
                At 0.94 a crown standing on the camera-to-hole line vanished
                outright — the A/B pair that produced this number has a queen
@@ -1887,14 +1899,32 @@ function makePalm(spec) {
     // Outer ring of fronds hangs low, inner ring points up: a real crown is a
     // shuttlecock, not a parasol.
     const inner = i % 3 === 0;
-    const len = spec.frondLen * (inner ? 0.72 : 1) * (0.86 + rng() * 0.3) * (1 + bias * 0.24);
-    const pitch = (inner ? 0.95 + rng() * 0.4 : spec.pitch + (rng() - 0.5) * 0.45) + bias * 0.58;
     const cell = spec.cells[i % spec.cells.length];
+    const fanCell = FAN_CELLS.has(cell);
+    /* A COSTAPALMATE CROWN IS A SHUTTLECOCK, NOT A LILY PAD.
+       A fan blade is as wide as it is long, so a dozen of them leaving the bud
+       at ONE shared pitch, ONE rise and ONE droop overlap into a single
+       surface — and every sabal and washingtonia in the city read from the game
+       camera as exactly that: a flat dark disc floating on a bare pole, with the
+       three upright inner blades sitting on top of it like a lid. A pinnate
+       frond is a narrow strip and never does this, so the extra spread is gated
+       on the CELL rather than applied to every palm.
+       Gated on trunk height too: a saw palmetto's crown starts 40 cm off the
+       ground, and a blade allowed to swing further down there would land in the
+       contact band worldBuild measures and hand a knee-high shrub a car's pass
+       radius (see fanShort's own note). */
+    const fan3d = fanCell && trunkH > 3.0;
+    const len = spec.frondLen * (inner ? 0.72 : 1) * (0.86 + rng() * 0.3) * (1 + bias * 0.24);
+    const spread = fan3d ? 1.15 : 0.45;
+    const pitch = (inner ? 0.95 + rng() * 0.4 : spec.pitch + (rng() - 0.5) * spread) + bias * 0.58;
     const f = frondGeo(len, len * spec.frondW, cell, {
-      rise: inner ? 0.75 : spec.rise,
-      droop: inner ? 0.7 : spec.droop,
+      // Per-blade ARC as well as per-blade angle. Blades that all bend by the
+      // same amount still finish on one common surface however they are
+      // pitched, which is the half of the plate that pitch alone cannot break.
+      rise: (inner ? 0.75 : spec.rise) * (fan3d ? 0.82 + rng() * 0.50 : 1),
+      droop: (inner ? 0.7 : spec.droop) * (fan3d ? 0.74 + rng() * 0.56 : 1),
       roll: 0.30 + rng() * 0.25,
-      alongV: FAN_CELLS.has(cell),
+      alongV: fanCell,
     });
     _m4.makeRotationZ(pitch);
     f.applyMatrix4(_m4);
@@ -2204,8 +2234,25 @@ function makeBush(spec) {
     }
     parts.push(g);
   }
-  if (spec.top !== false) {
-    const td = dep ? dep * 1.15 : spec.w * 0.94;
+  if (spec.top !== false && dep) {
+    /* A CLIPPED HEDGE HAS A RIDGE, NOT A LID.
+       One horizontal card spanning the full depth gave every hedge in the city
+       a single flat top plane, and a run of them at 3.2 m centres therefore
+       read from the game camera as one smooth extruded tube — a green sausage
+       laid along the kerb. Two cards pitched off a centre ridge cost the same
+       six triangles and give the top a lit face and a turned-away face, which
+       is the value separation that makes the mass read as a clipped box. */
+    const half = dep * 0.62;
+    for (const s of [-1, 1]) {
+      const t = cardGeo(spec.w * 0.96, half, spec.cell);
+      t.translate(0, -half * 0.5, 0);
+      _m4.makeRotationX(-Math.PI / 2 + s * 0.32);
+      t.applyMatrix4(_m4);
+      t.translate(0, spec.h * 0.84, s * half * 0.47);
+      parts.push(t);
+    }
+  } else if (spec.top !== false) {
+    const td = spec.w * 0.94;
     const t = cardGeo(spec.w * 0.94, td, spec.cell);
     t.translate(0, -td * 0.5, 0);
     _m4.makeRotationX(-Math.PI / 2);
@@ -2214,8 +2261,14 @@ function makeBush(spec) {
     parts.push(t);
   }
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  radialNormals(geo, 0, spec.h * 0.45, 0, 0.6);
-  liftNormals(geo, 0.35);
+  /* A BLOB IS ROUND; A HEDGE IS NOT.
+     The round pair (0.6 / 0.35) points a linear mass's side faces most of the
+     way at the sky, so the two long faces and the top all caught the key light
+     equally and the unit inflated into a smooth cylinder. Keeping more of the
+     side faces' real outward normal is what puts them a stop under the top. */
+  const lin = dep > 0;
+  radialNormals(geo, 0, spec.h * 0.45, 0, lin ? 0.30 : 0.6);
+  liftNormals(geo, lin ? 0.17 : 0.35);
   windAttr(geo, (x, y) => Math.pow(Math.min(1, y / spec.h), 1.6) * 0.45);
   return geo;
 }
@@ -2743,8 +2796,12 @@ const SPECIES = {
     debris: PALETTE.PALM_FROND, variants: 6, tints: 'palm', rBase: 0.40, contactMax: 1.6,
     make: palmVariant,
     base: {
+      // frondW 1.02, not 1.25. `palmVariant` multiplies it by 0.84-1.18, so at
+      // 1.25 a blade came out up to 1.5x WIDER than it is long and fourteen of
+      // them tiled the crown solid whatever their pitch. A costapalmate fan is
+      // about as wide as long; at 1.02 the blades read as blades.
       seed: 53, h: 8.4, rBot: 0.40, rTop: 0.35, bark: 'barkFib', crownshaft: false,
-      lean: 0.030, bulge: 0, fronds: 14, frondVar: 5, crownF: 0.37, frondW: 1.25,
+      lean: 0.030, bulge: 0, fronds: 14, frondVar: 5, crownF: 0.37, frondW: 1.02,
       pitch: 0.34, rise: 0.58, droop: 0.80, cells: ['fanA'],
       /* One variant in six carries the silver fan instead of the green one.
          There are only a dozen park parcels in the whole city, so however hard
@@ -2819,7 +2876,8 @@ const SPECIES = {
     make: palmVariant,
     base: {
       seed: 193, h: 15.5, rBot: 0.38, rTop: 0.30, bark: 'barkFib', crownshaft: false,
-      lean: 0.030, bulge: 0.05, fronds: 13, frondVar: 4, crownF: 0.21, frondW: 1.28,
+      // See sabal: a blade wider than it is long tiles a fan crown into a plate.
+      lean: 0.030, bulge: 0.05, fronds: 13, frondVar: 4, crownF: 0.21, frondW: 1.06,
       pitch: 0.30, rise: 0.55, droop: 0.86, cells: ['fanA'],
       // crownF 0.21, not the sabal's 0.37: the crown has to stay SMALL relative
       // to the trunk, or this is just a royal palm seen from further away.
@@ -3505,6 +3563,17 @@ function plant(ctx, key, x, z, rot, scale, opts = {}) {
     // construction, so we claim it and let props.js work around us.
     if (!opts.force && !ctx.isFree(x, z, clear)) { rej.occupied++; return null; }
     ctx.occupy(x, z, opts.force ? Math.min(clear, 1.7) : clear);
+  } else if (def.h >= 1.1) {
+    /* `clear: 0` means "do not RESERVE a clearance", not "this plant is not
+       there". A hedge unit, a croton, a palmetto — everything from knee height
+       up — is a solid object a person walks around, and pedestrians.js picks
+       its standing spots with `ctx.isFree(x, z, 0)`, i.e. one 3 m cell. Passing
+       clear 0 skipped the write as well as the read, so the 2,300 hedges were
+       invisible to the crowd and the commonest overlapping pair on the map was
+       a pedestrian standing inside a hedge. Radius 0 claims exactly the cell the
+       plant stands in and nothing more, so it cannot blanket a park the way a
+       real clearance would. */
+    ctx.occupy(x, z, 0);
   }
   if (sep > 0) sepTake(x, z, sep);
 

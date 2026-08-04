@@ -420,11 +420,19 @@ export function buildStreets(ctx) {
   const net = new RoadNetwork(layout);
   ctx.roads = net;
 
-  // Only a narrow apron past the last block: the base plane is what shows when
-  // nothing else claims the ground, and a wide skirt of it around the map is a
-  // big empty flat in the menu-hero frame.
-  const LAND_X0 = -S - 16, LAND_X1 = BAY;
-  const LAND_Z0 = -S - 16, LAND_Z1 = S + 16;
+  /* Only a narrow apron past the last block: the base plane is what shows when
+     nothing else claims the ground, and a wide skirt of it around the map is a
+     big empty flat in the menu-hero frame.
+     It has to be WIDER THAN THE CARRIAGEWAY REACHES, though, and it was not.
+     Every road is run out to +-(S + 30) so the grid never ends inside the
+     playable square, while the land stopped at S + 16 — so the last fourteen
+     metres of every road on all three land edges of the map was a strip of
+     asphalt hanging in the air over nothing, thirty-two of them, each one
+     visible from the two widest camera presets as a comb of grey fingers off
+     the edge of the world. */
+  const EDGE_APRON = 34;                       // > the roads' own 30 m overrun
+  const LAND_X0 = -S - EDGE_APRON, LAND_X1 = BAY;
+  const LAND_Z0 = -S - EDGE_APRON, LAND_Z1 = S + EDGE_APRON;
 
   const land = new Surf(5.0);
   const bed = new Surf(20);
@@ -2095,6 +2103,59 @@ export function buildStreets(ctx) {
       { key: 'w', road: b.edges.w, len: b.d, corner0: [x0, z1], corner1: [x0, z0] },
     ];
 
+    /* --------------------------------------------------- KERB RADII -----
+     * A city block whose kerb turns a razor 90 degrees at every junction is
+     * the loudest single "this grid was generated" tell there is, and it is
+     * also just wrong: no carriageway anywhere can be driven round a square
+     * corner. Every real junction has a kerb radius, and at the game's camera
+     * that curve is the difference between a street corner and a floor tile.
+     *
+     * THE RADIUS IS THE SIDEWALK WIDTH, and that is a structural choice rather
+     * than a taste one. The sweep's innermost profile station sits at o = sw,
+     * and the interior slab is a rectangle inset by exactly sw — so with
+     * R = sw the corner arc's radius at that station is zero and it lands on
+     * the slab's own corner. The two tile perfectly, with no gap to patch and
+     * no overlap to z-fight, and every band outboard of it comes out as a
+     * quarter annulus for free. Any other radius needs a corner cap.
+     *
+     * Only at genuine junction corners (both axes meet a road) and only where
+     * both edges are long enough to carry two radii plus a straight run.
+     */
+    const corners = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+    const roundAt = corners.map(([cx, cz]) => (
+      nearRoadX(cx) && nearRoadZ(cz)
+      && b.w >= sw * 2.6 && b.d >= sw * 2.6 ? sw : 0
+    ));
+    // edges[i] runs corners[i] -> corners[(i+1)%4], in that order.
+    for (let i = 0; i < 4; i++) {
+      edges[i].r0 = roundAt[i];
+      edges[i].r1 = roundAt[(i + 1) % 4];
+    }
+    /* The land the radius gave back to the carriageway. Paved as ROAD, because
+     * that is what the inside of a kerb radius is — the apron every turning
+     * vehicle actually drives over. Emitted from the square corner outward, so
+     * it abuts the junction box on both legs without overlapping it. */
+    for (let i = 0; i < 4; i++) {
+      const R = roundAt[i];
+      if (!R) continue;
+      const [cx, cz] = corners[i];
+      // Inward sign on each axis for this corner of the block.
+      const sx = (i === 0 || i === 3) ? 1 : -1;
+      const sz = (i === 0 || i === 1) ? 1 : -1;
+      const pts = [[cx, cz]];
+      for (let k = 0; k <= 6; k++) {
+        const a = (k / 6) * Math.PI * 0.5;
+        pts.push([
+          cx + sx * R * (1 - Math.cos(a)),
+          cz + sz * R * (1 - Math.sin(a)),
+        ]);
+      }
+      road.polyY(pts, Y_ROAD, 1.0);
+      // Claim it: streets.js runs first, and nothing else knows this corner of
+      // the block stopped being footway.
+      ctx.occupy(cx + sx * R * 0.42, cz + sz * R * 0.42, R * 0.62);
+    }
+
     /** Everything the sweep pushes down. Nothing flat may be drawn over these. */
     const holesFor = [];
 
@@ -2137,6 +2198,36 @@ export function buildStreets(ctx) {
 
       stations.push({ s: e.len, d: 0 });
       stations.sort((p, q) => p.s - q.s);
+
+      /* Stations along the corner arcs. Without them the radius is drawn as one
+         chord between s=0 and whatever the next station happens to be, which is
+         a chamfer rather than a curve. They are inserted AFTER the sort and
+         carry the drop `d` interpolated from the run they land in: a kerb ramp
+         occupies 1.2-4.9 m from the corner, which is squarely inside the arc,
+         and a d=0 station dropped into the middle of that window would stand
+         the kerb back up halfway down its own ramp. */
+      if (e.r0 || e.r1) {
+        const dAt = (ss) => {
+          for (let i = 0; i < stations.length - 1; i++) {
+            const p = stations[i], q = stations[i + 1];
+            if (ss >= p.s && ss <= q.s) {
+              const span = q.s - p.s;
+              return span < 1e-6 ? q.d : p.d + (q.d - p.d) * ((ss - p.s) / span);
+            }
+          }
+          return 0;
+        };
+        const arcStations = [];
+        for (const [R, base, dir] of [[e.r0, 0, 1], [e.r1, e.len, -1]]) {
+          if (!R) continue;
+          for (let k = 1; k < 5; k++) {
+            const ss = base + dir * (R * k) / 5;
+            arcStations.push({ s: ss, d: dAt(ss) });
+          }
+        }
+        for (const st of arcStations) stations.push(st);
+        stations.sort((p, q) => p.s - q.s);
+      }
 
       sweepEdge(e, stations, sw, tone, bandTone, x0, x1, z0, z1);
 
@@ -2290,14 +2381,49 @@ export function buildStreets(ctx) {
     stat.inlets++;
   }
 
-  /** World point on a block edge at distance `s` from corner0, inset `o`. */
+  /**
+   * World point on a block edge at distance `s` from corner0, inset `o`.
+   *
+   * ARC-AWARE. Where the block carries a kerb radius (`e.r0` / `e.r1`, set in
+   * the block loop) the first and last R metres of the run bend round a quarter
+   * circle instead of running into the mitre. Doing it HERE rather than in the
+   * sweep is what makes the radius free: every ramp, tactile pad, service
+   * patch, expansion joint, gully, crossover and planting strip is already
+   * authored in this (s, o) frame, so all of them follow the curve without
+   * knowing it exists — which is also the only way they stay on the pavement.
+   *
+   * Each edge owns half of its corner's 90 degrees and hands over on the 45
+   * degree bisector, exactly where the old mitre met, so the two runs join with
+   * no seam whichever neighbour is rounded.
+   */
   function edgePoint(e, s, o, x0, x1, z0, z1) {
+    let ox, oz, ux, uz, vx, vz;
     switch (e.key) {
-      case 'n': return [x0 + s, z0 + o];
-      case 's': return [x1 - s, z1 - o];
-      case 'e': return [x1 - o, z0 + s];
-      default: return [x0 + o, z1 - s];
+      case 'n': ox = x0; oz = z0; ux = 1; uz = 0; vx = 0; vz = 1; break;
+      case 'e': ox = x1; oz = z0; ux = 0; uz = 1; vx = -1; vz = 0; break;
+      case 's': ox = x1; oz = z1; ux = -1; uz = 0; vx = 0; vz = -1; break;
+      default: ox = x0; oz = z1; ux = 0; uz = -1; vx = 1; vz = 0; break;
     }
+    const r0 = e.r0 || 0, r1 = e.r1 || 0;
+    if (r0 > 0 && s < r0) {
+      const rad = Math.max(0, r0 - o);
+      const a = (1 - s / r0) * Math.PI * 0.25;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      return [
+        ox + (ux + vx) * r0 - (vx * ca + ux * sa) * rad,
+        oz + (uz + vz) * r0 - (vz * ca + uz * sa) * rad,
+      ];
+    }
+    if (r1 > 0 && s > e.len - r1) {
+      const rad = Math.max(0, r1 - o);
+      const a = ((s - (e.len - r1)) / r1) * Math.PI * 0.25;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      return [
+        ox + ux * (e.len - r1) + vx * r1 + (ux * sa - vx * ca) * rad,
+        oz + uz * (e.len - r1) + vz * r1 + (uz * sa - vz * ca) * rad,
+      ];
+    }
+    return [ox + ux * s + vx * o, oz + uz * s + vz * o];
   }
 
   /**
@@ -2316,7 +2442,12 @@ export function buildStreets(ctx) {
       // The mitre: corner stations move inward with the profile, and interior
       // stations are clamped into the same window so a wide sidewalk cannot
       // fold back on itself and invert a quad near a corner.
-      const s = Math.min(Math.max(st.s, o), Math.max(o, e.len - o));
+      // A ROUNDED end needs no clamp — edgePoint bends the run onto the arc and
+      // shrinks its radius with `o`, which is the same convergence expressed as
+      // a curve. Clamping as well would flatten the first R metres of it.
+      const lo = e.r0 > 0 ? 0 : o;
+      const hi = e.r1 > 0 ? e.len : Math.max(o, e.len - o);
+      const s = Math.min(Math.max(st.s, lo), Math.max(lo, hi));
       const y = yAt(i, st.d);
       const [px, pz] = edgePoint(e, s, o, x0, x1, z0, z1);
       return [px, y, pz];
@@ -2766,9 +2897,10 @@ export function buildStreets(ctx) {
    * A river crossing: a raised deck on an approach ramp at each end, a deep
    * fascia beam, pilastered parapets and lighting standards.
    *
-   * Piers are deliberately NOT built here — water.js already stands two pier
-   * walls with cutwaters under every entry in layout.bridges, and a second set
-   * in the same water would be duplicate geometry fighting itself.
+   * Piers are NOT built here: water.js owns everything standing in the channel
+   * and builds them (buildBridgePiers), sized against the water surface height
+   * it also owns. Both files used to claim the OTHER one did it, so for a while
+   * nothing did and four crossings spanned open water on nothing.
    *
    * Balusters are also out: a 60 mm baluster is razor-thin geometry the art
    * bible forbids, and from a 40-degree camera it aliases into grey fuzz. A

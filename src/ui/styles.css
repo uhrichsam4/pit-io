@@ -137,7 +137,7 @@ html, body {
   border-radius: 0.85em;
 }
 #hud-timer .lbl {
-  font-size: 0.56em; font-weight: 800; letter-spacing: 0.24em;
+  font-size: 0.62em; font-weight: 800; letter-spacing: 0.2em;
   text-transform: uppercase; color: var(--dim); margin-bottom: 0.15em;
 }
 #hud-timer .val {
@@ -203,7 +203,7 @@ html, body {
   display: block; font-size: 1.15em; font-weight: 900; letter-spacing: 0.14em;
 }
 #hud-frenzy .fz-s {
-  display: block; font-size: 0.56em; font-weight: 800; letter-spacing: 0.2em; opacity: 0.8;
+  display: block; font-size: 0.62em; font-weight: 800; letter-spacing: 0.16em; opacity: 0.85;
 }
 #hud-frenzy.slim .fz-t { font-size: 0.72em; }
 #hud-frenzy.slim .fz-s { display: none; }
@@ -233,12 +233,18 @@ html, body {
   padding: 0 0.35em 0.5em;
 }
 #hud-board .hd .ttl {
-  font-size: 0.58em; font-weight: 800; letter-spacing: 0.2em;
+  font-size: 0.62em; font-weight: 800; letter-spacing: 0.18em;
   text-transform: uppercase; color: var(--dim);
 }
 #hud-board .hd .mine {
-  font-size: 0.66em; font-weight: 900; letter-spacing: 0.06em; color: var(--sun);
+  font-size: 0.72em; font-weight: 900; letter-spacing: 0.06em; color: var(--sun);
   font-variant-numeric: tabular-nums;
+}
+/* The browser default for <sup> is `smaller`, which on a 0.72em parent inside
+   an already-scaled HUD renders the ordinal at 6.5 px on a 1024x600 laptop.
+   Sized explicitly, and lifted by hand so the smaller run still sits high. */
+#hud-board .hd .mine sup {
+  font-size: 0.68em; vertical-align: 0.4em; line-height: 0;
 }
 #hud-board .list { position: relative; }
 
@@ -321,7 +327,7 @@ html, body {
   font-size: 1.15em; font-weight: 900; letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
-#hud-rank .n sup { font-size: 0.5em; font-weight: 900; }
+#hud-rank .n sup { font-size: 0.62em; font-weight: 900; vertical-align: 0.42em; line-height: 0; }
 #hud-rank .k { font-size: 0.6em; font-weight: 800; letter-spacing: 0.2em; color: var(--dim); }
 #hud-rank.up   { border-color: rgba(77, 255, 158, 0.55); }
 #hud-rank.up .ar, #hud-rank.up .n { color: var(--lime); }
@@ -390,7 +396,7 @@ html, body {
 
 #hud-size .nxt {
   display: flex; align-items: baseline; gap: 0.4em; margin-top: 0.5em;
-  font-size: 0.6em; font-weight: 800; letter-spacing: 0.06em;
+  font-size: 0.64em; font-weight: 800; letter-spacing: 0.05em;
 }
 #hud-size .nxt .k { color: var(--dimmer); letter-spacing: 0.2em; }
 #hud-size .nxt .v {
@@ -455,7 +461,7 @@ html, body {
 }
 #hud-tierup.on { display: block; animation: tierCard 2.4s var(--ease) forwards; }
 #hud-tierup .k {
-  font-size: 0.55em; font-weight: 900; letter-spacing: 0.26em; opacity: 0.7;
+  font-size: 0.62em; font-weight: 900; letter-spacing: 0.22em; opacity: 0.75;
   text-transform: uppercase;
 }
 #hud-tierup .v {
@@ -500,6 +506,13 @@ html, body {
 #hud-feed {
   position: absolute; left: 1.05em; top: 1.05em; width: 17.5em;
   display: flex; flex-direction: column; gap: 0.32em;
+  /* Five wrapped kill lines are ~8 em of column, and on a phone in landscape
+     that ran straight through the size meter at the bottom-left. Capped
+     against the VIEWPORT rather than in em so the guarantee holds at every
+     scale; the oldest line is simply clipped, and it was about to expire. */
+  max-height: calc(100vh - 12em);
+  overflow: hidden;
+  pointer-events: none;
 }
 .feed-item {
   position: relative; overflow: hidden;
@@ -923,55 +936,7 @@ html, body {
 }
 @keyframes cardIn { from { opacity: 0; transform: translateY(1.6em) scale(0.96); } to { opacity: 1; transform: none; } }
 
-.place { line-height: 0.9; }
-.place .n {
-  font-size: clamp(58px, 8.4vw, 124px); font-weight: 900; letter-spacing: -0.045em;
-  background: linear-gradient(180deg, #fff 12%, var(--pl-c, var(--sun)) 62%, var(--pl-c2, var(--hot)) 100%);
-  -webkit-background-clip: text; background-clip: text; color: transparent;
-  filter: drop-shadow(0 0.06em 0.02em rgba(6, 11, 20, 0.6)) drop-shadow(0 0.1em 0.4em rgba(255, 61, 139, 0.35));
-}
-.place .n sup { font-size: 0.42em; letter-spacing: 0; }
-.place .k {
-  margin-top: 0.15em;
-  font-size: 0.74em; font-weight: 900; letter-spacing: 0.4em; text-transform: uppercase;
-  color: var(--dim);
-}
-
-.res-stats { display: flex; gap: 0.6em; }
-.res-stats .st {
-  flex: 1; min-width: 0; padding: 0.65em 0.5em 0.7em; border-radius: 0.7em;
-  background: rgba(255, 255, 255, 0.055);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-}
-.res-stats .st .k {
-  font-size: 0.5em; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--dimmer); white-space: nowrap;
-}
-.res-stats .st .v {
-  margin-top: 0.15em; font-size: 1.05em; font-weight: 900; letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.res-stats .st .v .u { font-size: 0.62em; font-weight: 800; color: var(--dim); margin-left: 0.1em; }
-
-.res-list {
-  display: flex; flex-direction: column; gap: 0.1em;
-  max-height: 38vh; overflow-y: auto; overflow-x: hidden;
-  touch-action: pan-y;                 /* body sets touch-action:none for the game */
-  scrollbar-width: thin;
-  padding: 0.45em 0.35em; border-radius: 0.7em;
-  background: rgba(4, 9, 18, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-  text-align: left;
-}
-.res-list .row { height: 1.95em; opacity: 0; animation: rowIn 0.4s var(--ease) forwards; }
-.res-list .row .nm { font-size: 0.82em; }
-.res-list .row .sc { font-size: 0.8em; }
-/* The list clips its overflow, so the player's accent bar has to sit inside. */
-.res-list .row.me::before { left: -0.28em; }
 @keyframes rowIn { from { opacity: 0; transform: translateX(-0.8em); } to { opacity: 1; transform: none; } }
-
-.res-actions { display: flex; align-items: center; justify-content: center; gap: 0.8em; flex-wrap: wrap; }
 
 /* ---- loading ----------------------------------------------------------- */
 #loading {
@@ -1030,23 +995,28 @@ html, body {
 @media (pointer: coarse) and (max-height: 500px) {
   #hud-toast { bottom: 0.6em; }
   #hud-board { top: 0.6em; right: 0.6em; }
-  .res-list { max-height: 30vh; }
+  .rs-rows { max-height: 26vh; }
   #hud-stick .ring { width: 7em; height: 7em; }
   #hud-stick .knob { width: 2.8em; height: 2.8em; }
 }
 
-/* Very short viewports: the menu has to fit without scrolling. */
+/* Very short viewports: the menu and the end card have to fit without
+   scrolling. The results card is the tighter of the two — it carries a
+   standings list — so its head shrinks and the list gives up most of it. */
 @media (max-height: 470px) {
   .tagline, .eyebrow { display: none; }
   .menu-in { gap: 0.55em; padding: 0.6em; }
-  .res-card { padding: 0.9em 1em 1em; gap: 0.6em; }
-  .place .n { font-size: clamp(34px, 9vh, 60px); }
+  .res-card { padding: 0.7em 0.9em 0.8em; gap: 0.5em; }
+  .results-screen .res-card { gap: 0.5em; }
+  .rs-place .n { font-size: clamp(30px, 9vh, 58px); }
+  .rs-verdict { font-size: 0.78em; margin-top: 0.1em; }
+  .rs-stats { padding: 0.45em 0.35em; }
+  .rs-rows { max-height: 22vh; }
   .btn { padding: 0.55em 1.9em 0.6em; font-size: 0.95em; }
+  .btn-ghost { padding: 0.5em 1.5em 0.55em; font-size: 0.85em; }
 }
 
 @media (max-width: 720px) {
-  .res-stats { flex-wrap: wrap; }
-  .res-stats .st { flex: 1 1 45%; }
   .howto .card { width: 100%; max-width: 20em; }
 }
 
@@ -1054,44 +1024,121 @@ html, body {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
 
-/* ------------------------------------------------------- end of match ---- */
-/* Laid out as a column of blocks so it reads top-to-bottom: what happened,
-   how you did, where everyone finished, what to do next. */
-.results-screen { gap: 16px; animation: rsIn .32s cubic-bezier(.2,.9,.3,1); }
-.results-screen.leaving { animation: rsOut .24s ease forwards; }
-@keyframes rsIn  { from { opacity:0; transform: translateY(14px);} to { opacity:1; transform:none; } }
-@keyframes rsOut { to { opacity:0; transform: translateY(-10px); } }
+/* ------------------------------------------------------- end of match ----
+ * One centred card on the same veil the menu uses, read top-to-bottom: what
+ * happened, how you did, where everyone finished, what to do next.
+ *
+ * EVERYTHING HERE IS IN em, off #screens' viewport-derived font size. The
+ * first version of this block was authored in hard pixels (12px kickers,
+ * 340px min-widths, 26px gaps) while the card around it scaled — so at 2560
+ * the type was a third of the size the layout expected, and on a phone in
+ * landscape the standings list forced the card wider than the screen.        */
+.results-screen .res-card { gap: 0.9em; }
+.results-screen.leaving .res-card,
+.res-card.leaving { animation: rsOut .24s ease forwards; }
+@keyframes rsOut { to { opacity: 0; transform: translateY(-0.6em) scale(0.98); } }
 
 .rs-head { text-align: center; }
 .rs-kicker {
-  font-size: 12px; letter-spacing: 4px; text-transform: uppercase;
-  opacity: .62; font-weight: 800; margin-bottom: 2px;
+  font-size: 0.62em; letter-spacing: 0.32em; text-transform: uppercase;
+  opacity: 0.62; font-weight: 900; margin-bottom: 0.15em;
 }
-.rs-place { margin: 0; font-size: clamp(52px, 10vw, 112px); line-height: .95; }
-.rs-of { font-size: .34em; opacity: .55; -webkit-text-fill-color: #fff; letter-spacing: 0; }
-.rs-verdict { font-size: 16px; opacity: .88; margin-top: 4px; }
-.rs-verdict.win { color: var(--sun); font-weight: 800; }
+.rs-place {
+  display: flex; align-items: baseline; justify-content: center; gap: 0.5em;
+  line-height: 0.92;
+}
+.rs-place .n {
+  font-size: clamp(46px, 7.6vw, 104px); font-weight: 900; letter-spacing: -0.045em;
+  background: linear-gradient(180deg, #fff 12%, var(--aqua) 60%, #1f9fd0 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0.05em 0.02em rgba(6, 11, 20, 0.6));
+}
+/* First place is the only result that gets the house colours. */
+.rs-place.first .n {
+  background: linear-gradient(180deg, #fff 10%, var(--sun) 58%, var(--hot) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  filter: drop-shadow(0 0.05em 0.02em rgba(6, 11, 20, 0.6))
+          drop-shadow(0 0.09em 0.4em rgba(255, 61, 139, 0.4));
+}
+.rs-place .n sup { font-size: 0.4em; letter-spacing: 0; }
+.rs-place .rs-of {
+  font-size: 0.8em; font-weight: 800; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--dim);
+}
+.rs-verdict { font-size: 0.9em; opacity: 0.9; margin-top: 0.25em; }
+.rs-verdict b { color: var(--txt); font-weight: 900; }
+.rs-verdict.win { color: var(--sun); font-weight: 900; letter-spacing: 0.02em; }
 
-.rs-stats { display: flex; gap: 26px; padding: 14px 22px; }
-.stat { display: flex; flex-direction: column; align-items: center; min-width: 74px; }
-.stat .sv { font-size: 22px; font-weight: 850; font-variant-numeric: tabular-nums; }
-.stat .sl { font-size: 10px; letter-spacing: 1.6px; text-transform: uppercase; opacity: .58; margin-top: 2px; }
+.rs-stats {
+  display: flex; flex-wrap: wrap; gap: 0.5em;
+  padding: 0.7em 0.5em; border-radius: 0.75em;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.stat {
+  flex: 1 1 6.5em; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+.stat .sv {
+  font-size: 1.15em; font-weight: 900; font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em; max-width: 100%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stat .sv .u { font-size: 0.66em; font-weight: 800; color: var(--dim); margin-left: 0.15em; }
+.stat .sl {
+  font-size: 0.58em; letter-spacing: 0.14em; text-transform: uppercase;
+  font-weight: 800; opacity: 0.62; margin-top: 0.25em; white-space: nowrap;
+}
 
-.rs-board { min-width: 340px; padding: 12px 14px; }
+.rs-board {
+  padding: 0.6em 0.6em 0.5em; border-radius: 0.75em;
+  background: rgba(4, 9, 18, 0.45);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  text-align: left;
+}
 .rs-board h3 {
-  margin: 0 0 8px; font-size: 11px; letter-spacing: 2.2px;
-  text-transform: uppercase; opacity: .6; font-weight: 700;
+  margin: 0 0 0.35em 0.4em; font-size: 0.58em; letter-spacing: 0.2em;
+  text-transform: uppercase; opacity: 0.6; font-weight: 900;
 }
+/* Eight rows always fit at desktop sizes; the scroll only ever engages on a
+   phone in landscape, where the card itself is the height constraint. */
+.rs-rows {
+  display: flex; flex-direction: column; gap: 0.08em;
+  max-height: 34vh; overflow-y: auto; overflow-x: hidden;
+  touch-action: pan-y;                 /* body sets touch-action:none for the game */
+  scrollbar-width: thin;
+}
+.rs-rows .row {
+  height: 1.9em; padding-left: 0.5em;
+  opacity: 0; animation: rowIn 0.34s var(--ease) forwards;
+}
+.rs-rows .row .rk {
+  width: 1.3em; text-align: center; flex: none;
+  font-size: 0.72em; font-weight: 900; color: var(--dimmer);
+  font-variant-numeric: tabular-nums;
+}
+.rs-rows .row.p1 .rk { color: var(--sun); }
+.rs-rows .row.p2 .rk { color: #dfe6ee; }
+.rs-rows .row.p3 .rk { color: #f0a468; }
+.rs-rows .row .nm { font-size: 0.8em; }
+.rs-rows .row .sc { font-size: 0.78em; }
+.rs-rows .row .crown { color: var(--sun); font-size: 1.05em; }
+/* The list clips its overflow, so the player's accent bar has to sit inside. */
+.rs-rows .row.me::before { left: 0.06em; }
 
-.rs-actions { display: flex; gap: 12px; align-items: center; }
+.rs-actions { display: flex; align-items: center; justify-content: center; gap: 0.7em; flex-wrap: wrap; }
 .btn-ghost {
-  background: rgba(255,255,255,.10); color: #fff;
-  border: 1px solid var(--stroke); box-shadow: none;
+  background: rgba(255, 255, 255, 0.10); color: var(--txt);
+  border: 1px solid var(--edge); box-shadow: none;
+  font-size: 0.95em; padding: 0.62em 1.8em 0.68em;
 }
-.btn-ghost:hover { background: rgba(255,255,255,.18); box-shadow: none; }
+.btn-ghost::after { display: none; }
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.2); box-shadow: none;
+  transform: translateY(-0.1em); filter: none;
+}
 
 @media (max-width: 700px) {
-  .rs-stats { flex-wrap: wrap; gap: 14px; justify-content: center; }
-  .rs-actions { flex-direction: column; width: 100%; padding: 0 24px; }
+  .rs-actions { flex-direction: column; width: 100%; }
   .rs-actions .btn { width: 100%; }
 }

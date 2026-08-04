@@ -167,6 +167,46 @@ const UNIFORM_DARK = [
   PALETTE.SIGN_DARK, PALETTE.TAR_SEAM, PALETTE.CAR_NAVY, PALETTE.STEEL_DARK,
 ];
 
+/** Guayabera whites and pastels — the uniform of a Miami park table. */
+const TOP_GUAYABERA = [
+  PALETTE.FABRIC_WHITE, PALETTE.CAR_WHITE, PALETTE.STUCCO_CREAM,
+  PALETTE.STUCCO_SKY, PALETTE.STUCCO_MINT, PALETTE.STUCCO_BUTTER,
+  PALETTE.STUCCO_SAND,
+];
+
+/** After dark, outside a club. */
+const TOP_NIGHT = [
+  PALETTE.SIGN_DARK, PALETTE.NEON_PINK, PALETTE.TAR_SEAM, PALETTE.NEON_AQUA,
+  PALETTE.CAR_WHITE,
+];
+
+/** What is laid out on a vendor's blanket or table. */
+const GOODS_COLORS = [
+  PALETTE.FABRIC_CORAL, PALETTE.FABRIC_SUN, PALETTE.FABRIC_AQUA,
+  PALETTE.NEON_PINK, PALETTE.STUCCO_SAND, PALETTE.FABRIC_LIME,
+];
+/** Bedding and bundled belongings: blues, greys, faded canvas. */
+const BEDDING_COLORS = [
+  PALETTE.CAR_NAVY, PALETTE.STEEL_DARK, PALETTE.STUCCO_SAND, PALETTE.GRAVEL,
+  PALETTE.FABRIC_SKY, PALETTE.WOOD_DECK,
+];
+const PIGEON_COLORS = [
+  PALETTE.CONCRETE_DARK, PALETTE.GRAVEL, PALETTE.TAR_SEAM, PALETTE.STUCCO_SAND,
+];
+/** Default tint for a street-life prop that does not carry its own. */
+const STREET_HEX = {
+  streetMat: PALETTE.FABRIC_CORAL,
+  streetTable: PALETTE.FABRIC_WHITE,
+  streetCooler: PALETTE.FABRIC_SKY,
+  bedroll: PALETTE.CAR_NAVY,
+  trolley: PALETTE.STEEL_DARK,
+  soapbox: PALETTE.WOOD_DECK,
+  signCard: PALETTE.STUCCO_SAND,
+  dominoSet: PALETTE.WOOD_DARK,
+  chessSet: PALETTE.WOOD_DARK,
+  pigeon: PALETTE.CONCRETE_DARK,
+};
+
 /* ============================================================ dimensions === */
 
 /**
@@ -493,6 +533,46 @@ function tripodGeo(head) {
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
+/**
+ * THE SHADOW PROXY — docs/PERF_FINDINGS.md, win 3.
+ *
+ * The crowd used to cast from three separate part pools: shins (3,126 x 22),
+ * torso (1,563 x 24) and thighs (3,126 x 10). That is 137 k triangles and three
+ * shadow-pass draw calls a frame to produce something that lands on the
+ * pavement as a person-shaped smudge a few pixels across — and it was already
+ * inconsistent, because the head and the arms did not cast at all, so every
+ * pedestrian in Miami was throwing a headless shadow.
+ *
+ * One coarse body volume per person instead: 18 triangles, one draw call,
+ * WITH a head. 28 k triangles against 137 k.
+ *
+ * WHY IT IS STILL DRAWN IN THE BEAUTY PASS. three's shadow map skips anything
+ * the main camera would skip — `object.visible`, `material.visible` and the
+ * camera's own layer mask are all consulted in the shadow traversal — so there
+ * is no such thing as a shadow-only object. `colorWrite: false` with
+ * `depthWrite: false` is the next best thing: the proxy rasterises and writes
+ * absolutely nothing, on a MeshBasicMaterial whose fragment shader is a single
+ * constant. It costs one draw call and no pixels.
+ *
+ * The profile is deliberately a little narrower than the body it stands in
+ * for. A shadow that is slightly too small reads as a shadow; one that is too
+ * big reads as a stain.
+ */
+function shadowProxyGeo() {
+  // Profile in a 0..1 unit body: ankles, hips, shoulders, crown.
+  const pts = [
+    new THREE.Vector2(0.105, 0.00),
+    new THREE.Vector2(0.140, 0.52),
+    new THREE.Vector2(0.150, 0.84),
+    new THREE.Vector2(0.070, 1.00),
+  ];
+  const g = new THREE.LatheGeometry(pts, 4, Math.PI / 4);
+  return shadeGeo(g, 1.0);
+}
+
+/** Standing height of the unit proxy — everything else is scaled from it. */
+const PROXY_H = 1.74;
+
 /* ------------------------------------------------ street-life fittings --- */
 
 /**
@@ -817,6 +897,11 @@ export function buildPedestrians(ctx) {
     color: 0xfff3df, vertexColors: true, roughness: 0.55, metalness: 0.0,
     emissive: 0xffe9c4, emissiveIntensity: 0.25, envMapIntensity: 0.4,
   }).clone();
+  // Writes neither colour nor depth: it exists only to be seen by the sun.
+  // MeshBasic, not MeshStandard, so the pixels it does rasterise are free.
+  const matShadow = new THREE.MeshBasicMaterial({
+    colorWrite: false, depthWrite: false,
+  });
 
   /* ------------------------------------------------------------ agents --- */
   // The whole city has ~27 km of pavement. Even at the top of the budget that
@@ -829,6 +914,13 @@ export function buildPedestrians(ctx) {
   // and take what they need. Free-roaming walkers get whatever is left, and
   // they can go anywhere, so they are the ones that should absorb the rounding.
   const TOTAL = 1450;
+  /**
+   * The pavement has to keep MOVING. Walkers used to take whatever the other
+   * placers left, and when the street-life layer arrived it ate two thirds of
+   * them: the census went from 685 people walking to 219, which reads as a city
+   * full of statues however good the statues are. Walkers now have a floor.
+   */
+  const WALK_FLOOR = 560;
   const agents = [];
   const furniture = collectFurniture(ctx);
   const venues = findVenues(ctx, rng, paths);
@@ -836,9 +928,21 @@ export function buildPedestrians(ctx) {
 
   // Everything already standing on the pavement, with its MEASURED footprint.
   // Built before the placers so they can ask "is this spot actually empty"
-  // instead of asking the 9 m occupancy grid, and used again afterwards to
-  // push anyone who still ended up inside something back out of it.
-  const obstacles = buildObstacleField(ctx);
+  // instead of asking the 9 m occupancy grid.
+  let obstacles = buildObstacleField(ctx);
+
+  // FIRST: the long tail needs the specific ground — a park table nobody is
+  // using, a quiet stretch of frontage, room for a blanket. Run it after the
+  // walkers and there is nothing left but the middle of the pavement.
+  const streetProps = [];
+  const nStreet = placeStreetLife(
+    ctx, rng, paths, furniture, obstacles, agents, Y_WALK, streetProps, 235);
+  // Their kit is registered NOW, not with the rest of the module, so that the
+  // walking corridor below is carved around the blankets and folding tables
+  // too. A stream of commuters walking through a vendor's stock is the same
+  // defect as a stream walking through a bench.
+  const nStreetProps = buildStreetProps(ctx, streetProps);
+  obstacles = buildObstacleField(ctx);
   const corridor = buildClearance(paths, obstacles);
 
   placeSeated(ctx, rng, furniture, agents, 250);
@@ -846,10 +950,11 @@ export function buildPedestrians(ctx) {
   placeVenueLife(ctx, rng, venues, agents, Y_WALK, 210);
   placeCreators(ctx, rng, paths, venues, agents, Y_WALK, shoots, 150);
   placeBuskers(ctx, rng, paths, agents, Y_WALK, 60);
-  placeGatherings(ctx, rng, paths, agents, Y_WALK, agents.length + 340);
+  placeGatherings(ctx, rng, paths, agents, Y_WALK, agents.length + 250);
   placeCyclists(ctx, rng, net, agents);
   placeCrossingQueues(ctx, rng, net, agents, Y_WALK, 180);
-  placeWalkers(ctx, rng, paths, agents, Y_WALK, TOTAL - agents.length);
+  placeWalkers(ctx, rng, paths, agents, Y_WALK,
+    Math.max(WALK_FLOOR, TOTAL - agents.length));
   placeChildren(ctx, rng, agents, 110);
 
   const N = agents.length;
@@ -889,10 +994,12 @@ export function buildPedestrians(ctx) {
     // this rig uses.
     head: makePool(group, headGeo(), matBody, N, false, 'head'),
     hair: makePool(group, hairGeo(), matBody, N, false, 'hair'),
-    torso: makePool(group, torsoGeo(), matBody, N, true, 'torso'),
+    torso: makePool(group, torsoGeo(), matBody, N, false, 'torso'),
     arms: makePool(group, armGeo(), matBody, N * 2, false, 'arms'),
-    thighs: makePool(group, thighGeo(), matBody, N * 2, true, 'thighs'),
-    shins: makePool(group, shinGeo(), matBody, N * 2, true, 'shins'),
+    thighs: makePool(group, thighGeo(), matBody, N * 2, false, 'thighs'),
+    shins: makePool(group, shinGeo(), matBody, N * 2, false, 'shins'),
+    // The ONLY caster in the crowd. See shadowProxyGeo.
+    shadow: makePool(group, shadowProxyGeo(), matShadow, N, true, 'shadow'),
     hat: makePool(group, hatGeo(), matBody, nHat, false, 'hat'),
     bag: makePool(group, bagGeo(), matBody, nBag, false, 'bag'),
     overlay: makePool(group, overlayGeo(), matBody, nOverlay, false, 'vest'),
@@ -992,6 +1099,8 @@ export function buildPedestrians(ctx) {
   );
   console.info('[pedestrians] blockers', JSON.stringify(
     Object.entries(corridor.why).sort((a, b) => b[1] - a[1]).slice(0, 18)));
+  console.info(
+    `[pedestrians] street life: ${nStreet} characters, ${nStreetProps} pieces of kit`);
 }
 
 /** Plain numbers only — see why at the publish site. */
@@ -1060,7 +1169,43 @@ function census(st) {
  *     water, and a crossing pedestrian has to be able to walk in front of one.
  */
 const OBST_CELL = 5;
+const OBST_STRIDE = 6;      // x, z, halfX, halfZ, cos(yaw), sin(yaw)
 const NOT_OBSTACLE = /^(sedan|suv|hatchback|pickup|sports|convertible|taxi|police|supercar|roadster|gtCoupe|deliveryVan|boxTruck|flatbed|garbageTruck|cementMixer|cityBus|articBus|shuttleBus|ambulance|scooter|motorcycle|bicycle|motorYacht|sailBoat|waterTaxi|skiff|sportFisher|cruiseShip|jetSki|pedestrian|dog)$/;
+
+/**
+ * The contact footprint of a pool's geometry as a LOCAL half-extent pair.
+ *
+ * `Consumable.radius` is the half-DIAGONAL of that patch, and treating it as a
+ * circle is catastrophically wrong for the two prop families that line a
+ * pavement. A 4 m hedge 0.8 m deep has a half-diagonal of 2.04 m, so as a
+ * circle it blocks two and a half metres of footway either side of itself —
+ * measured, that mistake alone closed 8,400 of the city's 27,000 corridor
+ * stations and made the whole clearance pass fall back to "no idea". As an
+ * oriented box it blocks 40 cm, which is what a hedge actually does.
+ *
+ * Measured off the lowest quarter of the mesh, the same band worldBuild sizes
+ * the consumption physics from, so the two agree by construction.
+ */
+const _contactBox = new WeakMap();
+function contactBox(geometry) {
+  let m = _contactBox.get(geometry);
+  if (m) return m;
+  if (!geometry.boundingBox) geometry.computeBoundingBox();
+  const bb = geometry.boundingBox;
+  const hiY = bb.min.y + (bb.max.y - bb.min.y) * 0.25;
+  const pos = geometry.attributes.position;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) > hiY) continue;
+    const x = pos.getX(i), z = pos.getZ(i);
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  if (!(maxX > minX)) { minX = bb.min.x; maxX = bb.max.x; minZ = bb.min.z; maxZ = bb.max.z; }
+  m = { hx: (maxX - minX) / 2, hz: (maxZ - minZ) / 2 };
+  _contactBox.set(geometry, m);
+  return m;
+}
 
 function buildObstacleField(ctx) {
   const cells = new Map();
@@ -1074,20 +1219,64 @@ function buildObstacleField(ctx) {
     if (c.radius > 5.5 || c.radius < 0.07) continue;
     if (c.height > 6 && c.radius > 1.6) continue;
     if (NOT_OBSTACLE.test(c.kind)) continue;
-    // `radius` is the half-DIAGONAL of the contact patch, so treating it as a
-    // circle over-blocks a long thin bench by about 40% at its ends. 0.8 is
-    // the compromise that keeps a person out of the bench without pushing the
-    // whole pavement stream into the road.
-    const r = Math.max(0.16, c.radius * 0.80);
+
+    let hx, hz;
+    if (c.pool && c.pool.geometry) {
+      const bx = contactBox(c.pool.geometry);
+      const sc = typeof c.scale === 'number' ? c.scale : 1;
+      hx = bx.hx * sc; hz = bx.hz * sc;
+    } else {
+      // Mesh-backed props have no shared geometry to measure, so fall back to
+      // the inscribed square of the declared radius rather than to the circle.
+      hx = hz = c.radius * 0.707;
+    }
+    if (hx < 0.05 && hz < 0.05) continue;
+    const yaw = c.rotationY || 0;
     const k = (Math.floor(c.position.x / OBST_CELL) + 2048) * 8192
             + (Math.floor(c.position.z / OBST_CELL) + 2048);
     let b = cells.get(k);
     if (!b) { b = []; cells.set(k, b); kinds.set(k, []); }
-    b.push(c.position.x, c.position.z, r);
+    b.push(c.position.x, c.position.z, hx, hz, Math.cos(yaw), Math.sin(yaw));
     kinds.get(k).push(c.kind);
     n++;
   }
   return { cells, kinds, n };
+}
+
+/**
+ * Signed clearance of a point against one oriented contact box.
+ * Returns the penetration depth (>0 when inside) and the escape direction.
+ */
+const _pen = { depth: 0, nx: 0, nz: 0 };
+function boxPenetration(b, q, x, z, pr) {
+  const dx = x - b[q], dz = z - b[q + 1];
+  const co = b[q + 4], si = b[q + 5];
+  // World -> the box's own frame (rotation about Y by -yaw).
+  const lx = dx * co - dz * si;
+  const lz = dx * si + dz * co;
+  const hx = b[q + 2], hz = b[q + 3];
+  const ox = Math.abs(lx) - hx, oz = Math.abs(lz) - hz;
+  if (ox >= pr || oz >= pr) { _pen.depth = -1; return _pen; }
+  if (ox > 0 || oz > 0) {
+    // Outside the box: distance to the nearest face or corner.
+    const ex = Math.max(ox, 0), ez = Math.max(oz, 0);
+    const d = Math.hypot(ex, ez);
+    if (d >= pr) { _pen.depth = -1; return _pen; }
+    const sx = lx < 0 ? -1 : 1, sz = lz < 0 ? -1 : 1;
+    let px = ex > 0 ? sx : 0, pz = ez > 0 ? sz : 0;
+    const l = Math.hypot(px, pz) || 1;
+    px /= l; pz /= l;
+    _pen.depth = pr - d;
+    _pen.nx = px * co + pz * si;
+    _pen.nz = -px * si + pz * co;
+    return _pen;
+  }
+  // Inside: push out through the nearest face.
+  const outX = pr - ox, outZ = pr - oz;   // ox, oz are negative here
+  const sx = lx < 0 ? -1 : 1, sz = lz < 0 ? -1 : 1;
+  if (outX < outZ) { _pen.depth = outX; _pen.nx = sx * co; _pen.nz = -sx * si; }
+  else { _pen.depth = outZ; _pen.nx = sz * si; _pen.nz = sz * co; }
+  return _pen;
 }
 
 /**
@@ -1097,8 +1286,6 @@ function buildObstacleField(ctx) {
  * moved out of both, and moving them off one can put them into the other.
  * Four passes settles every case in the city; beyond that the spot is simply
  * full and the caller should try somewhere else.
- *
- * @returns {boolean} true if the point ended up clear
  */
 const _clearOut = { x: 0, z: 0, moved: 0 };
 function clearOfProps(field, x, z, pr) {
@@ -1110,15 +1297,11 @@ function clearOfProps(field, x, z, pr) {
       for (let j = -1; j <= 1; j++) {
         const b = field.cells.get((cx + i + 2048) * 8192 + (cz + j + 2048));
         if (!b) continue;
-        for (let q = 0; q < b.length; q += 3) {
-          const dx = ox - b[q], dz = oz - b[q + 1];
-          const need = b[q + 2] + pr;
-          const d2 = dx * dx + dz * dz;
-          if (d2 >= need * need) continue;
-          const d = Math.sqrt(d2) || 1e-4;
-          const push = need - d;
-          if (pass === 0 && push > worst) worst = push;
-          px += (dx / d) * push; pz += (dz / d) * push;
+        for (let q = 0; q < b.length; q += OBST_STRIDE) {
+          const p = boxPenetration(b, q, ox, oz, pr);
+          if (p.depth <= 0) continue;
+          if (pass === 0 && p.depth > worst) worst = p.depth;
+          px += p.nx * p.depth; pz += p.nz * p.depth;
           hit++;
         }
       }
@@ -1138,10 +1321,8 @@ function spotIsClear(field, x, z, pr) {
     for (let j = -1; j <= 1; j++) {
       const b = field.cells.get((cx + i + 2048) * 8192 + (cz + j + 2048));
       if (!b) continue;
-      for (let q = 0; q < b.length; q += 3) {
-        const dx = x - b[q], dz = z - b[q + 1];
-        const need = b[q + 2] + pr;
-        if (dx * dx + dz * dz < need * need) return false;
+      for (let q = 0; q < b.length; q += OBST_STRIDE) {
+        if (boxPenetration(b, q, x, z, pr).depth > 0) return false;
       }
     }
   }
@@ -1225,7 +1406,12 @@ function buildClearance(paths, field) {
     const n = Math.max(4, Math.ceil(p.total / CLEAR_STEP));
     const lo = new Float32Array(n);
     const hi = new Float32Array(n);
-    const lim = p.lat * 1.35;
+    // Never narrower than 1.05 m either side. `p.lat` is derived from the
+    // BLOCK size, not from the pavement, so a small parcel gets a 40 cm band —
+    // and a band that narrow is closed by anything within half a metre of the
+    // centreline, which measured out as 12,400 of the city's 27,200 stations
+    // reporting "no way through" on pavement that is plainly walkable.
+    const lim = Math.max(p.lat * 1.35, 1.05);
     for (let i = 0; i < n; i++) {
       const s = i * CLEAR_STEP;
       const sm = sampleLoop(p, s, 0);
@@ -1244,16 +1430,24 @@ function buildClearance(paths, field) {
         for (let gj = -1; gj <= 1; gj++) {
           const b = field.cells.get((cx + gi + 2048) * 8192 + (cz + gj + 2048));
           if (!b) continue;
-          for (let q = 0; q < b.length; q += 3) {
+          for (let q = 0; q < b.length; q += OBST_STRIDE) {
             const dx = b[q] - sm.x, dz = b[q + 1] - sm.z;
+            const hx = b[q + 2], hz = b[q + 3], co = b[q + 4], si = b[q + 5];
+            // The box's own axes in world space, projected onto the loop's
+            // frame. This is the box's bounding extent along and across the
+            // pavement — exact for anything square-on to the street, which is
+            // almost everything, and conservative otherwise.
+            const axU = co * ux - si * uz, azU = si * ux + co * uz;
+            const halfAlong = hx * Math.abs(axU) + hz * Math.abs(azU);
             const along = dx * ux + dz * uz;
-            const r = b[q + 2];
-            if (Math.abs(along) > r + CLEAR_PAD) continue;
+            if (Math.abs(along) > halfAlong + CLEAR_PAD) continue;
+            const axN = co * nx - si * nz, azN = si * nx + co * nz;
+            const halfLat = hx * Math.abs(axN) + hz * Math.abs(azN);
             const lat = dx * nx + dz * nz;
-            const w = r + WALK_R;
+            const w = halfLat + WALK_R;
             if (lat - w > lim || lat + w < -lim) continue;
             spans.push([lat - w, lat + w, field.kinds.get(
-              (cx + gi + 2048) * 8192 + (cz + gj + 2048))[q / 3]]);
+              (cx + gi + 2048) * 8192 + (cz + gj + 2048))[q / OBST_STRIDE]]);
           }
         }
       }
@@ -1271,9 +1465,23 @@ function buildClearance(paths, field) {
           if (cur >= lim) break;
         }
         if (cur < lim && lim - cur > best) { best = lim - cur; aLo = cur; aHi = lim; }
-        // Fully blocked: better an unavoidable clip than a frozen pavement.
-        if (best < 0.34) {
-          aLo = -lim; aHi = lim; blocked++;
+        // Genuinely no way through — a shelter across the whole footway. Take
+        // the least-bad line rather than the whole band: an unavoidable brush
+        // past the corner beats walking through the middle of it.
+        if (best <= 0) {
+          let bestLat = 0, bestPen = Infinity;
+          for (let t = -1; t <= 1; t += 0.1) {
+            const cand = t * lim;
+            let pen = 0;
+            for (const sp of spans) {
+              if (cand > sp[0] && cand < sp[1]) {
+                pen = Math.max(pen, Math.min(cand - sp[0], sp[1] - cand));
+              }
+            }
+            if (pen < bestPen) { bestPen = pen; bestLat = cand; }
+          }
+          aLo = aHi = bestLat;
+          blocked++;
           for (const sp of spans) why[sp[2]] = (why[sp[2]] || 0) + 1;
         }
       }
@@ -1452,6 +1660,44 @@ const ARCH_DOORMAN = {
 const ARCH_BUSKER = {
   key: 'busker', label: 'Busker', speed: [0.9, 1.2], tops: TOP_TOURIST,
   longLeg: 0.3, sleeves: 0.1, hat: 0.45,
+};
+
+/* --- the street-life cast. Same rig, same standard as everyone else. --- */
+
+/** Retirees at the park tables: guayaberas, long trousers, wide hats. */
+const ARCH_PLAYER = {
+  key: 'player', label: 'Domino Player', speed: [0.8, 1.0], tops: TOP_GUAYABERA,
+  longLeg: 0.92, sleeves: 0.55, hat: 0.50,
+};
+const ARCH_VENDOR = {
+  key: 'vendor', label: 'Street Vendor', speed: [0.9, 1.15], tops: TOP_CASUAL,
+  longLeg: 0.60, sleeves: 0.25, hat: 0.42,
+};
+const ARCH_SPEAKER = {
+  key: 'speaker', label: 'Street Preacher', speed: [0.9, 1.1], tops: TOP_OFFICE,
+  longLeg: 0.90, sleeves: 0.70, hat: 0.16,
+};
+const ARCH_TAICHI = {
+  key: 'taichi', label: 'Tai Chi', speed: [0.7, 0.95], tops: TOP_SPORT,
+  longLeg: 0.70, sleeves: 0.30, hat: 0.06,
+};
+/**
+ * Someone resting on the street with their things.
+ *
+ * Deliberately identical in every respect that the renderer can see: the same
+ * body, the same colour sets, the same range of hats and bags as the office
+ * worker walking past. The ONLY thing that distinguishes them in the frame is
+ * that they are sitting down and their belongings are next to them, which is
+ * the whole and only point.
+ */
+const ARCH_RESTING = {
+  key: 'resting', label: 'Local', speed: [0.8, 1.05], tops: TOP_CASUAL,
+  longLeg: 0.62, sleeves: 0.30, hat: 0.30, bag: 0.35,
+};
+const ARCH_RESIDENT = ARCHETYPES[0];
+const ARCH_PROMOTER = {
+  key: 'promoter', label: 'Club Promoter', speed: [1.0, 1.25], tops: TOP_NIGHT,
+  longLeg: 0.80, sleeves: 0.35,
 };
 
 const ARCH_TOTAL = ARCHETYPES.reduce((s, a) => s + a.w, 0);
@@ -2297,6 +2543,41 @@ function placeVenueLife(ctx, rng, venues, agents, yWalk, cap) {
       if (!ctx.layout.isWater(val.x, val.z)) { agents.push(val); spent++; }
     }
 
+    /* --- club promoter -------------------------------------------------- */
+    // Only after dark, and by the same mechanism as the queue: they walk the
+    // frontage all day like anyone else and peel off to work the pavement when
+    // the venue comes to life. See updateSlow for the migration.
+    if (v.life > 0.5 && rng.chance(0.55) && spent < cap) {
+      const pr = makeAgent(rng, ARCH_PROMOTER);
+      pr.venue = v;
+      pr.promoter = true;
+      pr.nightAt = 0.34 + rng() * 0.14;
+      pr.lean = 0.02;
+      pr.idleSeed = rng() * 100;
+      pr.items = null;
+      // The stack of cards in the outstretched hand.
+      addItem(pr, AT.HAND_R, 0.085, 0.055, 0.012, rng.pick([
+        PALETTE.NEON_PINK, PALETTE.NEON_AQUA, PALETTE.FABRIC_SUN]), 0);
+      pr.homePath = v.path;
+      pr.homeS = v.s + (rng() - 0.5) * 22;
+      // A couple of metres out from the door and turned along the pavement,
+      // which is where you actually work a queue from.
+      const m = promoterMark(v);
+      if (night > pr.nightAt) {
+        pr.x = m.x; pr.z = m.z; pr.y = yWalk;
+        pr.yaw = v.yaw + Math.PI * 0.5;
+        pr.mode = MODE.IDLE;
+        pr.role = 'promoter';
+      } else {
+        joinPath(rng, pr, v.path, pr.homeS, rng.chance(0.5) ? 1 : -1);
+        const sm = sampleLoop(v.path, pr.s, 0);
+        pr.x = sm.x; pr.z = sm.z; pr.y = yWalk;
+      }
+      agents.push(pr);
+      v.stands.push(pr);
+      spent++;
+    }
+
     /* --- the queue ------------------------------------------------------ */
     const len = Math.round(2 + v.life * 6);
     for (let k = 0; k < len && spent < cap; k++) {
@@ -2331,6 +2612,14 @@ function placeVenueLife(ctx, rng, venues, agents, yWalk, cap) {
       spent++;
     }
   }
+}
+
+/** Where a promoter works from: clear of the queue, across the footfall. */
+function promoterMark(v) {
+  return {
+    x: v.x + v.tx * 1.6 + Math.sin(v.yaw) * 2.4,
+    z: v.z + v.tz * 1.6 + Math.cos(v.yaw) * 2.4,
+  };
 }
 
 /** Where the k-th person in a venue queue stands. */
@@ -2680,9 +2969,15 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
     if (!byTable.has(k)) byTable.set(k, []);
     byTable.get(k).push(s);
   }
+  // Sub-budget, deliberately. The city has ~90 usable park tables and a table
+  // seats four with two watching, so a single unbounded pass at this feature
+  // spends the WHOLE street-life budget on dominoes and leaves nothing for the
+  // vendors, the preachers or anyone resting — which is exactly what happened
+  // the first time it ran.
+  const gameCap = Math.round(cap * 0.34);
   const groups = [...byTable.values()].filter((g) => g.length >= 2);
   for (const g of groups) {
-    if (spent >= cap) break;
+    if (spent >= gameCap) break;
     const r = makeRNG(((Math.round(g[0].x) * 73856093) ^ (Math.round(g[0].z) * 19349663)) >>> 0);
     if (!r.chance(0.34)) continue;
     const game = r.chance(0.62) ? 'domino' : 'chess';
@@ -2699,7 +2994,7 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
       a.lean = 0.20 + r() * 0.10;
       a.game = game;
       if (r.chance(0.55)) { a.hat = true; a.hatHex = rng.pick(HAT_COLORS); a.hatScale = 1.18; }
-      if (spent >= cap) break;
+      if (spent >= gameCap) break;
     }
     // The tiles or the pieces on the table between them.
     props.push({
@@ -2708,7 +3003,7 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
     });
     // Spectators. A domino game without anyone leaning over it is a chore.
     const watch = r.weighted([[0, 32], [1, 34], [2, 24], [3, 10]]);
-    for (let k = 0; k < watch && spent < cap; k++) {
+    for (let k = 0; k < watch && spent < gameCap; k++) {
       const ang = r() * Math.PI * 2, rad = 1.5 + r() * 0.7;
       const x = g[0].x + Math.cos(ang) * rad, z = g[0].z + Math.sin(ang) * rad;
       if (!clear(x, z, WALK_R)) continue;
@@ -2768,12 +3063,15 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
     if ((green || prom || life > 0.62) && r.chance(0.10)) {
       const p = pitch(path, r, 1, 3.0, 6.0, 1.8);
       if (p) {
-        props.push({ kind: 'soapbox', x: p.x, z: p.z, y: yWalk, yaw: p.yaw });
         const a = person(r, ARCH_SPEAKER, p.x, p.z, p.yaw, MODE.IDLE, 'preacher');
-        // Standing ON the crate, so the whole body rides 0.40 m up.
-        a.y = yWalk + 0.40;
-        a.riser = 0.40;
         addItem(a, AT.HAND_L, 0.13, 0.19, 0.045, PALETTE.WOOD_DARK, 0);
+        // The crate goes BESIDE them, not under them. Standing a pedestrian on
+        // a 40 cm prop puts their contact point 40 cm off the pavement, which
+        // is the "floating prop" automatic failure with a person in it — and
+        // the physics would then measure their support against thin air.
+        const kx = p.x + Math.sin(p.yaw - 1.5) * 0.75;
+        const kz = p.z + Math.cos(p.yaw - 1.5) * 0.75;
+        if (clear(kx, kz, 0.35)) props.push({ kind: 'soapbox', x: kx, z: kz, y: yWalk, yaw: p.yaw });
         const crowd = r.int(1, 4);
         for (let k = 0; k < crowd && spent < cap; k++) {
           const ang = p.yaw + (k / crowd - 0.5) * 1.7 + (r() - 0.5) * 0.3;
@@ -2863,7 +3161,6 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
           a.dog = true;
           a.dogHex = r.pick(DOG_COLORS);
           a.dogPhase = r() * 6.28;
-          a.dogRest = true;
         }
       }
     }
@@ -3435,6 +3732,29 @@ function updateSlow(st, dt) {
     for (const a of v.stands) {
       if (a.dead || a.mode === MODE.FLEE || a.mode === MODE.RETURN) continue;
       const wants = night > a.nightAt;
+
+      /* --- the promoter works the pavement, they do not join the queue --- */
+      if (a.promoter) {
+        const onStation = a.role === 'promoter';
+        const heading = a.mode === MODE.GOTO && a.thenMode === MODE.IDLE;
+        if (wants && !onStation && !heading && a.mode === MODE.WALK) {
+          const m = promoterMark(v);
+          detachPath(a);
+          a.tx = m.x; a.tz = m.z;
+          a.mode = MODE.GOTO;
+          a.thenMode = MODE.IDLE;
+          a.thenRole = 'promoter';
+        } else if (!wants && (onStation || heading) && a.homePath) {
+          const sm = sampleLoop(a.homePath, a.homeS, 0);
+          a.role = null;
+          a.thenRole = null;
+          a.mode = MODE.GOTO;
+          a.thenMode = MODE.WALK;
+          a.tx = sm.x; a.tz = sm.z;
+        }
+        continue;
+      }
+
       const inLine = a.mode === MODE.QUEUE || (a.mode === MODE.GOTO && a.thenMode === MODE.QUEUE);
       // Only peel off when they are already near the door. GOTO walks in a
       // straight line, and a straight line from the far side of a block goes
@@ -3527,6 +3847,7 @@ function hideAgent(st, a, i, withDog = true) {
   clearInstance(P.head.instanceMatrix.array, i);
   clearInstance(P.hair.instanceMatrix.array, i);
   clearInstance(P.torso.instanceMatrix.array, i);
+  clearInstance(P.shadow.instanceMatrix.array, i);
   clearInstance(P.arms.instanceMatrix.array, i * 2);
   clearInstance(P.arms.instanceMatrix.array, i * 2 + 1);
   clearInstance(P.thighs.instanceMatrix.array, i * 2);
@@ -4146,6 +4467,50 @@ function poseAgent(st, a, i) {
       armR = -0.92 - Math.max(0, -b) * 0.34;
       lean = 0.22;
       twist = b * 0.07;
+    } else if (a.lying) {
+      /* --- asleep on a bench ------------------------------------------
+       * The torso goes down ALONG the seat rather than the legs coming up,
+       * because the hip stays where a hip on a bench is and the shoes stay off
+       * the pavement. `lean` is already ~1.34 rad from the placer, so all this
+       * has to do is straighten the legs out along the timber and stop the
+       * idle sway that would have them breathing like a metronome. */
+      thighL = -1.62; thighR = -1.58;
+      shinL = 0.06; shinR = 0.02;
+      lean = a.lean + Math.sin(st.time * 0.32 + a.idleSeed) * 0.012;
+      twist = 0.06;
+      armL = -1.05; armR = -0.30;
+      headExtra = -0.55;                 // head resting back, not chin on chest
+    } else if (a.role === 'boardgame') {
+      // Elbows on the table, a tile going down every few seconds.
+      const play = Math.max(0, Math.sin(st.time * 0.55 + a.idleSeed * 3.1));
+      armL = -1.16 - play * 0.30;
+      armR = -1.02 + Math.sin(st.time * 0.31 + a.idleSeed) * 0.06;
+      lean = 0.26 + play * 0.06;
+      twist = Math.sin(st.time * 0.4 + a.idleSeed) * 0.07;
+      headExtra = 0.24;                  // looking down at the board
+    } else if (a.role === 'vendor') {
+      const g = Math.sin(st.time * 0.42 + a.idleSeed);
+      armL = -0.70 + g * 0.22; armR = -0.48;
+      lean = 0.12;
+    } else if (a.role === 'feeder') {
+      // One hand out low, scattering; the other resting on the knee.
+      const s2 = Math.sin(st.time * 1.05 + a.idleSeed);
+      armL = -0.86 - Math.max(0, s2) * 0.34;
+      armR = -0.52;
+      lean = 0.16; headExtra = 0.22;
+    } else if (a.role === 'streetRest') {
+      /* --- sitting on the ground with their back against the wall ------
+       * Knees drawn up, forearms across them. Modelled with the same care as
+       * anyone else in this city, and posed to look comfortable rather than
+       * collapsed: the difference between a person resting and a caricature is
+       * entirely in this pose. */
+      thighL = -2.05; thighR = -1.98;
+      shinL = 1.62; shinR = 1.55;
+      armL = -1.28 + Math.sin(st.time * 0.28 + a.idleSeed) * 0.03;
+      armR = -1.20;
+      lean = 0.10 + Math.sin(st.time * 0.4 + a.idleSeed) * 0.02;
+      twist = Math.sin(st.time * 0.22 + a.idleSeed) * 0.05;
+      headExtra = 0.06;
     } else if (a.chatPartner && !a.chatPartner.dead) {
       // Talking over a table: one hand comes up off the top.
       const g = Math.max(0, Math.sin(st.time * 1.3 + a.idleSeed));
@@ -4262,6 +4627,77 @@ function poseAgent(st, a, i) {
       case 'onlooker': case 'audience':
         headExtra = -0.06;
         break;
+
+      /* ---- the street-life cast ---------------------------------------- */
+      case 'spectator':
+        // Watching something at waist height — a board, a blanket of goods.
+        // Arms folded, weight settled: the stillness is the whole read.
+        armL = -0.72; armR = -0.68;
+        headExtra = 0.20;
+        twist = Math.sin(t * 0.22) * 0.05;
+        lean = 0.06;
+        break;
+      case 'vendor': {
+        // Standing behind their own table, one hand out to whoever stops.
+        const g = Math.sin(t * 0.85);
+        armL = -0.62 - Math.max(0, g) * 0.62;
+        armR = -0.34;
+        lean = 0.05;
+        twist = g * 0.09;
+        break;
+      }
+      case 'preacher': {
+        // One arm up and open, the other holding the book. Emphatic, not
+        // frantic — a real speaker works in long slow beats.
+        const g = Math.sin(t * 0.9);
+        armL = -2.05 - Math.max(0, g) * 0.28;
+        armR = a.items ? -1.10 : -0.40 - Math.max(0, -g) * 0.5;
+        lean = 0.02;
+        twist = g * 0.14;
+        headExtra = -0.16 + g * 0.04;
+        break;
+      }
+      case 'taichi': {
+        /*
+         * Tai chi in the park: the arms travel through a slow circle and the
+         * knees stay soft. Everything here runs at a THIRD of the idle rate,
+         * which is what makes it read as a deliberate form and not as somebody
+         * waving. The idleSeed is spaced by the placer, so a group of four
+         * moves in loose unison rather than in lockstep.
+         */
+        const w = t * 0.30;
+        const c1 = Math.cos(w), s1 = Math.sin(w);
+        armL = -1.32 + c1 * 0.62;
+        armR = -1.32 - c1 * 0.62;
+        twist = s1 * 0.26;
+        // Soft knees and a settled stance.
+        hip = HIP_Y - 0.085 + Math.sin(w * 2) * 0.012;
+        thighL = 0.24; thighR = -0.26;
+        shinL = -0.16; shinR = 0.14;
+        lean = 0.01;
+        headTurn = s1 * 0.2;
+        break;
+      }
+      case 'arguer': {
+        // Somebody having it out with nobody. Both hands going, no partner to
+        // gesture at — which is exactly what makes a passer-by look twice.
+        const g = Math.sin(t * 2.3), h = Math.sin(t * 1.7 + 1.2);
+        armL = -0.70 - Math.max(0, g) * 1.05;
+        armR = -0.58 - Math.max(0, h) * 0.92;
+        twist = g * 0.20;
+        lean = 0.06 + Math.max(0, g) * 0.05;
+        headExtra = -0.10 + h * 0.06;
+        break;
+      }
+      case 'promoter': {
+        // Cards held out to the pavement, the other hand waving people over.
+        const g = Math.sin(t * 1.15);
+        armL = -1.24 - Math.max(0, g) * 0.14;
+        armR = -0.44 - Math.max(0, -g) * 0.62;
+        twist = 0.16 + g * 0.08;
+        lean = 0.04;
+        break;
+      }
       default: break;
     }
   } else {
@@ -4340,6 +4776,17 @@ function poseAgent(st, a, i) {
 
   const mTorso = P.torso.instanceMatrix.array;
   poseInto(mTorso, i, px, py, pz, yaw + twist, s, 0, hip, 0, lean, 1, 1, 1);
+
+  /* --- the one thing that casts ---------------------------------------
+   * A single coarse volume, stretched to the height this person actually
+   * occupies right now. Driven off `hip` rather off a constant so a sitter
+   * throws a sitter's shadow and a cyclist a cyclist's, and off `lean` so
+   * somebody asleep along a bench does not cast a standing silhouette. */
+  const stand = (hip + NECK_Y * cl + 0.30) / PROXY_H;
+  poseInto(
+    P.shadow.instanceMatrix.array, i, px, py, pz, yaw + twist * 0.5, s,
+    0, 0, 0, 0, 1, Math.max(0.18, stand) * PROXY_H, 1
+  );
 
   // Neck and shoulders ride the leaning torso.
   const neckY = hip + NECK_Y * cl;

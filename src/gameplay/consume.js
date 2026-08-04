@@ -513,9 +513,10 @@ export class ConsumeSystem {
         // A leaning skyscraper sweeps its crown across a whole block, so a
         // structure only ever creaks. It goes over properly once it fits.
         if (profile === FALL.SINK) lean = Math.min(lean, 0.10);
-        const kS = 7.0 / inertia;
-        dyn.tiltVel += (lean - dyn.tilt) * kS * dt;
-        dyn.tiltVel *= Math.exp(-5.0 * dt);
+        // Critically damped, so it approaches the lean and stops there instead
+        // of ringing. Heavier bodies take longer to get there.
+        const w = 5.0 / Math.sqrt(inertia);
+        dyn.tiltVel += (-(dyn.tilt - lean) * w * w - 2 * w * dyn.tiltVel) * dt;
         dyn.tilt += dyn.tiltVel * dt;
         if (dyn.tilt < 0) { dyn.tilt = 0; dyn.tiltVel = Math.max(0, dyn.tiltVel); }
         if (dyn.tilt > rest) { dyn.tilt = rest; dyn.tiltVel = Math.min(0, dyn.tiltVel); }

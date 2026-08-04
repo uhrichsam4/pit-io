@@ -265,7 +265,7 @@ export class Screens {
     this.el.style.pointerEvents = 'auto';
 
     const fade = (fn) => {
-      const scr = this.el.querySelector('.results-screen');
+      const scr = this.el.querySelector('.res-card');
       if (scr) scr.classList.add('leaving');
       // Let the transition play before the world is torn down and rebuilt.
       setTimeout(fn, 240);
@@ -278,6 +278,23 @@ export class Screens {
     });
   }
 
+}
+
+/**
+ * "Best meal" is worth a tile only when there IS one, and it reads better with
+ * the number attached — "Kaseya Center 2,600" says more about the round than
+ * either half alone. Match owns the label; the live HUD independently tracks
+ * the same thing (uiState.bestMeal) and is the fallback when a match ended
+ * without Match seeing a swallow (e.g. a net client crediting nobody).
+ */
+function bestMealStat(stats, stat) {
+  const label = stats.biggestMeal || (uiState.bestMeal && uiState.bestMeal.label);
+  if (!label) return '';
+  const v = Math.round(stats.biggestMealScore || (uiState.bestMeal && uiState.bestMeal.score) || 0);
+  const val = v > 0
+    ? `${esc(label)} <span class="u">${v.toLocaleString()}</span>`
+    : esc(label);
+  return stat('Best meal', val);
 }
 
 function esc(s) {
