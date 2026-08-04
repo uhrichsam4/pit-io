@@ -22,25 +22,25 @@
 export const QUALITY_TIERS = [
   {
     name: 'high',
-    shadowMapSize: 3072, shadowRadius: 3.0, shadows: true,
+    shadowMapSize: 3072, shadowRadius: 1.5, shadows: true,
     ao: true, aoSamples: 16, aoDenoiseSamples: 16, aoScale: 1.0,
     bloom: true, smaa: true, pixelRatioCap: 2, anisotropy: 8, skyDetail: 2,
   },
   {
     name: 'medium',
-    shadowMapSize: 2048, shadowRadius: 2.4, shadows: true,
+    shadowMapSize: 2048, shadowRadius: 1.3, shadows: true,
     ao: true, aoSamples: 10, aoDenoiseSamples: 8, aoScale: 0.7,
     bloom: true, smaa: true, pixelRatioCap: 1.5, anisotropy: 4, skyDetail: 1,
   },
   {
     name: 'low',
-    shadowMapSize: 1536, shadowRadius: 1.8, shadows: true,
+    shadowMapSize: 1536, shadowRadius: 1.1, shadows: true,
     ao: false, aoSamples: 8, aoDenoiseSamples: 4, aoScale: 0.5,
     bloom: true, smaa: false, pixelRatioCap: 1, anisotropy: 2, skyDetail: 0,
   },
   {
     name: 'potato',
-    shadowMapSize: 1024, shadowRadius: 1.4, shadows: false,
+    shadowMapSize: 1024, shadowRadius: 1.0, shadows: false,
     ao: false, aoSamples: 8, aoDenoiseSamples: 4, aoScale: 0.5,
     bloom: false, smaa: false, pixelRatioCap: 1, anisotropy: 1, skyDetail: 0,
   },
@@ -50,8 +50,21 @@ export const QUALITY = {
   /* --- shadows --- */
   shadows: true,
   shadowMapSize: 3072,
-  /** PCF blur kernel, in shadow-map texels. */
-  shadowRadius: 3.0,
+  /**
+   * PCF kernel radius, in shadow-map texels.
+   *
+   * MEASURED, and much lower than it looks like it should be. three r185's
+   * PCFShadowMap is not a box filter — it is FIVE taps on a Vogel disk of this
+   * radius, rotated per pixel by interleaved-gradient noise (hardware PCF then
+   * bilinear-filters each tap). At radius 3 that is savage stochastic
+   * undersampling: a large building shadow survives as a soft blob, but every
+   * shadow only a few texels across dissolves into per-pixel speckle and then
+   * into nothing. That is exactly why cars, palms and street props had no
+   * contact shadows at all and read as stickers on the pavement — art bible
+   * anti-pattern #10. A/B'd on a frozen frame at 0.8 / 1.6 / 2.4 / 3.4: 1.5 is
+   * the highest value at which a parked car still lands on the road.
+   */
+  shadowRadius: 1.5,
   /**
    * How much of the view depth receives shadows, in metres. The ortho box is
    * fitted to the camera frustum clipped at this distance, so a small number
@@ -337,13 +350,26 @@ export const DAY = {
  *   sunGlow         strength of the low-sun horizon wedge
  *   hazeAz          how hard the horizon haze concentrates toward the sun
  *   stars/moonDisc  sky dome extras, 0 by day
- *   shadowSoft      multiplier on the PCF kernel — moonlight has no hard edge
+ *   toneStart       where the filmic shoulder begins. Lowered at golden hour
+ *                   and sunset: a low sun puts a huge, near-uniform warm value
+ *                   across the whole frame, and with the noon shoulder that
+ *                   whole frame walks up to the clip point together. Rolling
+ *                   the highlights off earlier is what keeps the bay and the
+ *                   sunlit tower faces from fusing into one white sheet.
+ *   shadowSoft      multiplier on the PCF kernel — moonlight has no hard edge.
+ *                   Kept to a 1.0-1.3 range: see QUALITY.shadowRadius for why
+ *                   a big PCF radius destroys small shadows rather than
+ *                   softening them.
  */
 export const TOD_STOPS = [
   {
     /* ---- e=68: high noon. Near-white key, deep sky, short hard shadows. --- */
     e: 68,
-    sun: 0xfff6e6, sunI: 3.70,
+    // A touch under the 56 stop's exposure and key: a 68 deg sun puts most of
+    // the city's up-facing surfaces at peak incidence at once, and measured at
+    // noon the plaza paving reached 0.85 display luminance — the ceiling the
+    // art bible sets for sidewalk. Backed off to leave headroom.
+    sun: 0xfff6e6, sunI: 3.60,
     hemiSky: 0xc6dcf0, hemiGround: 0xc79a6a, hemiI: 0.62,
     fill: 0x9fc8ee, fillI: 0.30,
     bounce: 0xffc98e, bounceI: 0.30,
@@ -355,10 +381,15 @@ export const TOD_STOPS = [
     skySun: 0xfff6e6, sunDisc: 9.0, sunGlow: 0.00, hazeAz: 1.00,
     moon: 0xbcd4ff, moonDisc: 0.0, stars: 0.00,
     fogNear: 660, fogFar: 2700, fogBlend: 0.34,
-    exposure: 1.00, contrast: 1.07, saturation: 1.12, temperature: 0.022,
+    exposure: 0.99, contrast: 1.07, saturation: 1.12, temperature: 0.022,
     sTintR: -0.006, sTintG: 0.001, sTintB: 0.020,
     hTintR: 0.045, hTintG: 0.012, hTintB: -0.030,
     neutralise: 0.45, vignette: 0.24, dither: 1.0,
+    // Shoulder pulled in rather than exposure pulled down: at 69 deg the only
+    // thing near the ceiling is direct sun on pale plaza paving (measured p95
+    // 0.85 display luminance, exactly the art bible's sidewalk cap). Rolling
+    // the top end off holds the highlight without dimming the midtones.
+    toneStart: 0.41, toneDesat: 0.13,
     bloomStrength: 0.24, bloomRadius: 0.52, bloomThreshold: 1.38,
     aoIntensity: 1.00, shadowSoft: 1.00,
   },
@@ -381,6 +412,7 @@ export const TOD_STOPS = [
     sTintR: -0.006, sTintG: 0.001, sTintB: 0.020,
     hTintR: 0.045, hTintG: 0.012, hTintB: -0.030,
     neutralise: 0.45, vignette: 0.24, dither: 1.0,
+    toneStart: 0.45, toneDesat: 0.12,
     bloomStrength: 0.26, bloomRadius: 0.52, bloomThreshold: 1.30,
     aoIntensity: 1.00, shadowSoft: 1.00,
   },
@@ -398,13 +430,14 @@ export const TOD_STOPS = [
     cloudLit: 0xfffaf0, cloudShade: 0xa2b0c8, cloudCover: 0.76,
     skySun: 0xffe4bc, sunDisc: 10.0, sunGlow: 0.04, hazeAz: 1.10,
     moon: 0xbcd4ff, moonDisc: 0.0, stars: 0.00,
-    fogNear: 560, fogFar: 2500, fogBlend: 0.36,
+    fogNear: 600, fogFar: 2550, fogBlend: 0.36,
     exposure: 1.03, contrast: 1.07, saturation: 1.13, temperature: 0.040,
     sTintR: -0.005, sTintG: 0.001, sTintB: 0.022,
     hTintR: 0.058, hTintG: 0.016, hTintB: -0.040,
     neutralise: 0.45, vignette: 0.24, dither: 1.0,
+    toneStart: 0.43, toneDesat: 0.13,
     bloomStrength: 0.28, bloomRadius: 0.52, bloomThreshold: 1.24,
-    aoIntensity: 1.00, shadowSoft: 1.05,
+    aoIntensity: 1.00, shadowSoft: 1.02,
   },
   {
     /* ---- e=10: golden hour. Long shadows, warm haze, saturated sky. ------- */
@@ -414,45 +447,47 @@ export const TOD_STOPS = [
     // game. At golden hour the sky those surfaces actually see is orange, so
     // leaving this cool is what kept the first tuning pass's roads stubbornly
     // grey under a blazing sunset. Warm it and the ground turns with the sun.
-    hemiSky: 0xf6cdac, hemiGround: 0xf0a061, hemiI: 0.92,
+    hemiSky: 0xf6cdac, hemiGround: 0xf0a061, hemiI: 0.86,
     fill: 0x9ab6e0, fillI: 0.32,
     bounce: 0xffa85c, bounceI: 0.64,
     ambient: 0xffcb9a, ambientI: 0.32,
     env: 0.46,
     skyZenith: 0x2a6cb8, skyMid: 0x6ba6d6, skyHorizon: 0xffd2a0,
-    skyHaze: 0xffb478, skyFloor: 0xe3bc9c, skyGain: 0.88,
+    skyHaze: 0xffb478, skyFloor: 0xe3bc9c, skyGain: 0.86,
     cloudLit: 0xffe2c0, cloudShade: 0xac9ab4, cloudCover: 0.78,
     skySun: 0xffc07e, sunDisc: 13.0, sunGlow: 0.22, hazeAz: 1.25,
     moon: 0xbcd4ff, moonDisc: 0.0, stars: 0.00,
-    fogNear: 470, fogFar: 2300, fogBlend: 0.44,
-    exposure: 1.06, contrast: 1.06, saturation: 1.17, temperature: 0.062,
+    fogNear: 580, fogFar: 2450, fogBlend: 0.37,
+    exposure: 1.05, contrast: 1.06, saturation: 1.17, temperature: 0.052,
     sTintR: -0.003, sTintG: 0.000, sTintB: 0.028,
     hTintR: 0.082, hTintG: 0.022, hTintB: -0.060,
     neutralise: 0.42, vignette: 0.24, dither: 1.0,
+    toneStart: 0.39, toneDesat: 0.15,
     bloomStrength: 0.34, bloomRadius: 0.55, bloomThreshold: 1.12,
-    aoIntensity: 1.00, shadowSoft: 1.15,
+    aoIntensity: 1.00, shadowSoft: 1.08,
   },
   {
     /* ---- e=1: sunset. The key is orange and nearly out of power. ---------- */
     e: 1,
     sun: 0xff9350, sunI: 2.60,
-    hemiSky: 0xf3b498, hemiGround: 0xff8f52, hemiI: 1.05,
+    hemiSky: 0xffa478, hemiGround: 0xff8548, hemiI: 0.88,
     fill: 0x92a8d4, fillI: 0.34,
     bounce: 0xff8b4e, bounceI: 0.76,
-    ambient: 0xffb282, ambientI: 0.42,
+    ambient: 0xffa878, ambientI: 0.40,
     env: 0.46,
     skyZenith: 0x2a5aa8, skyMid: 0x6e94cc, skyHorizon: 0xff9860,
-    skyHaze: 0xff7a4e, skyFloor: 0xd2977e, skyGain: 0.94,
+    skyHaze: 0xff7a4e, skyFloor: 0xd2977e, skyGain: 0.84,
     cloudLit: 0xffc098, cloudShade: 0xa08cae, cloudCover: 0.80,
-    skySun: 0xff8442, sunDisc: 17.0, sunGlow: 0.40, hazeAz: 1.45,
+    skySun: 0xff8442, sunDisc: 17.0, sunGlow: 0.30, hazeAz: 1.30,
     moon: 0xbcd4ff, moonDisc: 0.0, stars: 0.02,
-    fogNear: 400, fogFar: 2100, fogBlend: 0.50,
-    exposure: 1.10, contrast: 1.05, saturation: 1.20, temperature: 0.078,
+    fogNear: 560, fogFar: 2350, fogBlend: 0.34,
+    exposure: 1.02, contrast: 1.05, saturation: 1.21, temperature: 0.060,
     sTintR: -0.001, sTintG: 0.000, sTintB: 0.034,
-    hTintR: 0.105, hTintG: 0.024, hTintB: -0.078,
+    hTintR: 0.085, hTintG: 0.020, hTintB: -0.065,
     neutralise: 0.38, vignette: 0.23, dither: 1.1,
+    toneStart: 0.35, toneDesat: 0.17,
     bloomStrength: 0.40, bloomRadius: 0.58, bloomThreshold: 1.00,
-    aoIntensity: 1.00, shadowSoft: 1.25,
+    aoIntensity: 1.00, shadowSoft: 1.14,
   },
   {
     /* ---- e=-7: blue hour. Key has handed over to the moon; sky still lit. - */
@@ -467,14 +502,15 @@ export const TOD_STOPS = [
     skyHaze: 0xd4805a, skyFloor: 0x7e7288, skyGain: 0.82,
     cloudLit: 0xb894a8, cloudShade: 0x6c7296, cloudCover: 0.78,
     skySun: 0xe0603c, sunDisc: 0.0, sunGlow: 0.26, hazeAz: 1.25,
-    moon: 0xc4d6ff, moonDisc: 6.0, stars: 0.35,
-    fogNear: 380, fogFar: 2000, fogBlend: 0.46,
-    exposure: 1.20, contrast: 1.02, saturation: 1.21, temperature: 0.006,
+    moon: 0xc4d6ff, moonDisc: 9.0, stars: 0.40,
+    fogNear: 520, fogFar: 2200, fogBlend: 0.44,
+    exposure: 1.14, contrast: 1.02, saturation: 1.21, temperature: 0.006,
     sTintR: 0.004, sTintG: 0.006, sTintB: 0.038,
     hTintR: 0.055, hTintG: 0.022, hTintB: 0.018,
     neutralise: 0.20, vignette: 0.22, dither: 1.3,
+    toneStart: 0.40, toneDesat: 0.14,
     bloomStrength: 0.50, bloomRadius: 0.62, bloomThreshold: 0.82,
-    aoIntensity: 0.95, shadowSoft: 1.35,
+    aoIntensity: 0.95, shadowSoft: 1.20,
   },
   {
     /* ---- e=-20: night. Cool, deep, and still completely readable. --------
@@ -494,14 +530,15 @@ export const TOD_STOPS = [
     skyHaze: 0x46598c, skyFloor: 0x16264a, skyGain: 0.70,
     cloudLit: 0x55648e, cloudShade: 0x2a3458, cloudCover: 0.72,
     skySun: 0x1a2b52, sunDisc: 0.0, sunGlow: 0.00, hazeAz: 0.55,
-    moon: 0xd8e6ff, moonDisc: 26.0, stars: 1.00,
-    fogNear: 340, fogFar: 1900, fogBlend: 0.40,
+    moon: 0xd8e6ff, moonDisc: 38.0, stars: 1.00,
+    fogNear: 480, fogFar: 2100, fogBlend: 0.40,
     exposure: 1.26, contrast: 1.02, saturation: 1.24, temperature: -0.045,
     sTintR: 0.006, sTintG: 0.010, sTintB: 0.042,
     hTintR: 0.010, hTintG: 0.014, hTintB: 0.040,
     neutralise: 0.04, vignette: 0.19, dither: 1.5,
+    toneStart: 0.46, toneDesat: 0.10,
     bloomStrength: 0.62, bloomRadius: 0.66, bloomThreshold: 0.60,
-    aoIntensity: 0.90, shadowSoft: 1.45,
+    aoIntensity: 0.90, shadowSoft: 1.30,
   },
 ];
 

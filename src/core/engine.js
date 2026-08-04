@@ -46,10 +46,21 @@
  * time explicitly:
  *   node tools/shot.mjs --script "__GAME__.engine.setTimeOfDay(0.85)" ...
  *
- * MEASURED LUMINANCE FLOOR: sunlit road at noon sits at ~0.62 display
- * luminance; the same road at deep night bottoms out at ~0.25 and the lit
- * sidewalk at ~0.31. Nothing in the playfield is allowed below ~0.20 — the
- * hole stays the darkest thing on screen at every hour, by a wide margin.
+ * THE LUMINANCE FLOOR, measured rather than asserted. Display-referred
+ * luminance over whole frames (360 px downsample, 0.2126/0.7152/0.0722):
+ *
+ *              noon 0.50   default 0.60   night 0.85
+ *   street-level median  0.53      0.48         0.25
+ *   hole-mid     median  0.45      0.42         0.24
+ *   hole-mid     p05     0.18      0.19         0.15
+ *   the hole itself      0.10      0.10         0.11
+ *
+ * The floor this rig is tuned to: the playable ground never drops below a
+ * ~0.24 frame median or a ~0.15 5th percentile at any hour, and the hole sits
+ * at ~0.10 around the clock — so it stays the darkest thing on screen from
+ * noon to midnight. Night is signalled by HUE and by the city lighting up, not
+ * by turning the lights off. Night costs about half the daylight illuminance
+ * and gets ~25% of it back through exposure.
  */
 
 import * as THREE from 'three';
@@ -150,19 +161,24 @@ const SKY_FRAG = /* glsl */ `
     // square and stars stay ROUND right down to the horizon — a plain d.xz
     // projection smears them into streaks exactly where the camera looks most.
     // No atan anywhere, so there is no azimuth seam either.
-    if (uStars > 0.003 && d.y > 0.012) {
-      vec2 sp = d.xz / (1.0 + d.y) * 260.0;
+    if (uStars > 0.003 && d.y > 0.006) {
+      // 190 cells across the unit disc puts one cell at ~0.30 deg near the
+      // horizon, so a 0.19-cell star is ~0.057 deg — about two pixels wide at
+      // a 42 deg FOV. Sized in DEGREES on purpose: the first pass used 260
+      // cells and a 0.055 radius, which is geometrically tidy and renders
+      // sub-pixel, i.e. an empty sky.
+      vec2 sp = d.xz / (1.0 + d.y) * 190.0;
       vec2 ic = floor(sp);
       float m = hash(ic + 0.5);
       if (m > 0.982) {
         vec2 c0 = vec2(hash(ic + 11.3), hash(ic + 27.9));
         // Magnitudes follow a steep curve so most stars are faint and only a
         // handful are bright; a uniform field reads as noise, not as a sky.
-        float mag = pow((m - 0.982) / 0.018, 1.7);
+        float mag = pow((m - 0.982) / 0.018, 1.9) * 1.6;
         float tw = 0.72 + 0.28 * sin(uTime * (1.1 + m * 7.0) + m * 63.0);
         col += vec3(0.86, 0.90, 1.00)
-             * smoothstep(0.055, 0.0, length(fract(sp) - c0))
-             * mag * tw * uStars * smoothstep(0.015, 0.26, d.y);
+             * smoothstep(0.19, 0.02, length(fract(sp) - c0))
+             * mag * tw * uStars * smoothstep(0.008, 0.13, d.y);
       }
     }
     #endif
@@ -180,11 +196,16 @@ const SKY_FRAG = /* glsl */ `
     col += uSunColor * core * uSunDisc * above;
 
     /* ---- moon ----------------------------------------------------------- */
+    // Deliberately co-located with the KEY direction rather than with the
+    // astronomical anti-sun: a moon that disagrees with its own moonlight is
+    // the kind of thing this project's reviews are supposed to catch. The
+    // consequence is that a fixed-pitch gameplay camera (50-58 deg down) never
+    // frames it — only the wide hero presets do. See DAY.KEY_MIN_ELEV.
     if (uMoonDisc > 0.001) {
       float md = dot(d, normalize(uMoonDir));
-      float mcore = smoothstep(0.999955, 0.999988, md);
-      float mglow = pow(max(md, 0.0), 1400.0) * 0.50
-                  + pow(max(md, 0.0), 26.0) * 0.05;
+      float mcore = smoothstep(0.99993, 0.999975, md);   // ~0.68 deg, soft limb
+      float mglow = pow(max(md, 0.0), 900.0) * 0.50
+                  + pow(max(md, 0.0), 22.0) * 0.06;
       col += uMoonColor * uMoonDisc * (mcore + mglow * 0.30);
     }
 
@@ -361,7 +382,10 @@ export class Engine {
     this.renderer.shadowMap.enabled = QUALITY.shadows;
     // PCF, not PCFSoft: PCFSoft ignores LightShadow.radius and bakes in a
     // ~1.5-texel penumbra, which is rock-hard once the ortho box is fitted
-    // tightly. PCF spreads its taps by `radius`, so softness is tunable.
+    // tightly. PCF spreads its taps by `radius`, so softness is tunable —
+    // but only over a NARROW range. In r185 this path is five taps on a Vogel
+    // disk rotated per pixel, so `radius` buys stochastic spread, not a wider
+    // box filter. See the essay on QUALITY.shadowRadius before raising it.
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     // Counting per-frame instead of per-render() so devtools.stats() reports
     // the true cost of a frame (shadow pass + beauty pass + post) rather than
@@ -382,6 +406,10 @@ export class Engine {
 
     this._frustumPts = Array.from({ length: 8 }, () => new THREE.Vector3());
 
+    // Declared before the cycle runs: _applyTimeOfDay() aims the key light at
+    // the look-at point when the shadow fit is not going to do it.
+    this._camTarget = new THREE.Vector3();
+
     this._buildSky();
     this._buildLights();
     this._buildComposer();
@@ -391,7 +419,6 @@ export class Engine {
     this._initCycle();
 
     this._followPos = new THREE.Vector3();
-    this._camTarget = new THREE.Vector3();
     this._dist = CAMERA.DIST_BASE;
     this._shakeOffset = new THREE.Vector3();
     this._shadowExtent = -1;   // forces the first fit to write the ortho box
@@ -595,6 +622,16 @@ export class Engine {
     // shadow side stays modelled however far round the sun has travelled.
     this.fill.position.copy(dirFrom(az + 180, LIGHTING.FILL_ELEVATION, _tmp)).multiplyScalar(300);
     this.bounce.position.copy(dirFrom(az + 166, LIGHTING.BOUNCE_ELEVATION, _tmp)).multiplyScalar(300);
+
+    // With shadows off (the potato tier) _updateShadowFit early-returns and
+    // never repositions the light, which would leave the sun frozen wherever it
+    // was at boot while the sky kept moving. Keep the direction live here; the
+    // fit overwrites both of these whenever it does run.
+    if (!this.sun.castShadow) {
+      this.sun.target.position.copy(this._camTarget);
+      this.sun.position.copy(this._camTarget).addScaledVector(this.sunDir, 400);
+      this.sun.target.updateMatrixWorld();
+    }
 
     // The IBL is a baked DAY sky; running it at full strength after dark would
     // paint noon reflections onto every glass tower. Fade it out and let the

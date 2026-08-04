@@ -19,6 +19,15 @@
  * The previous chain graded *before* tone mapping and clamped to [0,1] on the
  * way through, which threw away every highlight in the scene and pinned peak
  * white at ACES(1.0) ~= 0.80. That single clamp is why the game read flat.
+ *
+ * TIME OF DAY. GRADE (in core/quality.js) is the authored NOON baseline and is
+ * never mutated. The engine calls `setLook()` every frame the sun moves with an
+ * interpolated override — exposure, contrast, saturation, temperature, split
+ * tone, tone-curve shoulder, vignette, dither, bloom and AO strength. Anything
+ * the override omits falls through to GRADE. Bloom threshold drops and exposure
+ * rises after dark so emissive geometry (lit windows, streetlights, neon) reads
+ * as light without smearing; the shoulder tightens at golden hour so a frame
+ * that is uniformly warm does not walk to white all at once.
  */
 
 import * as THREE from 'three';
