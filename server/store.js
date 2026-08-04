@@ -451,14 +451,25 @@ export function createStore({ dir = join(__dirname, '.data') } = {}) {
     };
   }
 
+  /**
+   * A leaderboard row has to be EARNED by finishing a match.
+   *
+   * Every client posts its profile on boot, so without this the board fills with
+   * people who have played nothing: eighteen rows arrived during development and
+   * a dozen of them were "Player · 0 · 0", which makes a live board look broken
+   * and pads the real players down the list. Ranking is also meaningless for
+   * them — a hundred accounts tied on zero sort by id.
+   */
+  const hasPlayed = (r) => (r.matches || 0) > 0;
+
   function tableFor(board) {
     rollWeek();
-    const all = Object.values(db.players);
+    const all = Object.values(db.players).filter(hasPlayed);
     if (board !== 'weekly') return all.slice();
     const out = [];
     for (const rec of all) {
       const row = weeklyRow(rec);
-      if (row) out.push(row);
+      if (row && hasPlayed(row)) out.push(row);
     }
     return out;
   }

@@ -131,9 +131,9 @@ export const MODES = [
     name: 'Last Hole Standing',
     blurb: 'The map closes in. Outlast everyone.',
     rules: [
-      'The play area shrinks',
-      'Outside the ring you stop growing',
-      'Last hole alive wins',
+      'No respawns — swallowed is out',
+      'The ring closes and holds you in',
+      'Outlast everyone, not outscore them',
     ],
     icon: '⭕',
     accent: '#ff6b6b',
@@ -142,6 +142,9 @@ export const MODES = [
     botCount: 7,
     teams: 0,
     shrink: { startAt: 0.25, endRadius: 90 },
+    /* Swallowed is final: no respawn, and the table is the order people went
+       out in. Without this the mode was Classic on a smaller map. */
+    elimination: true,
     scoreFor: base,
     rewards: { xp: 170, coins: 65 },
   },

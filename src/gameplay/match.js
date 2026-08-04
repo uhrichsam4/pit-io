@@ -82,9 +82,26 @@ export class Match {
     };
   }
 
-  start(holes) {
+  /**
+   * @param {import('./hole.js').Hole[]} holes
+   * @param {?object} mode  a src/gameplay/modes.js entry. Only `elimination` is
+   *   read here; everything else about a mode is applied by the host.
+   */
+  start(holes, mode = null) {
     this.resetStats();
     this.holes = holes;
+    this.mode = mode;
+    /**
+     * ELIMINATION MODES DO NOT RESPAWN, and are not ranked on score.
+     *
+     * "Last Hole Standing" that hands the win to whoever ate the most is not
+     * the mode, it is Classic on a smaller map — the closing ring was there but
+     * nothing was ever at stake inside it. Here, being swallowed is final, and
+     * the standings are the order people went out in, backwards.
+     */
+    this.elimination = !!(mode && mode.elimination);
+    this._elimOrder = [];
+    this._elimCounter = 0;
     this.timeLeft = MATCH.DURATION;
     this.elapsed = 0;
     this.countdown = MATCH.COUNTDOWN;
@@ -97,8 +114,16 @@ export class Match {
       h.spawnGrace = 0;
       h.isLeader = false;
       h.rank = 0;
+      h.eliminatedAt = 0;
     }
     this._setPhase(PHASE.COUNTDOWN);
+  }
+
+  /** Holes still in the match. In non-elimination modes this is everyone. */
+  get aliveCount() {
+    let n = 0;
+    for (const h of this.holes) if (h.alive || !this.elimination) n++;
+    return n;
   }
 
   _setPhase(p) {
@@ -141,8 +166,32 @@ export class Match {
     for (const h of this.holes) {
       if (h.spawnGrace > 0) h.spawnGrace = Math.max(0, h.spawnGrace - dt);
       if (h.alive) continue;
+
+      if (this.elimination) {
+        // Out for good. Recorded once, in the order it happened, because that
+        // order IS the final table.
+        if (!h.eliminatedAt) {
+          h.eliminatedAt = ++this._elimCounter;
+          h.respawnAt = 0;
+          const left = this.aliveCount;
+          this._announce(
+            `<b>${h.name}</b> is out${left > 1 ? ` — ${left} left` : ''}`,
+            `#${h.color.getHexString()}`, 'elim'
+          );
+        }
+        continue;
+      }
+
       h.respawnAt -= dt;
       if (h.respawnAt <= 0) this._respawn(h);
+    }
+
+    // One hole left and nobody can come back: the mode is decided, so do not
+    // make the winner drive around an empty city until the clock expires.
+    if (this.elimination && this.aliveCount <= 1) {
+      this.timeLeft = 0;
+      this._rank();
+      this._setPhase(PHASE.RESULTS);
     }
   }
 
@@ -307,9 +356,19 @@ export class Match {
     const s = this._sorted;
     s.length = 0;
     for (const h of this.holes) s.push(h);
-    // Score first; eatCount breaks ties so two holes on 0 do not swap places
-    // every frame and spam the lead-change announcement.
-    s.sort((a, b) => (b.score - a.score) || (b.eatCount - a.eatCount) || (a.id - b.id));
+    if (this.elimination) {
+      // Survivors above the fallen; among the fallen, whoever lasted longest.
+      // Score only separates people who are still standing together.
+      s.sort((a, b) => (
+        (b.alive ? 1 : 0) - (a.alive ? 1 : 0) ||
+        (b.eliminatedAt || 0) - (a.eliminatedAt || 0) ||
+        (b.score - a.score) || (b.eatCount - a.eatCount) || (a.id - b.id)
+      ));
+    } else {
+      // Score first; eatCount breaks ties so two holes on 0 do not swap places
+      // every frame and spam the lead-change announcement.
+      s.sort((a, b) => (b.score - a.score) || (b.eatCount - a.eatCount) || (a.id - b.id));
+    }
     for (let i = 0; i < s.length; i++) s[i].rank = i + 1;
     return s;
   }

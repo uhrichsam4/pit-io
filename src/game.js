@@ -634,7 +634,7 @@ export class Game {
     this._applyTeams(mode);
 
     this.consume.setFrenzy(false);
-    this.match.start(this.holes);
+    this.match.start(this.holes, mode);
     this._applyModeDuration(mode);
     this._startShrink(mode);
     this.engine._camTarget.copy(this.player.position);

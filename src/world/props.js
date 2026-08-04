@@ -2676,8 +2676,6 @@ function gJersey(m) {
   m.col(0xd8d0be);
   for (const s of [-1, 1]) {
     m.prism(s * 0.985, 0, [[0.34, 0.03, 0.26], [0.72, 0.03, 0.22]]);
-    m.xform(Math.PI / 2 * s, 0, 0, 0);
-    m.reset();
   }
   m.col(0xb4ac98);
   for (const s of [-1, 1]) {
