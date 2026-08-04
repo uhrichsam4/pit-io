@@ -1099,8 +1099,11 @@ export function buildPedestrians(ctx) {
     `${corridor.samples} corridor samples (${corridor.blocked} fully blocked) | ` +
     `${cleared.fixed} people moved out of furniture, ${cleared.stuck} left tight`
   );
-  console.info('[pedestrians] blockers', JSON.stringify(
-    Object.entries(corridor.why).sort((a, b) => b[1] - a[1]).slice(0, 18)));
+  // What is closing the footway, for whoever owns the planting: a hedge or a
+  // shrub bed sitting ON the pavement centreline is the one case this pass
+  // cannot steer around, and it is the top of this list by a factor of three.
+  console.info('[pedestrians] corridor closed by:', Object.entries(corridor.why)
+    .sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => `${k} ${n}`).join(', '));
   console.info(
     `[pedestrians] street life: ${nStreet} characters, ${nStreetProps} pieces of kit`);
 }
