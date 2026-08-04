@@ -547,13 +547,6 @@ export class Game {
     this.stepSimulation(dt);
     updateHoleUniforms(this.holes, t);
 
-    // Fade anything standing between the camera and the player's hole. Runs
-    // after movement so it reacts in the same frame the hole slides under a
-    // podium, and before the draw so there is no one-frame flash of solid.
-    if (this.occlusion && this.player) {
-      this.occlusion.update(dt, this.player.position, this.player.displayRadius);
-    }
-
     // Size-tier chime + a rumble bed that grows with the hole.
     if (this.player) {
       let tier = 0;
@@ -620,14 +613,24 @@ export class Game {
       this.hud.drawMinimap(this.holes, this.player, this.layout);
       this.hud.root.style.opacity = '1';
     } else if (this.hud) {
-      this.hud.root.style.opacity = phase === PHASE.RESULTS ? '0.25' : '0';
+      // Fully out on the results screen. At 0.25 the frozen leaderboard and a
+      // couple of stale feed lines were still legible either side of the end
+      // card — it read as a UI that had failed to clear, not as context.
+      this.hud.root.style.opacity = '0';
     }
 
-    // The shader opens its x-ray window at the hole's screen position, so it
-    // must be projected with the camera matrices this frame will actually draw
-    // with — hence here, after the camera block, and in drawing-buffer pixels
+    // Fade anything standing between the camera and the player's hole, and open
+    // the shader's x-ray window at the hole's screen position.
+    //
+    // BOTH must run AFTER the camera block and BEFORE the draw. The raycast is
+    // camera-relative, so running it earlier tested last frame's viewpoint —
+    // harmless while following at 20 m/s, wrong the moment the dev harness or a
+    // respawn teleports the camera. The window is projected with the matrices
+    // this frame will actually draw with, in drawing-buffer pixels
     // (gl_FragCoord) rather than CSS pixels.
     if (this.occlusion && this.player) {
+      this.engine.camera.updateMatrixWorld();
+      this.occlusion.update(dt, this.player.position, this.player.displayRadius);
       const db = this.engine.renderer.getDrawingBufferSize(_bufSize);
       this.occlusion.updateWindow(
         this.player.position, this.player.displayRadius, db.x, db.y

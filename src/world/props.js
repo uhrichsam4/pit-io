@@ -3685,10 +3685,11 @@ function restaurantTerrace(pl, b, r, band) {
          a 2 m hole in it does not, and that is the defect the packing above
          exists to avoid in the first place. */
       let done = false;
-      for (const dd of [0, -0.42, 0.48, -0.80, 0.92]) {
+      for (const dd of [0, -0.35, 0.48, 0.92]) {
         const dep = dKerb + dd;
-        // Never step past the table line, and never into the gutter.
-        if (dep < 0.95 || dep > dTable - 0.55) continue;
+        // Never step past the table line, and never into the gutter. The floor
+        // is a backstop only — the ground sample already refuses the kerb ramp.
+        if (dep < 0.90 || dep > dTable - 0.55) continue;
         const p = edgePt(b, s, u + cb.hx, dep + (r() - 0.5) * 0.10);
         if (!pl.put(key, p.x, p.z, rot + (r() - 0.5) * 0.05, 1, null, cb.hz)) continue;
         pl.claimFeet(p.x, p.z, rot, [-cb.hx * 0.55, cb.hx * 0.55], cb.hz);
@@ -4118,7 +4119,13 @@ const squared = (r) => r.pick(SQUARE) + (r() - 0.5) * 0.16;
  * and leave the stools and speakers laid out around where it used to be.
  */
 function eventCorner(pl, b, r) {
-  if (Math.min(b.w, b.d) < 22 || !r.chance(0.85)) return;
+  if (Math.min(b.w, b.d) < 22) return;
+  /* A pop-up bar with a PA belongs on a plaza or a marina apron, which is where
+     Miami actually puts one. Once the site search below started succeeding, a
+     flat 0.85 gave the city a DJ booth in the middle of essentially every lawn
+     it owns — density bought at the cost of the thing the brief calls logical
+     placement. Parks keep a much smaller share. */
+  if (!r.chance(b.zone === ZONE.PARK ? 0.34 : 0.85)) return;
   const face = r.pick(SQUARE);
   const ax = Math.cos(face), az = -Math.sin(face);   // local +x
   const nx = Math.sin(face), nz = Math.cos(face);    // local +z, the way it faces

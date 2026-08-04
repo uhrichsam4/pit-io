@@ -241,16 +241,21 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
           mRadius = Math.hypot(w, d) / 2;
           mHeight = Math.max(0.2, box.max.y - box.min.y);
           mPass = mPass ?? Math.max(0.12, Math.min(w, d) / 2 * 1.02);
-          // The support disc has to be centred on the footprint the player can
-          // see, not on whatever anchor the module happened to author. A
-          // building's parcel anchor is typically 0.7 m off the mass it grew;
-          // the merged pontoon decks carry world-space geometry with their
-          // transform left at the origin and were 11 m out. Keep the authored
-          // Y — that is the surface the object rests on, and the box bottom
-          // includes foundations and kerb skirts that must not lift it.
-          pos = new THREE.Vector3(
-            (box.min.x + box.max.x) / 2, pos.y, (box.min.z + box.max.z) / 2
-          );
+          // The support disc has to sit under the footprint the player can
+          // see. Usually the authored anchor already does — a building's
+          // parcel centre lands within 0.72 m of its measured box, and that
+          // gap is awning and canopy asymmetry rather than a misplaced
+          // building, so moving the disc onto it would be less right, not
+          // more. What has to be caught is an anchor that is not on the object
+          // at all: the merged marina pontoons carry world-space geometry and
+          // were declaring a 51 m support disc 11.4 m from the deck it belongs
+          // to. Only override when the disagreement is that kind of size.
+          // Keep the authored Y — that is the surface the object rests on, and
+          // the box bottom includes foundations that must not lift it.
+          const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
+          if (Math.hypot(cx - pos.x, cz - pos.z) > Math.max(1.5, mRadius * 0.18)) {
+            pos = new THREE.Vector3(cx, pos.y, cz);
+          }
           ctx.stats.measured++;
           if (Math.abs((opts.radius ?? 1) - mRadius) / Math.max(0.05, mRadius) > 0.35) {
             ctx.stats.corrected++;

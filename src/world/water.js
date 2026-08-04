@@ -660,11 +660,11 @@ function box(w, hgt, d, x, y, z, rotY = 0) {
 
 const WATER_PARS = /* glsl */ `
   /* NAMED uWaterTime, not uTime. The hole cutter patches this same material and
-     declares its own `uniform float uTime`, and two declarations of one name in
-     one fragment shader is a hard compile error — which silently took the whole
-     bay out of the frame the first time the two were combined. The JS-side
-     uniform object still exposes `uTime` as well (both keys point at the same
-     object) so game.js keeps driving it by the name it always used. */
+     declares a uTime of its own, and two declarations of one name in one
+     fragment shader is a hard compile error — it silently took the whole bay
+     out of the frame the first time the two were combined. The JS-side uniform
+     object still exposes uTime as well (both keys point at the same object) so
+     game.js keeps driving it by the name it always used. */
   uniform float uWaterTime;
   uniform sampler2D uShoreMap;
   uniform vec2  uShoreOrigin;
@@ -1712,8 +1712,12 @@ export function buildWater(ctx) {
     wakeB.push(new THREE.Vector4(1, 1, 0, 0));
   }
 
+  // One object under two keys: the shader reads uWaterTime (see WATER_PARS for
+  // why it cannot be called uTime), game.js writes uTime.
+  const timeU = { value: 0 };
   const uniforms = {
-    uTime: { value: 0 },
+    uTime: timeU,
+    uWaterTime: timeU,
     uShoreMap: { value: field.tex },
     uShoreOrigin: { value: new THREE.Vector2(FIELD.x0, FIELD.z0) },
     uShoreSize: { value: new THREE.Vector2(FIELD.w * FIELD.cell, FIELD.h * FIELD.cell) },

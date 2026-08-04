@@ -1600,7 +1600,9 @@ function inscribedRect(plan, margin) {
  * needs at the 100-200 m the review camera actually sits at.
  */
 function roofDeck(B, plan, y, hex, r) {
-  B.trim(loft([{ p: plan, y }], { capTop: true, uScale: 3 }), hex);
+  // The base is the bitumen the rolls are bedded onto: darker than they are,
+  // and what shows through at every lap and round the perimeter upstand.
+  B.trim(loft([{ p: plan, y }], { capTop: true, uScale: 3 }), jitterHex(hex, 0.78, 0.015));
   const rect = inscribedRect(plan, 0.7);
   if (!rect) return;
   const along = r.chance(0.5);
@@ -1613,11 +1615,11 @@ function roofDeck(B, plan, y, hex, r) {
     const off = -span / 2 + rw * (i + 0.5);
     // Value walks rather than jumping, so the roof reads as one field that is
     // unevenly weathered instead of as a barcode.
-    const v = 0.94 + ((i * 7919) % 13) / 13 * 0.13;
+    const v = 0.90 + ((i * 7919) % 13) / 13 * 0.20;
     const tone = jitterHex(hex, v, ((i * 4993) % 7) / 7 * 0.05 - 0.02);
-    const w = along ? rw - 0.10 : run;
-    const d = along ? run : rw - 0.10;
-    B.trim(box(w, 0.05, d, rect.cx + (along ? off : 0), y + 0.01,
+    const w = along ? rw - 0.32 : run;
+    const d = along ? run : rw - 0.32;
+    B.trim(box(w, 0.06, d, rect.cx + (along ? off : 0), y + 0.01,
       rect.cz + (along ? 0 : off), 3), tone);
   }
 }
@@ -2059,10 +2061,28 @@ function towerBase(B, plan, r, pal, neon, glassMat, grow = 1.5) {
  * between a comb and a building. 'wave' is the Brickell undulating condo,
  * 'zig' the alternating deep/shallow terrace, 'taper' the ziggurat.
  */
-function balconyStack(B, plan, y0, y1, step, proj, slabHex, railHex, mode = 'flat') {
+function balconyStack(B, plan, y0, y1, step, proj, slabHex, railHex, mode = 'flat', bandEvery = 0) {
   const n = Math.max(1, Math.floor((y1 - 1 - y0) / step));
   let i = 0;
   for (let y = y0; y < y1 - 1; y += step, i++) {
+    /*
+     * AN AMENITY STOREY.
+     *
+     * A wrap-around balcony slab on every floor for forty floors is a radiator
+     * fin, not a tower: the wall behind is never visible at all, so the whole
+     * shaft reads as one fluted column of a single colour. Measured on the
+     * brickell-skyline preset, that was three of the five foreground towers.
+     * Real towers break every few storeys for a pool deck, a plant floor or a
+     * sky lounge — a deeper cornice, then one storey of plain facade above it.
+     * The GAP is the point: it is the only place the render behind the stack
+     * gets to show.
+     */
+    if (bandEvery && i > 0 && i % bandEvery === 0 && y + step * 2 < y1 - 1) {
+      B.trim(slabGeo(plan, y, 0.9, proj), slabHex);
+      B.trim(parapetGeo(offsetPlan(plan, proj), y + 0.9, 1.05, 0.11), railHex);
+      y += step; i++;
+      continue;
+    }
     let p = proj;
     if (mode === 'wave') p = proj * (0.55 + 0.45 * (1 + Math.sin(i * 0.85)) / 2 + 0.2);
     else if (mode === 'zig') p = i % 2 ? proj * 0.42 : proj;
@@ -2670,7 +2690,7 @@ function tower(ctx, B, r, w, d, h, o = {}) {
     switch (facade) {
       case 'resi':
         balconyStack(B, fp, y + 3.4, segTop, STOREY * (r.chance(0.55) ? 1 : 2),
-          1.25, slabHex, railHex, balMode);
+          1.25, slabHex, railHex, balMode, h > 60 ? 6 : 0);
         break;
       case 'band':
         for (let yy = y + STOREY; yy < segTop - 2; yy += STOREY) {
@@ -2823,12 +2843,28 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
   const reach = Math.max(0.55, Math.min(2.0,
     Math.min((o.lotW ?? w + 4) - w, (o.lotD ?? d + 4) - d) / 2 - 0.3));
   const proj = Math.min(reach, 0.85 + r() * 0.65);
+  // Amenity break, in balcony courses. See balconyStack.
+  const bandEvery = h > 48 ? r.int(4, 8) : 0;
+  const core = h > 44 && r.chance(0.52);
+  const coreHex = r.chance(0.5) ? P.CONCRETE : trim;
   let pw = w, pd = d;
   for (let sct = 0; sct < sections; sct++) {
     const last = sct === sections - 1;
     const want = last ? h : y + (h - podH) * (0.30 + r() * 0.14);
     const segTop = Math.min(h - 2, Math.max(y + 14, want));
     B.face(loft([{ p: plan, y }, { p: plan, y: segTop }], B.wall()));
+    /*
+     * The stair-and-lift core, expressed on the outside and run past the
+     * parapet. The glass towers have had one since the first pass; the
+     * residential half of the skyline did not, and it is the only element in
+     * this kit that interrupts a balcony stack VERTICALLY. Drawn from the
+     * shaft plan so it is always inside the parcel.
+     */
+    if (sct === 0 && core) {
+      const cp = mv(rectPlan(Math.min(pw, pd) * 0.28, pd * 0.44, 0.5));
+      B.trim(loft([{ p: cp, y }, { p: cp, y: h + 1.5 + r() * 5 }],
+        { uScale: 5, vScale: 5, capTop: true }), coreHex);
+    }
     if (lang === 'loggia') {
       // Recessed balconies: a dark reveal with a rail across it, so the facade
       // is a grid of holes rather than a stack of shelves.
@@ -2868,7 +2904,7 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
       }
     } else {
       balconyStack(B, plan, y + STOREY, segTop, lang === 'deep' ? STOREY : step,
-        Math.min(reach, lang === 'deep' ? proj * 1.6 : proj), trim, rail, mode);
+        Math.min(reach, lang === 'deep' ? proj * 1.6 : proj), trim, rail, mode, bandEvery);
     }
     if (r.chance(0.35)) fins(B, plan, y, segTop, 4, Math.min(reach, 0.85), trim);
     if (!last) {
@@ -2934,7 +2970,8 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
   // Deco is the language that WANTS a loud band, so it draws the accent twice as
   // often as the plain stucco block does.
   const trim = o.trimHex
-    || (r.chance(deco ? 0.55 : 0.28) ? accentFor(r, o.wallHex) : r.weighted(RENDER_TRIM));
+    || readableTrim(r.chance(deco ? 0.55 : 0.28) ? accentFor(r, o.wallHex) : r.weighted(RENDER_TRIM),
+      o.wallHex ?? P.STUCCO_CREAM);
 
   const steps = h > 26 ? (deco ? r.int(2, 3) : r.int(1, 2)) : 1;
   let y = 0;
@@ -3889,6 +3926,24 @@ const DECO_ACCENT = [
   [P.STUCCO_LILAC, 8], [P.GLASS_TEAL, 7], [P.STUCCO_MINT, 9], [P.BRICK_LIGHT, 5],
 ];
 
+/**
+ * Trim that can actually be seen against the wall it sits on.
+ *
+ * `accentFor` only guarantees a different HEX. That is not the same as a
+ * different value: cream trim on a pale pink render, or warm concrete on
+ * butter, differ by a few percent of luminance, and at 200 m the cornices,
+ * balcony slabs and string courses simply vanish. The tower then reads as a
+ * fluted column of one colour, which is exactly what the pastel half of the
+ * skyline was doing. Anything inside 28 code values of the wall is swapped for
+ * a tone that is definitely lighter or definitely darker than it.
+ */
+const lumaOf = (c) => 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
+function readableTrim(hex, wallHex) {
+  const lw = lumaOf(wallHex);
+  if (Math.abs(lumaOf(hex) - lw) > 28) return hex;
+  return lw > 168 ? P.CONCRETE_DARK : P.STUCCO_WHITE;
+}
+
 /** An accent that is not the wall it is going on — a coral band on a coral
  *  building is a band you cannot see. */
 function accentFor(r, wallHex) {
@@ -4184,8 +4239,8 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
     const mt = resiTower(ctx, MB, r, sw, sd, hCap, {
       podiumH: wing ? 0 : podH, lit: litIt, shift, pal,
       lotW: pl.lw, lotD: pl.ld,
-      trimHex: r.chance(0.30) ? accentFor(r, hex)
-        : (r.chance(0.45) ? P.STUCCO_WHITE : P.CONCRETE_WARM),
+      trimHex: readableTrim(r.chance(0.30) ? accentFor(r, hex)
+        : (r.chance(0.45) ? P.STUCCO_WHITE : P.CONCRETE_WARM), hex),
       helipad: hCap > 130 && r.chance(0.4),
     });
     register(ctx, group, MB, pl.world, Math.max(pl.lw, pl.ld) * 0.5, mt,
