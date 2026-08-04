@@ -3387,7 +3387,11 @@ const RENDER_TRIM = [
 const STUCCO_SET = [
   P.STUCCO_PINK, P.STUCCO_CORAL, P.STUCCO_CREAM, P.STUCCO_LILAC,
   P.STUCCO_AQUA, P.STUCCO_MINT, P.STUCCO_BUTTER, P.STUCCO_PEACH,
-  P.STUCCO_SAND, P.STUCCO_SKY, P.TERRACOTTA, P.BRICK_LIGHT, P.STUCCO_WHITE,
+  // BRICK_LIGHT, not TERRACOTTA: through the stucco texture's warm balance the
+  // deeper terracotta rendered as dark khaki at tower scale — a muddy mid,
+  // which the bible bans outright. BRICK_LIGHT keeps the warm masonry note and
+  // stays on the bright side of the grade.
+  P.STUCCO_SAND, P.STUCCO_SKY, P.BRICK_LIGHT, P.STUCCO_WHITE,
 ];
 const SHOP_SET = [
   P.STUCCO_CREAM, P.STUCCO_PINK, P.STUCCO_AQUA, P.STUCCO_PEACH, P.STUCCO_WHITE,

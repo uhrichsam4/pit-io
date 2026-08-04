@@ -3330,8 +3330,13 @@ function placeMoving(ctx, state, traf, rng) {
   for (const info of traf.lanes) {
     const lane = info.lane;
     const cls = lane.road.cls;
-    const base = cls === ROAD_CLASS.BOULEVARD ? 68
-      : cls === ROAD_CLASS.AVENUE ? 80 : 100;
+    // Spacing, metres per vehicle. Pulled in ~12% after looking at the
+    // `intersection` frame: eight lanes of Brickell Avenue with four cars on
+    // them reads as a closed road, and "empty pavement is a failure" applies
+    // to tarmac too. It costs ~150 more instances and no draw calls, because a
+    // pool is per (shape, paint) and every one of them already exists.
+    const base = cls === ROAD_CLASS.BOULEVARD ? 60
+      : cls === ROAD_CLASS.AVENUE ? 70 : 90;
     const outward = lane.laneCount > 1 ? lane.index / (lane.laneCount - 1) : 0;
     const spacing = lane.busLane ? 210 : base * (0.86 + 0.55 * outward);
     const mix = lane.busLane ? BUS_LANE_MIX
@@ -3627,7 +3632,9 @@ function placeBoats(ctx, state, rng) {
 
   // Bay: two bands. An inshore line of moored hulls off the seawall, then
   // traffic further out so the water has depth instead of one row of boats.
-  for (const band of [{ x0: 12, x1: 40, step: 26, p: 0.82 },
+  // The inshore line is the only one any camera in the game gets close to, so
+  // it is the one worth spending hulls on; the outer band is scenery.
+  for (const band of [{ x0: 12, x1: 40, step: 21, p: 0.85 },
     { x0: 58, x1: 128, step: 46, p: 0.66 }]) {
     for (let z = -WORLD.SIZE + 60; z < WORLD.SIZE - 60; z += band.step) {
       if (Math.abs(z) < 52) continue;                     // keep the river mouth clear
@@ -3701,6 +3708,7 @@ function placeBoats(ctx, state, rng) {
       put(type, run.x + (rng() - 0.5) * 26, z, run.dir > 0 ? 0 : Math.PI, true, {
         speed, vz: speed * run.dir,
         wake: 1.1 + FLEET[type].len * 0.09, wakeL: FLEET[type].len * 1.7,
+        wakeZ: FLEET[type].len * 0.44,
       });
     }
   }
@@ -3711,7 +3719,7 @@ function placeBoats(ctx, state, rng) {
     const speed = 8 + rng() * 4;
     const x0 = B + 52 + rng() * 30;
     put('jetSki', x0, z, dir > 0 ? 0 : Math.PI, true, {
-      speed, vz: speed * dir, wake: 1.5, wakeL: 13,
+      speed, vz: speed * dir, wake: 1.5, wakeL: 13, wakeZ: 1.4,
       x0, rot0: dir > 0 ? 0 : Math.PI, weave: 12 + rng() * 10, weaveHz: 0.22 + rng() * 0.14,
     });
   }
@@ -4173,6 +4181,10 @@ function makeUpdater(ctx, traf, state, boats) {
     // real thing, because the surface behind them stops competing.
     hazMat.opacity = (time % 0.92) < 0.52 ? 0.80 + 0.20 * lit : 0.04;
     brakeMat.opacity = 0.34 + 0.52 * lit;
+    // Foam is white water, not a lamp. `additive()` starts every card material
+    // at opacity 0 and this one was never turned up, so every wake in Biscayne
+    // Bay has been drawing at zero alpha — the boats under way looked moored.
+    wakeMat.opacity = 0.60 - 0.26 * lit;
 
     const V = traf.vehicles;
     for (let i = 0; i < V.length; i++) {
@@ -4335,7 +4347,11 @@ function makeUpdater(ctx, traf, state, boats) {
       if (b.wake) {
         e.set(0, b.rot, 0, 'YXZ');
         q.setFromEuler(e);
-        pos.set(b.x, BOAT_Y + 0.03, b.z);
+        // The trail is authored running aft from the card origin, so the origin
+        // belongs at the TRANSOM. Anchoring it at the hull's centre buried the
+        // hot half of the foam under the boat that is supposed to be making it.
+        pos.set(b.x - Math.sin(b.rot) * b.wakeZ, BOAT_Y + 0.03,
+          b.z - Math.cos(b.rot) * b.wakeZ);
         scl.set(b.wake, 1, b.wakeL);
         wakes.setTransform(i, pos, q, scl);
       }

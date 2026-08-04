@@ -312,7 +312,9 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
     `${pstats.pools} pools / ${pstats.instances} instances | ` +
     `${(performance.now() - t0).toFixed(0)}ms | ` +
     `${ctx.stats.measured} sized from geometry ` +
-    `(${ctx.stats.corrected} were off by >35% as authored)`
+    `(${ctx.stats.corrected} were off by >35% as authored) | ` +
+    `${pstats.shadowPoolsDisabled} flat pools skip the shadow pass ` +
+    `(-${(pstats.shadowTrisSaved / 1000).toFixed(0)}k tris)`
   );
 
   return { layout, props, ctx };

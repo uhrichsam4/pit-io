@@ -2737,15 +2737,19 @@ export function buildStreets(ctx) {
   // asphalt, so it reads as a tinted lane rather than a red carpet. Flat albedo
   // (paint IS flat) with the road's own normal map so the relief carries
   // straight through and the lane still looks like tarmac.
-  /* 0.27, down from 0.34. At a third of the way to TERRACOTTA the bed came out
-     salmon, and it landed in the same hue family as the detectable-warning
-     pads on the footway six metres away — so a traffic lane and a pedestrian
-     warning surface read as the same material. It also stopped reading as
-     tinted tarmac and started reading as brick paving, which is the opposite
-     of what a bus lane is. Backed off until the asphalt underneath is clearly
-     still asphalt. */
+  /* Desaturating toward the asphalt was the wrong axis, and two passes of it
+     did not fix the complaint. Measured off the street-level frame, the bed at
+     lerp 0.27 rendered BRIGHTER than the carriageway either side of it — the
+     linear mix nearly doubles the red channel — and a warm band that is lighter
+     than the road, laid immediately against a bone footway, is the definition
+     of brick paving. What separates a painted lane bed from pavers is not how
+     red it is, it is that paint on a road is DARKER than the road. So the hue
+     goes back up and the value comes down: at 0.30 x 0.74 the bed is
+     unmistakably a red bus lane and ~15% darker than the asphalt, which also
+     buys the kerb line beside it a value step it did not have. */
   const busColor = new THREE.Color(PALETTE.ASPHALT)
-    .lerp(new THREE.Color(PALETTE.TERRACOTTA), 0.27);
+    .lerp(new THREE.Color(PALETTE.TERRACOTTA), 0.30)
+    .multiplyScalar(0.74);
   const matBus = layer({
     color: busColor,
     normalMap: asphaltNormal,

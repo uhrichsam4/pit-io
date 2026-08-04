@@ -818,7 +818,7 @@ const MACRO = {
    * roughness (which reads as the sun catching a rough surface, not as dirt).
    */
   asphalt: {
-    m: 88, a: 0.25, r: 0.50, h: 0.036,
+    m: 88, a: 0.25, r: 0.44, h: 0.036,
     far: [3.10, 0.42], mid: [0.380, 0.44], detail: [0.3413, 0.80],
   },
   paving: {
@@ -2670,6 +2670,14 @@ function paramKey(p) {
  *
  * envMapIntensity is deliberately low. The IBL is a blue sky, and an up-facing
  * road that reflects it at full strength is exactly how asphalt turns navy.
+ *
+ * 0.24, down from 0.30. In full sun this is invisible — the key light is 3.55
+ * against an effective IBL of 0.45 x 0.30 — but in shadow the IBL is a large
+ * share of everything landing on the surface, and it is the bluest share.
+ * Measured on the street-level preset, carriageway in a tower's shadow rendered
+ * at r:b 0.73: blue-grey asphalt, listed automatic-failure #1. Trimming the IBL
+ * raises the relative weight of the rig's warm ambient and warm ground bounce,
+ * which is the correct place for shadow fill in this art direction anyway.
  */
 export function ground(params) {
   const p = withCompanions(params);
@@ -2679,7 +2687,7 @@ export function ground(params) {
     const m = applyHoleCut(new THREE.MeshStandardMaterial({
       roughness: 0.95,
       metalness: 0.0,
-      envMapIntensity: 0.30,
+      envMapIntensity: 0.24,
       dithering: true,
       ...p,
     }));

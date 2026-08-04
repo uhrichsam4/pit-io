@@ -173,6 +173,39 @@ export class InstancedProp {
     this._dirtySlots.clear();
   }
 
+  /**
+   * Decide whether this pool is worth rendering into the shadow map.
+   *
+   * A manhole cover, a drain grate, a painted marking or a kerb inlay lies flat
+   * on the ground: its shadow is geometrically hidden underneath itself and
+   * contributes nothing a player can see. But it still costs a full re-draw of
+   * every instance in the shadow pass, and there are thousands of them.
+   *
+   * The test is deliberately conservative — it only rejects genuinely flat
+   * geometry, so the contact shadows that ground props (cones, bins, benches)
+   * are untouched. Those are the whole reason the shadow filter was retuned.
+   *
+   * @returns {{disabled:boolean, height:number, saved:number}}
+   */
+  optimiseShadows() {
+    if (!this.mesh.castShadow) return { disabled: false, height: 0, saved: 0 };
+    const geo = this.geometry;
+    if (!geo.boundingBox) geo.computeBoundingBox();
+    const h = geo.boundingBox.max.y - geo.boundingBox.min.y;
+    // Also weigh how wide it is: a 10 cm tall but 3 m wide slab is a road
+    // marking; a 10 cm tall, 10 cm wide object is a kerb stone with a shadow.
+    const w = Math.max(
+      geo.boundingBox.max.x - geo.boundingBox.min.x,
+      geo.boundingBox.max.z - geo.boundingBox.min.z
+    );
+    const flat = h < 0.12 || (h < 0.3 && h / Math.max(0.01, w) < 0.10);
+    if (!flat) return { disabled: false, height: h, saved: 0 };
+    this.mesh.castShadow = false;
+    const tris = (geo.index ? geo.index.count / 3
+                            : (geo.attributes.position?.count || 0) / 3) * this.count;
+    return { disabled: true, height: h, saved: tris };
+  }
+
   /** Trim the buffer to what was actually used and compute bounds. */
   finalize() {
     this.mesh.count = this.count;
@@ -213,8 +246,19 @@ export class PropLibrary {
 
   finalizeAll() {
     let instances = 0;
-    for (const p of this.pools.values()) { p.finalize(); instances += p.count; }
-    return { pools: this.pools.size, instances };
+    let shadowSaved = 0;
+    let shadowPools = 0;
+    for (const p of this.pools.values()) {
+      p.finalize();
+      instances += p.count;
+      const o = p.optimiseShadows();
+      if (o.disabled) { shadowSaved += o.saved; shadowPools++; }
+    }
+    return {
+      pools: this.pools.size, instances,
+      shadowPoolsDisabled: shadowPools,
+      shadowTrisSaved: Math.round(shadowSaved),
+    };
   }
 
   flushAll() {

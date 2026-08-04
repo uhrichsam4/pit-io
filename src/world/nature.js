@@ -19,9 +19,11 @@
  *   3. MERGE EVERYTHING STATIC.  Lawns, paths, plaza paving, kerbs, court
  *      markings, steps and walls for all 216 blocks collapse into ~15 meshes.
  *
- * Measured cost of this module for the whole city: 47 draw calls, 318k
- * triangles, ~5,000 instances. The Group-of-meshes version it replaced cost
- * about 3,300 draw calls on its own.
+ * Measured cost of this module for the whole city: 145 draw calls, 365k
+ * triangles, 5,939 instances. 129 of those calls are one instanced pool per
+ * species VARIANT and 15 are the merged static ground — the variant count IS
+ * the anti-repetition budget, and it is where the draw calls went. The
+ * Group-of-meshes version this replaced cost about 3,300 draw calls on its own.
  *
  * ---------------------------------------------------------------------------
  * WIND
@@ -1177,8 +1179,12 @@ function installNatureShader(mat, key) {
                 aGlow > 1        a warm FIXTURE — a lamp globe. Always on, and
                                  its strength is aGlow - 1. */
           float nPick = fract(sin(nOrigin.x * 12.9898 + nOrigin.z * 78.233) * 43758.5453);
+          // 0.26, not 0.34. At a third of them the night frames read as a
+          // boulevard of floodlights rather than as a street with some feature
+          // trees lit on it — and the unlit ones are what make the lit ones
+          // land, so thinning the picks costs nothing and buys the contrast.
           vNatGlow = aGlow > 1.0 ? (aGlow - 1.0)
-                   : aGlow > 0.0 ? aGlow * step(nPick, 0.34)
+                   : aGlow > 0.0 ? aGlow * step(nPick, 0.26)
                    : aGlow;
         }
       `)
@@ -1242,7 +1248,16 @@ function installNatureShader(mat, key) {
             // Only what is actually tall enough to hide anything. A hedge does
             // not occlude, and dissolving it just makes the pavement flicker.
             open *= smoothstep(1.1, 3.4, vNatWorld.y);
-            if (open > 0.002 && natDither(gl_FragCoord.xy) < open * 0.94) discard;
+            /* 0.82, not 0.94: a GHOST always survives.
+               At 0.94 a crown standing on the camera-to-hole line vanished
+               outright — the A/B pair that produced this number has a queen
+               palm fully present in one frame and absent in the other. The
+               rubric fails "objects disappearing without falling in" as hard as
+               it fails a hidden hole, and occlusion.js makes the same call for
+               buildings: dissolve the body, keep enough of it that the player
+               still knows what they are standing under. One fragment in six is
+               a sparse speckle you can see straight through and still read. */
+            if (open > 0.002 && natDither(gl_FragCoord.xy) < open * 0.82) discard;
           }
         }
       `)
@@ -1848,12 +1863,27 @@ function makePalm(spec) {
  */
 function uplight(geo, crownY) {
   glowAttr(geo, (x, y) => {
-    const shaft = Math.exp(-Math.max(0, y) / 2.6) * 0.62;
-    const crown = Math.exp(-Math.abs(y - crownY * 0.94) / Math.max(1, crownY * 0.22)) * 0.32;
+    /* The TRUNK is what an in-ground fixture actually lights, and it is the
+       part that reads as "lit" rather than as "luminous". Reach extended to
+       4.2 m and the peak raised, because in the night frames that produced
+       this comment the trunks were black and only the crowns glowed — exactly
+       inside out. */
+    const shaft = Math.exp(-Math.max(0, y) / 4.2) * 0.72;
+    /* The crown catch is ASYMMETRIC and weak. A beam from the ground hits the
+       UNDERSIDE of a crown and stops there; the top of it stays as dark as the
+       sky. The old symmetric lobe was 0.32 either side of crownY, which lit the
+       whole crown evenly and turned every hash-picked palm into a solid gold
+       lamp — the one failure mode this function's own docstring warns about,
+       and it was doing it. Above the attachment point the falloff is three
+       times faster than below it. */
+    const d = y - crownY * 0.90;
+    const crown = Math.exp(d > 0
+      ? -d / Math.max(0.5, crownY * 0.06)
+      : d / Math.max(1.0, crownY * 0.20)) * 0.16;
     // Capped below 1: above 1 the shader reads the value as a light FIXTURE
     // rather than as a surface catching one, and every uplit palm in the city
     // would switch from "picked by the hash" to "always on".
-    return Math.min(0.92, shaft + crown);
+    return Math.min(0.80, shaft + crown);
   });
   return geo;
 }
@@ -2666,21 +2696,25 @@ const SPECIES = {
       cells: ['frondC', 'frondA', 'frondB'],
     },
   },
-  /* THE TALL ONE.
-     Eight palms above and every one of them tops out between 8 and 14 m, so a
-     boulevard planted from them has a single flat skyline however different
-     the individual specimens are — and a flat line of crowns at one height is
-     the repetition the eye locks onto first, long before it starts counting
-     fronds. A Washingtonia is 17-20 m of bare stick with a small crown and a
-     shaggy petticoat, so one threaded into a royal line breaks the top edge
-     instead of adding another crown to it. It reuses the sabal's fan cell and
-     the sabal's boot bark: the whole species costs five pool slots. */
+  /* THE ONE WITH THE WRONG PROPORTIONS.
+     Not "the tall one" — that was the first guess and measuring killed it. The
+     variant roll (0.80-1.24) and the instance scale (0.84-1.18) compound to a
+     2.2x spread, so the built population of a "13.5 m" royal palm already runs
+     from 11.6 m to 24.6 m and the skyline of a palm line is anything but flat.
+     What every palm above DOES share is a PROPORTION: a fat crown sitting
+     straight on top of a trunk about twice the crown's width. Scale cannot
+     break that, and it is the proportion, not the height, that makes a
+     boulevard read as one asset stamped forty times.
+     A Washingtonia inverts it — a long bare stick, a crown a fifth of its
+     height, and a shaggy petticoat of shed fronds hanging under it. It reuses
+     the sabal's fan cell and the sabal's boot bark, so the whole species costs
+     five pool slots and not a pixel of new atlas. */
   washingtonia: {
-    // 15.5 m nominal, MEASURED not guessed: the variant roll spans 0.80-1.24 and
-    // the instance scale another 0.84-1.18, so a nominal 17 put the tall tail of
-    // the population at 25 m — past every midrise in the city and into "why is
-    // there a radio mast in the park". At 15.5 the geometry measures 19-23 m,
-    // which still clears the royals' 17 m ceiling by a clear storey.
+    // 15.5 m nominal, and that number is measured rather than chosen: at a
+    // nominal 17 the tall tail of the built population came out past 25 m,
+    // taller than the midrises it stands between. At 15.5 it measures 13-23 m,
+    // the same band the royals occupy — which is correct. The difference
+    // between this palm and a royal is meant to be its shape, not its size.
     label: 'Fan Palm', tier: TIER.LARGE, h: 15.5, rad: 1.3, cap: 700, clear: 2.5, sep: 1.5,
     debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.38, contactMax: 1.1,
     make: palmVariant,
@@ -2689,9 +2723,9 @@ const SPECIES = {
       lean: 0.030, bulge: 0.05, fronds: 13, frondVar: 4, crownF: 0.21, frondW: 1.28,
       pitch: 0.30, rise: 0.55, droop: 0.86, cells: ['fanA'],
       // crownF 0.21, not the sabal's 0.37: the crown has to stay SMALL relative
-      // to the trunk or a 17 m palm just reads as a royal seen from closer.
+      // to the trunk, or this is just a royal palm seen from further away.
       // The petticoat is the other half of the species — nine shed fronds, two
-      // more than a sabal, and on a trunk this tall it reads as a collar at
+      // more than a sabal, and on a trunk this bare it reads as a collar at
       // 200 m where the crown itself has minified to a dot.
       flag: 0.28, skirt: 9,
     },
@@ -3008,10 +3042,26 @@ function layer(params, depth) {
 }
 
 const BUCKET_MATS = {
-  lawnA: () => layer({ map: Textures.grass(), roughness: 0.98 }, 3),
-  // The mowing stripe. Same texture, ~14% darker — mowers lay the blades in
-  // opposite directions and that is exactly what you see from the air.
-  lawnB: () => layer({ map: Textures.grass(), color: 0xdae6c6, roughness: 0.98 }, 3),
+  /* TURF IS THE BRIGHTEST THING IN THE CITY AND IT SHOULD NOT BE.
+   *
+   * Measured off the park, waterfront and skyline frames: the lawn panels were
+   * reading brighter and more saturated than the sky haze, the pastel facades
+   * and every tree canopy standing on them — a flat acid lime that announced
+   * itself from 430 m. The texture is not the problem (materials.js paints a
+   * good patchy turf, and PALETTE.GRASS is already authored a notch down for
+   * exactly this reason); the problem is that a 0.98-rough albedo that high
+   * under a 3.5x key light has nowhere to go but the top of the tone curve,
+   * which is the bible's own "nothing large should clip" rule.
+   *
+   * A near-NEUTRAL multiply, deliberately: the three channels are within 3% of
+   * each other, so this takes ~23% of the VALUE off and leaves the hue and the
+   * saturation exactly where the palette put them. A greener multiply would
+   * have darkened it and made it more acid at the same time.
+   */
+  lawnA: () => layer({ map: Textures.grass(), color: 0xc6cec8, roughness: 0.98 }, 3),
+  // The mowing stripe. Same texture, ~14% darker again — mowers lay the blades
+  // in opposite directions and that is exactly what you see from the air.
+  lawnB: () => layer({ map: Textures.grass(), color: 0xaab2ac, roughness: 0.98 }, 3),
   plazaBase: () => layer({
     map: Textures.paving(512, PALETTE.PLAZA, 'rgba(150,140,120,0.5)', 4), roughness: 0.9,
   }, 3),
