@@ -723,6 +723,24 @@ function paintByHeight(geo, stops) {
   return geo;
 }
 
+/**
+ * Multiply an existing colour attribute by a hash of each vertex's BEARING
+ * around Y. Weathering on an upright casting runs vertically, so a per-column
+ * modulation is the shape the stain actually has — and it costs nothing on top
+ * of a colour attribute that already exists.
+ */
+function streakByBearing(geo, amp) {
+  const pos = geo.attributes.position;
+  const col = geo.attributes.color;
+  for (let i = 0; i < pos.count; i++) {
+    const a = Math.atan2(pos.getZ(i), pos.getX(i));
+    const h = Math.abs(Math.sin(a * 3.7 + 1.3) * 0.6 + Math.sin(a * 8.1 - 2.2) * 0.4);
+    const k = 1 - amp * 0.5 + amp * h;
+    col.setXYZ(i, col.getX(i) * k, col.getY(i) * k, col.getZ(i) * k);
+  }
+  return geo;
+}
+
 /** A square-section bar running from a to b. Used for lattice and rigging. */
 function strut(a, b, w) {
   const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
@@ -2518,9 +2536,9 @@ const BOLLARD_PROFILE = [
   [0.335, 0.126, 1.12],   // chamfer — the bright arris that kills the razor edge
   [0.248, 0.142, 0.82],   // flange top face, into the shaft
   [0.186, 0.560, 1.00],   // shaft, tapering
-  [0.254, 0.650, 0.92],   // head underside flare (self-shadowed)
-  [0.252, 0.756, 1.22],   // ROPE WEAR: polished where lines rub
-  [0.000, 0.836, 1.04],   // crown
+  [0.254, 0.650, 0.80],   // head underside flare (self-shadowed)
+  [0.252, 0.756, 1.34],   // ROPE WEAR: polished where lines rub
+  [0.000, 0.836, 1.02],   // crown
 ];
 
 function bollardFactory() {
@@ -2529,16 +2547,21 @@ function bollardFactory() {
     BOLLARD_PROFILE.map((p) => new THREE.Vector2(p[0], p[1])), 8
   );
   paintByHeight(body, BOLLARD_PROFILE.map((p) => [p[1], p[2]]));
+  /* Salt and rust run DOWN a bollard, not around it, so the wear is modulated
+     by bearing rather than by height — one flat cast in a low sun otherwise
+     comes back as eight identical facets. Baked once and shared by all 154,
+     which is invisible because every copy is placed at a random yaw. */
+  streakByBearing(body, 0.13);
   parts.push(body);
 
   // Four bolt heads, seated on the flats of the flange top rather than the
   // corners, so none of them hangs over the chamfer.
   for (let i = 0; i < 4; i++) {
     const a = Math.PI / 4 + i * Math.PI / 2;
-    const b = new THREE.BoxGeometry(0.062, 0.028, 0.062);
+    const b = new THREE.BoxGeometry(0.072, 0.032, 0.072);
     b.rotateY(a);
-    b.translate(Math.sin(a) * 0.295, 0.140, Math.cos(a) * 0.295);
-    parts.push(paint(b, 0xffffff, 0.74));
+    b.translate(Math.sin(a) * 0.295, 0.142, Math.cos(a) * 0.295);
+    parts.push(paint(b, 0xffffff, 0.72));
   }
 
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
@@ -2583,9 +2606,9 @@ function ropeCoilFactory() {
   inner.rotateX(Math.PI / 2);
   inner.translate(0.035, 0.104, -0.02);
   parts.push(paint(inner, 0xcbb188, 0.86));
-  const tail = new THREE.BoxGeometry(0.072, 0.072, 0.36);
-  tail.rotateY(0.62);
-  tail.translate(0.30, 0.040, 0.28);
+  const tail = new THREE.BoxGeometry(0.070, 0.070, 0.30);
+  tail.rotateY(1.05);
+  tail.translate(0.24, 0.040, 0.31);
   parts.push(paint(tail, 0xcbb188, 0.93));
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   for (const p of parts) p.dispose();
@@ -2762,9 +2785,11 @@ function buoyFactory(kind) {
   /* ---- lattice mast ---- */
   const m0 = deckTop, m1 = deckTop + 0.60;
   const legBase = 0.19, legTop = 0.085;
+  /* 6.5 cm bars, not 4: the art bible bans needle-thin geometry and this
+     lattice has to survive being 40 m from a camera that is 100 m up. */
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     parts.push(paint(strut(
-      [dx * legBase, m0, dz * legBase], [dx * legTop, m1, dz * legTop], 0.05
+      [dx * legBase, m0, dz * legBase], [dx * legTop, m1, dz * legTop], 0.065
     ), STEEL, 1.00));
   }
   const ringY = m0 + 0.28;
@@ -2772,7 +2797,7 @@ function buoyFactory(kind) {
   for (let i = 0; i < 4; i++) {
     const a = [[rr, 0], [0, rr], [-rr, 0], [0, -rr]][i];
     const b = [[0, rr], [-rr, 0], [0, -rr], [rr, 0]][i];
-    parts.push(paint(strut([a[0], ringY, a[1]], [b[0], ringY, b[1]], 0.038), STEEL, 0.90));
+    parts.push(paint(strut([a[0], ringY, a[1]], [b[0], ringY, b[1]], 0.05), STEEL, 0.90));
   }
 
   /* ---- radar reflector: crossed plates, wider than the mast on purpose ---- */
@@ -2962,17 +2987,30 @@ function buildFuelDock(deck, trim, cx, cz, y0) {
     }
   }
 
-  /* ---- door, sign, life ring ---------------------------------------- */
-  T(0.86, 1.72, 0.07, -0.28, wallY0 + 0.86, -1.02, ROOF, 0.80);
-  T(0.07, 0.07, 0.07, 0.06, wallY0 + 0.92, -1.07, METAL, 1.10);
-  T(0.10, 0.40, 1.40, 1.10, wallY1 - 0.28, 0, ACCENT, 1.00);        // sign board
-  T(0.04, 0.13, 1.02, 1.16, wallY1 - 0.28, 0, INK, 1.00);           // lettering
+  /* ---- door, signs, life ring ----------------------------------------
+     ORIENTATION IS NOT ARBITRARY. The hut stands on the spine with the quay
+     and its gangway to -X and the berthing fingers to +X, so the serving hatch
+     faces the boats and the door faces the people walking down the gangway.
+     Putting them the other way round is the difference between a building and
+     a box with decals. Both flanks get something too, because the game camera
+     has a fixed yaw and will spend most of the match looking at one of them. */
+  T(0.07, 1.72, 0.86, -1.05, wallY0 + 0.86, -0.22, ROOF, 0.80);      // door
+  T(0.07, 0.07, 0.07, -1.10, wallY0 + 0.92, 0.14, METAL, 1.10);      // handle
+  T(0.10, 0.40, 1.40, 1.10, wallY1 - 0.28, 0, ACCENT, 1.00);         // hatch sign
+  T(0.04, 0.13, 1.02, 1.16, wallY1 - 0.28, 0, INK, 1.00);
+  // A small window on the -Z flank, so no elevation is a blank panel.
+  T(0.58, 0.60, 0.08, -0.30, wallY0 + 1.16, -1.03, DARK, 0.85);
+  T(0.70, 0.08, 0.07, -0.30, wallY0 + 1.50, -1.07, TRIM, 1.04);
+  T(0.74, 0.08, 0.16, -0.30, wallY0 + 0.83, -1.10, TRIM, 1.06);
+  // Hanging sign on a bracket off the +Z eave — reads from down the pontoon.
+  T(0.07, 0.07, 0.70, 0.55, wallY1 - 0.02, 1.36, METAL, 0.90);
+  T(0.05, 0.44, 0.76, 0.55, wallY1 - 0.32, 1.62, ACCENT, 0.94);
+  T(0.03, 0.13, 0.50, 0.51, wallY1 - 0.32, 1.62, INK, 1.00);
   {
-    // Hung flat on the landward wall: a torus is born in the XY plane, so it
-    // has to be turned onto the wall BEFORE it is moved onto it.
+    // Hung flat on the +Z flank: a torus is born in the XY plane, so it has to
+    // be turned onto the wall BEFORE it is moved onto it.
     const ring = new THREE.TorusGeometry(0.23, 0.055, 4, 10);
-    ring.rotateY(Math.PI / 2);
-    ring.translate(cx - 1.09, wallY0 + 1.22, cz + 0.52);
+    ring.translate(cx - 0.42, wallY0 + 1.22, cz + 1.07);
     trim.push(paint(ring, RING, 1.0));
   }
 
@@ -3156,8 +3194,12 @@ function buildMarinas(ctx, group, layout, rng) {
       ));
     }
 
-    /* ---- cleats along the spine, between the fingers -------------------- */
+    /* ---- cleats along the spine's landward edge ------------------------- */
+    const kioskZ = spineZ0 + 2.4;
     for (let cz = spineZ0 + 3; cz < spineZ1 - 2; cz += 5.5) {
+      // The fuel dock stands on this edge; a cleat inside the hut is a cleat
+      // nobody can see and a piece of geometry inside a wall.
+      if (Math.abs(cz - kioskZ) < 2.0) continue;
       ctx.addInstanced('dock-cleat', cleatFactory, {
         position: new THREE.Vector3(xA - spineW / 2 + 0.42, DECK_TOP, cz),
         rotationY: 0,
@@ -3166,7 +3208,7 @@ function buildMarinas(ctx, group, layout, rng) {
     }
 
     /* ---- the fuel dock at the head of the spine ------------------------- */
-    buildFuelDock(deck, trim, xA, spineZ0 + 2.4, DECK_TOP);
+    buildFuelDock(deck, trim, xA, kioskZ, DECK_TOP);
 
     for (let i = 0; i <= 4; i++) {
       const z = spineZ0 + (i / 4) * spineL;
@@ -3213,7 +3255,10 @@ function buildMarinas(ctx, group, layout, rng) {
   for (let x = -180; x < BAY - 20; x += 96) {
     const c = river.centerAt(x), h = river.halfAt(x);
     for (const s of [-1, 1]) {
-      if (rng() < 0.35) continue;
+      // 12 candidate stations down the bend. Skipping a few keeps the pairs
+      // from marching in lockstep; skipping a third of them (the old figure)
+      // left stretches of channel with no mark on either bank at all.
+      if (rng() < 0.14) continue;
       const kind = s < 0 ? 'red' : 'green';
       const bx = x + rng() * 20;
       const bz = c + s * (h - 5);

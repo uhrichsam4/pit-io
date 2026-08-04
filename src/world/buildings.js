@@ -3293,16 +3293,285 @@ function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
     'storefront', opt.label || 'Storefront', hex, { lw, ld });
 }
 
+/* =============================================== sheets you see through = */
+
+/**
+ * Alpha-cut sheet materials: debris netting and perforated cladding.
+ *
+ * These are the only two surfaces this file wears that MUST have holes in them.
+ * Everything else coloured pins its UVs to one texel of the skin texture, which
+ * is the trick that keeps a whole building to a single draw call — and a texel
+ * cannot have a hole in it. So these get a real tiled texture and ride in
+ * Build's GLASS slot, which both the garage and the construction site leave
+ * empty. The mesh they cost is a mesh that was not being used.
+ *
+ * alphaTest and NOT `transparent`: the depth material honours alphaTest, so the
+ * shadow a net casts is perforated as well. A transparent sheet would lay a
+ * solid dark rectangle across the whole site, which is a worse defect than the
+ * one this replaces. It also means there is nothing to sort.
+ */
+const _sheetMats = new Map();
+const hexCss = (h) => `#${(h >>> 0).toString(16).padStart(6, '0')}`;
+
+function sheetMaterial(key, paint) {
+  let m = _sheetMats.get(key);
+  if (m) return m;
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, size, size);
+  paint(g, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  m = new THREE.MeshStandardMaterial({
+    map: tex, alphaTest: 0.42, side: THREE.DoubleSide,
+    roughness: 0.9, metalness: 0.0, envMapIntensity: 0.55, dithering: true,
+  });
+  _sheetMats.set(key, m);
+  return m;
+}
+
+/** Woven debris net — warp over weft, so the crossings read as a weave. */
+function netMaterial(hex) {
+  return sheetMaterial(`net${hex}`, (g, size) => {
+    const n = 7, pitch = size / n, t = pitch * 0.58;
+    g.fillStyle = hexCss(hex);
+    for (let i = 0; i < n; i++) g.fillRect(i * pitch + pitch * 0.21, 0, t, size);
+    g.globalAlpha = 0.84;
+    for (let i = 0; i < n; i++) g.fillRect(0, i * pitch + pitch * 0.21, size, t);
+    g.globalAlpha = 1;
+  });
+}
+
+/** Perforated metal: solid sheet, staggered round punch. */
+function perfMaterial(hex) {
+  return sheetMaterial(`perf${hex}`, (g, size) => {
+    g.fillStyle = hexCss(hex);
+    g.fillRect(0, 0, size, size);
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = '#fff';
+    const n = 6, p = size / n, rr = p * 0.31;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        g.beginPath();
+        g.arc(i * p + (j % 2 ? p * 0.5 : 0) + p * 0.5, j * p + p * 0.5, rr, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    g.globalCompositeOperation = 'source-over';
+  });
+}
+
+/**
+ * One flat sheet standing on y=0, UV'd so the weave tiles every `tile` metres
+ * whatever size the sheet is. Two triangles for a 30 x 50 m net.
+ */
+function sheetGeo(w, h, tile) {
+  const g = new THREE.PlaneGeometry(w, h);
+  const a = g.attributes.uv;
+  for (let i = 0; i < a.count; i++) a.setXY(i, a.getX(i) * (w / tile), a.getY(i) * (h / tile));
+  a.needsUpdate = true;
+  g.translate(0, h / 2, 0);
+  return g;
+}
+
+/* ==================================================== street furniture == */
+
+/**
+ * Modern LED street lantern: tapered column, a shoe at the base, a swept arm
+ * and a wedge luminaire with a lit lens under it.
+ *
+ * The lot and the garage roof both used to top their poles with a single flat
+ * box, which from the pavement is a lolly stick with a domino on it. This is
+ * the same silhouette props.js hangs on its main roads, so a car park now
+ * lights the same way the street outside it does.
+ */
+function lampHead(B, x, y, z, h, rot, r) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const at = (ox, oy, oz) => [x + c * ox + s * oz, y + oy, z - s * ox + c * oz];
+  // Base shoe and holding-down collar — the join every real column has.
+  B.trim(cyl(0.24, 0.34, 8, x, y, z), P.CONCRETE_DARK);
+  B.trim(cyl(0.19, 0.14, 8, x, y + 0.34, z), P.STEEL_DARK);
+  // Tapered column. A parallel tube reads as scaffold; a taper reads as a lamp.
+  B.trim(cyl(0.15, h, 8, x, y + 0.42, z, 0.095), P.LAMP_POST);
+  // Swept arm: a short rake out of the head of the column.
+  const arm = box(1.35, 0.13, 0.13, 0, 0, 0, 2);
+  arm.rotateZ(-0.20);
+  const [ax, ay, az] = at(0.62, h + 0.30, 0);
+  arm.rotateY(rot); arm.translate(ax, ay, az);
+  B.trim(arm, P.LAMP_POST);
+  // Luminaire: a tapered wedge, not a slab. cyl() with a smaller top and four
+  // segments is a truncated pyramid for twelve triangles.
+  const [hx, hy, hz] = at(1.28, h + 0.44, 0);
+  const hd = cyl(0.30, 0.20, 4, 0, 0, 0, 0.20);
+  hd.rotateY(Math.PI / 4 + rot);
+  hd.scale(2.1, 1, 1);
+  hd.translate(hx, hy, hz);
+  B.trim(hd, P.ALUMINIUM);
+  // The lens. Faces down, so at night it is a bar of light over the bays.
+  const lens = box(0.86, 0.07, 0.34, 0, 0, 0, 1);
+  lens.rotateY(rot); lens.translate(hx, hy - 0.07, hz);
+  B.lit(lens, P.LAMP_GLOW);
+  if (r && r.chance(0.4)) {
+    // Cable-entry door on the column, at the height they always are.
+    const d = box(0.13, 0.5, 0.05, 0, 0, 0, 1);
+    d.rotateY(rot); d.translate(x + s * 0.14, y + 0.9, z + c * 0.14);
+    B.trim(d, P.STEEL_DARK);
+  }
+}
+
+/**
+ * Rising-arm barrier: post, head, counterweight and a banded boom.
+ *
+ * The boom is banded in real 0.8 m sections rather than painted, because at the
+ * distance the camera passes a car-park entrance a stripe texture would be one
+ * grey bar and the bands are the entire reason the object is recognisable.
+ */
+function barrier(B, x, y, z, rot, len, lift) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const push = (g, ox, oy, oz) => {
+    g.rotateY(rot);
+    g.translate(x + c * ox + s * oz, y + oy, z - s * ox + c * oz);
+    return g;
+  };
+  B.trim(push(box(0.62, 0.16, 0.62, 0, 0, 0, 2), 0, 0, 0), P.CONCRETE_DARK);
+  B.trim(push(box(0.40, 1.00, 0.44, 0, 0, 0, 2), 0, 0.16, 0), P.SIGN_LIGHT);
+  B.trim(push(box(0.46, 0.22, 0.50, 0, 0, 0, 2), 0, 1.16, 0), P.STEEL_DARK);
+  // Boom, hinged at the post and lifted by `lift` radians.
+  const n = Math.max(3, Math.round(len / 0.8));
+  for (let i = 0; i < n; i++) {
+    const seg = box(len / n - 0.02, 0.13, 0.13, 0, 0, 0, 1.2);
+    seg.translate((i + 0.5) * (len / n), 0, 0);
+    seg.rotateZ(lift);
+    B.trim(push(seg, 0.28, 1.28, 0), i % 2 ? P.BARRIER_WHITE : P.BARRIER_ORANGE);
+  }
+  // Skirt hanging off the boom root, and the prop the boom rests on.
+  const sk = box(len * 0.34, 0.34, 0.05, 0, 0, 0, 1.2);
+  sk.translate(len * 0.24, -0.24, 0);
+  sk.rotateZ(lift);
+  B.trim(push(sk, 0.28, 1.28, 0), P.BARRIER_ORANGE);
+}
+
 /* ============================================================ garage ==== */
 
-/** Cheap parked car: three boxes, tinted. Only the visible decks get them. */
-function parkedCar(B, x, y, z, rot, hex) {
-  const body = box(4.4, 0.95, 1.85, 0, 0, 0, 3);
-  const cabin = box(2.5, 0.72, 1.72, -0.2, 0.95, 0, 3);
-  const g = BufferGeometryUtils.mergeGeometries([body, cabin], false);
-  g.rotateY(rot); g.translate(x, y, z);
-  B.trim(g, hex);
+/**
+ * Car paints. Weighted toward the neutrals a real car park is full of, with
+ * enough pop colours that a deck does not read as one grey herd.
+ */
+const CAR_HEX = [
+  P.CAR_WHITE, P.CAR_WHITE, P.CAR_SILVER, P.CAR_SILVER, P.CAR_GRAPHITE,
+  P.CAR_BLACK, P.CAR_RED, P.CAR_BLUE, P.CAR_TEAL, P.CAR_YELLOW, P.CAR_GREEN,
+  P.CAR_CORAL, P.CAR_NAVY, P.CAR_PINK, P.CAR_ORANGE,
+];
+
+/**
+ * Three body archetypes, in metres. A car park full of one silhouette is the
+ * same copy-paste failure as a skyline full of one tower.
+ *   under  underbody ring height (the gap the wheels live in)
+ *   waist  widest ring — the shoulder line the light catches
+ *   sh     top of the body, i.e. bonnet and boot deck
+ *   cabL   glasshouse length, cabX where it sits along the car
+ */
+const CAR_BODIES = [
+  { L: 4.42, W: 1.86, under: 0.20, waist: 0.60, sh: 0.88, cabL: 2.30, cabX: -0.22, roof: 1.45, wr: 0.33 },
+  { L: 4.72, W: 1.96, under: 0.28, waist: 0.76, sh: 1.08, cabL: 2.86, cabX: -0.02, roof: 1.78, wr: 0.38 },
+  { L: 3.98, W: 1.78, under: 0.19, waist: 0.58, sh: 0.86, cabL: 2.12, cabX: -0.36, roof: 1.44, wr: 0.31 },
+];
+
+/**
+ * A parked car, built as a car.
+ *
+ * The old version was two untextured boxes merged — no wheels, no glass, no
+ * lamps, no bevel — and there were up to a dozen of them per surface lot at
+ * street level, which is the closest the camera ever gets to this module's
+ * geometry. This is a swept body (three lofted rings on a chamfered plan, so
+ * every edge is bevelled and the shoulder line catches the sun), a glasshouse
+ * with a dark window band under a painted roof, four wheels and lamp strips.
+ *
+ * @param {number} lod 2 street level (round wheels, mirrors), 1 roof deck,
+ *   0 deep inside a garage where only the front third is ever visible.
+ */
+function parkedCar(B, x, y, z, rot, hex, lod = 2, v = 0) {
+  const c = CAR_BODIES[((v % CAR_BODIES.length) + CAR_BODIES.length) % CAR_BODIES.length];
+  const { L, W, wr } = c;
+  const ch = W * 0.27;
+
+  const body = loft([
+    { p: rectPlan(L * 0.93, W * 0.84, ch * 0.8), y: c.under },
+    { p: rectPlan(L, W, ch), y: c.waist },
+    { p: rectPlan(L * 0.95, W * 0.90, ch), y: c.sh },
+  ], { capTop: true, capBottom: true, uScale: 2.2, vScale: 2.2 });
+
+  // Glasshouse. The band is a separate loft so the window line can be a real
+  // dark ring round the car instead of a decal on one face.
+  const cab = movePlan(rectPlan(c.cabL, W * 0.88, ch * 0.9), c.cabX, 0);
+  const cabHi = insetPlan(cab, W * 0.05);
+  const cabTop = insetPlan(cabHi, W * 0.05);
+  const glassY = c.roof - 0.17;
+  const band = loft([{ p: cab, y: c.sh - 0.03 }, { p: cabHi, y: glassY }], { uScale: 2, vScale: 2 });
+  const roof = loft([{ p: cabHi, y: glassY }, { p: cabTop, y: c.roof }],
+    { capTop: true, uScale: 2, vScale: 2 });
+
+  const put = (g) => { g.rotateY(rot); g.translate(x, y, z); return g; };
+  B.trim(put(body), hex);
+  B.trim(put(band), P.SIGN_DARK);
+  B.trim(put(roof), hex);
+
+  /* Wheels. Round at street level; a chamfered block deeper in a structure,
+     where the difference costs 24 triangles a corner and cannot be seen. */
+  const tw = W * 0.15, wx = L * 0.315, wz = W / 2 - tw * 0.52;
+  const tyres = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      let g;
+      if (lod >= 2) {
+        g = new THREE.CylinderGeometry(wr, wr, tw, 6, 1, false);
+        g.rotateX(Math.PI / 2);
+      } else {
+        g = new THREE.BoxGeometry(wr * 1.9, wr * 1.9, tw);
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+      }
+      g.translate(sx * wx, wr, sz * wz);
+      tyres.push(g);
+    }
+  }
+  B.trim(put(BufferGeometryUtils.mergeGeometries(tyres, false)), P.TYRE);
+
+  if (lod >= 1) {
+    const lampY = c.waist + (c.sh - c.waist) * 0.35;
+    const front = [], rear = [];
+    for (const sz of [-1, 1]) {
+      front.push(box(0.10, 0.17, W * 0.30, L / 2 - 0.04, lampY, sz * W * 0.28, 1));
+      rear.push(box(0.10, 0.15, W * 0.30, -L / 2 + 0.04, lampY, sz * W * 0.28, 1));
+    }
+    B.trim(put(BufferGeometryUtils.mergeGeometries(front, false)), P.HEADLIGHT);
+    B.trim(put(BufferGeometryUtils.mergeGeometries(rear, false)), P.TAILLIGHT);
+  }
+  if (lod >= 2) {
+    const mir = [];
+    for (const sz of [-1, 1]) {
+      mir.push(box(0.20, 0.13, 0.30, c.cabX + c.cabL * 0.40, c.sh + 0.06, sz * (W * 0.52), 1));
+    }
+    B.trim(put(BufferGeometryUtils.mergeGeometries(mir, false)), P.CAR_TRIM);
+  }
 }
+
+/**
+ * Miami garages are PAINTED. Museum Garage, the Ballpark, 1111 Lincoln Road —
+ * every one of them carries a coloured core or a coloured band, because a 24 m
+ * cream box with black slots in it is what a garage looks like in a city that
+ * does not care. This set is what the accent core and the accent level are
+ * drawn from, and it is deliberately loud: it is the only saturated thing on
+ * the building and it has to survive being 4% of the elevation.
+ */
+const GARAGE_ACCENT = [
+  [P.CAR_TEAL, 12], [P.STUCCO_CORAL, 11], [P.FABRIC_AQUA, 8], [P.STUCCO_SKY, 9],
+  [P.NEON_ORANGE, 5], [P.STUCCO_BUTTER, 7], [P.STUCCO_PINK, 6], [P.CAR_BLUE, 6],
+];
 
 function garage(ctx, group, b, r, world, lw, ld, levels) {
   const B = new Build(deckSkin(), P.SIGN_BLUE);
@@ -3311,6 +3580,24 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
   const plan = rectPlan(lw, ld, cham);
   const bb = planBounds(plan);
   const inner = offsetPlan(plan, -0.6);
+  const accent = r.weighted(GARAGE_ACCENT);
+  /*
+   * THE VALUE PROBLEM.
+   *
+   * The spandrel alternated PRECAST with CONCRETE. Those are 209 and 218 in
+   * luma — nine values apart on a 24 m elevation, which is to say invisible,
+   * and the whole mass read as one flat cream. Real precast banding alternates
+   * a pale panel with the shadowed sand-coloured one below it. jitterHex pulls
+   * the sand band down to ~177, which is the 30-value separation the band
+   * needs to actually read as a band from the street.
+   */
+  const bandHex = [P.PRECAST, jitterHex(P.STUCCO_SAND, 0.80, 0.02)];
+  // One level in the stack wears the accent. Never the ground floor — that is
+  // where the entry portal has to be the loud thing.
+  const bandLevel = levels > 2 ? 1 + Math.floor(r() * (levels - 2)) : 1;
+  // Entry bay: a real 6 m portal, placed off-centre along the front elevation.
+  const entryX = bb.x0 + lw * (0.20 + r() * 0.24);
+  const entryW = Math.min(6.2, lw * 0.34);
 
   for (let i = 0; i < levels; i++) {
     const y = i * lh;
@@ -3318,8 +3605,37 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
     B.face(loft([{ p: plan, y: y + 0.5 }], { capTop: true, uScale: 10 }));
     // Spandrel. Kept low so the ~1.9 m band above it stays open — a garage you
     // cannot see into is just a concrete box.
-    B.trim(loft([{ p: offsetPlan(plan, 0.22), y: y + 0.5 }, { p: offsetPlan(plan, 0.22), y: y + 1.25 }], {}), i % 2 ? P.PRECAST : P.CONCRETE);
+    const sHex = i === bandLevel ? accent : bandHex[i % 2];
+    B.trim(loft([{ p: offsetPlan(plan, 0.22), y: y + 0.5 }, { p: offsetPlan(plan, 0.22), y: y + 1.25 }], {}), sHex);
     B.trim(slabGeo(plan, y + 1.25, 0.18, 0.34), P.CONCRETE_DARK);
+
+    /*
+     * FILLING THE BLACK BAND.
+     *
+     * Above the spandrel is 1.9 m of nothing, and nothing renders as a void the
+     * art bible bans outright. A real deck is not a void: you see a lit soffit
+     * over the cars and the pale deck slab running away behind them. Two planes
+     * per elevation buy both, and because they are inside the plan they change
+     * neither the silhouette nor the measured footprint.
+     */
+    // The back wall stops clear of the west bay so the sheared ramp — the one
+    // piece of the structure that says "this is a car park" from above — is
+    // still visible through the opening.
+    const bwW = Math.max(4, lw - 9.5), bwX = bb.x1 - bwW / 2 - 0.6;
+    for (const sz of [1, -1]) {
+      const zf = (sz > 0 ? bb.z1 : bb.z0) - sz * 0.9;
+      B.trim(box(lw * 0.94, 0.12, 5.4, 0, y + lh - 0.30, zf - sz * 2.6, 3), P.CONCRETE_WARM);
+      B.trim(box(lw * 0.94, 0.10, 5.4, 0, y + 0.5, zf - sz * 2.6, 3), P.PRECAST);
+      // Back wall of the bay, catching light. Without it you look straight
+      // through the building and out the far side.
+      B.trim(box(bwW, lh - 0.62, 0.12, bwX, y + 0.6, zf - sz * 4.6, 3), P.CONCRETE);
+      // Strip lighting on the soffit. Pale by day, the thing that makes a deck
+      // read as an occupied interior after dark.
+      for (let k = 0; k < 3; k++) {
+        B.lit(box(lw * 0.22, 0.10, 0.26, bb.x0 + lw * (0.2 + k * 0.3), y + lh - 0.42, zf - sz * 2.2, 2), P.SIGN_LIGHT);
+      }
+    }
+
     // Columns on a real structural grid, not just the corners.
     const cols = Math.max(3, Math.round(lw / 8));
     for (let k = 0; k <= cols; k++) {
@@ -3328,17 +3644,83 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
       B.trim(box(0.6, lh, 0.7, x * 0.97, y, bb.z0 * 0.97, 3), P.CONCRETE_DARK);
     }
 
-    // Parked cars right behind the spandrel, where the camera can see them.
-    const rows = Math.max(2, Math.floor(lw / 2.9));
+    // Level number, painted on the spandrel where a driver would read it.
+    const nx = bb.x1 - lw * 0.16;
+    B.trim(box(1.5, 0.62, 0.1, nx, y + 0.62, bb.z1 + 0.28, 1.4), P.ROAD_LINE);
+    for (let k = 0; k <= i && k < 4; k++) {
+      B.trim(box(0.14, 0.40, 0.07, nx - 0.48 + k * 0.32, y + 0.72, bb.z1 + 0.34, 1), P.SIGN_DARK);
+    }
+
+    /* Parked cars behind the spandrel, where the camera can see them. Spaced
+       at a real 3.1 m bay rather than 2.9, and thinned, because a deck packed
+       kerb to kerb is both wrong and the whole of this building's triangle
+       budget. */
+    const rows = Math.max(2, Math.floor(lw / 3.1));
     for (let k = 0; k < rows; k++) {
-      if (r() < 0.26) continue;
-      const x = -lw / 2 + 2.0 + k * ((lw - 4) / Math.max(1, rows - 1));
-      parkedCar(B, x, y + 0.5, bb.z1 - 2.1, Math.PI / 2, r.pick(CAR_HEX));
-      if (r() < 0.7) parkedCar(B, x, y + 0.5, bb.z0 + 2.1, Math.PI / 2, r.pick(CAR_HEX));
+      const x = -lw / 2 + 2.2 + k * ((lw - 4.4) / Math.max(1, rows - 1));
+      const inEntry = i === 0 && Math.abs(x - entryX) < entryW * 0.75;
+      if (!inEntry && r() < 0.62) {
+        parkedCar(B, x, y + 0.5, bb.z1 - 2.4, Math.PI / 2, r.pick(CAR_HEX), 0, k + i);
+      }
+      if (r() < 0.46) {
+        parkedCar(B, x, y + 0.5, bb.z0 + 2.4, -Math.PI / 2, r.pick(CAR_HEX), 0, k + i + 1);
+      }
     }
   }
 
   const top = levels * lh;
+
+  /* ENTRY PORTAL. A garage with no way in is a bunker, and there was not one
+     opening anywhere on the elevation. The reveal is drawn proud of the
+     spandrel so it reads as a hole cut through the band, with the jambs and
+     head in the accent colour to say "this is the door". */
+  B.trim(box(entryW, lh + 0.2, 1.6, entryX, 0, bb.z1 - 0.50, 3), P.SIGN_DARK);
+  for (const sx of [-1, 1]) {
+    B.trim(box(0.5, lh + 0.5, 1.9, entryX + sx * (entryW / 2 + 0.25), 0, bb.z1 - 0.5, 2), accent);
+  }
+  B.trim(box(entryW + 1.5, 0.55, 1.9, entryX, lh + 0.2, bb.z1 - 0.5, 3), accent);
+  // Clearance-height bar hanging in the head of the opening, and the sign on it.
+  B.trim(box(entryW - 0.5, 0.1, 0.1, entryX, lh - 0.55, bb.z1 + 0.28, 2), P.SIGN_DARK);
+  B.trim(box(1.9, 0.62, 0.12, entryX, lh - 0.42, bb.z1 + 0.30, 1.4), P.SIGN_DARK);
+  B.lit(box(1.7, 0.46, 0.08, entryX, lh - 0.34, bb.z1 + 0.37, 1.2), P.SIGN_LIGHT);
+  /*
+   * Everything at the entry stays INSIDE the building line. worldBuild measures
+   * the lowest fifth of the geometry to derive the physics footprint, so an
+   * apron laid on the pavement would not just look wrong — it would make the
+   * garage claim 2.5 m of ground it does not stand on, and the hole would have
+   * to eat out there to take it. A real barrier sits behind the head anyway.
+   */
+  B.trim(box(entryW + 0.9, 0.05, 4.4, entryX, 0.0, bb.z1 - 2.2, 3), P.ASPHALT);
+  B.trim(box(0.34, 0.07, 2.2, entryX, 0.05, bb.z1 - 2.4, 2), P.ROAD_LINE);
+  B.trim(box(1.0, 0.07, 0.34, entryX, 0.05, bb.z1 - 1.4, 2), P.ROAD_LINE);
+  barrier(B, entryX + entryW / 2 - 0.35, 0, bb.z1 - 2.1, Math.PI, entryW * 0.70,
+    r.chance(0.45) ? 1.15 : 0.06);
+  // Ticket machine on the driver's side: pedestal, canted head, a lit slot.
+  const tmx = entryX - entryW / 2 + 0.45;
+  B.trim(box(0.5, 1.15, 0.5, tmx, 0, bb.z1 - 2.1, 2), P.STEEL_DARK);
+  B.trim(box(0.62, 0.72, 0.55, tmx, 1.15, bb.z1 - 2.1, 2), P.SIGN_LIGHT);
+  B.lit(box(0.4, 0.26, 0.06, tmx, 1.52, bb.z1 - 1.81, 1), P.NEON_WHITE);
+  B.trim(box(0.7, 0.1, 0.62, tmx, 1.87, bb.z1 - 2.1, 2), P.STEEL_DARK);
+
+  /* PERFORATED SCREEN over two or three bays. The one piece of architecture on
+     the building, and it costs two triangles a bay — see sheetMaterial. */
+  const scN = 2 + (r() < 0.5 ? 1 : 0);
+  const scW = lw * 0.20;
+  const scX = bb.x0 + lw * 0.52;
+  for (let k = 0; k < scN; k++) {
+    const x = scX + (k - (scN - 1) / 2) * (scW + 0.35);
+    if (x - scW / 2 < entryX + entryW / 2 + 0.5 && x + scW / 2 > bb.x0) continue;
+    const s = sheetGeo(scW, top - 0.4, 1.1);
+    s.rotateY(0);
+    s.translate(x, 0.4, bb.z1 + 0.42);
+    B.gl(s, perfMaterial(P.ALUMINIUM));
+    // The screen hangs on a frame; without it the sheet is a floating decal.
+    for (const sx of [-1, 1]) {
+      B.trim(box(0.16, top - 0.2, 0.34, x + sx * scW / 2, 0.3, bb.z1 + 0.42, 2), P.STEEL_DARK);
+    }
+    B.trim(box(scW + 0.3, 0.18, 0.34, x, top - 0.1, bb.z1 + 0.42, 2), P.STEEL_DARK);
+  }
+
   // Ramp: a sheared slab climbing the west bay, visible from the 3/4 camera.
   for (let i = 0; i < levels - 1; i++) {
     const g = new THREE.BoxGeometry(6.2, 0.4, ld * 0.55);
@@ -3353,18 +3735,29 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
     B.trim(g, P.CONCRETE);
   }
 
-  // Stair / lift tower breaking the slab, plus rooftop level.
-  bulkhead(B, bb.x0 + 3.4, 0, bb.z0 + 3.2, 5.2, 5.2, top + 3.2, P.STUCCO_SAND);
+  /* STAIR CORE. Painted full height, which is the single move that separates a
+     Miami garage from a Midwestern one. Glazed slot up the face so it reads as
+     a stair and not as a chimney. */
+  const cx = bb.x0 + 3.4, cz = bb.z0 + 3.2;
+  bulkhead(B, cx, 0, cz, 5.2, 5.2, top + 3.2, accent);
+  B.trim(box(1.5, top + 2.4, 0.18, cx, 0.6, cz + 2.68, 2), P.GLASS_SKY);
+  for (let i = 0; i <= levels; i++) {
+    B.trim(box(1.9, 0.24, 0.22, cx, i * lh + 0.4, cz + 2.72, 2), P.CONCRETE_DARK);
+  }
+  B.trim(box(1.3, 0.9, 0.16, cx, 0.15, cz + 2.72, 1.5), P.SIGN_DARK);
+  B.lit(box(0.9, 0.34, 0.1, cx, top + 2.5, cz + 2.74, 1.2), P.SIGN_LIGHT);
+
   B.trim(parapetGeo(plan, top, 1.2, 0.45), P.PRECAST);
+  B.trim(slabGeo(plan, top + 1.2, 0.16, 0.5), accent);   // coping stripe
   B.face(loft([{ p: inner, y: top + 0.02 }], { capTop: true, uScale: 10 }));
   const rows = Math.max(2, Math.floor(lw / 3.2));
   for (let k = 0; k < rows; k++) {
     if (r() < 0.45) continue;
     const x = -lw / 2 + 2.4 + k * ((lw - 5) / Math.max(1, rows - 1));
-    parkedCar(B, x, top + 0.1, bb.z1 - 3.0, Math.PI / 2, r.pick(CAR_HEX));
+    parkedCar(B, x, top + 0.1, bb.z1 - 3.0, Math.PI / 2, r.pick(CAR_HEX), 1, k);
   }
   for (let k = 0; k < 3; k++) {
-    B.trim(cyl(0.14, 6.5, 6, bb.x0 + 5 + k * (lw - 10) / 2, top + 1.2, bb.cz), P.LAMP_POST);
+    lampHead(B, bb.x0 + 5 + k * (lw - 10) / 2, top + 1.2, bb.cz, 5.4, k % 2 ? 0 : Math.PI, r);
   }
   // Big "P" sign on the street corner. Illuminated, because an unlit parking
   // sign is the one piece of signage in a city that is never actually unlit.
@@ -3375,59 +3768,332 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
     'garage', 'Parking Garage', P.PRECAST, { lw, ld });
 }
 
-/** Surface car park: fence, planting kerb, painted bays, parked cars, kiosk. */
+/**
+ * Attendant's booth: plinth, solid lower half, glazed upper on three sides, a
+ * serving counter with a slide window and a shallow pitched roof on a real
+ * overhang. Four metres square, so every part of it is something you would find
+ * on the real thing rather than a decoration hung on a box.
+ */
+function kiosk(B, x, z, rot, r, wallHex) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  const put = (g, ox, oy, oz) => {
+    g.rotateY(rot);
+    g.translate(x + c * ox + s * oz, oy, z - s * ox + c * oz);
+    return g;
+  };
+  const W = 2.6, D = 2.4, cill = 1.05, head = 2.35;
+  B.trim(put(box(W + 0.5, 0.16, D + 0.5, 0, 0, 0, 2), 0, 0, 0), P.CONCRETE_DARK);
+  // Solid lower half. Left as a plinth band so the glazing above it reads.
+  B.trim(put(box(W, cill, D, 0, 0, 0, 2.2), 0, 0.16, 0), wallHex);
+  B.trim(put(box(W + 0.14, 0.12, D + 0.14, 0, 0, 0, 2), 0, 0.16 + cill, 0), P.STUCCO_WHITE);
+  // Glazing: three sides open, the back wall solid.
+  B.trim(put(box(W - 0.3, head - cill - 0.12, D - 0.3, 0, 0, 0, 2), 0, cill + 0.28, 0), P.GLASS_SKY);
+  B.trim(put(box(W, head - cill - 0.12, 0.16, 0, 0, 0, 2), 0, cill + 0.28, -D / 2 + 0.08), wallHex);
+  // Corner posts and one intermediate mullion per open face.
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      B.trim(put(box(0.14, head - cill, 0.14, 0, 0, 0, 1), sx * (W / 2 - 0.07), cill + 0.28, sz * (D / 2 - 0.07)), P.MULLION);
+    }
+    B.trim(put(box(0.10, head - cill, 0.10, 0, 0, 0, 1), sx * (W / 2 - 0.05), cill + 0.28, 0), P.MULLION);
+  }
+  B.trim(put(box(W * 0.5, 0.10, 0.10, 0, 0, 0, 1), 0, cill + 0.28, D / 2 - 0.05), P.MULLION);
+  // Serving counter on the drive-up side, with the slide window over it.
+  B.trim(put(box(W * 0.8, 0.09, 0.52, 0, 0, 0, 1.5), 0, cill + 0.32, D / 2 + 0.24), P.CONCRETE_WARM);
+  B.trim(put(box(W * 0.44, 0.62, 0.07, 0, 0, 0, 1.2), W * 0.16, cill + 0.5, D / 2 + 0.02), P.MULLION);
+  // Shallow pitched roof, two slopes on a 0.4 m overhang, with a ridge capping.
+  const rw = W + 0.9, rd = D / 2 + 0.45;
+  for (const sz of [-1, 1]) {
+    const g = box(rw, 0.16, rd + 0.16, 0, 0, 0, 2.5);
+    g.rotateX(sz * 0.20);
+    B.trim(put(g, 0, head + 0.30 - Math.abs(Math.sin(0.20)) * rd * 0.5, sz * (rd / 2)), P.ROOF_DARK);
+  }
+  B.trim(put(box(rw + 0.1, 0.18, 0.26, 0, 0, 0, 2), 0, head + 0.34, 0), P.STEEL_DARK);
+  B.trim(put(box(rw, 0.14, 0.10, 0, 0, 0, 2), 0, head + 0.10, rd + 0.02), P.STUCCO_WHITE);
+  // Air-conditioner in the back wall and a light under the eaves — the two
+  // things every real booth in Florida has.
+  B.trim(put(box(0.62, 0.42, 0.30, 0, 0, 0, 1.5), -W * 0.2, 1.55, -D / 2 - 0.12), P.AC_METAL);
+  B.lit(put(box(0.42, 0.10, 0.20, 0, 0, 0, 1), 0, head + 0.16, rd - 0.1), P.LAMP_GLOW);
+  if (r.chance(0.6)) {
+    B.trim(put(box(0.5, 0.5, 0.5, 0, 0, 0, 1.2), W * 0.34, 0.16, D / 2 + 0.5), P.BIN_GREY);
+  }
+}
+
+/**
+ * Surface car park.
+ *
+ * A car park is a SURFACE with a layout painted on it, and the old version had
+ * neither: the ground under it was the same paving as the plaza next door, the
+ * bay paint was 5 cm of white on that paving, and the cars were two boxes. This
+ * lays warm asphalt inside the kerb line, paints a real bay layout on it —
+ * stalls, wheel stops, a hatched island, accessible bays — and parks properly
+ * built cars in it. Only four of these exist in the city and every one is a
+ * 31 m object the camera drives straight past, so it earns the detail.
+ */
 function surfaceLot(ctx, group, b, r, world, lw, ld) {
   const B = new Build(trimSkin(), P.SIGN_BLUE);
   const plan = rectPlan(lw, ld, 1.2);
   const bb = planBounds(plan);
-  // Perimeter kerb + rail — stops the lot reading as a bald slab.
+  const deck = offsetPlan(plan, -0.42);
+  const db = planBounds(deck);
+
+  /* THE SURFACE. Warm asphalt, one clear value below the bone paving outside
+     the kerb, so the lot reads as a lot from directly above — which is the
+     angle the game is played at. */
+  B.trim(loft([{ p: deck, y: 0.04 }], { capTop: true, uScale: 4 }), P.ASPHALT);
+  // Utility-cut repairs and a strip of newer overlay. Real tarmac is patched.
+  B.trim(box(lw * (0.20 + r() * 0.16), 0.055, ld * (0.22 + r() * 0.2),
+    db.cx + (r() - 0.5) * lw * 0.4, 0.04, db.cz + (r() - 0.5) * ld * 0.4, 3), P.ASPHALT_PATCH);
+  B.trim(box(lw * 0.9, 0.05, 1.5, 0, 0.045, db.cz + (r() - 0.5) * ld * 0.5, 3), P.ASPHALT_LIGHT);
+  // Oil drips down the middle of the bays. Four discs and the tarmac has a life.
+  for (let i = 0; i < 4; i++) {
+    B.trim(cyl(0.34 + r() * 0.36, 0.012, 6,
+      db.cx + (r() - 0.5) * lw * 0.7, 0.06, db.cz + (r() - 0.5) * ld * 0.7), P.OIL_STAIN);
+  }
+
+  /* Perimeter kerb + rail — stops the lot reading as a bald slab. The entrance
+     is a dropped kerb: a 7 m apron laid across the upstand, which is exactly
+     what a real crossover is. */
   B.trim(parapetGeo(plan, 0, 0.45, 0.4), P.CONCRETE_DARK);
+  const gateX = bb.x0 + lw * (0.16 + r() * 0.2);
+  const gateW = Math.min(7.0, lw * 0.3);
   for (let i = 0; i < 10; i++) {
     const t = (i + 0.5) / 10;
-    B.trim(cyl(0.09, 1.1, 6, bb.x0 + lw * t, 0.45, bb.z1 - 0.2), P.STEEL_DARK);
-    B.trim(cyl(0.09, 1.1, 6, bb.x0 + lw * t, 0.45, bb.z0 + 0.2), P.STEEL_DARK);
+    const x = bb.x0 + lw * t;
+    if (Math.abs(x - gateX) < gateW * 0.62) continue;
+    for (const sz of [1, -1]) {
+      const z = sz > 0 ? bb.z1 - 0.2 : bb.z0 + 0.2;
+      B.trim(cyl(0.075, 1.05, 6, x, 0.45, z), P.STEEL_DARK);
+      B.trim(cyl(0.10, 0.10, 6, x, 1.50, z), P.STEEL);      // post cap
+    }
   }
-  B.trim(box(lw, 0.1, 0.12, 0, 1.4, bb.z1 - 0.2, 3), P.STEEL);
-  B.trim(box(lw, 0.1, 0.12, 0, 1.4, bb.z0 + 0.2, 3), P.STEEL);
+  for (const sz of [1, -1]) {
+    const z = sz > 0 ? bb.z1 - 0.2 : bb.z0 + 0.2;
+    for (const h of [1.38, 0.86]) {
+      B.trim(box(lw - 1.0, 0.09, 0.11, 0, h, z, 3), P.STEEL);
+    }
+  }
+  // The crossover itself, plus the give-way bar on the way out.
+  B.trim(box(gateW, 0.07, 2.2, gateX, 0.02, bb.z1 - 0.4, 3), P.ASPHALT);
+  B.trim(box(gateW * 0.9, 0.08, 0.34, gateX, 0.07, bb.z1 - 1.7, 2), P.ROAD_LINE_WORN);
 
-  const bays = Math.max(3, Math.floor((lw - 3) / 2.7));
+  /* THE BAY LAYOUT. Paint stands 1 cm proud of the tarmac so it catches the key
+     light and casts a hairline shadow; flush paint at this scale disappears. */
+  const pitch = 2.72;
+  const bays = Math.max(3, Math.floor((lw - 3) / pitch));
+  const step = (lw - 3) / bays;
   const rows = ld > 26 ? 2 : 1;
+  let carN = 0;
   for (let rr = 0; rr < rows; rr++) {
-    const z = rows === 1 ? bb.cz : bb.z0 + 6.5 + rr * (ld - 13);
+    const z = rows === 1 ? bb.cz : bb.z0 + 6.6 + rr * (ld - 13.2);
+    // Which way the cars nose. Two rows face away from the central aisle.
+    const dir = rows === 1 ? -1 : (rr === 0 ? -1 : 1);
+    const headZ = z + dir * 2.5;
     for (let k = 0; k <= bays; k++) {
-      const x = bb.x0 + 1.5 + k * ((lw - 3) / bays);
-      B.trim(box(0.14, 0.055, 5.0, x, 0.0, z, 2), P.ROAD_LINE);   // stall paint
+      const x = bb.x0 + 1.5 + k * step;
+      B.trim(box(0.13, 0.065, 5.0, x, 0.04, z, 2), P.ROAD_LINE);
     }
+    // Wheel stop at the head of every bay: a 1.7 m precast block on two feet.
     for (let k = 0; k < bays; k++) {
-      if (r() < 0.38) continue;
-      const x = bb.x0 + 1.5 + ((lw - 3) / bays) * (k + 0.5);
-      parkedCar(B, x, 0.02, z, Math.PI / 2, r.pick(CAR_HEX));
+      const x = bb.x0 + 1.5 + step * (k + 0.5);
+      B.trim(box(1.7, 0.15, 0.22, x, 0.04, headZ - dir * 0.35, 1.5), P.CONCRETE_DARK);
+      B.trim(box(1.7, 0.05, 0.30, x, 0.04, headZ - dir * 0.35, 1.5), P.ROAD_LINE_WORN);
+    }
+    // Two accessible bays at the head of the row nearest the booth: a blue
+    // field with a white mark on it, and the hatched transfer aisle beside it.
+    if (rr === 0) {
+      for (let k = 0; k < 2; k++) {
+        const x = bb.x1 - 2.0 - step * (k + 0.5);
+        B.trim(box(step - 0.3, 0.06, 4.9, x, 0.045, z, 3), P.SIGN_BLUE);
+        B.trim(cyl(0.42, 0.07, 8, x, 0.05, z + dir * 0.6), P.ROAD_LINE);
+        B.trim(box(0.9, 0.075, 0.22, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
+        B.trim(box(0.22, 0.075, 0.9, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
+      }
+    }
+    // Hatched chevron island closing the end of the row.
+    const ix = bb.x0 + 1.5 - 0.2;
+    B.trim(box(0.14, 0.07, 5.0, ix - 1.8, 0.04, z, 2), P.ROAD_LINE);
+    for (let k = 0; k < 5; k++) {
+      const g = box(2.3, 0.07, 0.20, 0, 0, 0, 1.5);
+      g.rotateY(0.72);
+      g.translate(ix - 0.9, 0.045, z - 1.9 + k * 0.95);
+      B.trim(g, P.ROAD_LINE);
+    }
+
+    for (let k = 0; k < bays; k++) {
+      const x = bb.x0 + 1.5 + step * (k + 0.5);
+      if (Math.abs(x - gateX) < gateW * 0.55 && rows === 1) continue;
+      if (r() < 0.36) continue;
+      // Cars nose in to the wheel stop, so they sit forward in the bay.
+      parkedCar(B, x, 0.055, z + dir * 0.55, dir > 0 ? -Math.PI / 2 : Math.PI / 2,
+        r.pick(CAR_HEX), 2, carN + rr);
+      carN++;
     }
   }
-  // Attendant kiosk + light poles.
-  B.trim(box(2.6, 2.7, 2.4, bb.x1 - 2.4, 0, bb.z1 - 2.2, 2.5), P.STUCCO_CREAM);
-  B.trim(box(3.2, 0.24, 3.0, bb.x1 - 2.4, 2.7, bb.z1 - 2.2, 2.5), P.ROOF_DARK);
-  for (let k = 0; k < 2; k++) {
-    const x = bb.x0 + lw * (0.3 + k * 0.4);
-    B.trim(cyl(0.16, 7.5, 6, x, 0.45, bb.cz), P.LAMP_POST);
-    B.trim(box(1.5, 0.28, 0.5, x, 7.9, bb.cz, 2), P.ALUMINIUM);
+
+  /* THE BOOTH, the barrier and the sign — the corner of the lot a player
+     actually looks at. */
+  const kx = bb.x1 - 3.0, kz = bb.z1 - 3.0;
+  kiosk(B, kx, kz, Math.PI, r, r.pick([P.STUCCO_CREAM, P.STUCCO_WHITE, P.STUCCO_MINT, P.STUCCO_PEACH]));
+  barrier(B, gateX + gateW / 2 + 0.5, 0.04, bb.z1 - 3.2, Math.PI, gateW * 0.78,
+    r.chance(0.5) ? 1.2 : 0.05);
+  // Illuminated P totem beside the entrance.
+  const px = gateX - gateW / 2 - 1.1;
+  B.trim(cyl(0.16, 3.0, 6, px, 0.04, bb.z1 - 1.9), P.STEEL_DARK);
+  B.trim(box(1.5, 1.9, 0.34, px, 3.0, bb.z1 - 1.9, 2), P.SIGN_DARK);
+  B.lit(box(1.24, 1.62, 0.14, px, 3.14, bb.z1 - 1.76, 1.5), P.SIGN_BLUE);
+  B.trim(box(0.30, 0.95, 0.06, px - 0.16, 3.5, bb.z1 - 1.66, 1), P.SIGN_LIGHT);
+  B.trim(box(0.46, 0.34, 0.06, px + 0.02, 4.11, bb.z1 - 1.66, 1), P.SIGN_LIGHT);
+  B.trim(box(1.3, 0.5, 0.2, px, 2.42, bb.z1 - 1.9, 1.5), P.SIGN_LIGHT);   // tariff plate
+
+  // Column lighting, on the head props.js hangs on the streets outside.
+  for (let k = 0; k < 3; k++) {
+    lampHead(B, bb.x0 + lw * (0.18 + k * 0.32), 0.04, db.cz, 7.2,
+      k % 2 ? 0 : Math.PI, r);
   }
   register(ctx, group, B, world, Math.max(lw, ld) * 0.5, 3, TIER.HUGE,
     'lot', 'Car Park', P.CONCRETE_DARK, { lw, ld });
 }
 
-const CAR_HEX = [
-  P.CAR_WHITE, P.CAR_SILVER, P.CAR_GRAPHITE, P.CAR_RED, P.CAR_BLUE,
-  P.CAR_TEAL, P.CAR_YELLOW, P.CAR_GREEN, P.CAR_CORAL, P.CAR_NAVY, P.CAR_BLACK,
-];
-
 /* ====================================================== construction ==== */
+
+/** Acrow prop: threaded tube, adjusting collar, head plate, foot plate. Two of
+ *  these under a slab edge is the difference between "poured" and "propped". */
+function acrowProp(B, x, y, z, h) {
+  B.trim(box(0.30, 0.05, 0.30, x, y, z, 1), P.STEEL_DARK);
+  B.trim(cyl(0.055, h - 0.1, 6, x, y + 0.05, z), P.CRANE_YELLOW);
+  B.trim(cyl(0.085, 0.14, 6, x, y + h * 0.62, z), P.STEEL_DARK);   // collar
+  B.trim(box(0.30, 0.05, 0.30, x, y + h - 0.05, z, 1), P.STEEL_DARK);
+}
+
+/** Pallet of blocks: timber bearers, a stacked course and a banding strap. */
+function palletStack(B, x, y, z, rot, hex) {
+  const put = (g) => { g.rotateY(rot); g.translate(x, y, z); return g; };
+  B.trim(put(box(1.20, 0.14, 1.00, 0, 0, 0, 1)), P.WOOD_DECK);
+  B.trim(put(box(1.24, 0.06, 1.04, 0, 0.14, 0, 1)), P.WOOD_LIGHT);
+  B.trim(put(box(1.10, 0.78, 0.92, 0, 0.20, 0, 1.2)), hex);
+  B.trim(put(box(1.13, 0.06, 0.06, 0, 0.56, 0, 1)), P.STEEL);      // strap
+  B.trim(put(box(0.06, 0.82, 0.06, 0.42, 0.18, 0, 1)), P.STEEL);
+}
+
+/** Bundle of rebar: four bars on bearers, tied twice. Reads as rust and lines. */
+function rebarBundle(B, x, y, z, rot, len) {
+  const put = (g) => { g.rotateY(rot); g.translate(x, y, z); return g; };
+  B.trim(put(box(0.5, 0.10, 0.5, -len * 0.32, 0, 0, 1)), P.WOOD_DARK);
+  B.trim(put(box(0.5, 0.10, 0.5, len * 0.32, 0, 0, 1)), P.WOOD_DARK);
+  const bars = [];
+  for (let i = 0; i < 4; i++) {
+    const g = new THREE.CylinderGeometry(0.045, 0.045, len, 4, 1, false);
+    g.rotateZ(Math.PI / 2);
+    g.translate(0, 0.14 + (i > 1 ? 0.09 : 0), (i % 2 ? 0.1 : -0.1));
+    bars.push(g);
+  }
+  B.trim(put(BufferGeometryUtils.mergeGeometries(bars, false)), P.RUST);
+  for (const sx of [-1, 1]) {
+    B.trim(put(box(0.05, 0.30, 0.34, sx * len * 0.24, 0.05, 0, 1)), P.STEEL_DARK);
+  }
+}
+
+/**
+ * Debris chute: a stack of tapered plastic sections hung down one elevation into
+ * a skip. Orange, vertical, 20 m long — it is the loudest thing on a real site
+ * after the crane and the one that says "demolition" at any distance.
+ */
+function debrisChute(B, x, z, y0, y1, r) {
+  const secs = Math.max(3, Math.round((y1 - y0) / 1.7));
+  const sh = (y1 - y0) / secs;
+  for (let i = 0; i < secs; i++) {
+    const y = y0 + i * sh;
+    B.trim(cyl(0.66, sh * 0.96, 8, x, y, z, 0.50), i % 2 ? P.CONE_ORANGE : P.NEON_ORANGE);
+    if (i % 2 === 0) B.trim(cyl(0.72, 0.10, 8, x, y + sh * 0.9, z), P.STEEL_DARK);
+  }
+  // Hopper at the top, and the skip it discharges into.
+  B.trim(cyl(0.62, 1.1, 8, x, y1, z, 1.35), P.CONE_ORANGE);
+  B.trim(box(3.4, 1.25, 2.0, x, 0, z + 0.3, 2.5), P.RUST);
+  B.trim(box(3.5, 0.12, 2.1, x, 1.25, z + 0.3, 2.5), P.STEEL_DARK);
+  for (const sx of [-1, 1]) {
+    B.trim(box(0.16, 1.35, 0.16, x + sx * 1.6, 0, z - 0.6, 1), P.STEEL_DARK);
+  }
+  if (r.chance(0.6)) B.trim(box(2.4, 0.4, 1.3, x, 1.25, z + 0.3, 2), P.CONCRETE_DARK);
+}
+
+/**
+ * Site hoarding: painted panels between posts, a capping rail, and a developer
+ * board on the long face.
+ *
+ * The old fence was one lofted ring in one colour — a 3 m tall blank band round
+ * the whole parcel, which is the single largest flat surface a construction site
+ * owned. Real hoarding is 2.4 m ply sheets bolted to posts and printed with the
+ * scheme that is coming, so it is panelled, two-tone, and carries one big image.
+ */
+function hoardingRun(B, plan, h, a, bHex, r) {
+  const n = plan.length;
+  B.trim(parapetGeo(plan, 0, 0.22, 0.3), P.CONCRETE_DARK);       // kicker
+  B.trim(parapetGeo(plan, h, 0.20, 0.36), P.SIGN_DARK);          // capping rail
+  let panel = 0;
+  for (let i = 0; i < n; i++) {
+    const p0 = plan[i], p1 = plan[(i + 1) % n];
+    const dx = p1[0] - p0[0], dz = p1[1] - p0[1];
+    const L = Math.hypot(dx, dz);
+    if (L < 0.6) continue;
+    const rot = Math.atan2(dx, dz);
+    const k = Math.max(1, Math.round(L / 2.4));
+    for (let j = 0; j < k; j++) {
+      const t = (j + 0.5) / k;
+      const px = p0[0] + dx * t, pz = p0[1] + dz * t;
+      const g = box(L / k - 0.10, h - 0.22, 0.14, 0, 0, 0, 2.4);
+      g.rotateY(rot);
+      g.translate(px, 0.22, pz);
+      // Alternate the sheets, and drop a saturated one in every few panels —
+      // that is what a printed hoarding actually looks like from the far kerb.
+      const hx = (panel % 7 === 3) ? bHex : (panel % 2 ? jitterHex(a, 0.93, 0.01) : a);
+      B.trim(g, hx);
+      // Post between sheets.
+      const q = box(0.16, h + 0.1, 0.26, 0, 0, 0, 1.5);
+      q.rotateY(rot);
+      q.translate(p0[0] + dx * (j / k), 0.22, p0[1] + dz * (j / k));
+      B.trim(q, P.SCAFFOLD);
+      panel++;
+    }
+  }
+  /* Developer board on the longest face: a framed hoarding with a printed
+     panel, a strapline bar and a row of consultant blocks along the bottom. */
+  const bb = planBounds(plan);
+  const bw = Math.min(bb.w * 0.5, 11), bh = h * 0.78;
+  const bx = bb.cx + (r() - 0.5) * bb.w * 0.2, bz = bb.z1 + 0.16;
+  B.trim(box(bw + 0.5, bh + 0.5, 0.16, bx, h - bh - 0.1, bz, 3), P.SIGN_DARK);
+  B.trim(box(bw, bh * 0.62, 0.1, bx, h - bh + bh * 0.30, bz + 0.09, 3),
+    r.pick([P.STUCCO_SKY, P.GLASS_AQUA, P.STUCCO_PEACH, P.STUCCO_MINT]));
+  B.trim(box(bw, bh * 0.20, 0.1, bx, h - bh + bh * 0.06, bz + 0.09, 3), P.SIGN_LIGHT);
+  for (let i = 0; i < 5; i++) {
+    B.trim(box(bw * 0.15, bh * 0.10, 0.06, bx - bw * 0.4 + i * bw * 0.2,
+      h - bh + bh * 0.10, bz + 0.15, 1), P.SIGN_DARK);
+  }
+  B.lit(box(bw * 0.44, bh * 0.16, 0.08, bx - bw * 0.24, h - bh + bh * 0.68, bz + 0.15, 2), B.neon);
+  // Site notices and a gate on the other long face.
+  const gw = Math.min(bb.w * 0.22, 6.5);
+  B.trim(box(gw, h - 0.3, 0.20, bb.cx, 0.24, bb.z0 - 0.14, 2.6), P.CRANE_YELLOW);
+  B.trim(box(0.2, h - 0.3, 0.28, bb.cx, 0.24, bb.z0 - 0.14, 1.5), P.SCAFFOLD);
+  for (let i = 0; i < 3; i++) {
+    B.trim(box(0.7, 0.9, 0.06, bb.x0 + bb.w * 0.16 + i * 0.95, 1.5, bb.z0 - 0.20, 1), P.SIGN_LIGHT);
+  }
+}
 
 /** Lattice tower crane: mast, slew, cab, jib, counter-jib, cable and hook. */
 function towerCrane(ctx, B, x, z, h, jib, rot, r) {
   const leg = 0.9;
+  /*
+   * The top of a tower crane mast is painted in aviation bands. Below the band
+   * zone the legs are yellow; the top two 3 m sections alternate red and white,
+   * which is both correct and the only thing that gives an 80 m lattice any
+   * vertical rhythm at all from the review camera.
+   */
+  const bandFrom = Math.max(0, h - 6.4);
   for (const [dx, dz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-    B.trim(box(0.22, h, 0.22, x + dx * leg, 0, z + dz * leg, 2), P.CRANE_YELLOW);
+    B.trim(box(0.22, bandFrom, 0.22, x + dx * leg, 0, z + dz * leg, 2), P.CRANE_YELLOW);
+    for (let k = 0; k < 4; k++) {
+      B.trim(box(0.235, 1.6, 0.235, x + dx * leg, bandFrom + k * 1.6, z + dz * leg, 2),
+        k % 2 ? P.SIGN_LIGHT : P.LIGHT_RED);
+    }
   }
   for (let y = 2; y < h; y += 3.0) {
     B.trim(box(leg * 2.2, 0.15, 0.15, x, y, z - leg, 2), P.CRANE_YELLOW);
@@ -3502,6 +4168,15 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
     const raw = i >= openFrom;
     const sp = i > floors * 0.78 ? offsetPlan(plan, -(2 + r() * 5)) : plan;
     B.trim(slabGeo(sp, y, 0.42, 0.35), P.PRECAST);
+    /*
+     * PERIMETER EDGE BEAM. Every exposed floor used to be a plain 0.42 m plate,
+     * so a thirty-storey frame read as a stack of grey cards. A real slab is
+     * thickened at the edge into a downstand beam, and that downstand is what
+     * puts a shadow line under every floor and gives the frame its horizontal
+     * rhythm from 400 m. It is drawn INSIDE the slab edge so it changes nothing
+     * about the footprint.
+     */
+    B.trim(parapetGeo(offsetPlan(sp, -0.12), y - 0.52, 0.52, 0.44), P.CONCRETE_WARM);
     if (!raw) {
       B.trim(loft([{ p: sp, y: y + 0.42 }], { capTop: true, uScale: 4 }), P.CONCRETE_WARM);
     } else {
@@ -3530,8 +4205,39 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
       }
       B.trim(box(lw * 0.96, 0.08, 0.1, 0, y + 1.4, bb.z1 - 0.3, 3), P.CONE_ORANGE);
     }
-    // Stacked materials on a few slabs.
-    if (r() < 0.5) {
+    /*
+     * BACKPROPPING. The two floors under the last pour stay propped for a
+     * month, and the row of acrows is the most recognisable thing on any frame
+     * that has just been struck — it is also the only object up there with a
+     * vertical rhythm finer than the columns.
+     */
+    if (i >= floors - 3 && i > 1) {
+      const spb = planBounds(sp);
+      const pn = Math.max(3, Math.min(7, Math.round(spb.w / 4.2)));
+      for (let k = 0; k < pn; k++) {
+        const px = spb.x0 + 2.0 + ((spb.w - 4.0) * k) / Math.max(1, pn - 1);
+        acrowProp(B, px, y - 3.18, spb.cz + spb.d * 0.26, 3.18);
+        if (k % 2 === 0) acrowProp(B, px, y - 3.18, spb.cz - spb.d * 0.24, 3.18);
+      }
+    }
+    // Stacked materials on the upper slabs: blocks on pallets, bundled rebar,
+    // and the odd drum. A working floor has a lay-down area on it.
+    if (i >= floors - 5 && i < floors && r() < 0.78) {
+      const spb = planBounds(sp);
+      const mx = spb.cx + (r() - 0.5) * spb.w * 0.5;
+      const mz = spb.cz + (r() - 0.5) * spb.d * 0.5;
+      const rot = r.chance(0.5) ? 0 : Math.PI / 2;
+      const blockHex = r.pick([P.CONCRETE_DARK, P.PRECAST, P.BRICK_LIGHT, P.GRAVEL]);
+      for (let k = 0; k < 2 + Math.floor(r() * 2); k++) {
+        palletStack(B, mx + k * 1.35, y + 0.42, mz, rot, blockHex);
+      }
+      if (r() < 0.7) {
+        rebarBundle(B, mx - 2.6, y + 0.42, mz + 1.4, rot, Math.min(6.5, spb.w * 0.35));
+      }
+      if (r() < 0.45) {
+        B.trim(cyl(0.32, 0.9, 8, mx + 1.0, y + 0.42, mz - 1.9), P.CONE_ORANGE);
+      }
+    } else if (r() < 0.35) {
       const mx = bb.x0 + 2.5 + r() * (lw - 5), mz = bb.z0 + 2.5 + r() * (ld - 5);
       B.trim(box(2.6, 0.5, 1.3, mx, y + 0.42, mz, 2), r.chance(0.5) ? P.RUST : P.WOOD_DECK);
       if (r() < 0.6) B.trim(box(2.2, 0.35, 1.1, mx + 0.2, y + 0.92, mz, 2), P.STEEL_DARK);
@@ -3543,11 +4249,36 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
      and the netting is the only saturated colour the whole assembly owns. */
   const sh = Math.min(h, 3.6 * Math.round(floors * 0.7));
   scaffold(B, bb.x0 + 1.5, bb.x1 - 1.5, 0, sh, bb.z1 + 0.9, P.SCAFFOLD);
+  /*
+   * DEBRIS NETTING — one sheet, not a picket fence.
+   *
+   * It used to be a row of 1.3 m boxes with 1.3 m gaps between them. At the
+   * distance a site is normally seen that alternation minifies into speckle:
+   * reviewers read it as noise on the facade rather than as a wrapped
+   * elevation, and it was the only saturated colour the whole assembly owned,
+   * so the noise was loud. This is a single alpha-cut sheet per face — see
+   * sheetMaterial — with a real woven texture in it, tied back to the frame
+   * with a horizontal line at every floor. Four triangles for both faces, and
+   * it costs no draw call the site was not already paying for.
+   */
   const netHex = r.weighted([[P.STUCCO_MINT, 10], [P.STUCCO_SKY, 10], [P.FABRIC_AQUA, 7], [P.CONE_ORANGE, 5]]);
-  for (let x = bb.x0 + 1.5; x < bb.x1 - 1.5; x += 2.6) {
-    B.trim(box(1.3, sh, 0.05, x, 0, bb.z1 + 1.25, 3), netHex);
-    B.trim(box(1.3, sh * 0.86, 0.05, x, 0, bb.z0 - 1.25, 3), netHex);
+  const netMat = netMaterial(netHex);
+  const netW = lw - 2.4;
+  for (const [zf, hh] of [[bb.z1 + 1.25, sh], [bb.z0 - 1.25, sh * 0.86]]) {
+    const s = sheetGeo(netW, hh, 0.62);
+    s.translate(bb.cx, 0.1, zf);
+    B.gl(s, netMat);
+    // Tie lines: a scaffold tube along the sheet at every floor, plus the tie
+    // ends that hold it. This is what stops the sheet reading as a decal.
+    for (let y = 3.6; y < hh; y += 3.6) {
+      B.trim(box(netW, 0.09, 0.09, bb.cx, y, zf + (zf > 0 ? 0.06 : -0.06), 3), P.STEEL_DARK);
+    }
+    for (let x = bb.x0 + 2.2; x < bb.x1 - 2.0; x += 4.4) {
+      B.trim(box(0.10, hh * 0.98, 0.10, x, 0.1, zf + (zf > 0 ? 0.05 : -0.05), 2), P.SCAFFOLD);
+    }
   }
+  /* Debris chute down the west flank, into a skip on the hardstanding. */
+  debrisChute(B, bb.x0 - 1.0, bb.cz + ld * 0.18, 1.3, Math.max(9, sh * 0.82), r);
   // Man-hoist up the flank: a lattice mast with a cage on it. The one piece of
   // kit that says "site" at any distance where the crane is off frame.
   const hx = bb.x1 - 1.4;
@@ -3562,8 +4293,9 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
   /* Hoarding — the site boundary, so it may never leave the parcel. */
   const hoard = rectPlan(Math.min(lw + 3.4, lotW ?? lw + 3.4),
     Math.min(ld + 3.4, lotD ?? ld + 3.4), 2.0);
-  B.trim(parapetGeo(hoard, 0, 3.0, 0.22), r.pick([P.FABRIC_SKY, P.STUCCO_WHITE, P.FABRIC_AQUA]));
-  B.trim(parapetGeo(hoard, 3.0, 0.22, 0.4), P.SIGN_DARK);
+  hoardingRun(B, hoard, 3.0,
+    r.pick([P.FABRIC_SKY, P.STUCCO_WHITE, P.FABRIC_AQUA, P.STUCCO_MINT, P.STUCCO_SAND]),
+    r.pick([P.NEON_ORANGE, P.FABRIC_PINK, P.CAR_TEAL, P.STUCCO_CORAL]), r);
   const hb = planBounds(hoard);
 
   /* Crane.

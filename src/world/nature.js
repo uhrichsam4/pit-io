@@ -786,18 +786,29 @@ function drawAgaveBlade(g, rect, seed, dry = false) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
   const ox = X + W * 0.5, oy = Y + H * 0.995, ty = Y + H * 0.015;
-  const lo = dry ? mixHex(PALETTE.GRASS_DRY, PALETTE.RUST, 0.25) : GLAUCOUS.light;
-  const mid = dry ? mixHex(PALETTE.GRASS_DRY, PALETTE.WOOD_DARK, 0.30) : GLAUCOUS.mid;
-  const hi = dry ? mixHex(PALETTE.RUST, PALETTE.WOOD_DARK, 0.45) : GLAUCOUS.dark;
-  // Widest at a third of the way up, then a long straight taper to a spine.
-  const halfW = (t) => W * 0.40 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.10 + t * 0.86)), 0.55)
-    * (dry ? 0.86 : 1);
+  /* blendHex, NOT mixHex. mixHex returns a CSS string and cssOf() takes an
+     integer — feeding one to the other yields rgba(NaN,NaN,NaN,1), which canvas
+     rejects, leaves the previous fillStyle in place, and painted the entire
+     dried-blade cell solid black. */
+  const lo = dry ? blendHex(PALETTE.GRASS_DRY, PALETTE.RUST, 0.28) : GLAUCOUS.light;
+  const mid = dry ? blendHex(PALETTE.GRASS_DRY, PALETTE.WOOD_DARK, 0.34) : GLAUCOUS.mid;
+  const hi = dry ? blendHex(PALETTE.RUST, PALETTE.WOOD_DARK, 0.50) : GLAUCOUS.dark;
+  /* A BLADE, not a lens. Widest at a quarter of the way up and then a long
+     straight taper to a point — the first cut peaked at mid-span and was still
+     12% wide at the tip, which drew a fat leaf rather than the stiff succulent
+     spike the whole species is here to contribute. */
+  const halfW = (t) => W * (dry ? 0.24 : 0.27)
+    * Math.pow(Math.max(0, Math.sin(Math.PI * Math.min(1, 0.16 + t * 0.84))), 1.25)
+    * (1 - t * 0.35);
   const spine = (t) => oy + (ty - oy) * t + (dry ? Math.sin(t * 2.4) * H * 0.05 : 0);
 
-  const grad = g.createLinearGradient(X, 0, X + W, 0);
+  // Hard edges, light core: a succulent blade is a folded gutter, so its two
+  // margins turn away from the sky and go a full two stops down.
+  const grad = g.createLinearGradient(ox - W * 0.28, 0, ox + W * 0.28, 0);
   grad.addColorStop(0.00, cssOf(hi));
-  grad.addColorStop(0.30, cssOf(mid));
-  grad.addColorStop(0.55, cssOf(lo));
+  grad.addColorStop(0.26, cssOf(mid));
+  grad.addColorStop(0.50, cssOf(lo));
+  grad.addColorStop(0.76, cssOf(mid));
   grad.addColorStop(1.00, cssOf(hi));
   g.fillStyle = grad;
   g.beginPath();
@@ -822,8 +833,8 @@ function drawAgaveBlade(g, rect, seed, dry = false) {
     g.globalCompositeOperation = 'source-over';
   } else {
     // The pale central band and the fine marginal teeth an agave carries.
-    g.strokeStyle = cssOf(blendHex(GLAUCOUS.light, 0xffffff, 0.35), 0.42);
-    g.lineWidth = Math.max(1.6, W * 0.055);
+    g.strokeStyle = cssOf(blendHex(GLAUCOUS.light, 0xffffff, 0.35), 0.30);
+    g.lineWidth = Math.max(1.6, W * 0.030);
     g.beginPath();
     for (let k = 0; k <= 12; k++) {
       const t = k / 12;
@@ -852,23 +863,42 @@ function drawAgaveBlade(g, rect, seed, dry = false) {
   g.stroke();
 }
 
-/** Spanish moss: a hanging curtain of grey-green strands. */
+/**
+ * Spanish moss: a hanging curtain of grey-green strands.
+ *
+ * Deliberately DENSE and short-tufted rather than long and stringy — at the
+ * card size this is used at, sparse hairs minify to nothing and a curtain of
+ * long straight strands reads as straw. The strands are also cooler and greyer
+ * than any other foliage in the atlas, which is the whole point of it: it is
+ * the one thing hanging off a live oak that is not the colour of the crown.
+ */
 function drawMoss(g, rect, seed) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
-  const base = blendHex(PALETTE.GRASS_DRY, PALETTE.SEAWALL, 0.42);
-  for (let i = 0; i < 46; i++) {
-    const x = X + W * (0.10 + rand() * 0.80);
-    const len = H * (0.35 + rand() * 0.62);
-    g.strokeStyle = cssOf(rand() < 0.4 ? blendHex(base, PALETTE.TREE_CANOPY_DARK, 0.4) : base,
-      0.9);
-    g.lineWidth = Math.max(1.6, W * (0.020 + rand() * 0.030));
+  const base = blendHex(blendHex(PALETTE.GRASS_DRY, PALETTE.SEAWALL, 0.50),
+    PALETTE.TREE_CANOPY_DARK, 0.30);
+  for (let i = 0; i < 90; i++) {
+    const x = X + W * (0.06 + rand() * 0.88);
+    const top = Y + H * rand() * 0.30;
+    const len = H * (0.26 + rand() * 0.50);
+    g.strokeStyle = cssOf(rand() < 0.42 ? blendHex(base, PALETTE.TREE_CANOPY_DARK, 0.45)
+      : blendHex(base, PALETTE.FLOWER_WHITE, 0.18), 0.92);
+    g.lineWidth = Math.max(2.0, W * (0.028 + rand() * 0.045));
     g.lineCap = 'round';
     g.beginPath();
-    g.moveTo(x, Y + H * 0.02);
-    g.quadraticCurveTo(x + (rand() - 0.5) * W * 0.3, Y + len * 0.5,
-      x + (rand() - 0.5) * W * 0.42, Y + len);
+    g.moveTo(x, top);
+    g.quadraticCurveTo(x + (rand() - 0.5) * W * 0.24, top + len * 0.5,
+      x + (rand() - 0.5) * W * 0.34, top + len);
     g.stroke();
+  }
+  // A denser shoulder where the clump hangs off the limb — a moss curtain is
+  // thick at the top and frays out at the bottom.
+  for (let i = 0; i < 40; i++) {
+    g.fillStyle = cssOf(base, 0.85);
+    g.beginPath();
+    g.ellipse(X + W * (0.08 + rand() * 0.84), Y + H * rand() * 0.26,
+      W * (0.05 + rand() * 0.07), W * (0.04 + rand() * 0.05), rand() * 3.14, 0, 6.29);
+    g.fill();
   }
 }
 
@@ -1118,20 +1148,27 @@ function drawWaterVeil(g, rect, seed) {
 function drawNetMesh(g, rect) {
   const [X, Y, W, H] = rect;
   g.clearRect(X, Y, W, H);
+  /* CLIPPED. The diagonals have to start outside the cell for the lattice to
+     reach both edges, and without a clip they ran a full cell width either side
+     — straight across the four hibiscus blooms next door, which came out with
+     white netting printed over them. */
+  g.save();
+  g.beginPath(); g.rect(X, Y, W, H); g.clip();
   g.strokeStyle = cssOf(PALETTE.FLOWER_WHITE, 0.95);
   g.lineCap = 'round';
-  for (let i = -6; i <= 12; i++) {
+  g.lineWidth = Math.max(2.5, W * 0.030);
+  for (let i = -3; i <= 6; i++) {
     for (const s of [-1, 1]) {
-      g.lineWidth = Math.max(2.5, W * 0.030);
       g.beginPath();
-      g.moveTo(X + (i / 6) * W, Y);
-      g.lineTo(X + (i / 6) * W + s * W * 0.55, Y + H);
+      g.moveTo(X + (i / 3) * W, Y);
+      g.lineTo(X + (i / 3) * W + s * W * 0.55, Y + H);
       g.stroke();
     }
   }
   // The heavier hem loop round the bottom of a real net.
   g.lineWidth = Math.max(3, W * 0.05);
   g.beginPath(); g.moveTo(X, Y + H * 0.93); g.lineTo(X + W, Y + H * 0.93); g.stroke();
+  g.restore();
 }
 
 /**
@@ -1623,6 +1660,9 @@ const TINTABLE_CELLS = new Set([...CUTOUT_CELLS, 'crownshaft', 'sw_leaf', 'sw_le
 // whole reason it is there.
 TINTABLE_CELLS.delete('coconut');
 TINTABLE_CELLS.delete('frondDead');
+// Same argument for the agave's dried skirt: it is the one part of the plant
+// that is NOT the colour of the rosette, and that contrast is why it is there.
+TINTABLE_CELLS.delete('agaveDry');
 
 let _atlasTex = null;
 
@@ -1707,8 +1747,11 @@ function atlasTexture() {
 
   drawFlagUS(g, CELL.flagUS);
   drawFlagMiami(g, CELL.flagMiami);
+  // Deep oxblood, which is what a croton's lower leaves actually are. The first
+  // mix (brick toward canopy-dark) came out a mid olive-brown and read as a
+  // plant POT under the clump rather than as the plant's own crown.
   drawFlatCell(g, CELL.crotonCore, 0x3311bb,
-    blendHex(PALETTE.BRICK_DARK, PALETTE.TREE_CANOPY_DARK, 0.42), PALETTE.RUST, 700);
+    blendHex(PALETTE.CAR_RED, PALETTE.CAR_BLACK, 0.68), PALETTE.BRICK_DARK, 420);
   drawFlatCell(g, CELL.bedFoliage, 0x77aa22,
     blendHex(PALETTE.HEDGE, PALETTE.TREE_CANOPY_DARK, 0.30), PALETTE.HEDGE_LIGHT, 1400);
   drawFlatCell(g, CELL.bloomYel, 0x2b8f31, PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_ORANGE, 900);
@@ -2650,11 +2693,20 @@ function domeGeo(cellName, profile, sides, {
  * Loft a cross-section along a straight run in X, with the ridge line perturbed
  * station to station.
  *
- * `section` is [[u, v], ...] where u is across the depth in -0.5..0.5 and v is
- * up in 0..1. `wob` is the per-station height wobble, and it is the whole
- * reason this exists rather than an extrusion: a hedge whose section is
- * constant along its length reads from the game camera as a smooth green
- * sausage laid along the kerb, however many variants it has.
+ * `section` is [[u, v, tv], ...] where u is across the depth in -0.5..0.5, v is
+ * up in 0..1, and `tv` is where up the ATLAS CELL that point samples.
+ *
+ * tv is not optional and it is not the same as v. shrubA is a dome painted with
+ * a transparent margin above it, so a section point that samples the cell at
+ * v=1 lands in dead space: the first cut mapped the section linearly and the
+ * whole hedge came out near-black with its top edge alpha-tested away. tv keeps
+ * every point inside the dense core of the cell and uses its own bottom-dark /
+ * top-light gradient as the section's shading.
+ *
+ * `wob` is the per-station height wobble, and it is the whole reason this
+ * exists rather than an extrusion: a hedge whose section is constant along its
+ * length reads from the game camera as a smooth green sausage laid along the
+ * kerb, however many variants it has.
  */
 function loftGeo(section, len, dep, hgt, spans, strips, {
   rng = null, wob = 0.08, caps = null,
@@ -2679,19 +2731,28 @@ function loftGeo(section, len, dep, hgt, spans, strips, {
       for (let i = st.from; i <= st.to; i++) {
         const p = at(s, i);
         pos.push(p[0], p[1], p[2]);
-        const [u, v] = section[i];
-        // Side faces keep most of their real outward normal so they sit a stop
-        // under the crown; the crown itself points at the sky.
+        const [u, v, tv] = section[i];
+        /* Side faces keep some of their real outward normal so they sit a stop
+           under the crown; the crown itself points at the sky. The +Y floor is
+           0.42, not 0: at 0 the flanks were pointing dead sideways, caught none
+           of the high key light, and the whole hedge rendered black-green. */
         const nu = Math.sign(u) * (1 - Math.min(1, v * 1.15));
-        nor.push(0, Math.min(1, v * 1.25), nu === 0 ? 0.2 : nu);
-        uv.push(rect.u0 + (s / spans) * (rect.u1 - rect.u0),
-          rect.v0 + ((i - st.from) / Math.max(1, cols - 1)) * (rect.v1 - rect.v0));
+        nor.push(0, 0.42 + Math.min(1, v * 1.05) * 0.85, nu === 0 ? 0.2 : nu * 0.8);
+        // Stay inside the cell's dense core in u as well: the shrub dome tapers
+        // to nothing at the left and right edges of its cell.
+        uv.push(rect.u0 + (0.12 + (s / spans) * 0.76) * (rect.u1 - rect.u0),
+          rect.v0 + tv * (rect.v1 - rect.v0));
       }
     }
     for (let s = 0; s < spans; s++) {
       for (let i = 0; i < cols - 1; i++) {
         const a = s * cols + i, b = a + 1, c = a + cols, d = c + 1;
-        idx.push(a, c, b, b, c, d);
+        /* WINDING (a,b,c), not (a,c,b). The material is double-sided, and three
+           NEGATES the interpolated normal on a back face — so a surface whose
+           triangle winding disagrees with the normals it was given renders lit
+           from underneath. The first cut of this had the outward faces wound
+           inward and the whole hedge came out black-green from every angle. */
+        idx.push(a, b, c, b, d, c);
       }
     }
     const g = finishGeo(pos, nor, uv, idx);
@@ -2706,9 +2767,9 @@ function loftGeo(section, len, dep, hgt, spans, strips, {
       for (let i = 0; i < section.length; i++) {
         const p = at(s, i);
         pos.push(p[0], p[1], p[2]);
-        nor.push(s === 0 ? -1 : 1, 0.2, 0);
-        uv.push(rect.u0 + (section[i][0] + 0.5) * (rect.u1 - rect.u0),
-          rect.v0 + section[i][1] * (rect.v1 - rect.v0));
+        nor.push(s === 0 ? -1 : 1, 0.42, 0);
+        uv.push(rect.u0 + (0.25 + section[i][0] * 0.5) * (rect.u1 - rect.u0),
+          rect.v0 + section[i][2] * (rect.v1 - rect.v0));
       }
       for (let i = 1; i < section.length - 1; i++) {
         if (s === 0) idx.push(o, o + i, o + i + 1);
@@ -3543,9 +3604,11 @@ function makeHedge(spec) {
   const L = spec.w, D = spec.depth, H = spec.h;
   // Shoulders start a fixed 20 cm below the crown whatever the unit's height.
   const sh = Math.max(0.52, 1 - 0.20 / Math.max(0.45, H));
+  // [across, up, where up the atlas cell it samples] — see loftGeo on why the
+  // third number is not the second one.
   const sec = [
-    [-0.50, 0.075], [-0.50, sh], [-0.31, 0.985], [0, 1.04],
-    [0.31, 0.985], [0.50, sh], [0.50, 0.075],
+    [-0.50, 0.075, 0.08], [-0.50, sh, 0.42], [-0.31, 0.985, 0.62], [0, 1.04, 0.72],
+    [0.31, 0.985, 0.62], [0.50, sh, 0.42], [0.50, 0.075, 0.08],
   ];
   /* 3 spans, and that number is a BUDGET not a taste. This is the most numerous
      object in the city by a factor of eight: at 4 spans the unit is 78 tris and
@@ -3625,7 +3688,12 @@ function makeShrubMass(spec) {
     parts.push(g);
   }
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  liftNormals(geo, 0.26);
+  // A blob is round: bend the normals toward the mass centre so the cards shade
+  // with the hull instead of standing out from it as dark fins, then lift hard
+  // — the key light is high, and a vertical card that keeps its own normal
+  // catches almost none of it.
+  radialNormals(geo, 0, H * 0.42, 0, 0.55);
+  liftNormals(geo, 0.38);
   return lowWind(geo, H, 0.42);
 }
 
@@ -3644,9 +3712,12 @@ function makeCrotonClump(spec) {
   const rng = makeRNG(spec.seed);
   const parts = [];
   const H = spec.h, R = spec.w * 0.5;
+  // Low and spreading. At H*0.34 tall with straight sides it read as a plant
+  // POT with the clump standing in it rather than as the plant's own oxblood
+  // lower crown.
   parts.push(domeGeo('crotonCore', [
-    [0, R * 0.58], [H * 0.18, R * 0.62], [H * 0.34, R * 0.34],
-  ], 6, { lobes: 3, amp: 0.26, rng, jitter: 0.22 }));
+    [0, R * 0.60], [H * 0.10, R * 0.66], [H * 0.22, R * 0.30],
+  ], 6, { lobes: 3, amp: 0.30, rng, jitter: 0.26 }));
   parts.push(trunkGeo(H * 0.36, 0.055, 0.038, 'sw_wood', { sides: 3, rings: 1 }));
   const cells = ['croton', 'crotonB', 'crotonC'];
   const lead = Math.floor(rng() * 3);
@@ -3878,14 +3949,16 @@ function makeHibiscusBush(spec) {
 function makeAgave(spec) {
   const rng = makeRNG(spec.seed);
   const parts = [];
-  const R = spec.w * 0.33;
-  const n = 9 + Math.floor(rng() * 4);
+  const R = spec.w * 0.46;
+  const n = 10 + Math.floor(rng() * 4);
   for (let i = 0; i < n; i++) {
     const a = (i / n) * 6.283 + (rng() - 0.5) * 0.30;
-    // 35-55 degrees, which is what stops the rosette being a flat star.
-    const pitch = 0.61 + rng() * 0.35;
-    const len = R * (0.84 + rng() * 0.36);
-    const f = frondGeo(len, len * 0.34, 'agaveB', {
+    // 40-62 degrees. Steeper than the 35-55 the review asked for, because a
+    // blade shallower than ~0.42 rad has its tip inside the lowest fifth of the
+    // geometry — which is the band the consumption physics measures.
+    const pitch = 0.70 + rng() * 0.38;
+    const len = R * (0.84 + rng() * 0.40);
+    const f = frondGeo(len, len * 0.44, 'agaveB', {
       segs: 2, rise: 0.10, droop: 0.26, roll: 0.18 + rng() * 0.16, alongV: true,
     });
     _m4.makeRotationZ(pitch);
@@ -3899,10 +3972,10 @@ function makeAgave(spec) {
      non-green thing on the plant, and it is what makes the rosette look grown
      rather than moulded. Short and shallow so it stays clear of the contact
      band the physics measures. */
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * 6.283 + rng() * 0.7;
-    const len = R * (0.52 + rng() * 0.20);
-    const f = frondGeo(len, len * 0.40, 'agaveDry', {
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * 6.283 + rng() * 0.7;
+    const len = R * (0.48 + rng() * 0.18);
+    const f = frondGeo(len, len * 0.52, 'agaveDry', {
       segs: 2, rise: 0.04, droop: 0.30, roll: 0.42 + rng() * 0.24, alongV: true,
     });
     _m4.makeRotationZ(-(0.08 + rng() * 0.16));
@@ -7463,6 +7536,32 @@ function builtBlock(ctx, B, b, rng) {
       { clear: 1.2, force: true, tintIndex: i }, 3, 1.4);
   }
 }
+
+/* ======================================================================== */
+/*  DEV HOOK                                                                */
+/* ======================================================================== */
+
+/**
+ * Build one specimen of one species, with no city around it.
+ *
+ * `tools/prop-catalogue.mjs` photographs props out of the assembled world,
+ * which means it needs every OTHER content module to be healthy — and with six
+ * agents editing this tree at once it routinely is not: a half-written symbol
+ * in props.js or pedestrians.js takes `window.__GAME__` away and the catalogue
+ * times out on a defect that has nothing to do with the thing being reviewed.
+ *
+ * This is the escape hatch. nature.js's module graph is three, config,
+ * materials, rng, groundShader and cityLayout, so a specimen can always be
+ * built and looked at from here even when the rest of the world will not boot.
+ */
+export function specimen(key, variant = 0) {
+  const def = SPECIES[key];
+  if (!def) return null;
+  const { geometry, material } = factoryFor(key, variant % (def.variants || 1))();
+  return { geometry, material, def };
+}
+/** Every kind this module owns, for a caller that wants to sweep them. */
+export function speciesKeys() { return Object.keys(SPECIES); }
 
 /* ======================================================================== */
 /*  ENTRY POINT                                                             */

@@ -494,6 +494,21 @@ function hue(geo, hex, k = 1) {
 }
 
 /**
+ * Sit a finished prop exactly ON the ground plane.
+ *
+ * Anything assembled out of rotated parts lands a few millimetres off, and both
+ * directions are an automatic review failure: sunk props z-fight the paving,
+ * floating ones read as stickers. Measuring the merged result once at build
+ * time is cheaper and far more reliable than hand-solving every rotation.
+ */
+function ground(geo) {
+  geo.computeBoundingBox();
+  const min = geo.boundingBox.min.y;
+  if (min !== 0) { geo.translate(0, -min, 0); geo.computeBoundingBox(); }
+  return geo;
+}
+
+/**
  * A limb / trunk segment hanging DOWN from its joint at the origin.
  * `thetaStart` puts a flat face forward rather than an edge, which is what
  * makes a 5- or 6-sided prism read as chunky rather than as a spike.
@@ -575,9 +590,10 @@ function headGeo() {
   // is what gives the sphere a chin instead of a horizon.
   gradY(skull, 0.075, 0.175, 0.74, 1.0);
   parts.push(skull);
-  // Eyes. Small solids rather than cards, so they never read as a decal edge-on.
+  // Eyes. Small solids rather than cards, so they never read as a decal
+  // edge-on, and standing ~1 mm proud of the skull so they cannot z-fight it.
   for (const s of [-1, 1]) {
-    parts.push(box(0.024, 0.028, 0.016, s * 0.043, 0.196, 0.104, 0.13));
+    parts.push(box(0.024, 0.028, 0.020, s * 0.044, 0.196, 0.106, 0.13));
   }
   // Brow and nose in one wedge — a four-sided cone is six triangles and reads
   // as a profile from the side, which two eyes alone never do.
@@ -589,12 +605,28 @@ function headGeo() {
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
-/** Hair: a cap over the skull, pivot at the neck base. Per-agent scaled. */
+/**
+ * Hair: a cap over the skull, pivot at the neck base. Per-agent scaled.
+ *
+ * THE HAIRLINE IS WHY THE CROWD WAS FACELESS. The old cap ran a full 98 degrees
+ * from the crown at a radius larger than the skull's, which means it enclosed
+ * the front of the head down past the eye line — a helmet, not hair. Anything
+ * put on the face would have been rendered inside it. It is two pieces now: a
+ * full crown down to the brow, and a back-and-sides band below that with a
+ * 70-degree wedge left open at the front.
+ */
 function hairGeo() {
-  const g = new THREE.SphereGeometry(0.131, 6, 3, 0, Math.PI * 2, 0, 1.72);
-  g.scale(1, 1.14, 1.0);
-  g.translate(0, 0.178, -0.006);
-  return shadeGeo(g, 1.0);
+  const parts = [];
+  const crown = new THREE.SphereGeometry(0.131, 6, 2, 0, Math.PI * 2, 0, 1.30);
+  crown.scale(1, 1.14, 1.0);
+  crown.translate(0, 0.178, -0.006);
+  parts.push(shadeGeo(crown, 1.0));
+  const back = new THREE.SphereGeometry(
+    0.131, 6, 1, Math.PI / 2 + 0.62, Math.PI * 2 - 1.24, 1.26, 0.52);
+  back.scale(1, 1.14, 1.0);
+  back.translate(0, 0.178, -0.006);
+  parts.push(shadeGeo(back, 0.92));
+  return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
 /**
@@ -608,7 +640,7 @@ function hairGeo() {
 const ARM_L = 0.545;
 function armGeo() {
   const parts = [];
-  parts.push(limb(0.062, 0.048, ARM_L, 5, 1.0));
+  parts.push(limb(0.062, 0.048, ARM_L, 5, 1.0, 1, true));
   // Cuff: a short flared ring where a sleeve or a watch strap would sit.
   const cuff = new THREE.CylinderGeometry(0.052, 0.050, 0.036, 5, 1, true, Math.PI / 5);
   cuff.translate(0, -ARM_L + 0.052, 0);
@@ -783,8 +815,8 @@ function dogGeo(breed = 'short') {
   for (const s of [-1, 1]) {
     if (B.ear === 'drop') {
       // A folded ear hanging beside the cheek.
-      const e = bevBox(0.026 * B.hs, 0.095 * B.hs, 0.062 * B.hs,
-        s * 0.062 * B.hs, hy - 0.024 * B.hs, hx - 0.008, 0.70, 0.008);
+      const e = bar(0.026 * B.hs, 0.095 * B.hs, 0.062 * B.hs,
+        s * 0.062 * B.hs, hy - 0.024 * B.hs, hx - 0.008, 0.70, 6);
       parts.push(e);
     } else {
       const e = new THREE.ConeGeometry(0.042 * B.hs, 0.082 * B.hs, 3, 1, false, Math.PI / 3);
@@ -819,7 +851,7 @@ function dogGeo(breed = 'short') {
     parts.push(g);
     // The paw lands wherever the rake put the ankle, not under the hip.
     const pz = lz - Math.sin(rake) * top;
-    parts.push(bevBox(B.lr * 2.4, 0.032, B.lr * 3.1, s * B.gr * 0.52, 0.017, pz, 1.28, 0.008));
+    parts.push(box(B.lr * 2.4, 0.032, B.lr * 3.1, s * B.gr * 0.52, 0.017, pz, 1.28));
   }
 
   /* --- tail: two tapering segments, tapering and lifting ------------------ */
@@ -837,7 +869,7 @@ function dogGeo(breed = 'short') {
     ty += Math.sin(ang) * len;
     tz -= Math.cos(ang) * len;
   }
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1004,7 +1036,7 @@ function tripodGeo(head) {
     }
     parts.push(hue(bevBox(0.264, 0.030, 0.030, 0, hy + 0.072, 0, 1.0, 0.007), TRI_BLACK, 1.2));
   }
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1158,7 +1190,7 @@ function vendorMatGeo() {
     parts.push(hue(box(0.075, 0.012, 0.052, cx, T + 0.016 + tier * 0.056, -cz + 0.060, 1.0),
       PALETTE.SIGN_DARK, 1.6));
   }
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1246,7 +1278,7 @@ function foldTableGeo() {
       TOP_Y + 0.056, 0.02 + ((i / 2) | 0) * 0.100, 1.0),
     i % 3 ? PALETTE.CAR_YELLOW : PALETTE.NEON_AQUA));
   }
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1319,7 +1351,7 @@ function coolerGeo() {
       parts.push(bevBox(0.018, 0.100, 0.018, x, BH * 0.70 - 0.050, sz * 0.095, 0.22, 0.005));
     }
   }
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1374,7 +1406,7 @@ function bedrollGeo() {
   parts.push(hue(shadeGeo(bagB, 1.0), 0x9db8c6));                       // faded tarp blue
   parts.push(hue(bevBox(0.055, 0.036, 0.34, -0.33, 0.180, 0.26, 1.0, 0.008),
     PALETTE.STUCCO_SAND, 0.9));                                         // a webbing strap
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1500,7 +1532,7 @@ function trolleyGeo() {
     PALETTE.WOOD_DECK));
   parts.push(hue(box(0.245, 0.012, 0.05, -0.10, RY + 0.396, -0.02, 1.0),
     PALETTE.WOOD_DARK, 0.9));                            // tape down the box seam
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1549,10 +1581,10 @@ function crateGeo() {
   // Rim cleats top and bottom, which is what stops a stack of boards splaying.
   for (const y of [0.018, H - 0.020]) {
     for (const sz of [-1, 1]) {
-      parts.push(bevBox(W + 0.014, 0.036, 0.024, 0, y, sz * (D / 2 - 0.004), 0.68, 0.005));
+      parts.push(box(W + 0.014, 0.036, 0.024, 0, y, sz * (D / 2 - 0.004), 0.68));
     }
     for (const sx of [-1, 1]) {
-      parts.push(bevBox(0.024, 0.036, D - 0.03, sx * (W / 2 - 0.004), y, 0, 0.68, 0.005));
+      parts.push(box(0.024, 0.036, D - 0.03, sx * (W / 2 - 0.004), y, 0, 0.68));
     }
   }
   parts.push(bevBox(W - 0.02, 0.020, D - 0.02, 0, H - 0.006, 0, 0.94, 0.006));   // top slat deck
@@ -1561,7 +1593,7 @@ function crateGeo() {
     PALETTE.STUCCO_SAND, 1.15));
   parts.push(hue(box(0.13, 0.022, 0.004, -0.01, 0.240, D / 2 + 0.010, 1.0), PALETTE.SIGN_DARK));
   parts.push(hue(box(0.09, 0.018, 0.004, -0.03, 0.196, D / 2 + 0.010, 1.0), PALETTE.SIGN_DARK, 0.9));
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -1588,6 +1620,9 @@ function signCardGeo() {
   shape.closePath();
   const board = new THREE.ExtrudeGeometry(shape, { depth: 0.016, bevelEnabled: false });
   board.translate(0, 0, -0.008);
+  // ExtrudeGeometry is non-indexed and mergeGeometries refuses to mix indexed
+  // with non-indexed, so give it a trivial index rather than losing the merge.
+  board.setIndex([...Array(board.attributes.position.count).keys()]);
   // A soft bend across the middle: nothing that has been carried under an arm
   // is still flat.
   const bp = board.attributes.position;
@@ -1621,8 +1656,7 @@ function signCardGeo() {
   // Leaning back, and canted a few degrees, the way a propped sign always is.
   g.rotateX(-0.34);
   g.rotateZ(0.07);
-  g.translate(0, 0.010, 0);
-  return g;
+  return ground(g);
 }
 
 /**
@@ -1640,8 +1674,12 @@ function pigeonGeo(pose = 'stand') {
 
   /* --- legs and feet: the only orange on the bird, and it matters ---------- */
   for (const s of [-1, 1]) {
-    parts.push(hue(bar(0.014, 0.052, 0.014, s * 0.024, 0.048, 0.004, 1.0, 5), PIGEON_FOOT));
-    parts.push(hue(bevBox(0.030, 0.016, 0.048, s * 0.024, 0.014, 0.012, 1.0, 0.005), PIGEON_FOOT, 0.86));
+    // Leg and foot in ONE solid. At 25 cm tall with 180-odd of them on the
+    // paving, a pigeon cannot afford a second box per ankle.
+    const leg = box(0.030, 0.062, 0.052, s * 0.024, 0.031, 0.012, 1.0);
+    hue(leg, PIGEON_FOOT);
+    gradY(leg, 0.000, 0.030, 1.0, 0.72);
+    parts.push(leg);
   }
 
   /* --- body: deeper at the breast, tapering to the tail -------------------- */
@@ -1656,10 +1694,10 @@ function pigeonGeo(pose = 'stand') {
 
   /* --- folded wings, overlapping the body line so it is not one blob ------- */
   for (const s of [-1, 1]) {
-    const w = bevBox(0.026, 0.058, 0.150, s * 0.060, 0.116, -0.010, 1.0, 0.008);
+    const w = box(0.026, 0.058, 0.150, s * 0.060, 0.116, -0.010, 1.0);
     w.rotateX(tilt * 0.6);
     parts.push(hue(w, PIGEON_BODY, 0.80));
-    parts.push(hue(bevBox(0.030, 0.013, 0.070, s * 0.061, 0.096, -0.030, 1.0, 0.005),
+    parts.push(hue(box(0.030, 0.013, 0.070, s * 0.061, 0.096, -0.030, 1.0),
       PIGEON_BAR));                              // the wing bar
   }
 
@@ -1672,14 +1710,13 @@ function pigeonGeo(pose = 'stand') {
   neck.rotateX(nAng);
   neck.translate(0, 0.130 + Math.cos(nAng) * nLen * 0.42,
     0.030 + Math.sin(nAng) * nLen * 0.42);
-  parts.push(hue(shadeGeo(neck, 1.0), PIGEON_HEAD, 1.05));
-  // A hint of the throat iridescence every city pigeon actually has.
-  const throat = new THREE.CylinderGeometry(0.036, 0.040, 0.026, 6, 1, true, Math.PI / 6);
-  throat.rotateX(nAng);
-  throat.translate(0, 0.130 + Math.cos(nAng) * 0.030, 0.030 + Math.sin(nAng) * 0.030);
-  parts.push(hue(shadeGeo(throat, 1.0), PALETTE.CAR_TEAL, 0.85));
+  // A hint of the throat iridescence every city pigeon actually has, straight
+  // out of the neck's own vertices rather than a second ring.
+  hue(shadeGeo(neck, 1.0), PIGEON_HEAD, 1.05);
+  gradY(neck, 0.128, 0.190, 1.30, 1.0);
+  parts.push(neck);
 
-  const head = new THREE.SphereGeometry(0.042, 5, 3);
+  const head = new THREE.SphereGeometry(0.042, 5, 2);
   head.scale(1, 0.98, 1.06);
   head.translate(0, hy, hz);
   parts.push(hue(shadeGeo(head, 1.0), PIGEON_HEAD));
@@ -1687,19 +1724,15 @@ function pigeonGeo(pose = 'stand') {
   beak.rotateX(peck ? Math.PI * 0.86 : Math.PI / 2);
   beak.translate(0, hy - (peck ? 0.028 : 0.004), hz + (peck ? 0.020 : 0.048));
   parts.push(hue(shadeGeo(beak, 1.0), PALETTE.SIGN_DARK));
-  for (const s of [-1, 1]) {
-    parts.push(hue(box(0.008, 0.009, 0.008, s * 0.026, hy + 0.008, hz + 0.024, 1.0),
-      PALETTE.STUCCO_BUTTER, 1.2));              // eye
-  }
 
   /* --- tail: a long flat fan raked down at the rear ------------------------ */
-  const tail = bevBox(0.086, 0.014, 0.158, 0, 0, 0, 1.0, 0.005);
+  const tail = box(0.086, 0.014, 0.158, 0, 0, 0, 1.0);
   tail.rotateX(peck ? 0.55 : -0.24);
   tail.translate(0, peck ? 0.128 : 0.086, -0.155);
   parts.push(hue(tail, PIGEON_BODY, 0.90));
-  parts.push(hue(bevBox(0.078, 0.010, 0.030, 0, peck ? 0.150 : 0.070, -0.222, 1.0, 0.004),
+  parts.push(hue(box(0.078, 0.010, 0.030, 0, peck ? 0.150 : 0.070, -0.222, 1.0),
     PIGEON_BAR, 0.85));                          // pale tail band
-  return BufferGeometryUtils.mergeGeometries(parts, false);
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
 /**
@@ -4175,7 +4208,7 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
     // Pigeons are not a prop that belongs to a person. A plaza or a promenade
     // has them whether or not anyone is sitting there, and scattering them in
     // loose groups rather than singly is what makes them read as birds.
-    if ((green || prom || life > 0.58) && r.chance(0.34)) {
+    if ((green || prom || life > 0.58) && r.chance(0.20)) {
       const p = pitch(path, r, 1, 1.6, 4.4, 1.0);
       if (p) flock(props, r, p.x, p.z, yWalk, r.int(5, 8), 0.4, 1.7, 0.5);
     }
@@ -6088,3 +6121,39 @@ function poseItems(st, a, hip, shY, shZ, armL, armR, lean, twist, yaw, px, py, p
     poseInto(arr, it.slot, px, py, pz, yaw + yw, s, lx, ly, lz, sw, it.gx, it.gy, it.gz);
   }
 }
+
+/* ================================================================ probe === */
+
+/**
+ * The geometry of this module, exposed for measurement.
+ *
+ * Every prop here is sized by worldBuild from the LOWEST FIFTH of its own mesh,
+ * so "did that rebuild change the physics footprint" is a question about
+ * geometry alone — and answering it should not require booting a browser, a
+ * WebGL context and a whole city. Nothing in the game reads this.
+ */
+export const GEOMETRY_UNDER_TEST = {
+  dogShort: () => dogGeo('short'),
+  dogLean: () => dogGeo('lean'),
+  dogFluffy: () => dogGeo('fluffy'),
+  pigeon: () => pigeonGeo('stand'),
+  pigeonPeck: () => pigeonGeo('peck'),
+  streetMat: vendorMatGeo,
+  streetTable: foldTableGeo,
+  streetCooler: coolerGeo,
+  bedroll: bedrollGeo,
+  trolley: trolleyGeo,
+  soapbox: crateGeo,
+  signCard: signCardGeo,
+  tripod: () => tripodGeo('camera'),
+  lightstand: () => tripodGeo('light'),
+  pedHead: headGeo,
+  pedHair: hairGeo,
+  pedTorso: torsoGeo,
+  pedArm: armGeo,
+  pedThigh: thighGeo,
+  pedShin: shinGeo,
+  pedHat: hatGeo,
+  pedBag: bagGeo,
+  pedFallBody: () => fallBodyGeo(0xe0bd8e, 0x413b34, 0x3ecfb2, 0x2a4d80, false, 0),
+};

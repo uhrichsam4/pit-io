@@ -1409,33 +1409,33 @@ function flatbedBody(sh, load) {
     { z: 3.86, w: 2.06, h: 1.66, y0: 0.60 },
   ], { edgeRoles: OCT_SILL, capStart: false, capEnd: ROLE.BODY_LO });
   for (const s of [-1, 1]) faceX(sh, s * 1.10, 1.78, 3.00, 1.10, 0.62, ROLE.GLASS, s);
-  faceZ(sh, 0, 2.02, 3.86, 1.82, 0.70, ROLE.GLASS, 1);
+  faceZ(sh, 0, 1.90, 3.86, 1.82, 0.56, ROLE.GLASS, 1);
   truckFace(sh, {
     zN: 3.86, zL: 3.96, xF: 1.10, wF: 2.06, yG: 1.20, yL: 0.86, dxL: 0.78,
-    ySill: 0.42, yDoor: 1.55, zDoor: 3.00, yVisor: 2.42,
+    ySill: 0.42, yDoor: 1.55, zDoor: 3.00, yVisor: 2.24,
   });
-  cyl(sh, 0.92, 2.70, 1.42, 0.09, 0.09, 1.60, 6, 'y', ROLE.CHROME);        // stack
-  chamfer(sh, 0, 3.44, 1.42, 0.20, 0.16, 0.20, 0.04, ROLE.DARK);
+  cyl(sh, 1.14, 2.70, 1.24, 0.09, 0.09, 1.60, 6, 'y', ROLE.CHROME);        // stack
+  chamfer(sh, 1.14, 3.44, 1.24, 0.20, 0.16, 0.20, 0.04, ROLE.DARK);
   /* --- the deck ------------------------------------------------------------
    * 5.6 m of one saturated colour was the single largest flat surface on the
    * vehicle. It is a steel frame now, planked in two timber tones with a real
    * reveal between the boards, and a diamond-plate strip over each wheel line. */
-  chamfer(sh, 0, 1.02, -1.30, 2.34, 0.26, 5.60, 0.06, ROLE.DARK);
+  chamfer(sh, 0, 1.02, -1.45, 2.34, 0.26, 5.30, 0.06, ROLE.DARK);
   for (let i = 0; i < 10; i++) {
-    faceY(sh, -1.00 + i * 0.222, 1.15, -1.30, 0.19, 5.44, i % 2 ? ROLE.DECK_LO : ROLE.DECK);
+    faceY(sh, -1.00 + i * 0.222, 1.15, -1.45, 0.19, 5.14, i % 2 ? ROLE.DECK_LO : ROLE.DECK);
   }
-  for (const s of [-1, 1]) faceY(sh, s * 0.98, 1.152, -2.30, 0.24, 2.60, ROLE.STEEL);
-  // Headache rack behind the cab.
-  for (const s of [-1, 1]) box(sh, s * 1.02, 1.90, 1.36, 0.10, 1.40, 0.12, ROLE.DARK);
-  box(sh, 0, 2.56, 1.36, 2.14, 0.12, 0.12, ROLE.DARK);
-  for (const s of [-1, 1]) box(sh, s * 0.36, 1.90, 1.36, 0.07, 1.40, 0.08, ROLE.STEEL);
+  for (const s of [-1, 1]) faceY(sh, s * 0.98, 1.152, -2.40, 0.24, 2.40, ROLE.STEEL);
+  // Headache rack, standing just behind the cab.
+  for (const s of [-1, 1]) box(sh, s * 1.02, 1.90, 1.16, 0.10, 1.40, 0.12, ROLE.DARK);
+  box(sh, 0, 2.56, 1.16, 2.14, 0.12, 0.12, ROLE.DARK);
+  for (const s of [-1, 1]) box(sh, s * 0.36, 1.90, 1.16, 0.07, 1.40, 0.08, ROLE.STEEL);
   // Stake sides: a rail, four posts a side, and a top rail linking them.
   for (const s of [-1, 1]) {
-    chamfer(sh, s * 1.12, 1.30, -1.30, 0.10, 0.34, 5.50, 0.04, ROLE.BODY_LO);
-    for (let i = 0; i < 4; i++) box(sh, s * 1.12, 1.72, -3.6 + i * 1.5, 0.10, 0.86, 0.14, ROLE.DARK);
-    box(sh, s * 1.12, 2.12, -2.35, 0.08, 0.09, 4.60, ROLE.DARK);
+    chamfer(sh, s * 1.12, 1.30, -1.45, 0.10, 0.34, 5.20, 0.04, ROLE.BODY_LO);
+    for (let i = 0; i < 4; i++) box(sh, s * 1.12, 1.72, -3.7 + i * 1.45, 0.10, 0.86, 0.14, ROLE.DARK);
+    box(sh, s * 1.12, 2.12, -1.55, 0.08, 0.09, 4.40, ROLE.DARK);
   }
-  chamfer(sh, 0, 0.60, -1.30, 2.20, 0.34, 5.50, 0.06, ROLE.DARK);
+  chamfer(sh, 0, 0.60, -1.45, 2.20, 0.34, 5.20, 0.06, ROLE.DARK);
   // Mudguards over the rear bogie, fuel tank and battery box on the rail.
   for (const s of [-1, 1]) {
     box(sh, s * 1.02, 1.02, -2.70, 0.42, 0.10, 2.00, ROLE.DARK);
@@ -1476,14 +1476,14 @@ function garbageTruck(sh) {
   ], { role: ROLE.WHITE, edgeRoles: { 0: ROLE.DARK, 1: ROLE.DARK, 2: ROLE.DARK },
     capStart: false, capEnd: ROLE.WHITE });
   for (const s of [-1, 1]) faceX(sh, s * 1.14, 1.92, 3.10, 1.10, 0.62, ROLE.GLASS, s);
-  faceZ(sh, 0, 2.20, 3.92, 1.90, 0.72, ROLE.GLASS, 1);
+  faceZ(sh, 0, 2.02, 3.92, 1.90, 0.60, ROLE.GLASS, 1);
   truckFace(sh, {
     zN: 3.92, zL: 4.02, xF: 1.14, wF: 2.14, yG: 1.24, yL: 0.90, dxL: 0.82,
-    ySill: 0.44, yDoor: 1.62, zDoor: 3.10, yVisor: 2.62,
+    ySill: 0.44, yDoor: 1.62, zDoor: 3.10, yVisor: 2.40,
   });
   // Amber beacon bar across the cab roof.
-  box(sh, 0, 2.86, 3.20, 1.34, 0.10, 0.20, ROLE.DARK);
-  for (const s of [-1, 1]) faceZ(sh, s * 0.42, 2.90, 3.31, 0.42, 0.10, ROLE.AMBER, 1);
+  box(sh, 0, 2.74, 3.20, 1.34, 0.10, 0.20, ROLE.DARK);
+  for (const s of [-1, 1]) faceZ(sh, s * 0.42, 2.76, 3.31, 0.42, 0.09, ROLE.AMBER, 1);
   // Body: green, ribbed, with a rub rail and a livery panel.
   sweep(sh, SEC.OCT, [
     { z: -3.10, w: 2.30, h: 2.10, y0: 0.66 },
@@ -1530,10 +1530,10 @@ function cementMixer(sh) {
     { z: 3.90, w: 2.12, h: 1.86, y0: 0.60 },
   ], { edgeRoles: OCT_SILL, capStart: false, capEnd: ROLE.BODY_LO });
   for (const s of [-1, 1]) faceX(sh, s * 1.13, 1.94, 3.10, 1.10, 0.62, ROLE.GLASS, s);
-  faceZ(sh, 0, 2.22, 3.90, 1.88, 0.72, ROLE.GLASS, 1);
+  faceZ(sh, 0, 2.04, 3.90, 1.88, 0.60, ROLE.GLASS, 1);
   truckFace(sh, {
     zN: 3.90, zL: 4.00, xF: 1.13, wF: 2.12, yG: 1.24, yL: 0.90, dxL: 0.80,
-    ySill: 0.44, yDoor: 1.64, zDoor: 3.10, yVisor: 2.64,
+    ySill: 0.44, yDoor: 1.64, zDoor: 3.10, yVisor: 2.42,
   });
   /* --- the drum ------------------------------------------------------------
    * Tilted nose-up, discharging at the rear. `dp` gives a point at axial
@@ -1924,7 +1924,13 @@ const HULL_ROLES = { 5: ROLE.WHITE };
  * Boats are modelled with y = 0 at the waterline, so the placement code can
  * drop them straight onto the water plane and the bob animation is a simple
  * offset rather than a per-hull constant.
+ *
+ * The deck plane is the TOP EDGE of the hull section, so its height follows the
+ * sheer — it rises toward the bow. Anything standing on deck has to be placed
+ * against the local sheer height, not against a single number; a flat decal
+ * pinned at the transom height disappears under the deck amidships.
  */
+
 /**
  * Flybridge motor yacht — 31 of them along the seawall.
  *
@@ -1941,12 +1947,17 @@ function motorYacht(sh) {
     { z: 2.40, w: 4.20, h: 1.75, y0: -1.05 },
     { z: 5.60, w: 2.90, h: 1.70, y0: -0.95 },
     { z: 7.10, w: 0.80, h: 1.55, y0: -0.75 },
-  ], { role: ROLE.HULL, edgeRoles: HULL3_ROLES, capStart: ROLE.ANTIFOUL, capEnd: ROLE.HULL });
+  ], {
+    role: ROLE.HULL,
+    // The whole deck plane is teak, so the cockpit sole, the side decks and the
+    // foredeck all come out warm against the white without a single decal —
+    // and, being the sheer edge itself, they follow the sheer instead of
+    // sinking under it the way a flat panel does.
+    edgeRoles: { ...HULL3_ROLES, 6: ROLE.DECK },
+    capStart: ROLE.ANTIFOUL, capEnd: ROLE.HULL,
+  });
   // Sheer stripe sweeping the length of the topsides, above the boot stripe.
   for (const s of [-1, 1]) faceX(sh, s * 2.10, 0.42, -1.0, 10.2, 0.11, ROLE.ACCENT, s);
-  // Teak side decks and cockpit sole against the white.
-  faceY(sh, 0, 0.63, -4.60, 2.60, 2.90, ROLE.DECK);
-  for (const s of [-1, 1]) faceY(sh, s * 1.86, 0.632, 1.60, 0.52, 6.60, ROLE.DECK);
   // Saloon + flybridge, stepping back as they rise.
   chamfer(sh, 0, 1.35, -0.40, 3.50, 1.50, 6.20, 0.22, ROLE.WHITE);
   for (const s of [-1, 1]) {
@@ -2018,15 +2029,17 @@ function sailBoat(sh) {
   box(sh, 0, 1.14, -0.60, 0.86, 0.10, 0.60, ROLE.DECK);
   for (const z of [1.60, 2.30]) faceY(sh, 0, 1.11, z, 0.44, 0.34, ROLE.GLASS_DK);
   /* --- cockpit well --------------------------------------------------------
-   * Sunk below a coaming, with a wheel on a pedestal and a bench each side. */
-  box(sh, 0, 0.30, -2.70, 1.44, 0.10, 2.40, ROLE.DECK_LO);
+   * A dark sole ringed by a coaming that stands 200 mm proud of the deck: from
+   * the game's 3/4 camera the coaming's own shadow is what reads as the drop. */
+  faceY(sh, 0, 0.610, -2.70, 1.50, 2.40, ROLE.DECK_LO);
+  for (let i = 0; i < 5; i++) faceY(sh, -0.56 + i * 0.28, 0.618, -2.70, 0.20, 2.30, ROLE.DECK);
   for (const s of [-1, 1]) {
-    box(sh, s * 0.86, 0.52, -2.70, 0.14, 0.36, 2.40, ROLE.WHITE);
-    box(sh, s * 0.56, 0.44, -2.90, 0.46, 0.12, 1.90, ROLE.DECK);      // bench
+    box(sh, s * 0.86, 0.70, -2.70, 0.14, 0.30, 2.44, ROLE.WHITE);     // coaming
+    box(sh, s * 0.54, 0.68, -2.90, 0.46, 0.12, 1.90, ROLE.DECK);      // bench
   }
-  box(sh, 0, 0.52, -3.92, 1.70, 0.36, 0.14, ROLE.WHITE);
-  cyl(sh, 0, 0.62, -1.90, 0.14, 0.12, 0.56, 6, 'y', ROLE.CHROME);     // pedestal
-  cyl(sh, 0, 0.98, -1.90, 0.30, 0.30, 0.05, 8, 'z', ROLE.DARK, [false, false]);
+  box(sh, 0, 0.70, -3.90, 1.74, 0.30, 0.14, ROLE.WHITE);
+  cyl(sh, 0, 0.86, -1.90, 0.14, 0.12, 0.56, 6, 'y', ROLE.CHROME);     // pedestal
+  cyl(sh, 0, 1.22, -1.90, 0.30, 0.30, 0.05, 8, 'z', ROLE.DARK, [false, false]);
   // Bow pulpit, anchor roller and a chrome cleat.
   guardRail(sh, [
     { x: 0.86, y: 0.68, z: 4.10 }, { x: 0.60, y: 0.70, z: 4.90 },
@@ -2108,7 +2121,7 @@ function waterTaxi(sh) {
    * Cambered in three sections with a 0.10 m crown, a scalloped fascia and a
    * grab rail underneath. A dead-flat slab is what made it read as cardboard. */
   for (const s of [-1, 1]) {
-    for (const z of [1.60, -0.20, -2.00]) box(sh, s * 1.15, 1.55, z, 0.08, 1.50, 0.08, ROLE.CHROME);
+    for (const z of [1.60, -0.20, -2.00]) box(sh, s * 1.15, 1.45, z, 0.08, 1.72, 0.08, ROLE.CHROME);
   }
   const cw = 1.30, cy0 = 2.30, crown = 0.10;
   for (let i = 0; i < 3; i++) {
@@ -2139,8 +2152,8 @@ function waterTaxi(sh) {
   for (const s of [-1, 1]) box(sh, s * 0.63, 1.67, 2.74, 0.05, 0.40, 0.30, ROLE.CHROME);
   stamp(sh, (s2) => cyl(s2, 0, 0, 0, 0.16, 0.16, 0.04, 6, 'z', ROLE.DARK, [false, false]),
     { x: -0.32, y: 1.36, z: 2.62, rx: -0.42 });
-  for (const z of [0.60, -0.90, -2.40]) chamfer(sh, 0, 0.80, z, 2.10, 0.14, 0.44, 0.05, ROLE.DECK);
-  faceY(sh, 0, 0.58, -0.6, 2.10, 5.4, ROLE.DECK_LO);
+  faceY(sh, 0, 0.596, -0.6, 2.10, 5.4, ROLE.DECK_LO);                  // sole
+  for (const z of [0.60, -0.90, -2.40]) chamfer(sh, 0, 0.70, z, 2.10, 0.16, 0.44, 0.05, ROLE.DECK);
   cyl(sh, 0.42, 0.10, -3.94, 0.09, 0.09, 0.30, 6, 'z', ROLE.DARK);     // transom exhaust
 }
 
@@ -2199,15 +2212,17 @@ function sportFisher(sh) {
     faceX(sh, s * 1.57, 1.70, 1.30, 3.40, 0.08, ROLE.GLASS_HI, s);
   }
   /* --- cockpit well --------------------------------------------------------
-   * Sole dropped 0.28 m below the covering boards, inside a coaming, with a
-   * plank reveal every 0.24 m. */
-  box(sh, 0, 0.34, -3.60, 2.50, 0.10, 3.40, ROLE.DECK_LO);
-  for (let i = 0; i < 9; i++) faceY(sh, -1.08 + i * 0.27, 0.39, -3.60, 0.22, 3.30, ROLE.DECK);
-  for (const s of [-1, 1]) box(sh, s * 1.36, 0.52, -3.60, 0.20, 0.44, 3.50, ROLE.WHITE);
-  box(sh, 0, 0.52, -5.32, 2.70, 0.44, 0.20, ROLE.WHITE);
-  faceZ(sh, 0, 0.46, -5.44, 0.72, 0.52, ROLE.DECK, -1);            // transom door
-  chamfer(sh, 0, 0.72, -0.90, 1.30, 0.66, 0.50, 0.06, ROLE.WHITE); // bait station
-  faceY(sh, 0, 1.05, -0.90, 1.14, 0.40, ROLE.DECK_LO);
+   * A muted teak sole with a plank reveal every 0.28 m, ringed by a coaming
+   * standing 0.30 m proud of the covering boards. The old version was a flat
+   * bright-orange rectangle lying on a white deck, which read as a texturing
+   * error rather than as a fishing cockpit. */
+  faceY(sh, 0, 0.605, -3.60, 2.60, 3.50, ROLE.DECK_LO);
+  for (let i = 0; i < 9; i++) faceY(sh, -1.08 + i * 0.27, 0.614, -3.60, 0.21, 3.40, ROLE.DECK);
+  for (const s of [-1, 1]) box(sh, s * 1.42, 0.74, -3.60, 0.22, 0.34, 3.60, ROLE.WHITE);
+  box(sh, 0, 0.72, -5.40, 2.86, 0.34, 0.22, ROLE.WHITE);
+  faceZ(sh, 0, 0.20, -5.60, 0.72, 0.60, ROLE.DECK, -1);            // transom door
+  chamfer(sh, 0, 0.82, -0.90, 1.30, 0.62, 0.50, 0.06, ROLE.WHITE); // bait station
+  faceY(sh, 0, 1.11, -0.90, 1.14, 0.40, ROLE.DECK_LO);
   // Rod holders along the covering boards.
   for (const s of [-1, 1]) {
     for (let i = 0; i < 4; i++) {
@@ -2297,27 +2312,29 @@ function cruiseShip(sh) {
   }
   faceZ(sh, 0, 16.4, 10.22, 5.8, 1.20, ROLE.GLASS_DK, 1);
   faceZ(sh, 0, 17.10, 10.23, 5.8, 0.14, ROLE.GLASS_HI, 1);
-  cyl(sh, 0, 18.0, -6.0, 2.1, 1.8, 5.6, 10, 'y', ROLE.ACCENT);      // funnel
-  cyl(sh, 0, 21.0, -6.0, 1.9, 1.8, 0.7, 10, 'y', ROLE.DARK);        // black cap
+  cyl(sh, 0, 17.6, -6.0, 2.1, 1.8, 5.6, 10, 'y', ROLE.ACCENT);      // funnel
+  cyl(sh, 0, 20.6, -6.0, 1.9, 1.8, 0.7, 10, 'y', ROLE.DARK);        // black cap
   // Swept funnel fin.
-  sh.quad([-0.20, 16.0, -8.0], [0.20, 16.0, -8.0], [0.20, 21.2, -10.6], [-0.20, 21.2, -10.6],
+  sh.quad([-0.20, 15.4, -8.0], [0.20, 15.4, -8.0], [0.20, 20.8, -10.4], [-0.20, 20.8, -10.4],
     ROLE.ACCENT, [0, 18, -6]);
-  sh.quad([-0.20, 16.0, -8.0], [-0.20, 21.2, -10.6], [-0.20, 21.2, -9.2], [-0.20, 15.6, -6.4],
-    ROLE.ACCENT, [1, 18, -8]);
-  sh.quad([0.20, 16.0, -8.0], [0.20, 21.2, -10.6], [0.20, 21.2, -9.2], [0.20, 15.6, -6.4],
-    ROLE.ACCENT, [-1, 18, -8]);
+  for (const s of [-1, 1]) {
+    sh.quad([s * 0.20, 15.4, -8.0], [s * 0.20, 20.8, -10.4],
+      [s * 0.20, 20.8, -9.0], [s * 0.20, 15.0, -6.4], ROLE.ACCENT, [-s, 18, -8]);
+  }
   /* --- top deck ------------------------------------------------------------
-   * The camera looks down on ship roofs for most of the match. */
-  faceY(sh, 0, 13.20, -14.0, 6.2, 8.4, ROLE.WHITE);                 // pool surround
-  faceY(sh, 0, 13.22, -14.0, 4.6, 6.4, ROLE.BLUE);                  // pool
+   * The camera looks down on ship roofs for most of the match, and the highest
+   * accommodation block tops out at y = 14.5, aft of z = -4. That is the sun
+   * deck: pool, loungers and a rail line round the edge. */
+  faceY(sh, 0, 14.50, -9.5, 5.8, 7.0, ROLE.WHITE);                  // pool surround
+  faceY(sh, 0, 14.52, -9.5, 4.2, 5.2, ROLE.BLUE);                   // pool
   for (const s of [-1, 1]) {
     for (let i = 0; i < 4; i++) {
-      box(sh, s * 3.40, 13.34, -17.4 + i * 2.2, 0.70, 0.16, 1.60, ROLE.WHITE);
+      box(sh, s * 2.80, 14.60, -13.0 + i * 1.7, 0.66, 0.16, 1.40, ROLE.WHITE);
     }
   }
   guardRail(sh, [
-    { x: 4.30, y: 13.2, z: -20.0 }, { x: 4.60, y: 13.2, z: -14.0 },
-    { x: 4.60, y: 13.2, z: -8.0 },
+    { x: 3.10, y: 14.5, z: -13.6 }, { x: 3.10, y: 14.5, z: -8.0 },
+    { x: 3.10, y: 14.5, z: -3.0 },
   ], 0.90, ROLE.STEEL);
 }
 
