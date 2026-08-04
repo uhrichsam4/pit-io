@@ -244,16 +244,24 @@ const report = await page.evaluate(async (kindFilter) => {
     let floating = 0, sunken = 0, inWater = 0;
     const offenders = [];
     for (const { c, r } of m) {
-      if (Math.abs(r.baseY) > GROUND_TOL) {
-        // Only now is it worth a ray. A boat or a mangrove is meant to sit in
-        // the water, so its surface is the waterline, not the seabed.
-        const surf = floats ? 0 : surfaceUnder(c, r.baseY);
+      const wet = !floats && g.layout && g.layout.isWater
+        && g.layout.isWater(c.position.x, c.position.z);
+      let surf;
+      if (Math.abs(r.baseY) > GROUND_TOL || wet) {
+        // A boat or a mangrove is meant to sit in the water, so its surface is
+        // the waterline, not the seabed.
+        surf = floats ? 0 : surfaceUnder(c, r.baseY);
         const gap = surf === null ? r.baseY : r.baseY - surf;
-        if (gap > GROUND_TOL) { floating++; offenders.push({ id: c.id, gap: +gap.toFixed(2), over: +(surf ?? 0).toFixed(2), at: [Math.round(c.position.x), Math.round(c.position.z)] }); }
-        else if (gap < -GROUND_TOL && !floats) { sunken++; offenders.push({ id: c.id, gap: +gap.toFixed(2), over: +(surf ?? 0).toFixed(2), at: [Math.round(c.position.x), Math.round(c.position.z)] }); }
+        const at = [Math.round(c.position.x), Math.round(c.position.z)];
+        if (gap > GROUND_TOL) { floating++; offenders.push({ id: c.id, gap: +gap.toFixed(2), over: +(surf ?? 0).toFixed(2), at }); }
+        else if (gap < -GROUND_TOL && !floats) { sunken++; offenders.push({ id: c.id, gap: +gap.toFixed(2), over: +(surf ?? 0).toFixed(2), at }); }
       }
-      if (!floats && g.layout && g.layout.isWater
-          && g.layout.isWater(c.position.x, c.position.z)) inWater++;
+      // isWater() is a LAYOUT polygon test, and quays, piers, pontoons and the
+      // seawall coping all overhang it — all 154 mooring bollards, which stand
+      // on 1.36 m of seawall, were being reported as standing in the bay. A
+      // prop is only in the water when the water is the thing under it.
+      if (wet && surf !== undefined && surf !== null && surf > 0.30) continue;
+      if (wet) inWater++;
     }
 
     kinds.push({
