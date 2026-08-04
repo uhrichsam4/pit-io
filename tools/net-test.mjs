@@ -99,17 +99,20 @@ check('roster is symmetric', seenA.length === 1 && seenB.length === 1,
   `A sees ${seenA.length} peer(s), B sees ${seenB.length}`);
 
 /* 3. consumption replication ---------------------------------------------- */
-// Freeze A the instant it has eaten. Its own rAF loop keeps simulating between
-// playwright calls, and a 7 m hole parked on a city block keeps swallowing
-// things — so an unpaused A moves the target every time B closes the gap and
-// the two counts can never meet. Paused, dt is 0: the network still pumps, the
-// simulation does not.
+// Freeze BOTH the instant A has eaten. Their own rAF loops keep simulating
+// between playwright calls, and a hole parked on a city block keeps swallowing
+// things — whichever side is still running moves the target every time the
+// other closes the gap, and the two counts can never meet. Paused, dt is 0: the
+// network still pumps (receiving is a socket callback, not a simulation step),
+// the simulation does not.
 await A.evaluate(() => { DEV.devour(45); DEV.pause(true); });
+await B.evaluate(() => { DEV.pause(true); });
+const flush = (p) => p.evaluate(() => {
+  const g = window.__GAME__; g.net.update(g.player, g.clock.elapsedTime);
+});
 let aliveA = -1, aliveB = -2;
 for (let i = 0; i < 30; i++) {
-  // Flush A's queued ids without stepping its simulation.
-  await A.evaluate(() => { const g = window.__GAME__; g.net.update(g.player, g.clock.elapsedTime); });
-  await step(B);
+  await flush(A); await flush(B);
   await A.waitForTimeout(90);
   aliveA = await A.evaluate(() => window.__GAME__.registry.aliveCount);
   aliveB = await B.evaluate(() => window.__GAME__.registry.aliveCount);

@@ -90,27 +90,29 @@ class Room {
   }
 
   /**
-   * @param {boolean} onlyReady  skip clients that have not started playing yet.
+   * @param {?{lossy:boolean}} opts  `lossy` marks a message that a client may
+   *   simply not be sent — see below. EVERYTHING ELSE MUST BE DELIVERED: the
+   *   consumed-id relay is the only record that an object is gone, there is no
+   *   re-send and no reconciliation, so one dropped CONSUMED leaves that object
+   *   standing on that client for the rest of the match.
    *
-   * THIS FLAG IS LOAD-BEARING FOR THE 15 Hz TRAFFIC. A client opens its socket
-   * and then builds the entire city on the main thread — tens of seconds, and
-   * minutes on a loaded machine — during which it drains nothing. Snapshots
-   * kept arriving at 15 Hz, so by the time the liveness ping was written it sat
-   * behind thousands of queued frames that the blocked renderer would never
-   * read. The pong never came, the sweep called terminate(), and every player
+   * Snapshots are the exception, and gating them is load-bearing. A client
+   * opens its socket and then builds the entire city on the main thread — tens
+   * of seconds, minutes on a loaded machine — during which it drains nothing.
+   * At 15 Hz that queued thousands of frames, so when the liveness ping was
+   * finally written it sat behind all of them and the blocked renderer never
+   * reached it. No pong, so the sweep called terminate(), and every player
    * whose machine was slow to load was kicked out mid-loading-screen with a
-   * 1006. Roster and match events are rare and small, so they still go to
-   * everyone; the firehose does not.
+   * 1006. A snapshot is pure current state and the next one supersedes it, so
+   * skipping one costs nothing.
    */
-  broadcast(type, data, exceptId = null, onlyReady = false) {
+  broadcast(type, data, exceptId = null, opts = null) {
+    const lossy = !!(opts && opts.lossy);
     const msg = encode(type, data);
     for (const c of this.clients.values()) {
       if (c.id === exceptId) continue;
-      if (onlyReady && !c.ready) continue;
       if (c.ws.readyState !== 1) continue;
-      // Second line of defence: a client that has stopped draining gets no more
-      // volume until it catches up, rather than an ever-growing kernel buffer.
-      if (onlyReady && c.ws.bufferedAmount > 262144) continue;
+      if (lossy && (!c.ready || c.ws.bufferedAmount > 262144)) continue;
       c.ws.send(msg);
     }
   }
@@ -237,7 +239,7 @@ class Room {
       const ids = [...new Set(this.pendingConsumed)];
       this.pendingConsumed.length = 0;
       for (let i = 0; i < ids.length; i += 300) {
-        this.broadcast(S2C.CONSUMED, { ids: ids.slice(i, i + 300) }, null, true);
+        this.broadcast(S2C.CONSUMED, { ids: ids.slice(i, i + 300) });
       }
     }
 
@@ -246,7 +248,7 @@ class Room {
       holes.push([c.id, round2(c.x), round2(c.z), round2(c.r), Math.round(c.score), c.alive ? 1 : 0]);
     }
     this.broadcast(S2C.SNAPSHOT, { t: now, holes, timeLeft: Math.round(this.timeLeft) },
-      null, true);
+      null, { lossy: true });
   }
 }
 

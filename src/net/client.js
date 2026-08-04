@@ -186,9 +186,15 @@ export class NetClient {
         r: +localHole.radius.toFixed(3),
         score: Math.round(localHole.score),
       }));
-      if (this._pendingAte.length) {
-        this.ws.send(encode(C2S.ATE, { ids: this._pendingAte.slice(0, 300) }));
-        this._pendingAte.length = 0;
+      // Drain the WHOLE queue, in server-sized chunks. This used to send the
+      // first 300 ids and then clear the array, so everything past 300 was
+      // thrown away — and 300 is nothing: one bite of a city block at a large
+      // radius queues hundreds in a single frame. The objects vanished locally
+      // and stayed standing on every other client, permanently, because there
+      // is no re-send and no reconciliation. Splice, so the send list and the
+      // clear can never disagree.
+      while (this._pendingAte.length) {
+        this.ws.send(encode(C2S.ATE, { ids: this._pendingAte.splice(0, 300) }));
       }
     }
 
