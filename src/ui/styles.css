@@ -577,8 +577,18 @@ html, body {
   align-items: center; justify-content: center; flex-direction: column;
   background: radial-gradient(ellipse at 50% 50%, rgba(120, 8, 44, 0) 30%, rgba(120, 8, 44, 0.45) 100%);
 }
-#hud-dead.on { display: flex; animation: deadIn 0.3s ease-out; }
-@keyframes deadIn { from { opacity: 0; } to { opacity: 1; } }
+/* PERSISTENT state, so its visibility must not depend on an animation having
+   run. `deadIn` used to fade in from opacity 0 with no fill mode: any moment
+   the document timeline is not advancing — a starved main thread mid-build, a
+   backgrounded tab, the reduced-motion override every capture runs under — the
+   whole respawn card is left sitting at 0% and the player is told nothing at
+   all about why they cannot move. The entry is a scale on the CARD instead;
+   the overlay itself is simply on. */
+#hud-dead.on { display: flex; opacity: 1; animation: deadWash 0.3s ease-out; }
+@keyframes deadWash {
+  from { backdrop-filter: none; transform: scale(1.04); }
+  to   { transform: none; }
+}
 /* The killer's name lands on whatever happens to be under the camera — a
    glass tower, a lawn, a white plaza. It needs its own plate, not a shadow. */
 #hud-dead .card {
@@ -904,20 +914,28 @@ html, body {
   border: 0.02em solid rgba(255, 255, 255, 0.55);
   animation: cdRing 0.85s var(--ease) forwards;
 }
+/* Both start FULLY OPAQUE. The count-in runs in the two seconds straight after
+   startMatch() — the heaviest moment in the game, when the world has just been
+   rebuilt and the main thread is at its most starved. An entry keyframe at
+   opacity 0 means that is exactly when "3 / 2 / 1 / GO" is most likely to be
+   left invisible, which is the one moment it has to be seen. Neither can stick
+   on screen: showCountdown() replaces the node each second and the PLAYING
+   transition clears the layer outright. */
 @keyframes cdPop {
-  0%   { opacity: 0; transform: scale(2.1); }
+  0%   { opacity: 1; transform: scale(2.1); }
   22%  { opacity: 1; transform: scale(1); }
   70%  { opacity: 1; transform: scale(0.98); }
   100% { opacity: 0; transform: scale(0.86); }
 }
 @keyframes cdGo {
-  0%   { opacity: 0; transform: scale(0.5); }
+  0%   { opacity: 1; transform: scale(0.5); }
   20%  { opacity: 1; transform: scale(1.14); }
   40%  { transform: scale(1); }
   100% { opacity: 0; transform: scale(1.5); }
 }
 @keyframes cdRing {
   0%   { opacity: 0.9; transform: scale(0.4); }
+  /* (the ring may sit at 0% harmlessly — it is decoration around the digit) */
   100% { opacity: 0; transform: scale(1.5); }
 }
 
@@ -1118,7 +1136,14 @@ html, body {
 }
 .rs-rows .row {
   height: 1.9em; padding-left: 0.5em;
-  opacity: 0; animation: rowIn 0.34s var(--ease) forwards;
+  /* Transform-only, and NO `opacity: 0` base — same reason as rsCardIn above.
+     With an opacity-0 base plus a staggered delay, a stalled document timeline
+     leaves the entire final standings list blank on the end screen. */
+  animation: rowSlideIn 0.32s var(--ease) both;
+}
+@keyframes rowSlideIn {
+  from { transform: translateX(-0.6em); }
+  to   { transform: none; }
 }
 .rs-rows .row .rk {
   width: 1.3em; text-align: center; flex: none;

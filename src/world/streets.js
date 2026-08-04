@@ -2134,7 +2134,15 @@ export function buildStreets(ctx) {
     /* The land the radius gave back to the carriageway. Paved as ROAD, because
      * that is what the inside of a kerb radius is — the apron every turning
      * vehicle actually drives over. Emitted from the square corner outward, so
-     * it abuts the junction box on both legs without overlapping it. */
+     * it abuts the junction box on both legs without overlapping it.
+     *
+     * Fanned by hand rather than through polyY: the region is a square with a
+     * CONCAVE arc bitten out of it, so it is star-shaped about the square
+     * corner and about nothing else — and polyY reverses its point list
+     * whenever the winding comes out clockwise, which is half of the four
+     * corners, and that quietly moves the fan origin onto the arc where the
+     * triangles fold back through the void they are supposed to be filling.
+     * triUp fixes the origin at the corner and settles the facing per triangle. */
     for (let i = 0; i < 4; i++) {
       const R = roundAt[i];
       if (!R) continue;
@@ -2142,15 +2150,12 @@ export function buildStreets(ctx) {
       // Inward sign on each axis for this corner of the block.
       const sx = (i === 0 || i === 3) ? 1 : -1;
       const sz = (i === 0 || i === 1) ? 1 : -1;
-      const pts = [[cx, cz]];
-      for (let k = 0; k <= 6; k++) {
-        const a = (k / 6) * Math.PI * 0.5;
-        pts.push([
-          cx + sx * R * (1 - Math.cos(a)),
-          cz + sz * R * (1 - Math.sin(a)),
-        ]);
-      }
-      road.polyY(pts, Y_ROAD, 1.0);
+      const arc = (k) => {
+        const a = (k / 7) * Math.PI * 0.5;
+        return [cx + sx * R * (1 - Math.cos(a)), Y_ROAD, cz + sz * R * (1 - Math.sin(a))];
+      };
+      const C = [cx, Y_ROAD, cz];
+      for (let k = 0; k < 7; k++) road.triUp(C, arc(k), arc(k + 1), 1.0);
       // Claim it: streets.js runs first, and nothing else knows this corner of
       // the block stopped being footway.
       ctx.occupy(cx + sx * R * 0.42, cz + sz * R * 0.42, R * 0.62);
