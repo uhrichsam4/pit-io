@@ -315,7 +315,7 @@ function paletteFor(v) {
     amber: PALETTE.INDICATOR,
     plate: 0xf0ead6,
     dark: 0x23262a,
-    seat: 0x3a3c40,
+    seat: v.seat ?? 0x3a3c40,
     hull: v.hull ?? PALETTE.HULL_WHITE,
     deck: v.deck ?? PALETTE.TEAK,
     sail: v.sail ?? PALETTE.SAIL,
@@ -582,9 +582,13 @@ function tube(sh, a, b, r0, r1, seg, role, caps = [true, true]) {
 function ram(sh, a, b, rb, o = {}) {
   const f = o.out ?? 0.55;            // how far along the rod is extended
   const m = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
-  tube(sh, a, m, rb, rb, 6, o.barrel ?? ROLE.MACH_LO);
-  tube(sh, m, b, rb * 0.52, rb * 0.52, 5, ROLE.CHROME);
-  for (const p of [a, b]) box(sh, p[0], p[1], p[2], rb * 2.4, rb * 1.5, rb * 1.5, ROLE.DARK);
+  tube(sh, a, m, rb, rb, 6, o.barrel ?? ROLE.DARK);
+  // PLATE, not CHROME, for the rod. A chrome rod is physically right and
+  // visually wrong here: at metalness 0.92 under a turquoise sky it comes out
+  // as a glowing cyan stick, which is the exact artefact three reviews called
+  // an error. PLATE is a bright matte off-white and reads as polished steel.
+  tube(sh, m, b, rb * 0.62, rb * 0.62, 5, ROLE.PLATE);
+  for (const p of [a, b]) box(sh, p[0], p[1], p[2], rb * 2.6, rb * 1.7, rb * 1.7, ROLE.MACH_LO);
 }
 
 /**
@@ -843,13 +847,31 @@ function faceZ(sh, x, y, z, w, h, role, dz) {
   else sh.flat(b, a, d, c, role, [0, 0, -1]);
 }
 
-/** Decal quad on an x-facing surface (door livery, side markers). */
+/**
+ * Decal quad on an x-facing surface (door livery, side markers).
+ *
+ * THE WINDING WAS INVERTED, AND IT COST THE WHOLE FLEET ITS SIDE DETAIL.
+ * -------------------------------------------------------------------------
+ * `flat` emits (a,b,c) and (a,c,d) verbatim — it does not auto-orient the way
+ * `quad` does — and the old corner order gave the +x decal a geometric normal
+ * of -x and the -x decal a normal of +x. Under the default FrontSide material
+ * that means every faceX decal in the city was back-face culled from the only
+ * direction you can actually see it from: a decal on the right flank was
+ * rendered only for a viewer standing inside the vehicle.
+ *
+ * That single bug is behind four separate review verdicts — the motor yacht
+ * with "no windows at all", the shuttle bus with "no passenger glazing on
+ * either flank", the delivery van whose signwriting "came out as blank white
+ * boxes", and the cruise ship with "no windows". The normals were always
+ * right; only the corner order was wrong. faceY and faceZ are correct and are
+ * left alone.
+ */
 function faceX(sh, x, y, z, d, h, role, dx) {
   const hz = d / 2, hy = h / 2, xx = x + dx * 0.014;
   const a = [xx, y - hy, z - hz], b = [xx, y - hy, z + hz];
   const c = [xx, y + hy, z + hz], e = [xx, y + hy, z - hz];
-  if (dx > 0) sh.flat(a, b, c, e, role, [1, 0, 0]);
-  else sh.flat(b, a, e, c, role, [-1, 0, 0]);
+  if (dx > 0) sh.flat(a, e, c, b, role, [1, 0, 0]);
+  else sh.flat(b, c, e, a, role, [-1, 0, 0]);
 }
 
 /** Decal quad lying on a horizontal surface (roof markings, deck panels). */
@@ -1161,7 +1183,7 @@ function gtCoupe(sh) {
   pillar(sh, 0.87, 1.20, -1.10, 0.12, 0.30);
   // Sky-reflection bands across the top of both screens. The flanks get theirs
   // from CABIN_GLOSS_ROLES; the screens are caps, so they need it drawn on.
-  sh.flat([-0.62, 1.30, 0.09], [0.62, 1.30, 0.09], [0.66, 1.25, 0.15], [-0.66, 1.25, 0.15],
+  sh.flat([-0.66, 1.25, 0.15], [0.66, 1.25, 0.15], [0.62, 1.30, 0.09], [-0.62, 1.30, 0.09],
     ROLE.GLASS_HI, [0, 0.6, 0.8]);
   sh.flat([0.60, 1.21, -1.95], [-0.60, 1.21, -1.95], [-0.64, 1.17, -1.88], [0.64, 1.17, -1.88],
     ROLE.GLASS_HI, [0, 0.6, -0.8]);
@@ -1310,7 +1332,8 @@ function police(sh) {
     cyl(s2, 0, 0, 0, 0.09, 0.09, 0.22, 6, 'z', ROLE.DARK);
     faceZ(s2, 0, 0, 0.11, 0.14, 0.10, ROLE.HEAD, 1);
   }, { x: -0.90, y: 1.62, z: 0.94, ry: -0.5 });
-  cyl(sh, 0.72, 2.06, -2.10, 0.025, 0.02, 1.10, 4, 'y', ROLE.DARK);
+  // Whip antenna. 45 mm, not 25: the bible bans needle-thin geometry outright.
+  cyl(sh, 0.72, 1.92, -2.10, 0.045, 0.03, 0.86, 5, 'y', ROLE.DARK);
 }
 
 /* ================================================ shape: vans, trucks == */
@@ -1414,8 +1437,10 @@ function flatbedBody(sh, load) {
     zN: 3.86, zL: 3.96, xF: 1.10, wF: 2.06, yG: 1.20, yL: 0.86, dxL: 0.78,
     ySill: 0.42, yDoor: 1.55, zDoor: 3.00, yVisor: 2.24,
   });
-  cyl(sh, 1.14, 2.70, 1.24, 0.09, 0.09, 1.60, 6, 'y', ROLE.CHROME);        // stack
-  chamfer(sh, 1.14, 3.44, 1.24, 0.20, 0.16, 0.20, 0.04, ROLE.DARK);
+  // Stack in dark steel, not chrome: a polished cylinder at metalness 0.92
+  // mirrors the Miami sky and comes out as a glowing cyan pole.
+  cyl(sh, 1.14, 2.70, 1.24, 0.09, 0.09, 1.60, 6, 'y', ROLE.DARK);          // stack
+  chamfer(sh, 1.14, 3.44, 1.24, 0.20, 0.16, 0.20, 0.04, ROLE.STEEL);
   /* --- the deck ------------------------------------------------------------
    * 5.6 m of one saturated colour was the single largest flat surface on the
    * vehicle. It is a steel frame now, planked in two timber tones with a real
@@ -1558,14 +1583,14 @@ function cementMixer(sh) {
   emit(0.70, 1.30, -3.60, -2.10, ROLE.MACH);
   emit(1.30, 1.30, -2.10, 0.40, ROLE.MACH);
   emit(1.30, 0.86, 0.40, 1.50, ROLE.MACH);
-  // Dried-concrete wash over the bottom of the barrel: this is a working truck.
-  for (let i = 0; i < 5; i++) {
-    const a0 = Math.PI * (0.62 + 0.31 * (i / 5)), a1 = Math.PI * (0.62 + 0.31 * ((i + 1) / 5));
-    for (const m of [1, -1]) {
-      sh.quad(dp(-2.20 - drumZ, m * a0, 1.31), dp(-2.20 - drumZ, m * a1, 1.31),
-        dp(0.40 - drumZ, m * a1, 1.31), dp(0.40 - drumZ, m * a0, 1.31),
-        ROLE.DUSTY, [0, drumY, drumZ]);
-    }
+  /* Dried-concrete wash over the BOTTOM of the barrel: this is a working truck.
+   * In `dp`, angle 0 is +x and pi/2 is straight up, so the underside is the
+   * arc between pi and 2pi. */
+  for (let i = 0; i < 6; i++) {
+    const a0 = Math.PI * (1.12 + 0.76 * (i / 6)), a1 = Math.PI * (1.12 + 0.76 * ((i + 1) / 6));
+    sh.quad(dp(-2.20 - drumZ, a0, 1.31), dp(-2.20 - drumZ, a1, 1.31),
+      dp(0.40 - drumZ, a1, 1.31), dp(0.40 - drumZ, a0, 1.31),
+      ROLE.DUSTY, [0, drumY, drumZ]);
   }
   // Three raised helical fin bands. A bare cone-cylinder is not a mixer.
   for (let b = 0; b < 3; b++) {
@@ -1595,11 +1620,11 @@ function cementMixer(sh) {
   chamfer(sh, 0, 2.20, -3.86, 1.20, 0.36, 0.30, 0.06, ROLE.MACH_LO);       // chute hinge
   // Water tank behind the cab, ladder up the near side to a catwalk.
   cyl(sh, 0, 3.10, 1.90, 0.42, 0.42, 1.70, 8, 'x', ROLE.WHITE);
-  for (const s of [-1, 1]) box(sh, s * 1.06, 1.30, -1.2, 0.14, 1.70, 0.20, ROLE.STEEL);
-  for (let i = 0; i < 4; i++) box(sh, 1.20, 0.90 + i * 0.42, 0.90, 0.10, 0.07, 0.46, ROLE.CHROME);
-  box(sh, 1.16, 2.62, -0.60, 0.34, 0.08, 2.60, ROLE.STEEL);                // catwalk
-  box(sh, 1.30, 3.06, -0.60, 0.07, 0.80, 0.07, ROLE.CHROME);
-  box(sh, 1.30, 3.42, -0.60, 0.07, 0.07, 2.60, ROLE.CHROME);
+  for (const s of [-1, 1]) box(sh, s * 1.06, 1.30, -1.2, 0.14, 1.70, 0.20, ROLE.DARK);
+  for (let i = 0; i < 4; i++) box(sh, 1.20, 0.90 + i * 0.42, 0.90, 0.10, 0.07, 0.46, ROLE.DARK);
+  box(sh, 1.16, 2.62, -0.60, 0.34, 0.08, 2.60, ROLE.DARK);                 // catwalk
+  box(sh, 1.30, 3.06, -0.60, 0.08, 0.80, 0.08, ROLE.MACH_LO);
+  box(sh, 1.30, 3.42, -0.60, 0.08, 0.08, 2.60, ROLE.MACH_LO);
   chamfer(sh, 0, 0.66, -0.9, 2.16, 0.34, 6.6, 0.06, ROLE.DARK);
   wheels4(sh, 1.02, 2.80, -1.80, 0.50, 0.32, 7);
   wheel(sh, 1.02, 0.50, -2.90, 0.50, 0.32, 7); wheel(sh, -1.02, 0.50, -2.90, 0.50, 0.32, 7);
@@ -1665,7 +1690,8 @@ function articBus(sh) {
   for (const z of [6.60, 2.60, -4.20]) {
     for (const s of [-1, 1]) {
       faceX(sh, s * 1.28, 1.60, z, 1.20, 1.90, ROLE.GLASS, s);
-      faceX(sh, s * 1.29, 1.60, z, 0.05, 1.90, ROLE.DARK, s);       // door leaf split
+      // Body colour, not dark: a dark split line on dark glass is invisible.
+      faceX(sh, s * 1.29, 1.60, z, 0.07, 1.90, ROLE.BODY, s);       // door leaf split
       faceX(sh, s * 1.29, 0.68, z, 1.24, 0.10, ROLE.DARK, s);       // step well shadow
     }
   }
@@ -1713,21 +1739,31 @@ function shuttleBus(sh) {
     { z: -3.00, w: 2.22, h: 2.38, y0: 0.32 },
     { z: 2.60, w: 2.22, h: 2.38, y0: 0.32 },
     { z: 3.55, w: 2.04, h: 2.20, y0: 0.32, rake: -0.26 },
-  ], { edgeRoles: COACH_ROLES, capStart: ROLE.BODY, capEnd: ROLE.GLASS });
+  ], {
+    /* The COACH section paints its own flank band as saloon glazing, which on
+     * this body ran from y = 1.13 to 2.18 — over half the side — and still did
+     * not read as windows, because nothing broke it up. The band is painted
+     * body colour here and the glazing is authored explicitly instead: a
+     * shallower run with WHITE mullions through it. Dark mullions on dark glass
+     * are invisible; it is the white pillars between the panes that make a
+     * window band read as windows. */
+    edgeRoles: { ...COACH_ROLES, 4: ROLE.BODY, 10: ROLE.BODY },
+    capStart: ROLE.BODY, capEnd: ROLE.GLASS,
+  });
   for (const s of [-1, 1]) {
     faceX(sh, s * 1.12, 1.00, 0, 5.8, 0.42, ROLE.ACCENT, s);
-    // Continuous saloon glazing, z -2.6 .. 2.4, split by four dark mullions.
-    faceX(sh, s * 1.12, 1.80, -0.10, 5.00, 0.90, ROLE.GLASS, s);
+    // Continuous saloon glazing, z -2.6 .. 2.4, split by four mullions.
+    faceX(sh, s * 1.12, 1.82, -0.10, 5.00, 0.86, ROLE.GLASS, s);
     faceX(sh, s * 1.125, 2.21, -0.10, 5.00, 0.09, ROLE.GLASS_HI, s);
     for (let i = 0; i < 4; i++) {
-      faceX(sh, s * 1.13, 1.80, -2.00 + i * 1.00, 0.09, 0.92, ROLE.DARK, s);
+      faceX(sh, s * 1.13, 1.82, -2.00 + i * 1.00, 0.10, 0.88, ROLE.BODY, s);
     }
-    faceX(sh, s * 1.13, 1.34, -0.10, 5.00, 0.07, ROLE.DARK, s);      // waist rail
+    faceX(sh, s * 1.13, 1.34, -0.10, 5.00, 0.07, ROLE.BODY_LO, s);   // waist rail
   }
   // Glazed entry door with a step well, behind the front axle, kerb side.
-  faceX(sh, 1.13, 1.60, 1.62, 0.98, 1.42, ROLE.DARK, 1);
-  faceX(sh, 1.14, 1.72, 1.62, 0.84, 1.10, ROLE.GLASS, 1);
-  faceX(sh, 1.14, 0.78, 1.62, 0.90, 0.24, ROLE.DARK, 1);
+  faceX(sh, 1.13, 1.60, 1.62, 0.98, 1.46, ROLE.BODY_LO, 1);
+  faceX(sh, 1.14, 1.74, 1.62, 0.84, 1.10, ROLE.GLASS, 1);
+  faceX(sh, 1.14, 0.80, 1.62, 0.90, 0.24, ROLE.DARK, 1);
   faceZ(sh, 0, 1.70, -3.62, 1.44, 0.86, ROLE.GLASS, -1);             // rear window
   faceZ(sh, 0, 2.66, 3.42, 1.44, 0.28, ROLE.SIGN, 1);                // destination blind
   // Knocked-back paint, not white: a white pod on a white roof is no pod.
@@ -2243,8 +2279,10 @@ function sportFisher(sh) {
   chamfer(sh, 0, 3.86, 1.30, 2.30, 0.12, 1.60, 0.05, ROLE.WHITE);
   chamfer(sh, 0, 4.58, 1.30, 1.60, 0.14, 1.10, 0.05, ROLE.WHITE);
   // Two outriggers swept back and out from the tower, not one vertical pole.
+  // 0.10 m at the root: the bible bans needle-thin geometry, and a 4 m spar at
+  // 45 mm is exactly that.
   for (const s of [-1, 1]) {
-    tube(sh, [s * 1.00, 4.40, 1.10], [s * 3.10, 5.40, -2.40], 0.07, 0.045, 5, ROLE.CHROME);
+    tube(sh, [s * 1.00, 4.40, 1.10], [s * 3.10, 5.40, -2.40], 0.10, 0.06, 5, ROLE.WHITE);
   }
 }
 
@@ -2358,8 +2396,30 @@ function ropsFrame(sh, o) {
   for (const z of [z0, z1]) box(sh, 0, y1, z, x * 2, r, r, ROLE.DARK);
 }
 function stepLadder(sh, x, y0, z, n, dx) {
-  for (let i = 0; i < n; i++) box(sh, x, y0 + i * 0.34, z, 0.30, 0.06, 0.10, ROLE.CHROME);
-  box(sh, x + dx * 0.14, y0 + n * 0.34 * 0.5 + 0.40, z, 0.06, n * 0.34 + 0.70, 0.06, ROLE.CHROME);
+  for (let i = 0; i < n; i++) box(sh, x, y0 + i * 0.34, z, 0.30, 0.06, 0.10, ROLE.DARK);
+  box(sh, x + dx * 0.14, y0 + n * 0.34 * 0.5 + 0.40, z, 0.07, n * 0.34 + 0.70, 0.07, ROLE.MACH_LO);
+}
+
+/**
+ * A machine cab: a body in knocked-back machine paint, a dark surround, and
+ * glazing inside it.
+ *
+ * Building the cab shell itself out of ROLE.DARK — which is what the first pass
+ * did — makes the whole cab a black brick, because the dark glass then has
+ * nothing to sit against. The surround has to be a frame, not the body.
+ */
+function machCab(sh, o) {
+  const { x = 0, y, z, w, h, d, b = 0.12 } = o;
+  chamfer(sh, x, y, z, w, h, d, b, ROLE.MACH_LO);
+  const gy = y + h * 0.14, gh = h * 0.52;
+  for (const s of [-1, 1]) {
+    faceX(sh, x + s * w * 0.5, gy, z, d * 0.84, gh + 0.10, ROLE.DARK, s);
+    faceX(sh, x + s * (w * 0.5 + 0.008), gy, z, d * 0.74, gh, ROLE.GLASS, s);
+  }
+  faceZ(sh, x, gy, z + d * 0.5, w * 0.80, gh + 0.10, ROLE.DARK, 1);
+  faceZ(sh, x, gy, z + d * 0.5 + 0.008, w * 0.70, gh, ROLE.GLASS, 1);
+  faceZ(sh, x, gy, z - d * 0.5, w * 0.80, gh + 0.10, ROLE.DARK, -1);
+  faceZ(sh, x, gy, z - d * 0.5 - 0.008, w * 0.70, gh, ROLE.GLASS, -1);
 }
 
 /**
@@ -2383,28 +2443,31 @@ function excavator(sh) {
   faceZ(sh, 0, 1.50, -2.36, 2.00, 1.20, ROLE.GRIME, -1);            // counterweight face
   for (const s of [-1, 1]) faceX(sh, s * 1.21, 1.70, -0.90, 1.90, 0.36, ROLE.MACH_LO, s);
   for (const s of [-1, 1]) faceX(sh, s * 1.22, 1.28, -0.90, 1.10, 0.28, ROLE.WHITE, s);
-  chamfer(sh, -0.72, 2.10, 0.62, 1.10, 1.90, 1.60, 0.14, ROLE.DARK);
-  faceZ(sh, -0.72, 2.30, 1.44, 0.86, 1.10, ROLE.GLASS, 1);
-  faceX(sh, -1.28, 2.30, 0.62, 1.30, 1.10, ROLE.GLASS, -1);
+  machCab(sh, { x: -0.72, y: 2.10, z: 0.62, w: 1.10, h: 1.90, d: 1.60, b: 0.14 });
   beacon(sh, -0.72, 3.06, 0.10);
   cyl(sh, 0.72, 2.70, -1.60, 0.11, 0.09, 1.00, 6, 'y', ROLE.DARK);  // exhaust stack
   // Handrail loop round the house roof, and a step ladder up the near side.
-  for (const s of [-1, 1]) box(sh, s * 1.10, 2.42, -1.60, 0.06, 0.60, 0.06, ROLE.CHROME);
-  box(sh, 0, 2.70, -1.60, 2.20, 0.06, 0.06, ROLE.CHROME);
-  box(sh, 1.10, 2.70, -0.70, 0.06, 0.06, 1.80, ROLE.CHROME);
+  for (const s of [-1, 1]) box(sh, s * 1.10, 2.42, -1.60, 0.07, 0.60, 0.07, ROLE.MACH);
+  box(sh, 0, 2.70, -1.60, 2.20, 0.07, 0.07, ROLE.MACH);
+  box(sh, 1.10, 2.70, -0.70, 0.07, 0.07, 1.80, ROLE.MACH);
   stepLadder(sh, 1.26, 0.72, 0.30, 3, 1);
   // Boom / stick / bucket. Angles chosen so the machine reads as "working".
   const boom = (x, y, z, len, ang, w) => {
     stamp(sh, (s2) => chamfer(s2, 0, 0, 0, w, w * 1.25, len, 0.06, ROLE.MACH), { x, y, z, rx: ang });
   };
   boom(0.66, 2.70, 2.00, 3.60, 0.62, 0.44);
-  boom(0.66, 3.30, 4.30, 2.80, -0.95, 0.36);
+  boom(0.66, 3.30, 4.30, 3.30, -0.95, 0.36);
   // The three rams. This is the silhouette cue the machine was missing.
-  ram(sh, [0.66, 1.90, 0.60], [0.66, 3.00, 2.60], 0.13);            // boom ram
-  ram(sh, [0.66, 4.10, 2.90], [0.66, 3.80, 4.60], 0.11);            // stick ram
-  ram(sh, [0.66, 2.70, 5.10], [0.66, 1.80, 5.44], 0.09);            // bucket ram
-  chamfer(sh, 0.66, 1.30, 5.55, 0.98, 0.80, 0.90, 0.10, ROLE.STEEL);
-  for (let i = 0; i < 4; i++) box(sh, 0.20 + i * 0.30, 0.94, 5.96, 0.12, 0.30, 0.24, ROLE.STEEL);
+  ram(sh, [0.66, 1.90, 0.60], [0.66, 3.00, 2.60], 0.14);            // boom ram
+  ram(sh, [0.66, 4.10, 2.90], [0.66, 3.80, 4.60], 0.12);            // stick ram
+  ram(sh, [0.66, 2.90, 4.90], [0.66, 2.05, 5.28], 0.10);            // bucket ram
+  /* The bucket has to MEET the stick. The stick's lower pivot lands at
+   * (0.66, 1.96, 5.26) — length 3.30 rotated -0.95 rad about x — so the bucket
+   * is hung there rather than at a guessed height, which is what left it
+   * floating half a metre clear of the arm. */
+  chamfer(sh, 0.66, 1.45, 5.40, 0.98, 0.95, 0.90, 0.10, ROLE.MACH_LO);
+  faceZ(sh, 0.66, 1.50, 5.85, 0.80, 0.66, ROLE.GRIME, 1);
+  for (let i = 0; i < 4; i++) box(sh, 0.20 + i * 0.30, 1.02, 5.82, 0.12, 0.30, 0.24, ROLE.DARK);
 }
 
 /**
@@ -2415,9 +2478,7 @@ function excavator(sh) {
 function wheelLoader(sh) {
   chamfer(sh, 0, 1.30, -1.50, 2.10, 1.10, 2.40, 0.18, ROLE.MACH);   // rear engine block
   chamfer(sh, 0, 1.20, 0.60, 1.90, 0.80, 2.00, 0.16, ROLE.MACH);
-  chamfer(sh, 0, 2.30, -0.55, 1.60, 1.60, 1.50, 0.14, ROLE.DARK);
-  for (const s of [-1, 1]) faceX(sh, s * 0.81, 2.45, -0.55, 1.20, 1.10, ROLE.GLASS, s);
-  faceZ(sh, 0, 2.45, 0.21, 1.30, 1.10, ROLE.GLASS, 1);
+  machCab(sh, { y: 2.30, z: -0.55, w: 1.60, h: 1.60, d: 1.50, b: 0.14 });
   chamfer(sh, 0, 3.14, -0.55, 1.66, 0.14, 1.56, 0.05, ROLE.MACH);
   ropsFrame(sh, { x: 0.84, y0: 1.60, y1: 3.20, z0: -1.28, z1: 0.18 });
   beacon(sh, 0.50, 3.22, -0.55);
@@ -2436,8 +2497,9 @@ function wheelLoader(sh) {
     ram(sh, [s * 0.86, 1.10, 0.70], [s * 0.86, 1.86, 2.30], 0.13);
   }
   ram(sh, [0, 2.10, 0.80], [0, 1.62, 2.70], 0.11);
-  chamfer(sh, 0, 0.72, 3.34, 2.60, 1.05, 1.05, 0.12, ROLE.STEEL);
-  faceZ(sh, 0, 0.90, 2.80, 2.36, 0.86, ROLE.MACH_LO, -1);           // bucket back plate
+  chamfer(sh, 0, 0.72, 3.34, 2.60, 1.05, 1.05, 0.12, ROLE.MACH_LO);
+  faceZ(sh, 0, 0.90, 2.80, 2.36, 0.86, ROLE.GRIME, -1);             // bucket back plate
+  faceY(sh, 0, 1.24, 3.34, 2.30, 0.86, ROLE.GRIME);                 // spoil in the bucket
   chamfer(sh, 0, 0.28, 3.82, 2.60, 0.18, 0.30, 0.04, ROLE.DARK);    // cutting edge
   for (let i = 0; i < 5; i++) box(sh, -0.96 + i * 0.48, 0.24, 3.98, 0.20, 0.12, 0.24, ROLE.DARK);
   wheels4(sh, 0.98, 1.10, -1.70, 0.72, 0.44, 8);
@@ -2454,13 +2516,19 @@ function siteDumper(sh) {
   chamfer(sh, 0, 0.86, 0.20, 2.20, 0.70, 6.60, 0.10, ROLE.GRIME);
   // Articulation joint between cab and skip.
   cyl(sh, 0, 1.10, 1.16, 0.42, 0.42, 1.30, 8, 'x', ROLE.DARK);
-  // Tipper body — raked up at the front so it reads as a skip, not a box.
+  /* Tipper body — raked up at the front so it reads as a skip, not a box. The
+   * TOP EDGE of the section is dark: the game camera looks down on this, so
+   * what it sees is the load, and a clean orange lid is the one thing a working
+   * dumper never has. */
   sweep(sh, SEC.OCT, [
     { z: -3.60, w: 2.60, h: 1.50, y0: 1.28 },
     { z: 0.60, w: 2.70, h: 1.60, y0: 1.28 },
     { z: 1.30, w: 2.70, h: 2.10, y0: 1.28 },
-  ], { role: ROLE.MACH_LO, capStart: ROLE.MACH_LO, capEnd: ROLE.MACH_LO });
-  faceY(sh, 0, 1.60, -1.20, 2.30, 4.60, ROLE.GRIME);
+  ], {
+    role: ROLE.MACH_LO,
+    edgeRoles: { 0: ROLE.GRIME, 1: ROLE.GRIME, 2: ROLE.GRIME, 5: ROLE.GRIME },
+    capStart: ROLE.MACH_LO, capEnd: ROLE.MACH_LO,
+  });
   // Mud and rust up the bottom third of the skip: this thing carries spoil.
   for (const s of [-1, 1]) {
     faceX(sh, s * 1.35, 1.62, -1.20, 4.60, 0.56, ROLE.GRIME, s);
@@ -2504,8 +2572,9 @@ function craneBase(sh) {
   const tilt = Math.atan2(a * 2, dy);
   for (let i = 0; i < LV; i++) {
     const y = 0.70 + i * dy;
-    const top = i >= LV - 2;
-    const role = top ? ROLE.HAZARD : ROLE.MACH;
+    // Red/white banding on the top two sections. Sun yellow on crane yellow is
+    // a two-percent value shift, i.e. invisible — it has to be a real contrast.
+    const role = i >= LV - 1 ? ROLE.RED : i === LV - 2 ? ROLE.WHITE : ROLE.MACH;
     for (const s of [-1, 1]) {
       box(sh, s * a, y + dy, 0, 0.14, 0.14, a * 2, role);
       box(sh, 0, y + dy, s * a, a * 2, 0.14, 0.14, role);
@@ -2544,8 +2613,9 @@ function craneBase(sh) {
   tube(sh, [0, jibY + 3.10, 0], [0, jibY + 0.30, -7.6], 0.08, 0.08, 4, ROLE.MACH, [false, false]);
   // Trolley and hook block.
   box(sh, 0, jibY - 0.42, 12.0, 0.70, 0.26, 0.80, ROLE.MACH_LO);
-  tube(sh, [0, jibY - 0.52, 12.0], [0, jibY - 5.20, 12.0], 0.045, 0.045, 4, ROLE.CHROME, [false, false]);
-  chamfer(sh, 0, jibY - 5.50, 12.0, 0.44, 0.66, 0.44, 0.08, ROLE.HAZARD);
+  tube(sh, [0, jibY - 0.52, 12.0], [0, jibY - 5.20, 12.0], 0.05, 0.05, 4, ROLE.DARK, [false, false]);
+  chamfer(sh, 0, jibY - 5.50, 12.0, 0.46, 0.68, 0.46, 0.08, ROLE.MACH_LO);
+  faceZ(sh, 0, jibY - 5.50, 12.24, 0.36, 0.30, ROLE.DARK, 1);
 }
 
 /**
@@ -2584,14 +2654,16 @@ function scissorLift(sh) {
   for (const s of [-1, 1]) {
     box(sh, s * 0.78, 3.32, 0, 0.07, 1.10, 2.72, ROLE.MACH);
     box(sh, 0, 3.32, s * 1.36, 1.60, 1.10, 0.07, ROLE.MACH);
-    faceX(sh, s * 0.79, 3.00, 0, 2.66, 0.30, ROLE.MACH_LO, s);      // kick plate
-    faceX(sh, s * 0.785, 3.52, 0, 2.66, 0.52, ROLE.DARK, s);        // mesh infill
-    faceZ(sh, 0, 3.00, s * 1.37, 1.54, 0.30, ROLE.MACH_LO, s);
-    faceZ(sh, 0, 3.52, s * 1.365, 1.54, 0.52, ROLE.DARK, s);
+    // Outboard of the rail box (which reaches x = 0.815), or the depth test
+    // buries the infill inside the rail and the guards read as bare plates.
+    faceX(sh, s * 0.822, 3.00, 0, 2.66, 0.30, ROLE.MACH_LO, s);     // kick plate
+    faceX(sh, s * 0.818, 3.52, 0, 2.66, 0.52, ROLE.DARK, s);        // mesh infill
+    faceZ(sh, 0, 3.00, s * 1.402, 1.54, 0.30, ROLE.MACH_LO, s);
+    faceZ(sh, 0, 3.52, s * 1.398, 1.54, 0.52, ROLE.DARK, s);
   }
   // Entry gate at the rear: a lighter panel with a visible stile each side.
-  faceZ(sh, 0, 3.30, -1.375, 0.70, 1.00, ROLE.MACH_LO, -1);
-  for (const d of [-1, 1]) faceZ(sh, d * 0.38, 3.30, -1.385, 0.08, 1.04, ROLE.DARK, -1);
+  faceZ(sh, 0, 3.30, -1.412, 0.70, 1.00, ROLE.MACH_LO, -1);
+  for (const d of [-1, 1]) faceZ(sh, d * 0.38, 3.30, -1.422, 0.08, 1.04, ROLE.DARK, -1);
   chamfer(sh, 0.52, 3.36, 1.30, 0.36, 0.44, 0.20, 0.05, ROLE.DARK); // control box
   faceZ(sh, 0.52, 3.40, 1.41, 0.26, 0.22, ROLE.SIGN, 1);
 }
@@ -2602,7 +2674,9 @@ function scissorLift(sh) {
  * pivot, and there was no scraper, canopy, beacon, step or handrail.
  */
 function roadRoller(sh) {
-  cyl(sh, 0, 0.62, 1.45, 0.62, 0.62, 1.90, 12, 'x', ROLE.STEEL);
+  // GRIME, not STEEL: a 12-sided cylinder at metalness 0.92 mirrors the Miami
+  // sky and the drum came out bright turquoise. A roller drum is grey.
+  cyl(sh, 0, 0.62, 1.45, 0.62, 0.62, 1.90, 12, 'x', ROLE.GRIME);
   // Drum yoke: two side arms carrying a visible pivot boss.
   for (const s of [-1, 1]) {
     chamfer(sh, s * 1.02, 0.86, 1.45, 0.16, 0.90, 1.20, 0.05, ROLE.DARK);
@@ -2616,8 +2690,7 @@ function roadRoller(sh) {
   chamfer(sh, 0, 1.10, -1.10, 1.90, 1.00, 2.10, 0.14, ROLE.MACH);
   // Articulation joint line between front and rear body.
   cyl(sh, 0, 1.16, -0.10, 0.30, 0.30, 1.20, 8, 'x', ROLE.DARK);
-  chamfer(sh, 0, 2.10, -0.90, 1.20, 1.10, 1.20, 0.12, ROLE.DARK);
-  for (const s of [-1, 1]) faceX(sh, s * 0.61, 2.20, -0.90, 0.90, 0.72, ROLE.GLASS, s);
+  machCab(sh, { y: 2.10, z: -0.90, w: 1.20, h: 1.10, d: 1.20, b: 0.10 });
   chamfer(sh, 0, 2.72, -0.90, 1.34, 0.12, 1.34, 0.05, ROLE.MACH);
   ropsFrame(sh, { x: 0.72, y0: 1.60, y1: 2.90, z0: -1.50, z1: -0.30 });
   beacon(sh, 0.42, 2.92, -0.90);
@@ -2914,6 +2987,31 @@ function seatY(type, surface) {
  * budget can be checked without booting a renderer:
  *   node -e "import('./src/world/vehicles.js').then(m=>console.log(m.vehicleShapeStats()))"
  */
+/**
+ * TOOLING: one fully-painted geometry for a kind, for the catalogue studio.
+ *
+ * The catalogue used to photograph a live instance standing in the city, which
+ * meant a shot could come back as somebody's curtain wall, or as a palm, or —
+ * once the shared dev server is under load from five agents — not at all. This
+ * hands the shape straight to an isolated renderer instead. `variantGeometry`
+ * bakes every role colour into the vertex buffer, so no per-instance tint
+ * attributes are needed and the result is exactly what the city draws.
+ */
+export function vehicleSpecimen(key, vi = 0) {
+  const def = FLEET[key];
+  if (!def) return null;
+  return {
+    geometry: variantGeometry(key, def.paints[vi % def.paints.length]),
+    material: vehicleMaterial(),
+    def,
+    variants: def.paints.length,
+    metrics: shapeMetrics(key),
+  };
+}
+
+/** TOOLING: every kind the fleet can build. */
+export function vehicleKinds() { return Object.keys(FLEET); }
+
 export function vehicleShapeStats() {
   const out = {};
   let total = 0;
@@ -2988,9 +3086,12 @@ const FLEET = {
   sports: { tier: 'LARGE', r: 1.5, h: 1.25, len: 4.5, cap: 39, label: 'Sports Coupe',
     paints: [P.CAR_RED, P.CAR_PINK, P.CAR_MINT, P.CAR_YELLOW, P.CAR_PURPLE,
       P.CAR_BLACK, P.NEON_ORANGE].map((c) => exotic(c)) },
+  // Tan hide, not black: the camera looks straight down into this one, and a
+  // dark interior in a dark cockpit well is just a hole in the car.
   convertible: { tier: 'LARGE', r: 1.5, h: 1.35, len: 4.4, cap: 28, label: 'Convertible',
-    paints: plain([P.CAR_PURPLE, P.CAR_WHITE, P.CAR_CORAL, P.STUCCO_AQUA, P.CAR_PINK,
-      P.CAR_RED, P.STUCCO_BUTTER, P.CAR_SILVER, P.NEON_AQUA]) },
+    paints: [P.CAR_PURPLE, P.CAR_WHITE, P.CAR_CORAL, P.STUCCO_AQUA, P.CAR_PINK,
+      P.CAR_RED, P.STUCCO_BUTTER, P.CAR_SILVER, P.NEON_AQUA]
+      .map((c) => ({ paint: c, seat: 0x8d7a62, interior: 0x4c443b })) },
   supercar: { tier: 'LARGE', r: 1.6, h: 1.15, len: 4.7, cap: 30, label: 'Supercar',
     paints: [P.NEON_PINK, P.NEON_AQUA, P.ACCENT_SUN, P.CAR_ORANGE, P.CAR_LIME, P.CAR_WHITE,
       P.NEON_PURPLE, P.CAR_BLACK]
@@ -3128,7 +3229,7 @@ const FLEET = {
     paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.58) }] },
   roadRoller: { tier: 'LARGE', r: 1.4, h: 2.9, len: 4.4, cap: 16, label: 'Road Roller',
     paints: [{ paint: P.CAR_YELLOW, paintLo: darken(P.CAR_YELLOW, 0.66),
-      dusty: 0xb5aa93, steel: 0x9aa09e }] },
+      dusty: 0xb5aa93, grime: 0x93968f }] },
 };
 
 /* ================================================== spawn / pooling ==== */

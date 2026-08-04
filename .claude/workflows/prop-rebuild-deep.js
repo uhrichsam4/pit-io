@@ -4,6 +4,7 @@ export const meta = {
   phases: [
     { title: 'Regrade', detail: 'photograph and independently re-judge all ~220 kinds' },
     { title: 'Rebuild', detail: 'small batches, sequential per file so two agents never edit one file' },
+    { title: 'Trim', detail: 'claw back the triangle cost the rebuild added, without losing the look' },
     { title: 'Verify', detail: 'reshoot, re-judge the rebuilt kinds, physics regression' },
   ],
 };
@@ -220,12 +221,36 @@ HOW TO REBUILD WELL
   read at distance; the detail has to hold up close. Both, not one.
 
 CONSTRAINTS THAT WILL BITE YOU
+
 - worldBuild MEASURES ground-contact geometry to derive each prop's physics
   footprint, so changing a model changes how it is eaten. Keep the lowest fifth
   of the geometry as the part that genuinely rests on the ground.
-- Triangle budget: these are instanced in their thousands. Check the instance
-  count and current triangle count in ${dir}/catalogue.json. A bench at 2,000
-  instances cannot afford what a landmark at 3 instances can. Report your delta.
+
+- THE TRIANGLE BUDGET IS A HARD LIMIT, NOT ADVICE. The first rebuild pass took
+  the city from 5.2M triangles to 10.1M — it nearly doubled the cost of the
+  whole game — because each agent optimised its own models and nobody was
+  looking at the total. Detail is not free and it is not the goal; detail
+  WHERE IT IS SEEN is the goal.
+
+  Budget by how many times the kind is instanced. Instance counts are in
+  ${dir}/catalogue.json — LOOK YOURS UP before you build, not after:
+
+      > 1000 instances    <=   60 triangles
+      300 - 1000          <=  150
+      100 - 300           <=  350
+      20 - 100            <=  900
+      < 20                <= 3000
+
+  A hedge at 2,354 instances gets 60 triangles and must read as a clipped hedge
+  anyway — that is a silhouette-and-colour problem, not a geometry problem. A
+  landmark at 3 instances can afford everything. If you cannot make a kind work
+  inside its budget, say so in your report with the count you needed; do not
+  quietly spend ten times it.
+
+  Report the per-kind BEFORE and AFTER triangle count, and the total delta for
+  your batch. A batch that increases the city's triangle count by more than 10%
+  has failed even if every model looks better.
+
 - Everything procedural. No new dependencies, no image files.
 
 VERIFY BEFORE YOU FINISH — this is not optional:
@@ -286,6 +311,51 @@ while (round <= MAX_ROUNDS) {
   round++;
 }
 
+/* ------------------------------------------------------------------- trim */
+
+/*
+ * The rebuild agents each police their own batch, but nobody watching a batch
+ * can see the total — which is exactly how the first pass doubled the city's
+ * triangle count while every individual model got better. This stage looks at
+ * the whole thing at once and spends the budget where it is actually seen.
+ */
+phase('Trim');
+
+const trim = await agent(`${BASE}
+
+TRIANGLE BUDGET PASS — the whole city at once.
+
+Before this project's rebuild work the city drew 5.2M triangles. After the
+first rebuild pass it drew 10.1M. Your job is to get it back under control
+WITHOUT undoing the visual gains.
+
+1. Measure first: node tools/perf-audit.mjs. Get per-pool triangle totals
+   (instances x triangles-per-instance) and rank them by TOTAL cost, not by
+   per-model cost. The expensive kinds are the numerous ones, not the fancy
+   ones.
+
+2. For every kind in the top 25 by total cost, ask: how close does the player
+   ever get, and how many are on screen? Then cut geometry that cannot be seen
+   at that distance:
+     - interior faces and undersides that are never visible
+     - cylinder segment counts above what the silhouette needs (a 0.05 m radius
+       bollard does not need 8 sides; 5 reads identically at 3 m)
+     - chamfer sections on edges smaller than a few centimetres
+     - detail on the BACK of anything that always faces a wall or a kerb
+   Do NOT flatten silhouettes and do NOT go back to untextured boxes. The point
+   is to spend the budget where the eye is.
+
+3. Re-measure. Report the before/after total and the ten biggest savings.
+
+TARGET: at or under 6.5M triangles for the whole city, with the visual quality
+of the rebuild intact. If you cannot reach it without making things look worse,
+stop at the point where they still look good and report the honest number and
+what the remaining hogs are — an honest 7.5M beats a 6.5M that looks cheap.
+
+You may edit any file under src/world/ and src/core/materials.js. No other
+agent is running at this point.`,
+  { label: 'trim', phase: 'Trim', effort: 'high' });
+
 /* ------------------------------------------------------------------ verify */
 
 phase('Verify');
@@ -318,6 +388,7 @@ would do next. Do not report success you did not verify.`,
 
 return {
   rounds: history,
+  trim: String(trim || '').slice(0, 3000),
   stillFailing: lastFailing.map((g) => ({ kind: g.kind, grade: g.grade, owner: g.owner })),
   verdict: String(verdict || '').slice(0, 6000),
 };

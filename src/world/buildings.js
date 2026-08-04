@@ -3335,14 +3335,42 @@ function sheetMaterial(key, paint) {
   return m;
 }
 
-/** Woven debris net — warp over weft, so the crossings read as a weave. */
+/**
+ * Woven debris net.
+ *
+ * TWO THINGS THIS GETS RIGHT THAT THE OBVIOUS VERSION DOES NOT.
+ *
+ * RGB is painted flat across the whole tile and only the ALPHA carries the
+ * weave. Punching holes by clearing pixels leaves black in the gaps, and mip
+ * generation averages that black into the strands — so the sheet would get
+ * darker and muddier the further away it is, which is the opposite of what
+ * netting does.
+ *
+ * The gaps bottom out at alpha 0.22 rather than 0, and the strands cover ~70%.
+ * At mip 0 the gaps fail the 0.42 alphaTest so you see a real mesh; two mips up
+ * the average is 0.7*1 + 0.3*0.22 = 0.77 and the sheet goes solid. That is the
+ * transition you want — an open weave close to, a flat green wrap at 300 m —
+ * and it happens over one mip instead of thrashing across five, which is what a
+ * fine 50%-coverage weave does and why the first attempt shimmered.
+ */
 function netMaterial(hex) {
   return sheetMaterial(`net${hex}`, (g, size) => {
-    const n = 7, pitch = size / n, t = pitch * 0.58;
     g.fillStyle = hexCss(hex);
-    for (let i = 0; i < n; i++) g.fillRect(i * pitch + pitch * 0.21, 0, t, size);
-    g.globalAlpha = 0.84;
-    for (let i = 0; i < n; i++) g.fillRect(0, i * pitch + pitch * 0.21, size, t);
+    g.fillRect(0, 0, size, size);
+    const n = 4, pitch = size / n, gap = pitch * 0.30;
+    g.globalCompositeOperation = 'destination-out';
+    g.globalAlpha = 0.78;
+    g.fillStyle = '#fff';
+    for (let i = 0; i < n; i++) {
+      g.fillRect(i * pitch, 0, gap, size);
+      g.fillRect(0, i * pitch, size, gap);
+    }
+    g.globalCompositeOperation = 'source-over';
+    // Weave tone: the weft reads a shade heavier than the warp, which is what
+    // makes a flat sheet look like cloth rather than like paint.
+    g.globalAlpha = 0.22;
+    g.fillStyle = '#000';
+    for (let i = 0; i < n; i++) g.fillRect(0, i * pitch + gap, size, pitch - gap);
     g.globalAlpha = 1;
   });
 }
@@ -3500,11 +3528,16 @@ function parkedCar(B, x, y, z, rot, hex, lod = 2, v = 0) {
   const { L, W, wr } = c;
   const ch = W * 0.27;
 
-  const body = loft([
-    { p: rectPlan(L * 0.93, W * 0.84, ch * 0.8), y: c.under },
-    { p: rectPlan(L, W, ch), y: c.waist },
-    { p: rectPlan(L * 0.95, W * 0.90, ch), y: c.sh },
-  ], { capTop: true, capBottom: true, uScale: 2.2, vScale: 2.2 });
+  /* Three rings out in the open — the middle one is the shoulder crease the sun
+     catches — and two deep inside a structure, where nobody has ever seen the
+     crease and it is 16 triangles a car across fifty cars a garage. */
+  const rings = lod >= 1
+    ? [{ p: rectPlan(L * 0.93, W * 0.84, ch * 0.8), y: c.under },
+      { p: rectPlan(L, W, ch), y: c.waist },
+      { p: rectPlan(L * 0.95, W * 0.90, ch), y: c.sh }]
+    : [{ p: rectPlan(L * 0.96, W * 0.92, ch), y: c.under },
+      { p: rectPlan(L * 0.95, W * 0.90, ch), y: c.sh }];
+  const body = loft(rings, { capTop: true, capBottom: lod >= 1, uScale: 2.2, vScale: 2.2 });
 
   // Glasshouse. The band is a separate loft so the window line can be a real
   // dark ring round the car instead of a decal on one face.
@@ -3521,8 +3554,8 @@ function parkedCar(B, x, y, z, rot, hex, lod = 2, v = 0) {
   B.trim(put(band), P.SIGN_DARK);
   B.trim(put(roof), hex);
 
-  /* Wheels. Round at street level; a chamfered block deeper in a structure,
-     where the difference costs 24 triangles a corner and cannot be seen. */
+  /* Wheels. Round at street level; a block deeper in a structure, where the
+     difference costs 12 triangles a corner and cannot be seen. */
   const tw = W * 0.15, wx = L * 0.315, wz = W / 2 - tw * 0.52;
   const tyres = [];
   for (const sx of [-1, 1]) {
@@ -3655,14 +3688,16 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
        at a real 3.1 m bay rather than 2.9, and thinned, because a deck packed
        kerb to kerb is both wrong and the whole of this building's triangle
        budget. */
-    const rows = Math.max(2, Math.floor(lw / 3.1));
+    const rows = Math.max(2, Math.floor(lw / 3.3));
     for (let k = 0; k < rows; k++) {
       const x = -lw / 2 + 2.2 + k * ((lw - 4.4) / Math.max(1, rows - 1));
       const inEntry = i === 0 && Math.abs(x - entryX) < entryW * 0.75;
-      if (!inEntry && r() < 0.62) {
+      if (!inEntry && r() < 0.56) {
         parkedCar(B, x, y + 0.5, bb.z1 - 2.4, Math.PI / 2, r.pick(CAR_HEX), 0, k + i);
       }
-      if (r() < 0.46) {
+      // The far row is behind everything else and only ever a colour showing
+      // through the gaps, so it is deliberately thin.
+      if (r() < 0.32) {
         parkedCar(B, x, y + 0.5, bb.z0 + 2.4, -Math.PI / 2, r.pick(CAR_HEX), 0, k + i + 1);
       }
     }
@@ -3800,15 +3835,19 @@ function kiosk(B, x, z, rot, r, wallHex) {
   // Serving counter on the drive-up side, with the slide window over it.
   B.trim(put(box(W * 0.8, 0.09, 0.52, 0, 0, 0, 1.5), 0, cill + 0.32, D / 2 + 0.24), P.CONCRETE_WARM);
   B.trim(put(box(W * 0.44, 0.62, 0.07, 0, 0, 0, 1.2), W * 0.16, cill + 0.5, D / 2 + 0.02), P.MULLION);
-  // Shallow pitched roof, two slopes on a 0.4 m overhang, with a ridge capping.
-  const rw = W + 0.9, rd = D / 2 + 0.45;
+  /* Shallow pitched roof on a 0.45 m overhang. The two slopes are built about
+     the origin and then swung, so the ridge ends actually meet instead of
+     leaving the gap that rotating an already-stood box produces. */
+  const rw = W + 0.9, rd = D / 2 + 0.45, pitch = 0.22, ridgeY = head + 0.34;
   for (const sz of [-1, 1]) {
-    const g = box(rw, 0.16, rd + 0.16, 0, 0, 0, 2.5);
-    g.rotateX(sz * 0.20);
-    B.trim(put(g, 0, head + 0.30 - Math.abs(Math.sin(0.20)) * rd * 0.5, sz * (rd / 2)), P.ROOF_DARK);
+    const g = box(rw, 0.16, rd, 0, -0.08, 0, 2.5);
+    g.rotateX(sz * pitch);
+    g.translate(0, ridgeY - Math.sin(pitch) * rd / 2, sz * Math.cos(pitch) * rd / 2);
+    B.trim(put(g, 0, 0, 0), P.ROOF_DARK);
   }
-  B.trim(put(box(rw + 0.1, 0.18, 0.26, 0, 0, 0, 2), 0, head + 0.34, 0), P.STEEL_DARK);
-  B.trim(put(box(rw, 0.14, 0.10, 0, 0, 0, 2), 0, head + 0.10, rd + 0.02), P.STUCCO_WHITE);
+  B.trim(put(box(rw + 0.1, 0.16, 0.30, 0, 0, 0, 2), 0, ridgeY - 0.02, 0), P.STEEL_DARK);
+  B.trim(put(box(rw, 0.13, 0.09, 0, 0, 0, 2), 0,
+    ridgeY - Math.sin(pitch) * rd - 0.13, rd - 0.02), P.STUCCO_WHITE);   // gutter
   // Air-conditioner in the back wall and a light under the eaves — the two
   // things every real booth in Florida has.
   B.trim(put(box(0.62, 0.42, 0.30, 0, 0, 0, 1.5), -W * 0.2, 1.55, -D / 2 - 0.12), P.AC_METAL);
@@ -3960,8 +3999,7 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
  *  these under a slab edge is the difference between "poured" and "propped". */
 function acrowProp(B, x, y, z, h) {
   B.trim(box(0.30, 0.05, 0.30, x, y, z, 1), P.STEEL_DARK);
-  B.trim(cyl(0.055, h - 0.1, 6, x, y + 0.05, z), P.CRANE_YELLOW);
-  B.trim(cyl(0.085, 0.14, 6, x, y + h * 0.62, z), P.STEEL_DARK);   // collar
+  B.trim(cyl(0.055, h - 0.1, 4, x, y + 0.05, z), P.CRANE_YELLOW);
   B.trim(box(0.30, 0.05, 0.30, x, y + h - 0.05, z, 1), P.STEEL_DARK);
 }
 
@@ -4211,9 +4249,9 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
      * that has just been struck — it is also the only object up there with a
      * vertical rhythm finer than the columns.
      */
-    if (i >= floors - 3 && i > 1) {
+    if (i >= floors - 2 && i > 1) {
       const spb = planBounds(sp);
-      const pn = Math.max(3, Math.min(7, Math.round(spb.w / 4.2)));
+      const pn = Math.max(3, Math.min(6, Math.round(spb.w / 5.0)));
       for (let k = 0; k < pn; k++) {
         const px = spb.x0 + 2.0 + ((spb.w - 4.0) * k) / Math.max(1, pn - 1);
         acrowProp(B, px, y - 3.18, spb.cz + spb.d * 0.26, 3.18);
@@ -4265,7 +4303,9 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
   const netMat = netMaterial(netHex);
   const netW = lw - 2.4;
   for (const [zf, hh] of [[bb.z1 + 1.25, sh], [bb.z0 - 1.25, sh * 0.86]]) {
-    const s = sheetGeo(netW, hh, 0.62);
+    // 1.6 m tile: a 25 m sheet is then 16 weave repeats rather than 40, which
+    // is the difference between a mesh you can read and a field of aliasing.
+    const s = sheetGeo(netW, hh, 1.6);
     s.translate(bb.cx, 0.1, zf);
     B.gl(s, netMat);
     // Tie lines: a scaffold tube along the sheet at every floor, plus the tie
@@ -4331,6 +4371,169 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
 
 /* ========================================================= landmarks ==== */
 
+/**
+ * Cable tray on stands: two rails, rungs, and a run of cable in it.
+ *
+ * The connective tissue of a plant roof. A roof with a chiller, two tanks and
+ * nothing joining them reads as objects dropped on a plane; one tray running
+ * between them turns the same objects into an installation.
+ */
+function cableTray(B, x, y, z, len, rot, hex) {
+  const put = (g) => { g.rotateY(rot); g.translate(x, y, z); return g; };
+  const n = Math.max(2, Math.round(len / 2.6));
+  for (let i = 0; i <= n; i++) {
+    const ox = -len / 2 + (len * i) / n;
+    B.trim(put(box(0.12, 0.42, 0.12, ox, 0, 0, 1)), P.STEEL_DARK);
+  }
+  const rails = [
+    box(len, 0.10, 0.07, 0, 0.42, -0.16, 2),
+    box(len, 0.10, 0.07, 0, 0.42, 0.16, 2),
+  ];
+  const rungs = Math.max(3, Math.round(len / 0.7));
+  for (let i = 0; i < rungs; i++) {
+    rails.push(box(0.06, 0.05, 0.34, -len / 2 + (len * (i + 0.5)) / rungs, 0.44, 0, 1));
+  }
+  B.trim(put(BufferGeometryUtils.mergeGeometries(rails, false)), P.ALUMINIUM);
+  B.trim(put(box(len * 0.98, 0.12, 0.22, 0, 0.50, 0, 2)), hex || P.SIGN_DARK);
+}
+
+/**
+ * Raised clerestory: kerb, glazing with real mullions, and a pitched cap on an
+ * overhang.
+ *
+ * The market hall's ridge lantern used to be a glazed prism under a rounded
+ * slab, and from the 3/4 camera a pale rounded slab lying in the middle of a
+ * roof reads as a swimming pool. A monitor rooflight is not rounded: it is a
+ * glazed box with a ridged hat on it, and the hat plus the mullion rhythm is
+ * what makes the eye read glazing.
+ */
+function clerestory(B, plan, y, h, glassHex, capHex) {
+  const bb = planBounds(plan);
+  B.trim(loft([{ p: plan, y }, { p: plan, y: y + 0.34 }], { uScale: 3, vScale: 3 }), P.CONCRETE_WARM);
+  B.trim(loft([{ p: plan, y: y + 0.34 }, { p: plan, y: y + h }], { uScale: 3, vScale: 3 }), glassHex);
+  // Mullions on a 1.5 m rhythm right round, plus a transom band.
+  const n = plan.length;
+  for (let i = 0; i < n; i++) {
+    const a = plan[i], b = plan[(i + 1) % n];
+    const dx = b[0] - a[0], dz = b[1] - a[1];
+    const L = Math.hypot(dx, dz);
+    const k = Math.max(1, Math.round(L / 1.5));
+    const rot = Math.atan2(dx, dz);
+    for (let j = 0; j <= k; j++) {
+      const t = j / k;
+      const g = box(0.11, h - 0.34, 0.14, 0, 0, 0, 1);
+      g.rotateY(rot);
+      g.translate(a[0] + dx * t, y + 0.34, a[1] + dz * t);
+      B.trim(g, P.MULLION);
+    }
+  }
+  B.trim(slabGeo(plan, y + 0.34 + (h - 0.34) * 0.55, 0.10, 0.09), P.MULLION);
+  // Pitched cap. Built about the origin and swung, so the ridge closes.
+  const ov = 0.42, pitch = 0.30;
+  const D = bb.d / 2 + ov, W = bb.w + ov * 2;
+  const ridgeY = y + h + 0.55;
+  for (const sz of [-1, 1]) {
+    const g = box(W, 0.20, D, 0, -0.10, 0, 3);
+    g.rotateX(sz * pitch);
+    g.translate(bb.cx, ridgeY - Math.sin(pitch) * D / 2, bb.cz + sz * Math.cos(pitch) * D / 2);
+    B.trim(g, capHex);
+  }
+  B.trim(box(W + 0.14, 0.26, 0.44, bb.cx, ridgeY - 0.06, bb.cz, 2), capHex);
+  // Rafter ends showing under the eaves — the mark that says "roof", not "lid".
+  const rn = Math.max(3, Math.round(W / 1.8));
+  for (let i = 0; i < rn; i++) {
+    const rx = bb.cx - W / 2 + (W * (i + 0.5)) / rn;
+    for (const sz of [-1, 1]) {
+      B.trim(box(0.12, 0.20, 0.34, rx, ridgeY - Math.sin(pitch) * D - 0.22,
+        bb.cz + sz * (Math.cos(pitch) * D - 0.16), 1), P.WOOD_DARK);
+    }
+  }
+}
+
+/**
+ * Dress a big roof cap so it is never a bare plane.
+ *
+ * The art bible's rule, stated as code: nothing above 10 m may present an
+ * unbroken surface much wider than 8 m. Every landmark roof in this file is
+ * wider than that, so they all run through here — an upstand parapet, a rolled
+ * membrane field, raised seam ribs splitting it into bays, and a plant scape
+ * with the runs between the kit actually drawn in.
+ */
+function dressedCap(B, plan, y, r, o = {}) {
+  const bb = planBounds(plan);
+  const ph = o.parapetH ?? 0.5;
+  B.trim(parapetGeo(plan, y, ph, 0.4), o.parapetHex || P.CONCRETE_WARM);
+  const field = offsetPlan(plan, -0.42);
+  const fb = planBounds(field);
+  roofDeck(B, field, y + 0.03, o.surfaceHex || P.ROOF_MEMBRANE, r);
+  // Seam ribs: 4-6 bays, standing 12 cm proud. On a 30 m cap this is the
+  // difference between a plane and a roof.
+  const bays = 4 + Math.floor(r() * 3);
+  const along = fb.w >= fb.d;
+  for (let i = 1; i < bays; i++) {
+    const t = i / bays;
+    if (along) B.trim(box(0.20, 0.14, fb.d * 0.97, fb.x0 + fb.w * t, y + 0.05, fb.cz, 2), P.PARAPET);
+    else B.trim(box(fb.w * 0.97, 0.14, 0.20, fb.cx, y + 0.05, fb.z0 + fb.d * t, 2), P.PARAPET);
+  }
+  /*
+   * Below about 9 m across there is no room to stand a bulkhead and two tanks
+   * on the cap without them hanging over the parapet, so a small cap gets the
+   * ribs, the rolls and a couple of condensers and stops there. The rule is
+   * "no bare plane", and at 8 m the ribs alone already satisfy it.
+   */
+  if (o.plant === false) return;
+  if (Math.min(fb.w, fb.d) < 9) {
+    if (Math.min(fb.w, fb.d) < 4.5) return;
+    acPack(B, fb.cx, y + 0.05, fb.cz + fb.d * 0.22, fb.w >= fb.d ? 0 : Math.PI / 2, 0.8, r);
+    ventStack(B, fb.cx - fb.w * 0.26, y + 0.05, fb.cz - fb.d * 0.22, 0.8);
+    return;
+  }
+
+  /* The plant. Laid out on two rails either side of the middle, square to the
+     parapet, which is how a real roof is set out — and a tidy line of machinery
+     reads at 200 m where a scatter reads as speckle. */
+  const rot = along ? 0 : Math.PI / 2;
+  const lane = (o.laneOff ?? 0.30);
+  // u runs along the roof's long axis, v across it. Which world axis each of
+  // those is depends on the plan, so everything below is placed through `at`.
+  const cross = along ? fb.d : fb.w;
+  const crossC = along ? fb.cz : fb.cx;
+  const zA = crossC - cross * lane;
+  const zB = crossC + cross * lane;
+  const at = (u, v) => (along ? [fb.cx + u, v] : [v, fb.cz + u]);
+  const span = (along ? fb.w : fb.d);
+  const packs = Math.max(3, Math.min(4, Math.round(span / 9)));
+  for (let i = 0; i < packs; i++) {
+    const u = -span * 0.34 + (span * 0.68 * i) / Math.max(1, packs - 1);
+    const [ax, az] = at(u, zA);
+    acPack(B, ax, y + 0.05, az, rot, 0.9 + r() * 0.35, r);
+    if (r() < 0.7) {
+      const [bx, bz] = at(u + span * 0.06, zB);
+      acPack(B, bx, y + 0.05, bz, rot, 0.85 + r() * 0.3, r);
+    }
+  }
+  const [t1x, t1z] = at(-span * 0.40, zB);
+  const [t2x, t2z] = at(span * 0.40, zB);
+  waterTank(B, t1x, y + 0.05, t1z, 0.85);
+  waterTank(B, t2x, y + 0.05, t2z, 0.78);
+  // Roof-access bulkhead with a door on it.
+  const [bx0, bz0] = at(span * 0.30, zA);
+  bulkhead(B, bx0, y + 0.05, bz0, 3.2, 2.8, 2.7, o.bulkheadHex || P.PRECAST);
+  B.trim(box(1.0, 2.05, 0.14, bx0, y + 0.05, bz0 + 1.45, 1.6), P.SIGN_DARK);
+  B.trim(box(0.1, 0.1, 0.14, bx0 + 0.36, y + 1.05, bz0 + 1.52, 1), P.CHROME);
+  // Duct run between the bulkhead and the plant, and the tray beside it.
+  const [dx0, dz0] = at(span * 0.06, zA);
+  ductRun(B, dx0, y + 0.05, dz0, Math.min(span * 0.34, 7), rot, 1.3);
+  const [cx0, cz0] = at(0, crossC + cross * (lane - 0.09));
+  cableTray(B, cx0, y + 0.05, cz0, Math.min(span * 0.6, 16), rot, o.trayHex);
+  if (o.vents !== false) {
+    for (let i = 0; i < 3; i++) {
+      const [vx, vz] = at(-span * 0.24 + i * span * 0.24, crossC - cross * (lane - 0.12));
+      ventStack(B, vx, y + 0.05, vz, 0.8 + r() * 0.4);
+    }
+  }
+}
+
 /** Big-span roof, ring of glazing, deep fascia. Kaseya Center. */
 function arena(ctx, B, r, lw, ld, h) {
   const plan = ellipsePlan(lw, ld, 22);
@@ -4360,16 +4563,23 @@ function arena(ctx, B, r, lw, ld, h) {
 
   /* Barrel roof — scaled rings, not inset ones: an inset on a 118x88 ellipse
      collapses the short axis long before the long one. */
+  const capPlan = scalePlan(plan, 0.40);
   B.trim(loft([
     { p: plan, y: glassTop + 1.8 },
     { p: scalePlan(plan, 0.93), y: glassTop + 5.0 },
     { p: scalePlan(plan, 0.72), y: glassTop + 8.6 },
-    { p: scalePlan(plan, 0.40), y: glassTop + 10.6 },
-  ], { uScale: 8, vScale: 8, smooth: true, capTop: true }), P.ROOF_MEMBRANE);
-  for (let i = 0; i < 9; i++) {
-    const a = (i / 9) * Math.PI * 2;
-    acUnit(B, Math.cos(a) * bb.w * 0.16, glassTop + 10.6, Math.sin(a) * bb.d * 0.16, 1.7, r);
-  }
+    { p: capPlan, y: glassTop + 10.6 },
+  ], { uScale: 8, vScale: 8, smooth: true }), P.ROOF_MEMBRANE);
+  // Purlin rings at each change of slope. A barrel this size with no horizontal
+  // break on it is 40 m of unmodulated membrane from the review camera.
+  B.trim(slabGeo(scalePlan(plan, 0.93), glassTop + 5.0, 0.18, 0.28), P.CONCRETE_WARM);
+  B.trim(slabGeo(scalePlan(plan, 0.72), glassTop + 8.6, 0.18, 0.28), P.CONCRETE_WARM);
+  /* The barrel's crown is a 47 x 35 m plate on the real arena parcel. Dressed
+     rather than capped: the same rule the market hall roof follows. */
+  dressedCap(B, capPlan, glassTop + 10.5, r, {
+    parapetHex: P.CONCRETE_WARM, surfaceHex: P.ROOF_GRAVEL,
+    bulkheadHex: P.PRECAST, parapetH: 0.85, laneOff: 0.26,
+  });
   /* Entrance canopy on columns — a deliberate overhang, but sized off the
      drum so it stays a canopy instead of becoming an 8 m slab over the road. */
   const cProj = Math.max(2.4, Math.min(11, ld * 0.16));
@@ -4414,8 +4624,29 @@ function decoTower(ctx, B, r, lw, ld, h) {
     B.trim(loft([{ p: cp, y: cy }, { p: cp, y: cy + hh }], { uScale: 5, vScale: 5 }), P.STUCCO_CREAM);
     B.lit(loft([{ p: offsetPlan(cp, 0.22), y: cy + hh * 0.55 }, { p: offsetPlan(cp, 0.22), y: cy + hh * 0.9 }], {}), P.NEON_YELLOW);
     cy += hh;
-    cp = insetPlan(cp, Math.min(lw, ld) * 0.09);
+    /*
+     * Each setback leaves a real terrace, and it used to be left open — you
+     * could see down into the shaft. Capped, kerbed, and on the widest step
+     * given the plant a building this size carries: nothing above 10 m may be
+     * a bare surface, and that includes the ones you only see from above.
+     */
+    const np = insetPlan(cp, Math.min(lw, ld) * 0.09);
+    B.trim(ringCap(cp, np, cy + 0.14, true), P.CONCRETE_WARM);
+    B.trim(parapetGeo(cp, cy, 0.72, 0.4), P.STUCCO_WHITE);
+    if (i === 0) {
+      const ab = planBounds(cp);
+      const off = Math.min(lw, ld) * 0.045 + 0.9;
+      acUnit(B, ab.x0 + off, cy + 0.14, ab.cz, 1.0, r);
+      acUnit(B, ab.x1 - off, cy + 0.14, ab.cz, 1.0, r);
+      ventStack(B, ab.cx, cy + 0.14, ab.z0 + off * 0.8, 0.95);
+      ventStack(B, ab.cx + ab.w * 0.18, cy + 0.14, ab.z1 - off * 0.8, 0.85);
+      B.trim(cyl(0.08, 5.5, 6, ab.x1 - off, cy + 0.14, ab.z1 - off * 0.8), P.ALUMINIUM);
+    }
+    cp = np;
   }
+  // Close the top of the stack before the lantern stands on it.
+  B.trim(loft([{ p: cp, y: cy }], { capTop: true, uScale: 3 }), P.CONCRETE_WARM);
+  B.trim(parapetGeo(cp, cy, 0.45, 0.32), P.STUCCO_WHITE);
   const cb = planBounds(cp);
   // A lantern is round, so its radius has to come off the SHORT axis of the
   // crown. Sizing it off cb.w put a 41 m drum on a 13 m deep parcel, hanging
@@ -5320,17 +5551,24 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
       B.trim(slabGeo(pi, yi, 0.14, 0.22), P.CONCRETE_WARM);            // course batten
       pPrev = pi; yPrev = yi + 0.14;
     }
-    B.trim(loft([{ p: pPrev, y: yPrev }], { capTop: true, uScale: 4 }), P.ROOF_MEMBRANE);
-    // Ridge lantern: a raised clerestory with a cap over it. Every real market
-    // hall has one, it is how the shed is daylit, and it is the mark that reads
-    // as a market from the 3/4 camera rather than as a warehouse.
+    /*
+     * THE CAP. Above the coursed terracotta sat a single flat membrane plane
+     * about 30 x 25 m with nothing on it — on a building whose roof is the
+     * largest thing the 3/4 camera ever sees of it, that one surface was what
+     * let the whole landmark set down. It now gets the full treatment: an
+     * upstand parapet, a rolled field, seam ribs, and the plant a market hall
+     * genuinely carries. Nothing above 10 m presents a bare plane.
+     */
+    dressedCap(B, pPrev, yPrev, r, {
+      parapetHex: P.CONCRETE_WARM, surfaceHex: P.ROOF_MEMBRANE,
+      bulkheadHex: P.STUCCO_SAND, trayHex: P.SIGN_DARK, laneOff: 0.36,
+    });
+    // Ridge lantern: a raised clerestory with a pitched cap over it. Every real
+    // market hall has one, it is how the shed is daylit, and it is the mark
+    // that reads as a market from the 3/4 camera rather than as a warehouse.
     const rb = planBounds(pPrev);
-    const lp = movePlan(rectPlan(Math.max(2, rb.w * 0.62), Math.max(1.6, rb.d * 0.30), 0.6), rb.cx, rb.cz);
-    B.trim(loft([{ p: lp, y: yPrev }, { p: lp, y: yPrev + 1.7 }], { uScale: 4, vScale: 4 }), P.GLASS_SKY);
-    B.trim(slabGeo(lp, yPrev + 1.7, 0.35, 0.55), P.TERRACOTTA);
-    for (let i = 0; i < 3; i++) {
-      ventStack(B, rb.cx + (i - 1) * rb.w * 0.26, yPrev, rb.cz + rb.d * 0.30, 0.9);
-    }
+    const lp = movePlan(rectPlan(Math.max(3, rb.w * 0.58), Math.max(2.2, rb.d * 0.22), 0.5), rb.cx, rb.cz);
+    clerestory(B, lp, yPrev + 0.55, 2.4, P.GLASS_SKY, P.TERRACOTTA);
     awning(B, pl.lw * 0.84, 4.0, bb.z1, 2.6, 0.7, P.FABRIC_CORAL);
     B.trim(box(pl.lw * 0.9, 0.3, 3.0, 0, 4.2, bb.z1 + 1.5, 4), P.FABRIC_CORAL);
     channelSign(B, 0, 5.4, bb.z1 + 0.2, pl.lw * 0.44, 1.8, 0, r, B.neon, false);

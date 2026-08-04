@@ -190,10 +190,18 @@ const GOODS_COLORS = [
   PALETTE.FABRIC_CORAL, PALETTE.FABRIC_SUN, PALETTE.FABRIC_AQUA,
   PALETTE.NEON_PINK, PALETTE.STUCCO_SAND, PALETTE.FABRIC_LIME,
 ];
-/** Bedding and bundled belongings: blues, greys, faded canvas. */
+/**
+ * Bedding and bundled belongings.
+ *
+ * MID VALUES ONLY, and that is a rendering constraint rather than a taste one:
+ * this tint multiplies the baked cardboard mat and the two bags as well as the
+ * roll it is meant to colour, so a near-black navy turned the whole group into
+ * one black shape. These read as blues, greys and faded canvas and still let
+ * the baked parts through.
+ */
 const BEDDING_COLORS = [
-  PALETTE.CAR_NAVY, PALETTE.STEEL_DARK, PALETTE.STUCCO_SAND, PALETTE.GRAVEL,
-  PALETTE.FABRIC_SKY, PALETTE.WOOD_DECK,
+  PALETTE.FABRIC_SKY, PALETTE.STUCCO_SKY, PALETTE.STEEL_DARK, PALETTE.STUCCO_SAND,
+  PALETTE.GRAVEL, PALETTE.WOOD_DECK, PALETTE.CAR_TEAL, PALETTE.STUCCO_MINT,
 ];
 /**
  * PIGEONS ARE PAINTED, NOT TINTED.
@@ -209,7 +217,7 @@ const PIGEON_COLORS = [
   PALETTE.FABRIC_WHITE, PALETTE.CAR_WHITE, PALETTE.STUCCO_WHITE,
   PALETTE.CAR_TRIM, PALETTE.CAR_SILVER, PALETTE.FABRIC_WHITE,
 ];
-const PIGEON_BODY = PALETTE.STEEL_DARK;      // 0x6f7878 — the blue-grey back
+const PIGEON_BODY = PALETTE.GLASS_SMOKE;     // 0x8fa6b0 — the blue-grey back
 const PIGEON_HEAD = PALETTE.CAR_GRAPHITE;    // distinctly darker head and neck
 const PIGEON_BAR = PALETTE.CAR_SILVER;       // the pale wing bar
 const PIGEON_FOOT = PALETTE.NEON_ORANGE;     // coral legs and feet
@@ -236,9 +244,11 @@ const STREET_HEX = {
 };
 
 /** Cooler tubs, so a street is not lined with identical sky-blue boxes. */
+// Mid-value tubs only. The lid is baked pale and MULTIPLIED by this, so a
+// near-black tub would take the white lid down with it.
 const COOLER_COLORS = [
-  PALETTE.FABRIC_SKY, PALETTE.CAR_RED, PALETTE.CAR_TEAL, PALETTE.STUCCO_WHITE,
-  PALETTE.CAR_ORANGE, PALETTE.BIN_BLUE,
+  PALETTE.FABRIC_SKY, PALETTE.CAR_CORAL, PALETTE.CAR_TEAL, PALETTE.STUCCO_WHITE,
+  PALETTE.CAR_ORANGE, PALETTE.STUCCO_SKY, PALETTE.CAR_MINT,
 ];
 /** Market cloths: whites, creams and washed pastels. */
 const CLOTH_COLORS = [
@@ -548,18 +558,21 @@ function torsoGeo() {
   // Waistband: a narrow ring standing 1 cm proud of the trunk, aligned to the
   // same hexagon so it cannot poke through unevenly. Crisper than shading the
   // trunk's own vertices, which would smear the belt over a third of the shirt.
-  const belt = new THREE.CylinderGeometry(0.176, 0.176, 0.055, 6, 1, true, Math.PI / 6);
+  const belt = new THREE.CylinderGeometry(0.180, 0.180, 0.042, 6, 1, true, Math.PI / 6);
   belt.scale(1, 1, 0.70);
-  belt.translate(0, 0.048, 0);
-  parts.push(shadeGeo(belt, 0.58));
+  belt.translate(0, 0.098, 0);
+  parts.push(shadeGeo(belt, 0.55));
   // Shirt collar, standing above the yoke around the neck.
   const collar = new THREE.CylinderGeometry(0.084, 0.080, 0.055, 6, 1, true, Math.PI / 6);
   collar.scale(1, 1, 0.90);
   collar.translate(0, 0.618, 0.004);
   parts.push(shadeGeo(collar, 0.80));
-  const yoke = new THREE.CylinderGeometry(0.5, 0.5, 0.132, 8, 1, false, Math.PI / 8);
-  yoke.scale(0.415 * 1.0824, 1, 0.250 * 1.0824);
-  yoke.translate(0, SHOULDER_Y - 0.030, 0);
+  // Shoulders, not a plate: an eight-sided prism that TAPERS inward as it
+  // rises, so the deltoid line slopes the way a shoulder does instead of
+  // sitting on the chest like a lid.
+  const yoke = new THREE.CylinderGeometry(0.5 * 0.84, 0.5, 0.185, 8, 1, false, Math.PI / 8);
+  yoke.scale(0.398 * 1.0824, 1, 0.248 * 1.0824);
+  yoke.translate(0, SHOULDER_Y - 0.058, 0);
   parts.push(shadeGeo(yoke, 1.0));
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
@@ -582,7 +595,7 @@ function headGeo() {
   const neck = limb(0.052, 0.058, 0.078, 5, 0.86, 1, true);
   neck.translate(0, 0.058, 0);
   parts.push(neck);
-  const skull = new THREE.SphereGeometry(0.121, 6, 3);
+  const skull = new THREE.SphereGeometry(0.121, 7, 3);
   skull.scale(1, 1.16, 0.95);
   skull.translate(0, 0.185, 0.004);
   shadeGeo(skull, 1.0);
@@ -597,10 +610,10 @@ function headGeo() {
   }
   // Brow and nose in one wedge — a four-sided cone is six triangles and reads
   // as a profile from the side, which two eyes alone never do.
-  const nose = new THREE.ConeGeometry(0.019, 0.040, 4, 1, false, Math.PI / 4);
+  const nose = new THREE.ConeGeometry(0.016, 0.032, 4, 1, false, Math.PI / 4);
   nose.rotateX(Math.PI / 2);
-  nose.scale(1, 0.85, 1);
-  nose.translate(0, 0.172, 0.108);
+  nose.scale(0.85, 0.80, 1);
+  nose.translate(0, 0.166, 0.106);
   parts.push(shadeGeo(nose, 0.90));
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
@@ -645,10 +658,12 @@ function armGeo() {
   const cuff = new THREE.CylinderGeometry(0.052, 0.050, 0.036, 5, 1, true, Math.PI / 5);
   cuff.translate(0, -ARM_L + 0.052, 0);
   parts.push(shadeGeo(cuff, 0.70));
-  const hand = new THREE.SphereGeometry(0.050, 4, 2);
-  hand.scale(0.82, 1.0, 1.05);
-  hand.translate(0, -ARM_L - 0.022, 0.006);
-  parts.push(shadeGeo(hand, 1.04));
+  // A four-segment sphere is a pencil tip, not a hand. A chunky box at the
+  // same triangle cost reads as a fist from three metres and from forty.
+  const hand = new THREE.BoxGeometry(0.070, 0.086, 0.058);
+  hand.rotateX(0.18);
+  hand.translate(0, -ARM_L - 0.030, 0.008);
+  parts.push(shadeGeo(hand, 1.05));
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
@@ -669,11 +684,12 @@ function thighGeo() {
 function shinGeo() {
   const parts = [];
   parts.push(limb(0.076, 0.061, SHIN_L, 5, 1.0, 1, true));
-  const shoe = new THREE.BoxGeometry(0.100, SHOE_H, 0.218, 1, 2, 1);
-  shoe.translate(0, -SHIN_L - SHOE_H * 0.5 + 0.012, 0.040);
-  shadeGeo(shoe, 0.30);
-  gradY(shoe, -SHIN_L - SHOE_H + 0.012, -SHIN_L - SHOE_H * 0.5 + 0.012, 2.35, 1.0);
-  parts.push(shoe);
+  // Upper and sole as two solids. A shading gradient across one box gave a
+  // smear; two boxes give the crisp pale sole line a shoe actually has.
+  const y0 = -SHIN_L - SHOE_H + 0.012;
+  parts.push(box(0.102, 0.019, 0.222, 0, y0 + 0.0095, 0.040, 0.86));
+  parts.push(box(0.094, SHOE_H - 0.019, 0.206, 0, y0 + 0.019 + (SHOE_H - 0.019) * 0.5,
+    0.036, 0.26));
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
@@ -773,9 +789,9 @@ const DOG_BREEDS = ['short', 'lean', 'fluffy'];
 function dogGeo(breed = 'short') {
   const B = {
     // shoulder  bodyLen  girth  legR  headS  ears     tail        collar
-    short:  { sh: 0.30, bl: 0.50, gr: 0.108, lr: 0.032, hs: 0.94, ear: 'drop', tail: 'low',  col: PALETTE.CAR_RED },
-    lean:   { sh: 0.47, bl: 0.42, gr: 0.094, lr: 0.026, hs: 0.86, ear: 'rose', tail: 'whip', col: PALETTE.CAR_TEAL },
-    fluffy: { sh: 0.38, bl: 0.40, gr: 0.128, lr: 0.030, hs: 1.00, ear: 'prick', tail: 'curl', col: PALETTE.CAR_YELLOW },
+    short:  { sh: 0.27, bl: 0.50, gr: 0.112, lr: 0.040, hs: 0.94, ear: 'drop', tail: 'low',  col: PALETTE.CAR_RED },
+    lean:   { sh: 0.46, bl: 0.42, gr: 0.096, lr: 0.030, hs: 0.86, ear: 'rose', tail: 'whip', col: PALETTE.CAR_TEAL },
+    fluffy: { sh: 0.37, bl: 0.40, gr: 0.130, lr: 0.036, hs: 1.00, ear: 'prick', tail: 'curl', col: PALETTE.CAR_YELLOW },
   }[breed];
   const parts = [];
   const Y = B.sh;                       // spine height
@@ -783,15 +799,15 @@ function dogGeo(breed = 'short') {
 
   /* --- barrel: chest, waist, haunch. A dog is deeper than it is wide. ----- */
   const chest = barZ(B.gr * 0.86, B.gr * 1.06, B.bl * 0.40, 0, Y, zF - B.bl * 0.20,
-    1.0, 6, 0.86, 1.10);
+    1.0, 6, 0.88, 1.08);
   gradY(chest, Y - B.gr, Y, 1.30, 0.96);           // pale chest and belly
   parts.push(chest);
   const waist = barZ(B.gr * 1.06, B.gr * 0.90, B.bl * 0.32, 0, Y - 0.004, 0,
-    1.0, 6, 0.84, 1.04);
+    1.0, 6, 0.88, 1.08);
   gradY(waist, Y - B.gr, Y, 1.16, 0.92);
   parts.push(waist);
   const rump = barZ(B.gr * 0.90, B.gr * 1.02, B.bl * 0.38, 0, Y - 0.006,
-    zB + B.bl * 0.18, 1.0, 6, 0.88, 1.06);
+    zB + B.bl * 0.18, 1.0, 6, 0.88, 1.08);
   gradY(rump, Y - B.gr, Y, 1.12, 0.88);
   parts.push(rump);
 
@@ -809,14 +825,24 @@ function dogGeo(breed = 'short') {
   const muzzle = bevBox(0.070 * B.hs, 0.064 * B.hs, 0.098 * B.hs,
     0, hy - 0.020 * B.hs, hx + 0.108 * B.hs, 1.28, 0.010);
   parts.push(muzzle);
-  parts.push(hue(box(0.030 * B.hs, 0.024 * B.hs, 0.020 * B.hs,
-    0, hy - 0.014 * B.hs, hx + 0.156 * B.hs, 1.0), PALETTE.SIGN_DARK));   // nose
+  // Nose and eyes. Twenty-four triangles, and the difference between an animal
+  // and a shape: at 0.5 m the camera gets closer to a dog than to any other
+  // prop in the city.
+  const snout = new THREE.SphereGeometry(0.020 * B.hs, 4, 2);
+  snout.scale(1.15, 0.85, 0.9);
+  snout.translate(0, hy + 0.002 * B.hs, hx + 0.156 * B.hs);
+  parts.push(hue(shadeGeo(snout, 1.0), PALETTE.SIGN_DARK));
+  for (const s of [-1, 1]) {
+    parts.push(box(0.017 * B.hs, 0.019 * B.hs, 0.014 * B.hs,
+      s * 0.040 * B.hs, hy + 0.020 * B.hs, hx + 0.066 * B.hs, 0.13));
+  }
 
   for (const s of [-1, 1]) {
     if (B.ear === 'drop') {
       // A folded ear hanging beside the cheek.
-      const e = bar(0.026 * B.hs, 0.095 * B.hs, 0.062 * B.hs,
-        s * 0.062 * B.hs, hy - 0.024 * B.hs, hx - 0.008, 0.70, 6);
+      const e = bar(0.030 * B.hs, 0.130 * B.hs, 0.080 * B.hs,
+        s * 0.074 * B.hs, hy - 0.038 * B.hs, hx - 0.012, 0.70, 6);
+      e.rotateZ(s * -0.14);
       parts.push(e);
     } else {
       const e = new THREE.ConeGeometry(0.042 * B.hs, 0.082 * B.hs, 3, 1, false, Math.PI / 3);
@@ -836,22 +862,29 @@ function dogGeo(breed = 'short') {
     PALETTE.CAR_YELLOW, 1.7));                        // name tag
 
   /* --- four legs, with a gap between each pair ---------------------------- */
+  // The rear pair is TWO segments with a hock between them. Four identical
+  // straight rods is what made the old dog read as a table with a head.
   const top = Y - B.gr * 0.55;
-  const legs = [
-    [1, zF - 0.070, 0.00], [-1, zF - 0.070, 0.00],
-    [1, zB + 0.075, 0.20], [-1, zB + 0.075, 0.20],
-  ];
-  for (const [s, lz, rake] of legs) {
-    const g = new THREE.CylinderGeometry(B.lr * 1.25, B.lr * 0.82, top, 5, 1, false, Math.PI / 5);
-    g.translate(0, -top / 2, 0);
-    g.rotateX(rake);
-    g.translate(s * B.gr * 0.52, top, lz);
-    shadeGeo(g, 0.94);
-    gradY(g, 0, 0.085, 1.36, 0.94);                  // pale socks
-    parts.push(g);
-    // The paw lands wherever the rake put the ankle, not under the hip.
-    const pz = lz - Math.sin(rake) * top;
-    parts.push(box(B.lr * 2.4, 0.032, B.lr * 3.1, s * B.gr * 0.52, 0.017, pz, 1.28));
+  const legSeg = (s, x, y0, y1, z0, z1, rA, rB, k) => {
+    const len = Math.hypot(y1 - y0, z1 - z0);
+    const g = new THREE.CylinderGeometry(rA, rB, len, 5, 1, false, Math.PI / 5);
+    g.rotateX(Math.atan2(z1 - z0, y1 - y0));
+    g.translate(s * x, (y0 + y1) / 2, (z0 + z1) / 2);
+    return shadeGeo(g, k);
+  };
+  for (const s of [-1, 1]) {
+    const fx = B.gr * 0.50, fz = zF - 0.075;
+    const fl = legSeg(s, fx, top, 0.030, fz, fz + 0.014, B.lr * 1.30, B.lr * 0.86, 0.94);
+    gradY(fl, 0, 0.075, 1.34, 0.96);
+    parts.push(fl);
+    parts.push(box(B.lr * 2.2, 0.030, B.lr * 2.9, s * fx, 0.016, fz + 0.020, 1.26));
+    // Rear: thigh raked back to a hock, then a shank forward to the paw.
+    const rx = B.gr * 0.50, rz = zB + 0.085, hockY = top * 0.44, hockZ = rz - 0.085;
+    parts.push(legSeg(s, rx, top + 0.020, hockY, rz, hockZ, B.lr * 1.55, B.lr * 0.92, 0.94));
+    const rl = legSeg(s, rx, hockY, 0.030, hockZ, hockZ + 0.052, B.lr * 0.92, B.lr * 0.80, 0.94);
+    gradY(rl, 0, 0.075, 1.34, 0.96);
+    parts.push(rl);
+    parts.push(box(B.lr * 2.2, 0.030, B.lr * 2.9, s * rx, 0.016, hockZ + 0.058, 1.26));
   }
 
   /* --- tail: two tapering segments, tapering and lifting ------------------ */
@@ -1114,9 +1147,9 @@ const BOARD_HIP = +(0.11 + (THIGH_L + SOLE_L) * Math.cos(0.30)).toFixed(4);
  * lighter border and a fringe — and only the soft goods take the pitch tint, so
  * there is always a dark ground under bright stock whatever the tint is.
  */
-const MAT_DARK = 0x2f3352;      // indigo ground
-const MAT_STRIPE = 0x7a5f92;    // the woven stripe
-const MAT_EDGE = 0xb9a68c;      // bleached border band
+const MAT_DARK = 0x454b7c;      // indigo ground — light enough to read as CLOTH
+const MAT_STRIPE = 0x9d84ba;    // the woven stripe
+const MAT_EDGE = 0xcbb99c;      // bleached border band
 function vendorMatGeo() {
   const parts = [];
   const W = 1.66, D = 1.16, T = 0.026;
@@ -1125,7 +1158,7 @@ function vendorMatGeo() {
   parts.push(hue(bevBox(W, T, D, 0, T / 2, 0, 1.0, 0.010), MAT_DARK));
   // Woven stripes, standing 3 mm proud so nothing is coplanar with anything.
   for (let i = -1; i <= 1; i++) {
-    parts.push(hue(box(W - 0.14, 0.005, 0.085, 0, T + 0.002, i * 0.30, 1.0),
+    parts.push(hue(box(W - 0.14, 0.005, 0.130, 0, T + 0.002, i * 0.30, 1.0),
       i === 0 ? MAT_EDGE : MAT_STRIPE));
   }
   // Border band on all four sides.
@@ -1235,6 +1268,15 @@ function foldTableGeo() {
   /* --- table top and cloth. ONLY the cloth takes the instance tint. ------- */
   parts.push(hue(bevBox(1.42, 0.036, 0.66, 0, TOP_Y - 0.020, 0, 1.0, 0.008), PALETTE.WOOD_DARK));
   parts.push(bevBox(1.46, 0.026, 0.70, 0, TOP_Y + 0.012, 0, 1.0, 0.008));       // cloth top
+  // Gingham: alternate squares knocked back, so the cloth is a CHECKED cloth
+  // rather than a white plank. Nine thin plates, no second draw call.
+  for (let cx = 0; cx < 6; cx++) {
+    for (let cz = 0; cz < 3; cz++) {
+      if ((cx + cz) % 2) continue;
+      parts.push(box(0.225, 0.004, 0.215, -0.60 + cx * 0.24, TOP_Y + 0.026,
+        -0.22 + cz * 0.22, 0.74));
+    }
+  }
   for (const sz of [-1, 1]) {
     parts.push(bevBox(1.46, 0.30, 0.026, 0, TOP_Y - 0.135, sz * 0.350, 0.92, 0.008));
     parts.push(box(1.46, 0.030, 0.032, 0, TOP_Y - 0.278, sz * 0.350, 0.62));    // hem
@@ -1310,12 +1352,17 @@ function coolerGeo() {
   parts.push(box(W + 0.032, 0.008, D + 0.032, 0, BH + 0.046, 0, 0.16));        // parting line
 
   /* --- what is inside, visible because the lid is up --------------------- */
-  parts.push(hue(bevBox(W - 0.06, 0.075, D - 0.06, 0, BH + 0.005, 0, 1.0, 0.012),
-    PALETTE.STUCCO_WHITE, 1.25));                                              // ice
+  // Ice: lumpy and bleached, not a flat slab in shadow.
+  for (let i = 0; i < 5; i++) {
+    const w = 0.16 + (i % 3) * 0.05;
+    parts.push(hue(bevBox(w, 0.085 + (i % 2) * 0.02, 0.13 + (i % 2) * 0.05,
+      -0.20 + i * 0.10, BH + 0.010 + (i % 2) * 0.012, -0.05 + (i % 3) * 0.05, 1.0, 0.012),
+    PALETTE.STUCCO_WHITE, 2.1));
+  }
   for (let i = 0; i < 4; i++) {
     const b = new THREE.CylinderGeometry(0.030, 0.030, 0.090, 6, 1, false, Math.PI / 6);
     b.rotateZ(0.30 + (i % 2) * 0.2);
-    b.translate(-0.18 + i * 0.12, BH + 0.052, -0.05 + (i % 2) * 0.10);
+    b.translate(-0.18 + i * 0.12, BH + 0.072, -0.05 + (i % 2) * 0.10);
     parts.push(hue(shadeGeo(b, 1.0),
       [PALETTE.CAR_RED, PALETTE.CAR_GREEN, PALETTE.NEON_ORANGE, PALETTE.CAR_BLUE][i]));
   }
@@ -1349,6 +1396,9 @@ function coolerGeo() {
     parts.push(bevBox(0.020, 0.020, 0.20, x, BH * 0.70, 0, 0.22, 0.005));
     for (const sz of [-1, 1]) {
       parts.push(bevBox(0.018, 0.100, 0.018, x, BH * 0.70 - 0.050, sz * 0.095, 0.22, 0.005));
+      // The lug the wire handle actually pivots on, or it hangs in mid-air.
+      parts.push(bevBox(0.030, 0.034, 0.032, x - Math.sign(x) * 0.014, BH * 0.70 - 0.100,
+        sz * 0.095, 0.40, 0.006));
     }
   }
   return ground(BufferGeometryUtils.mergeGeometries(parts, false));
@@ -1365,7 +1415,7 @@ function bedrollGeo() {
   // is also what grounds the group — without it three objects float side by
   // side with no relationship to each other.
   const mat = bevBox(1.12, 0.026, 0.72, 0.02, 0.013, 0.06, 1.0, 0.008);
-  parts.push(hue(mat, PALETTE.WOOD_DECK, 0.86));
+  parts.push(hue(mat, PALETTE.WOOD_DECK, 1.55));
   parts.push(hue(bevBox(1.06, 0.008, 0.030, 0.02, 0.028, -0.16, 1.0, 0.003),
     PALETTE.WOOD_DARK, 0.8));                       // the crease it was folded on
 
@@ -1394,15 +1444,20 @@ function bedrollGeo() {
   // leaning against the roll, one settled beside it.
   const bagA = new THREE.SphereGeometry(0.215, 6, 4);
   bagA.scale(1.02, 0.76, 0.88);
-  bagA.rotateZ(-0.22);
-  bagA.translate(0.40, 0.175, 0.30);
+  bagA.scale(1.0, 1.0, 1.0);
+  bagA.rotateZ(-0.30);
+  bagA.rotateX(0.20);
+  // Leaning ON the roll, not parked beside it: the overlap is what makes three
+  // objects read as one person's things.
+  bagA.translate(0.30, 0.196, 0.176);
   parts.push(hue(shadeGeo(bagA, 1.0), 0x5f7a4a));                       // dark green
-  parts.push(hue(bevBox(0.13, 0.030, 0.11, 0.41, 0.300, 0.30, 1.0, 0.008),
+  parts.push(hue(bevBox(0.13, 0.030, 0.11, 0.31, 0.322, 0.176, 1.0, 0.008),
     PALETTE.SIGN_DARK, 0.9));                                           // its handle
   const bagB = new THREE.SphereGeometry(0.175, 6, 4);
-  bagB.scale(1.08, 0.70, 0.92);
-  bagB.rotateZ(0.30);
-  bagB.translate(-0.33, 0.148, 0.26);
+  bagB.scale(1.14, 0.64, 0.92);
+  bagB.rotateZ(0.34);
+  bagB.rotateX(-0.16);
+  bagB.translate(-0.34, 0.135, 0.30);
   parts.push(hue(shadeGeo(bagB, 1.0), 0x9db8c6));                       // faded tarp blue
   parts.push(hue(bevBox(0.055, 0.036, 0.34, -0.33, 0.180, 0.26, 1.0, 0.008),
     PALETTE.STUCCO_SAND, 0.9));                                         // a webbing strap
@@ -1438,15 +1493,21 @@ function trolleyGeo() {
       parts.push(hue(bar(0.020, h, 0.020, sx * wAt(t) / 2, yAt(t) + h / 2, z, 1.0, 6), CHROME));
     }
   }
+  // A longitudinal member has to follow BOTH slopes: the floor rising toward
+  // the nose and the wall drawing in toward it. The yaw is negative on the +x
+  // side because the front is the narrow end.
+  const along = (w, h, x0, y0, k) => {
+    // u is where this member sits across the basket, as a fraction of the half
+    // width; its x therefore runs from u*RW/2 at the rear to u*FW/2 at the nose.
+    const u = x0 / ((RW + FW) / 4);
+    const b = bevBox(w, h, BL, 0, 0, 0, 1.0, 0.005);
+    b.rotateX(-Math.atan2(FY - RY, BL));
+    b.rotateY(Math.atan2(u * (FW - RW) / 2, BL));
+    b.translate(x0, (RY + FY) / 2 + y0, 0);
+    return hue(b, CHROME, k);
+  };
   for (let r = 0; r < 3; r++) {         // horizontal rails down each side
-    const y0 = 0.06 + r * 0.13;
-    for (const sx of [-1, 1]) {
-      const b = bevBox(0.018, 0.018, BL, sx * (RW + FW) / 4, 0, 0, 1.0, 0.005);
-      b.rotateX(-Math.atan2(FY - RY, BL));
-      b.rotateY(sx * Math.atan2((RW - FW) / 2, BL));
-      b.translate(0, (RY + FY) / 2 + y0, 0);
-      parts.push(hue(b, CHROME, 0.94));
-    }
+    for (const sx of [-1, 1]) parts.push(along(0.018, 0.018, sx * (RW + FW) / 4, 0.06 + r * 0.13, 0.94));
   }
   for (const [t, sw] of [[0, RW], [1, FW]]) {
     for (let i = 0; i < 4; i++) {
@@ -1455,18 +1516,13 @@ function trolleyGeo() {
     }
     parts.push(hue(bevBox(sw + 0.03, 0.020, 0.020, 0, yAt(t) + BH, zAt(t), 1.0, 0.005), CHROME));
   }
-  // Raked floor and the top rim, both following the taper.
-  const floor = bevBox((RW + FW) / 2, 0.020, BL, 0, 0, 0, 1.0, 0.006);
-  floor.rotateX(-Math.atan2(FY - RY, BL));
-  floor.translate(0, (RY + FY) / 2, 0);
-  parts.push(hue(floor, CHROME, 0.80));
-  for (const sx of [-1, 1]) {
-    const rim = bevBox(0.026, 0.026, BL + 0.02, sx * (RW + FW) / 4, 0, 0, 1.0, 0.006);
-    rim.rotateX(-Math.atan2(FY - RY, BL));
-    rim.rotateY(sx * Math.atan2((RW - FW) / 2, BL));
-    rim.translate(0, (RY + FY) / 2 + BH, 0);
-    parts.push(hue(rim, CHROME, 1.06));
+  // Floor as five tapering slats rather than one rectangular slab: a slab wide
+  // enough for the back sticks 5 cm out through the narrow front wall.
+  for (let i = 0; i < 5; i++) {
+    const u = (i / 4 - 0.5) * 2 * 0.86;
+    parts.push(along(0.030, 0.016, u * (RW + FW) / 4, 0, 0.80));
   }
+  for (const sx of [-1, 1]) parts.push(along(0.026, 0.026, sx * (RW + FW) / 4, BH, 1.06));
 
   /* --- handle end: bright plastic bar and a hinged child seat ------------- */
   for (const sx of [-1, 1]) {
@@ -1517,20 +1573,22 @@ function trolleyGeo() {
   /* --- contents you can name ---------------------------------------------- */
   const bagA = new THREE.SphereGeometry(0.19, 6, 4);
   bagA.scale(1.05, 0.90, 0.86);
-  bagA.translate(0.02, RY + 0.20, -0.16);
+  bagA.scale(0.92, 0.92, 0.92);
+  bagA.translate(0.00, RY + 0.16, -0.16);
   parts.push(hue(shadeGeo(bagA, 1.0), PALETTE.CAR_GRAPHITE));
   const bagB = new THREE.SphereGeometry(0.155, 6, 4);
   bagB.scale(1.0, 0.94, 0.90);
-  bagB.translate(-0.06, RY + 0.19, 0.12);
+  bagB.scale(0.88, 0.88, 0.88);
+  bagB.translate(-0.03, RY + 0.17, 0.12);
   parts.push(hue(shadeGeo(bagB, 1.0), PALETTE.BIN_BLUE));
-  const blanket = new THREE.CylinderGeometry(0.085, 0.085, 0.34, 7, 1, false, Math.PI / 7);
+  const blanket = new THREE.CylinderGeometry(0.072, 0.072, 0.24, 7, 1, false, Math.PI / 7);
   blanket.rotateZ(Math.PI / 2);
   blanket.rotateY(0.35);
-  blanket.translate(0.06, RY + 0.14, 0.28);
+  blanket.translate(0.02, RY + 0.11, 0.26);
   parts.push(hue(shadeGeo(blanket, 1.0), PALETTE.FABRIC_CORAL));
-  parts.push(hue(bevBox(0.24, 0.19, 0.18, -0.10, RY + 0.30, -0.02, 1.0, 0.010),
+  parts.push(hue(bevBox(0.22, 0.17, 0.17, -0.09, RY + 0.26, -0.04, 1.0, 0.010),
     PALETTE.WOOD_DECK));
-  parts.push(hue(box(0.245, 0.012, 0.05, -0.10, RY + 0.396, -0.02, 1.0),
+  parts.push(hue(box(0.225, 0.012, 0.05, -0.09, RY + 0.346, -0.04, 1.0),
     PALETTE.WOOD_DARK, 0.9));                            // tape down the box seam
   return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
@@ -1589,10 +1647,11 @@ function crateGeo() {
   }
   parts.push(bevBox(W - 0.02, 0.020, D - 0.02, 0, H - 0.006, 0, 0.94, 0.006));   // top slat deck
   // A faded stencil block on one face — deliberately abstract, no lettering.
-  parts.push(hue(box(0.20, 0.10, 0.006, 0.02, 0.215, D / 2 + 0.006, 1.0),
+  // Flush with the boards, not standing off them: a stencil is ink, not a sign.
+  parts.push(hue(box(0.20, 0.10, 0.004, 0.02, 0.215, D / 2 + 0.0015, 1.0),
     PALETTE.STUCCO_SAND, 1.15));
-  parts.push(hue(box(0.13, 0.022, 0.004, -0.01, 0.240, D / 2 + 0.010, 1.0), PALETTE.SIGN_DARK));
-  parts.push(hue(box(0.09, 0.018, 0.004, -0.03, 0.196, D / 2 + 0.010, 1.0), PALETTE.SIGN_DARK, 0.9));
+  parts.push(hue(box(0.13, 0.020, 0.004, -0.01, 0.240, D / 2 + 0.0035, 1.0), PALETTE.SIGN_DARK));
+  parts.push(hue(box(0.09, 0.016, 0.004, -0.03, 0.196, D / 2 + 0.0035, 1.0), PALETTE.SIGN_DARK, 0.9));
   return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
@@ -1639,17 +1698,20 @@ function signCardGeo() {
   parts.push(hue(board, CARD_BROWN));
   // The corrugated flute, exposed along the cut bottom edge.
   for (let i = 0; i < 7; i++) {
-    parts.push(hue(box(0.048, 0.016, 0.007, -0.180 + i * 0.062, 0.004, 0, 1.0),
-      CARD_BROWN, i % 2 ? 0.55 : 1.20));
+    // 2 cm deep against a 1.6 cm board, so the flute PROTRUDES and is visible
+    // instead of being buried inside the card it is meant to be the edge of.
+    parts.push(hue(box(0.048, 0.014, 0.021, -0.180 + i * 0.062, 0.006, 0, 1.0),
+      CARD_BROWN, i % 2 ? 0.50 : 1.25));
   }
   // Two lines of writing, blocked in. Deliberately abstract: legible text on a
   // sign held by someone in this position would be putting words in a
   // stranger's mouth for entertainment.
-  for (let i = 0; i < 2; i++) {
-    const line = new THREE.BoxGeometry(0.28 - i * 0.09, 0.026, 0.005);
-    line.rotateZ(0.03 - i * 0.05);
-    line.translate(-0.01 + i * 0.02, 0.205 - i * 0.072, 0.010 - (0.205 - i * 0.072 > 0.14
-      ? Math.pow(0.205 - i * 0.072 - 0.14, 2) * 1.9 : 0));
+  for (let i = 0; i < 3; i++) {
+    const ly = 0.232 - i * 0.056;
+    const line = new THREE.BoxGeometry(0.27 - i * 0.055, 0.017, 0.003);
+    line.rotateZ(0.028 - i * 0.03);
+    line.translate(-0.015 + i * 0.018, ly,
+      0.0095 - (ly > 0.14 ? Math.pow(ly - 0.14, 2) * 1.9 : 0));
     parts.push(hue(shadeGeo(line, 1.0), PALETTE.SIGN_DARK, 1.2));
   }
   const g = BufferGeometryUtils.mergeGeometries(parts, false);
@@ -1671,67 +1733,68 @@ function signCardGeo() {
 function pigeonGeo(pose = 'stand') {
   const peck = pose === 'peck';
   const parts = [];
+  const tilt = peck ? 0.34 : 0.05;
 
-  /* --- legs and feet: the only orange on the bird, and it matters ---------- */
+  /* --- legs: thin, and the only orange on the bird ------------------------ */
   for (const s of [-1, 1]) {
-    // Leg and foot in ONE solid. At 25 cm tall with 180-odd of them on the
-    // paving, a pigeon cannot afford a second box per ankle.
-    const leg = box(0.030, 0.062, 0.052, s * 0.024, 0.031, 0.012, 1.0);
-    hue(leg, PIGEON_FOOT);
-    gradY(leg, 0.000, 0.030, 1.0, 0.72);
-    parts.push(leg);
+    parts.push(hue(box(0.011, 0.046, 0.011, s * 0.021, 0.026, 0.006, 1.0), PIGEON_FOOT));
+    parts.push(hue(box(0.026, 0.011, 0.042, s * 0.021, 0.006, 0.014, 1.0), PIGEON_FOOT, 0.80));
   }
 
-  /* --- body: deeper at the breast, tapering to the tail -------------------- */
-  const tilt = peck ? 0.30 : 0.06;
-  const body = new THREE.SphereGeometry(0.078, 6, 3);
-  body.scale(0.82, 0.86, 1.34);
+  /* --- body: deep breast tapering back to the tail ------------------------ */
+  const body = new THREE.SphereGeometry(0.070, 6, 3);
+  body.scale(0.86, 0.92, 1.30);
   body.rotateX(tilt);
-  body.translate(0, 0.112, 0.004);
+  body.translate(0, 0.098, 0.006);
   hue(shadeGeo(body, 1.0), PIGEON_BODY);
-  gradY(body, 0.05, 0.14, 1.24, 0.88);          // pale breast, darker mantle
+  gradY(body, 0.045, 0.120, 1.26, 0.86);        // pale breast, darker mantle
   parts.push(body);
 
-  /* --- folded wings, overlapping the body line so it is not one blob ------- */
+  /* --- folded wings, swept along the flanks and only 2 cm thick ----------- */
   for (const s of [-1, 1]) {
-    const w = box(0.026, 0.058, 0.150, s * 0.060, 0.116, -0.010, 1.0);
-    w.rotateX(tilt * 0.6);
-    parts.push(hue(w, PIGEON_BODY, 0.80));
-    parts.push(hue(box(0.030, 0.013, 0.070, s * 0.061, 0.096, -0.030, 1.0),
-      PIGEON_BAR));                              // the wing bar
+    const w = box(0.020, 0.046, 0.135, 0, 0, 0, 1.0);
+    w.rotateZ(s * 0.16);
+    w.rotateX(tilt + 0.10);
+    w.translate(s * 0.052, 0.104, -0.014);
+    parts.push(hue(w, PIGEON_BODY, 0.78));
+    const bandBar = box(0.023, 0.011, 0.060, 0, 0, 0, 1.0);
+    bandBar.rotateZ(s * 0.16);
+    bandBar.rotateX(tilt + 0.10);
+    bandBar.translate(s * 0.054, 0.088, -0.036);
+    parts.push(hue(bandBar, PIGEON_BAR));
   }
 
-  /* --- neck and head, lifted proud of the shoulders ------------------------ */
-  const hy = peck ? 0.118 : 0.212;
-  const hz = peck ? 0.118 : 0.058;
-  const nAng = Math.atan2(hz - 0.030, hy - 0.130);
-  const nLen = Math.hypot(hz - 0.030, hy - 0.130) + 0.030;
-  const neck = new THREE.CylinderGeometry(0.028, 0.042, nLen, 5, 1, false, Math.PI / 5);
+  /* --- neck and head, lifted clear of the shoulders ----------------------- */
+  const hy = peck ? 0.102 : 0.178;
+  const hz = peck ? 0.112 : 0.058;
+  const nAng = Math.atan2(hz - 0.030, hy - 0.115);
+  const nLen = Math.hypot(hz - 0.030, hy - 0.115) + 0.028;
+  const neck = new THREE.CylinderGeometry(0.024, 0.038, nLen, 5, 1, false, Math.PI / 5);
   neck.rotateX(nAng);
-  neck.translate(0, 0.130 + Math.cos(nAng) * nLen * 0.42,
-    0.030 + Math.sin(nAng) * nLen * 0.42);
-  // A hint of the throat iridescence every city pigeon actually has, straight
-  // out of the neck's own vertices rather than a second ring.
-  hue(shadeGeo(neck, 1.0), PIGEON_HEAD, 1.05);
-  gradY(neck, 0.128, 0.190, 1.30, 1.0);
+  neck.translate(0, 0.115 + Math.cos(nAng) * nLen * 0.42, 0.030 + Math.sin(nAng) * nLen * 0.42);
+  hue(shadeGeo(neck, 1.0), PIGEON_HEAD, 1.06);
   parts.push(neck);
 
-  const head = new THREE.SphereGeometry(0.042, 5, 2);
-  head.scale(1, 0.98, 1.06);
+  const head = new THREE.SphereGeometry(0.034, 5, 3);
+  head.scale(1, 0.98, 1.10);
   head.translate(0, hy, hz);
   parts.push(hue(shadeGeo(head, 1.0), PIGEON_HEAD));
-  const beak = new THREE.ConeGeometry(0.013, 0.034, 4, 1, false, Math.PI / 4);
-  beak.rotateX(peck ? Math.PI * 0.86 : Math.PI / 2);
-  beak.translate(0, hy - (peck ? 0.028 : 0.004), hz + (peck ? 0.020 : 0.048));
+  const beak = new THREE.ConeGeometry(0.010, 0.026, 4, 1, false, Math.PI / 4);
+  beak.rotateX(peck ? Math.PI * 0.88 : Math.PI / 2);
+  beak.translate(0, hy - (peck ? 0.024 : 0.002), hz + (peck ? 0.016 : 0.040));
   parts.push(hue(shadeGeo(beak, 1.0), PALETTE.SIGN_DARK));
 
-  /* --- tail: a long flat fan raked down at the rear ------------------------ */
-  const tail = box(0.086, 0.014, 0.158, 0, 0, 0, 1.0);
-  tail.rotateX(peck ? 0.55 : -0.24);
-  tail.translate(0, peck ? 0.128 : 0.086, -0.155);
-  parts.push(hue(tail, PIGEON_BODY, 0.90));
-  parts.push(hue(box(0.078, 0.010, 0.030, 0, peck ? 0.150 : 0.070, -0.222, 1.0),
-    PIGEON_BAR, 0.85));                          // pale tail band
+  /* --- tail: a flat fan that WIDENS to the tip, raked down --------------- */
+  // A tapered prism laid flat is a fan for 24 triangles; a box is a plank, and
+  // a plank sticking out of a sphere is what made these read as litter.
+  const tail = barZ(0.058, 0.026, 0.150, 0, 0, 0, 1.0, 6, 1.35, 0.22);
+  tail.rotateX(peck ? 0.42 : -0.16);
+  tail.translate(0, peck ? 0.116 : 0.078, -0.152);
+  parts.push(hue(tail, PIGEON_BODY, 0.88));
+  const band = box(0.086, 0.012, 0.026, 0, 0, 0, 1.0);
+  band.rotateX(peck ? 0.42 : -0.16);
+  band.translate(0, peck ? 0.142 : 0.066, -0.222);
+  parts.push(hue(band, PIGEON_BAR, 0.90));
   return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
