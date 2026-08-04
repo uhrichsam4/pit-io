@@ -1,0 +1,479 @@
+/* =========================================================================
+ * PLAY — matchmaking screen.
+ *
+ * Everything here is scoped under [data-screen="play"] (the shell stamps that
+ * on the page element) so this file can never leak into another screen. It
+ * adds LAYOUT ONLY: panels, buttons, chips, rows and tabs all come from
+ * tokens.css. Where a component looks new — the code boxes, the bot switch,
+ * the radar — it is genuinely new, not a restyle of an existing one.
+ *
+ * Authored in `em` off the shell's single --ui-scale, like the rest of the
+ * meta layer. Portrait phone first; the .wrap max-width does the desktop work.
+ * ====================================================================== */
+
+[data-screen="play"] .play-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding-bottom: 0.2em;
+}
+
+/* The shell's page body is the only scroller. `touch-action` has to be stated:
+   styles.css sets `touch-action: none` on <body> to stop the browser panning
+   the game canvas, and that decision is inherited by the hit test for every
+   descendant — without this the lobby simply refuses to scroll on a phone. */
+[data-screen="play"] .page-body { touch-action: pan-y; }
+
+/* A gentle stagger on entry. Cheap, and it makes the screen feel assembled
+   rather than pasted. Reduced motion is neutralised globally in tokens.css. */
+[data-screen="play"] .play-wrap > * { animation: play-rise 0.34s var(--ease-back) both; }
+[data-screen="play"] .play-wrap > *:nth-child(2) { animation-delay: 0.04s; }
+[data-screen="play"] .play-wrap > *:nth-child(3) { animation-delay: 0.08s; }
+[data-screen="play"] .play-wrap > *:nth-child(4) { animation-delay: 0.12s; }
+[data-screen="play"] .play-wrap > *:nth-child(5) { animation-delay: 0.16s; }
+@keyframes play-rise { from { opacity: 0; transform: translateY(0.7em); } }
+
+[data-screen="play"] .pane { display: flex; flex-direction: column; gap: var(--gap); }
+[data-screen="play"] .pane[hidden] { display: none; }
+
+/* Small button variant. The 44 px floor is NOT relaxed — only the padding and
+   the type get smaller, so a "Join" in a row is still a thumb target. */
+[data-screen="play"] .btn-sm {
+  font-size: 0.82em;
+  padding: 0.4em 1em;
+}
+
+/* ======================================================================== */
+/* MODE STRIP                                                               */
+/* ======================================================================== */
+
+[data-screen="play"] .mode-panel { display: flex; flex-direction: column; gap: 0.5em; }
+
+[data-screen="play"] .mode-strip {
+  display: flex;
+  gap: 0.5em;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  /* Bleed to the panel edge so the last chip is visibly cut off — that is the
+     only honest signal on a phone that the row scrolls. */
+  margin: 0 -0.7em;
+  padding: 0.15em 0.7em 0.5em;
+  scrollbar-width: none;
+}
+[data-screen="play"] .mode-strip::-webkit-scrollbar { height: 0; }
+
+[data-screen="play"] .mode-chip {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  position: relative;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  gap: 0.1em;
+  width: 7.6em;
+  min-height: 5.2em;
+  padding: 0.6em;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-sm);
+  background:
+    linear-gradient(150deg, color-mix(in srgb, var(--cc, var(--aqua)) 22%, transparent) 0%,
+                            rgba(10, 17, 31, 0.92) 70%),
+    var(--glass);
+  color: var(--dim);
+  font: inherit; text-align: left;
+  cursor: pointer;
+  transition: transform 0.14s var(--ease-back), border-color 0.14s var(--ease),
+              color 0.14s var(--ease), box-shadow 0.14s var(--ease);
+}
+[data-screen="play"] .mode-chip:active { transform: scale(0.96); }
+[data-screen="play"] .mode-chip .mc-ico { font-size: 1.4em; line-height: 1; margin-bottom: auto; }
+[data-screen="play"] .mode-chip .mc-name {
+  font-size: 0.76em; font-weight: 800; line-height: 1.15;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+[data-screen="play"] .mode-chip .mc-tag {
+  position: absolute; top: 0.4em; right: 0.4em;
+  padding: 0.1em 0.4em;
+  border-radius: var(--r-pill);
+  background: var(--sun); color: #2a1c00;
+  font-size: 0.54em; font-weight: 900; letter-spacing: 0.08em;
+}
+[data-screen="play"] .mode-chip[aria-checked="true"] {
+  color: var(--txt);
+  border-color: var(--cc, var(--aqua));
+  box-shadow: 0 0 0 1px var(--cc, var(--aqua)),
+              0 0.5em 1.2em color-mix(in srgb, var(--cc, var(--aqua)) 30%, transparent);
+}
+
+[data-screen="play"] .mode-blurb { min-height: 2.2em; line-height: 1.35; }
+
+/* ======================================================================== */
+/* SERVER BROWSER                                                           */
+/* ======================================================================== */
+
+[data-screen="play"] .browser-head {
+  display: flex; align-items: center; gap: 0.5em;
+  padding: 0.7em 0.5em 0.7em 0.9em;
+  border-bottom: 1px solid var(--stroke);
+}
+[data-screen="play"] .browser-head h3 { margin: 0; flex: 1 1 auto; }
+[data-screen="play"] .browser-head .icon-btn { font-size: 1.05em; }
+
+[data-screen="play"] .net-chip.off { border-color: var(--hot); color: var(--hot); }
+[data-screen="play"] .net-chip.live { border-color: var(--lime); }
+
+[data-screen="play"] .room-rows { display: flex; flex-direction: column; }
+
+[data-screen="play"] .room-row {
+  /* The whole row is the tap target. A 44 px "Join" button beside 44 px of
+     text is a phone-sized mis-tap waiting to happen. */
+  display: flex; align-items: center; gap: 0.7em;
+  width: 100%;
+  padding: 0.6em 0.8em;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-left: 0.22em solid var(--cc, var(--aqua));
+  background: transparent;
+  color: var(--txt); font: inherit; text-align: left;
+  cursor: pointer;
+  transition: background 0.14s var(--ease), transform 0.1s var(--ease);
+}
+[data-screen="play"] .room-row:last-child { border-bottom: 0; }
+[data-screen="play"] .room-row:active {
+  background: color-mix(in srgb, var(--cc, var(--aqua)) 16%, transparent);
+  transform: translateX(0.15em);
+}
+[data-screen="play"] .rr-ico { font-size: 1.3em; line-height: 1; flex: 0 0 auto; }
+[data-screen="play"] .rr-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+[data-screen="play"] .rr-name {
+  font-weight: 800; font-size: 0.95em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="play"] .rr-sub {
+  color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="play"] .rr-count {
+  flex: 0 0 auto; font-weight: 800; font-size: 1.02em;
+}
+[data-screen="play"] .rr-count i { font-style: normal; color: var(--dim); font-size: 0.78em; }
+[data-screen="play"] .rr-count.hot { color: var(--sun); }
+[data-screen="play"] .rr-go { flex: 0 0 auto; color: var(--dimmer); font-size: 1.3em; line-height: 1; }
+
+/* Loading placeholder. It resolves within the 3 s network timeout in every
+   case, including "there is no server", so it can never become a dead spinner. */
+[data-screen="play"] .skel { padding: 0.3em 0; }
+[data-screen="play"] .skel-row {
+  display: flex; align-items: center; gap: 0.7em;
+  padding: 0.75em 0.9em;
+}
+[data-screen="play"] .skel-row > * {
+  display: block; height: 0.85em; border-radius: var(--r-pill);
+  background: linear-gradient(90deg, rgba(255,255,255,0.06), rgba(255,255,255,0.15), rgba(255,255,255,0.06));
+  background-size: 220% 100%;
+  animation: skel-slide 1.3s linear infinite;
+}
+[data-screen="play"] .skel-row i { width: 1.5em; height: 1.5em; border-radius: 0.4em; }
+[data-screen="play"] .skel-row b { flex: 1 1 auto; }
+[data-screen="play"] .skel-row s { width: 2.6em; }
+[data-screen="play"] .skel-row:nth-child(2) > * { animation-delay: 0.16s; opacity: 0.75; }
+[data-screen="play"] .skel-row:nth-child(3) > * { animation-delay: 0.32s; opacity: 0.5; }
+@keyframes skel-slide { to { background-position: -220% 0; } }
+
+/* ---- the honest offline state ------------------------------------------ */
+
+[data-screen="play"] .offline-note { padding: 1.4em 1em calc(1em + 0.2em); text-align: center; }
+[data-screen="play"] .off-ico {
+  font-size: 2.2em; line-height: 1;
+  filter: drop-shadow(0 0.1em 0.4em rgba(0, 0, 0, 0.5));
+  animation: off-bob 3.2s ease-in-out infinite;
+}
+@keyframes off-bob { 50% { transform: translateY(-0.12em) rotate(-4deg); } }
+[data-screen="play"] .off-title {
+  margin-top: 0.5em;
+  font-size: 1.02em; font-weight: 800; line-height: 1.3;
+}
+[data-screen="play"] .offline-note p { margin: 0.5em auto 1em; max-width: 22em; line-height: 1.45; }
+[data-screen="play"] .off-actions { display: flex; flex-direction: column; gap: 0.5em; }
+
+/* ======================================================================== */
+/* PRIVATE LOBBY                                                            */
+/* ======================================================================== */
+
+[data-screen="play"] .lobby-panel { display: flex; flex-direction: column; gap: 0.6em; }
+[data-screen="play"] .lobby-intro { margin: 0; line-height: 1.45; }
+[data-screen="play"] .lobby-mode {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  align-self: flex-start;
+  padding: 0.3em 0.7em;
+  border-radius: var(--r-pill);
+  background: var(--sunk); border: 1px solid var(--stroke);
+  font-weight: 700; color: var(--dim);
+}
+[data-screen="play"] .lobby-mode .lm-ico { font-size: 1.1em; }
+
+/* The code is the product of this whole flow — it gets the biggest type on
+   the screen, and it stays readable at a glance across a room. */
+[data-screen="play"] .code-display {
+  display: flex; justify-content: center; gap: 0.28em;
+  flex-wrap: nowrap;
+  padding: 0.15em 0;
+}
+[data-screen="play"] .code-display span {
+  flex: 0 1 2.3em;
+  min-width: 0;
+  padding: 0.32em 0;
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+  border: 1px solid var(--stroke-hi);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 1.5em; font-weight: 900; text-align: center;
+  font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+  color: var(--sun);
+  text-shadow: 0 0 0.6em color-mix(in srgb, var(--sun) 55%, transparent);
+  animation: code-pop 0.34s var(--ease-back) both;
+}
+[data-screen="play"] .code-display span:nth-child(2) { animation-delay: 0.04s; }
+[data-screen="play"] .code-display span:nth-child(3) { animation-delay: 0.08s; }
+[data-screen="play"] .code-display span:nth-child(4) { animation-delay: 0.12s; }
+[data-screen="play"] .code-display span:nth-child(5) { animation-delay: 0.16s; }
+[data-screen="play"] .code-display span:nth-child(6) { animation-delay: 0.20s; }
+@keyframes code-pop { from { opacity: 0; transform: translateY(0.4em) scale(0.85); } }
+
+[data-screen="play"] .lobby-meta { display: flex; flex-wrap: wrap; gap: 0.4em; justify-content: center; }
+[data-screen="play"] .lobby-meta .chip { border-color: color-mix(in srgb, var(--cc, var(--stroke)) 70%, transparent); }
+[data-screen="play"] .lobby-actions { display: flex; gap: 0.5em; flex-wrap: wrap; }
+[data-screen="play"] .lobby-actions .btn { flex: 1 1 7em; font-size: 0.85em; padding-left: 0.8em; padding-right: 0.8em; }
+
+/* ======================================================================== */
+/* CODE ENTRY                                                               */
+/* ======================================================================== */
+
+[data-screen="play"] .join-panel { display: flex; flex-direction: column; gap: 0.6em; }
+
+[data-screen="play"] .code-boxes { display: flex; gap: 0.35em; }
+[data-screen="play"] .code-box {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.3em 0;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--stroke-hi);
+  background: var(--sunk);
+  color: var(--txt);
+  font: inherit; font-size: 1.3em; font-weight: 900;
+  text-align: center; text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  /* styles.css turns selection off globally for the game canvas; a text field
+     that cannot be selected or long-pressed cannot be pasted into. */
+  user-select: text; -webkit-user-select: text;
+  touch-action: manipulation;
+  transition: border-color 0.14s var(--ease), box-shadow 0.14s var(--ease), background 0.14s var(--ease);
+}
+[data-screen="play"] .code-box:focus {
+  outline: none;
+  border-color: var(--aqua);
+  background: rgba(55, 230, 213, 0.10);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--aqua) 45%, transparent);
+}
+[data-screen="play"] .join-msg { min-height: 1.3em; line-height: 1.3; }
+[data-screen="play"] .join-msg.bad { color: var(--hot); }
+
+/* ======================================================================== */
+/* FRIENDS                                                                  */
+/* ======================================================================== */
+
+[data-screen="play"] .friends-panel { display: flex; flex-direction: column; gap: 0.7em; }
+
+[data-screen="play"] .mycode-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'label label' 'code actions';
+  align-items: center;
+  gap: 0.3em 0.6em;
+  padding: 0.7em 0.8em;
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+}
+[data-screen="play"] .mycode-label { grid-area: label; letter-spacing: 0.09em; text-transform: uppercase; }
+[data-screen="play"] .mycode {
+  grid-area: code;
+  min-width: 0;
+  font-size: 1.5em; font-weight: 900; letter-spacing: 0.14em;
+  color: var(--aqua);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="play"] .mycode-actions { grid-area: actions; display: flex; gap: 0.4em; }
+
+[data-screen="play"] .friend-rows { display: flex; flex-direction: column; }
+[data-screen="play"] .friend-row {
+  display: flex; align-items: center; gap: 0.65em;
+  padding: 0.5em 0.2em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+[data-screen="play"] .friend-row:last-child { border-bottom: 0; }
+[data-screen="play"] .friend-row.on .avatar { --rc: var(--lime); }
+[data-screen="play"] .fr-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+[data-screen="play"] .fr-main .nm,
+[data-screen="play"] .fr-main .tiny {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="play"] .fr-off { flex: 0 0 auto; padding-right: 0.4em; }
+[data-screen="play"] .friends-empty { padding: 1.4em 0.6em; }
+[data-screen="play"] .fe-title { font-weight: 800; color: var(--txt); margin-bottom: 0.35em; }
+[data-screen="play"] .friends-empty p { margin: 0 auto; max-width: 22em; line-height: 1.45; }
+
+/* ======================================================================== */
+/* AI BACKFILL                                                              */
+/* ======================================================================== */
+
+[data-screen="play"] .ai-panel { display: flex; flex-direction: column; gap: 0.6em; }
+[data-screen="play"] .ai-copy { min-width: 0; }
+[data-screen="play"] .ai-title { font-weight: 800; }
+
+[data-screen="play"] .switch {
+  flex: 0 0 auto;
+  width: 3.6em;
+  padding: 0 0.25em;
+  border: 0; background: transparent;
+  display: inline-flex; align-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+/* The track is an inner element so the button itself can keep the 44 px hit
+   area the shell enforces without becoming a 44 px-tall slab of colour. */
+[data-screen="play"] .switch > i {
+  position: relative;
+  display: block; width: 100%; height: 1.75em;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+[data-screen="play"] .switch > i::after {
+  content: '';
+  position: absolute; top: 50%; left: 0.14em;
+  width: 1.35em; height: 1.35em;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #fff, #cfd6e0);
+  box-shadow: var(--lift-1);
+  transition: transform 0.2s var(--ease-back), left 0.2s var(--ease-back);
+}
+[data-screen="play"] .switch[aria-checked="true"] > i {
+  background: linear-gradient(180deg, var(--lime), #23c46b);
+  border-color: var(--lime);
+}
+[data-screen="play"] .switch[aria-checked="true"] > i::after { left: calc(100% - 1.49em); }
+[data-screen="play"] .switch:active > i::after { transform: translateY(-50%) scale(0.92); }
+
+[data-screen="play"] .stepper {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6em;
+  padding: 0.45em 0.7em;
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  transition: opacity 0.18s var(--ease);
+}
+[data-screen="play"] .stepper.off { opacity: 0.42; }
+[data-screen="play"] .stepper-ctl { display: flex; align-items: center; gap: 0.5em; }
+[data-screen="play"] .stepper-ctl .icon-btn { width: 2.4em; min-width: 2.4em; font-size: 1.15em; font-weight: 800; }
+[data-screen="play"] .stepper-ctl .icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+[data-screen="play"] .ai-count {
+  min-width: 1.8em; text-align: center;
+  font-size: 1.25em; font-weight: 900;
+}
+
+/* ======================================================================== */
+/* SEARCHING                                                                */
+/* ======================================================================== */
+
+[data-screen="play"] .search-overlay {
+  position: absolute; inset: 0; z-index: 30;
+  display: grid; place-items: center;
+  padding: 1.2em;
+  background: rgba(4, 8, 16, 0.74);
+  backdrop-filter: blur(4px);
+  animation: pg-fade 0.2s var(--ease) both;
+}
+[data-screen="play"] .search-overlay[hidden] { display: none; }
+
+[data-screen="play"] .search-card {
+  width: min(22em, 100%);
+  display: flex; flex-direction: column; align-items: center; gap: 0.5em;
+  padding: 1.6em 1.2em 1.2em;
+  text-align: center;
+}
+[data-screen="play"] .search-title { font-size: 1.15em; font-weight: 800; }
+[data-screen="play"] .search-sub { font-variant-numeric: tabular-nums; }
+/* The cancel button is not optional and not small: a spinner a player cannot
+   escape is the worst thing a lobby can do to them. */
+[data-screen="play"] .search-card .btn { margin-top: 0.7em; }
+
+[data-screen="play"] .radar {
+  position: relative;
+  width: 6.4em; height: 6.4em;
+  display: grid; place-items: center;
+  margin-bottom: 0.4em;
+}
+[data-screen="play"] .radar i {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--aqua);
+  opacity: 0;
+  animation: radar-ping 2.1s var(--ease) infinite;
+}
+[data-screen="play"] .radar i:nth-child(2) { animation-delay: 0.7s; }
+[data-screen="play"] .radar i:nth-child(3) { animation-delay: 1.4s; }
+[data-screen="play"] .radar b {
+  width: 2.1em; height: 2.1em;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 38%, #060a12 42%, var(--hot) 44%, #06090f 100%);
+  box-shadow: 0 0 1.6em color-mix(in srgb, var(--hot) 60%, transparent), var(--lift-2);
+  animation: radar-core 2.1s var(--ease) infinite;
+}
+@keyframes radar-ping {
+  0%   { transform: scale(0.32); opacity: 0; }
+  22%  { opacity: 0.85; }
+  100% { transform: scale(1); opacity: 0; }
+}
+@keyframes radar-core { 50% { transform: scale(1.09); } }
+
+/* ======================================================================== */
+/* RESPONSIVE                                                               */
+/* ======================================================================== */
+
+/* Narrow phones: six code boxes and a six-character display are the two things
+   that can push the page sideways, so they shed size first. */
+@media (max-width: 380px) {
+  [data-screen="play"] .code-box { font-size: 1.1em; }
+  [data-screen="play"] .code-display span { font-size: 1.2em; }
+  [data-screen="play"] .mode-chip { width: 6.8em; }
+  [data-screen="play"] .mycode { font-size: 1.3em; letter-spacing: 0.1em; }
+}
+
+/* Landscape phone: the search card and the mode chips both lose height. */
+@media (orientation: landscape) and (max-height: 460px) {
+  [data-screen="play"] .radar { width: 4.2em; height: 4.2em; margin-bottom: 0; }
+  [data-screen="play"] .search-card { padding: 1em; }
+  [data-screen="play"] .mode-chip { min-height: 4.2em; }
+  [data-screen="play"] .off-ico { font-size: 1.6em; }
+}
+
+/* Roomy screens: the friends pane reads better as two columns than as one
+   very long strip of panels. */
+@media (min-width: 760px) {
+  [data-screen="play"] .pane[data-pane="friends"] {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+  [data-screen="play"] .pane[data-pane="friends"][hidden] { display: none; }
+  [data-screen="play"] .pane[data-pane="friends"] .friends-panel { grid-column: 1 / -1; }
+}

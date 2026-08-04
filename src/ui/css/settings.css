@@ -1,0 +1,297 @@
+/* =========================================================================
+ * SETTINGS SCREEN — chunky mobile controls, nothing that needs a mouse.
+ *
+ * Scoped entirely under [data-screen="settings"]. The two components that do
+ * not exist in tokens.css live here: the toggle switch and the range slider.
+ * Both are built to be usable with a thumb on a moving bus — the switch is a
+ * full-width row, and the slider's draggable band is taller than the 44 px
+ * floor even though the track it draws is thin.
+ * ====================================================================== */
+
+/* src/ui/styles.css loads first and declares `.panel { position: absolute }`
+   for the in-game HUD plates. tokens.css re-skins .panel but never resets
+   position, so without this every section on this screen is pulled out of flow
+   and they all stack on top of each other. `relative` rather than `static`
+   because that same stylesheet hangs an absolutely positioned ::before hairline
+   off .panel. */
+[data-screen='settings'] .panel { position: relative; }
+
+[data-screen='settings'] .st-root { padding-top: 0.2em; }
+[data-screen='settings'] .st-sec { animation: st-rise 0.3s var(--ease) both; }
+[data-screen='settings'] .st-sec:nth-of-type(2) { animation-delay: 0.05s; }
+[data-screen='settings'] .st-sec:nth-of-type(3) { animation-delay: 0.10s; }
+[data-screen='settings'] .st-sec:nth-of-type(4) { animation-delay: 0.15s; }
+@keyframes st-rise { from { opacity: 0; transform: translateY(0.8em); } }
+
+[data-screen='settings'] .panel.st-sec { padding: 0.85em 0.9em 0.5em; }
+
+/* ======================================================================== */
+/* ROWS                                                                     */
+/* ======================================================================== */
+
+[data-screen='settings'] .st-row {
+  display: flex; align-items: center; gap: 0.7em;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.55em 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  text-align: left;
+  color: var(--txt);
+}
+[data-screen='settings'] .st-row:last-child { border-bottom: 0; }
+[data-screen='settings'] .st-row.st-block,
+[data-screen='settings'] .st-row.st-slider { flex-direction: column; align-items: stretch; gap: 0.55em; }
+
+[data-screen='settings'] .st-label {
+  display: flex; align-items: center; gap: 0.65em;
+  flex: 1 1 auto; min-width: 0;
+}
+[data-screen='settings'] .st-ico {
+  flex: 0 0 auto;
+  width: 2.1em; height: 2.1em; border-radius: var(--r-sm);
+  display: grid; place-items: center;
+  font-size: 1em; line-height: 1;
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+}
+[data-screen='settings'] .st-text {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; gap: 0.1em;
+}
+[data-screen='settings'] .st-text b {
+  font-size: 0.94em; font-weight: 800; line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+[data-screen='settings'] .st-text small {
+  font-size: 0.7em; line-height: 1.25; color: var(--dim);
+  overflow-wrap: anywhere;
+}
+[data-screen='settings'] .st-val {
+  flex: 0 0 auto;
+  min-width: 2.4em; text-align: right;
+  font-size: 0.95em; font-weight: 900; color: var(--sun);
+}
+
+/* ======================================================================== */
+/* SLIDER                                                                   */
+/* ======================================================================== */
+
+/* The band is 2.9em tall so the drag target clears 44 px, while the painted
+   track stays thin — a fat track reads as a progress bar, not a control. */
+[data-screen='settings'] input.sl {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 2.9em;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+[data-screen='settings'] input.sl:focus { outline: none; }
+[data-screen='settings'] input.sl:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 0.22em color-mix(in srgb, var(--aqua) 55%, transparent);
+}
+
+[data-screen='settings'] input.sl::-webkit-slider-runnable-track {
+  height: 0.85em;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--stroke);
+  background:
+    linear-gradient(90deg, var(--hot) 0 var(--v, 0%), rgba(4, 8, 16, 0.55) var(--v, 0%) 100%);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+[data-screen='settings'] input.sl::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 1.75em; height: 1.75em;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff 0%, #d5dbe6 100%);
+  border: 0.16em solid var(--hot);
+  box-shadow: 0 0.22em 0.5em rgba(0, 0, 0, 0.55);
+  /* Centre the thumb on a 0.85em track with a 1px border on each side. */
+  margin-top: calc((0.85em + 2px - 1.75em) / 2);
+  transition: transform 0.12s var(--ease-back);
+}
+[data-screen='settings'] input.sl:active::-webkit-slider-thumb { transform: scale(1.14); }
+
+[data-screen='settings'] input.sl::-moz-range-track {
+  height: 0.85em;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--stroke);
+  background: rgba(4, 8, 16, 0.55);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.55);
+}
+[data-screen='settings'] input.sl::-moz-range-progress {
+  height: 0.85em;
+  border-radius: var(--r-pill);
+  background: var(--hot);
+}
+[data-screen='settings'] input.sl::-moz-range-thumb {
+  width: 1.5em; height: 1.5em;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff 0%, #d5dbe6 100%);
+  border: 0.16em solid var(--hot);
+  box-shadow: 0 0.22em 0.5em rgba(0, 0, 0, 0.55);
+}
+
+/* ======================================================================== */
+/* TOGGLE                                                                   */
+/* ======================================================================== */
+
+[data-screen='settings'] button.st-toggle {
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: background 0.14s var(--ease), transform 0.1s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+[data-screen='settings'] button.st-toggle:last-child { border-bottom: 0; }
+[data-screen='settings'] button.st-toggle:active {
+  background: rgba(255, 255, 255, 0.07);
+  transform: scale(0.99);
+}
+
+[data-screen='settings'] .sw {
+  flex: 0 0 auto;
+  position: relative;
+  width: 3.2em; height: 1.85em;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+[data-screen='settings'] .sw > i {
+  position: absolute;
+  top: 0.17em; left: 0.17em;
+  width: 1.44em; height: 1.44em;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #b6c2d4 0%, #8695ab 100%);
+  box-shadow: 0 0.14em 0.35em rgba(0, 0, 0, 0.55);
+  transition: transform 0.22s var(--ease-back), background 0.2s var(--ease);
+}
+[data-screen='settings'] [aria-checked='true'] .sw {
+  background: linear-gradient(180deg, var(--lime) 0%, #1fbf6a 100%);
+  border-color: #1fbf6a;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0.7em color-mix(in srgb, var(--lime) 45%, transparent);
+}
+[data-screen='settings'] [aria-checked='true'] .sw > i {
+  transform: translateX(calc(3.2em - 2px - 0.34em - 1.44em));
+  background: linear-gradient(180deg, #ffffff 0%, #e6ecf5 100%);
+}
+
+/* ======================================================================== */
+/* SEGMENTED QUALITY PICKER                                                 */
+/* ======================================================================== */
+
+[data-screen='settings'] .seg {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.28em;
+  padding: 0.28em;
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-pill);
+}
+[data-screen='settings'] .seg button {
+  min-height: calc(var(--tap) - 0.6em);
+  min-width: 0;
+  padding: 0.45em 0.15em;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--dim);
+  font: inherit; font-size: 0.74em; font-weight: 900; letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.16s var(--ease), color 0.16s var(--ease), transform 0.1s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+[data-screen='settings'] .seg button:active { transform: scale(0.95); }
+[data-screen='settings'] .seg button[aria-checked='true'] {
+  background: linear-gradient(180deg, var(--aqua) 0%, #16a89a 100%);
+  color: #04231f;
+  box-shadow: 0 0.18em 0 #0e7a70, var(--lift-1);
+}
+
+/* ======================================================================== */
+/* FRIEND CODE                                                              */
+/* ======================================================================== */
+
+[data-screen='settings'] .code-copy {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.8em;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0.5em 0.5em 0.5em 1em;
+  border-radius: var(--r-pill);
+  border: 1px dashed var(--stroke-hi);
+  background: var(--sunk);
+  color: var(--txt);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 0.1s var(--ease), background 0.14s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+[data-screen='settings'] .code-copy:active {
+  transform: scale(0.985);
+  background: rgba(255, 255, 255, 0.08);
+}
+[data-screen='settings'] .code-copy .code {
+  font-size: 1.15em; font-weight: 900;
+  letter-spacing: 0.22em;
+  color: var(--aqua);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* The letter-spacing pads the right of the last glyph; pull it back so the
+     code looks optically centred against the COPY pill. */
+  margin-right: -0.22em;
+}
+[data-screen='settings'] .code-copy .code-cta {
+  flex: 0 0 auto;
+  padding: 0.4em 0.9em;
+  border-radius: var(--r-pill);
+  background: var(--glass-hi);
+  border: 1px solid var(--stroke-hi);
+  font-size: 0.72em; font-weight: 900; letter-spacing: 0.09em;
+}
+
+/* ======================================================================== */
+/* DESTRUCTIVE + ABOUT                                                      */
+/* ======================================================================== */
+
+/* Last on the page, and never styled as a primary action. */
+[data-screen='settings'] .st-danger { margin-top: 0.4em; }
+[data-screen='settings'] .btn.danger {
+  border-color: color-mix(in srgb, var(--hot) 65%, transparent);
+  color: color-mix(in srgb, var(--hot) 78%, #fff);
+  background: color-mix(in srgb, var(--hot) 12%, rgba(14, 22, 38, 0.78));
+}
+[data-screen='settings'] .st-danger-note {
+  margin: 0.6em 0 0;
+  line-height: 1.4;
+}
+[data-screen='settings'] .st-about {
+  margin: 0.4em 0 0;
+  line-height: 1.6;
+  color: var(--dimmer);
+}
+
+/* ======================================================================== */
+/* RESPONSIVE                                                               */
+/* ======================================================================== */
+
+/* Small Android portrait: "Medium" must still fit in a fifth of 328 px. */
+@media (max-width: 380px) {
+  [data-screen='settings'] .seg { gap: 0.2em; padding: 0.22em; }
+  [data-screen='settings'] .seg button { font-size: 0.66em; padding: 0.45em 0.1em; }
+  [data-screen='settings'] .code-copy .code { font-size: 1em; letter-spacing: 0.14em; margin-right: -0.14em; }
+}
+
+@media (orientation: landscape) and (max-height: 460px) {
+  [data-screen='settings'] .panel.st-sec { padding: 0.6em 0.75em 0.35em; }
+  [data-screen='settings'] input.sl { height: 2.6em; }
+}

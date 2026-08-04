@@ -11,14 +11,18 @@
  *
  * Rooms are created on demand from the ?room= query parameter, so two browser
  * tabs pointed at ?room=test are immediately in the same match.
+ *
+ * The meta layer's REST surface (rooms browser, invite codes, leaderboard) is
+ * mounted on this SAME listener — see http.js. The game protocol below is
+ * untouched by it: `ws` handles the upgrade, plain requests fall through to the
+ * JSON handler.
  */
 
 import { WebSocketServer } from 'ws';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { createServer } from 'node:http';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { createStore, MAX_PLAYERS } from './store.js';
+import { createHttpHandler } from './http.js';
 
 // Pull the shared constants out of the ES module without bundling: the client
 // protocol file is plain JS with no browser dependencies, so we can import it.
@@ -31,8 +35,12 @@ const MATCH_DURATION = 150;
 const INTERMISSION = 10;
 const PVP_RATIO = 1.18;
 const PVP_REWARD = 0.62;
-const MAX_PLAYERS = 12;
 const PORT = Number(process.env.PORT || 8787);
+
+// Room descriptors + the persisted leaderboard. MAX_PLAYERS comes from here so
+// the roster cap the REST browser advertises and the cap the socket enforces
+// can never drift apart.
+const store = createStore();
 
 /* ------------------------------------------------------------------ room --- */
 
@@ -259,11 +267,19 @@ const round2 = (n) => Math.round(n * 100) / 100;
 const rooms = new Map();
 function getRoom(name) {
   let r = rooms.get(name);
-  if (!r) { r = new Room(name); rooms.set(name, r); }
+  if (!r) {
+    r = new Room(name);
+    rooms.set(name, r);
+    // A room is born one of two ways — reserved over REST (the invite-code
+    // flow) or conjured by the first ?room= socket. Binding here rather than at
+    // reservation time means both kinds show up in the browser identically.
+    store.attachLive(name, r);
+  }
   return r;
 }
 
-const wss = new WebSocketServer({ port: PORT });
+const httpServer = createServer(createHttpHandler({ store, version: PROTOCOL_VERSION }));
+const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url || '/', 'http://localhost');
@@ -304,7 +320,12 @@ wss.on('connection', (ws, req) => {
 
   const bye = () => {
     if (client) room.remove(client.id);
-    if (room.clients.size === 0) rooms.delete(roomName);
+    if (room.clients.size === 0) {
+      rooms.delete(roomName);
+      // The descriptor outlives the live room for a few minutes so a private
+      // code stays joinable while everyone is between matches.
+      store.detachLive(roomName);
+    }
   };
   ws.on('close', bye);
   ws.on('error', bye);
@@ -323,6 +344,21 @@ setInterval(() => {
   }
 }, 15000);
 
-console.log(`[miami-devour] room server listening on ws://localhost:${PORT}`);
-console.log(`  join a room:  ws://localhost:${PORT}?room=<name>`);
-console.log(`  in the game:  http://localhost:5173/?room=<name>`);
+// The leaderboard write is debounced, so a Ctrl-C between matches would
+// otherwise drop the last few minutes of play.
+let closing = false;
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    if (closing) process.exit(0);
+    closing = true;
+    try { store.dispose(); } catch { /* nothing left to save */ }
+    process.exit(0);
+  });
+}
+
+httpServer.listen(PORT, () => {
+  console.log(`[miami-devour] room server listening on ws://localhost:${PORT}`);
+  console.log(`  join a room:  ws://localhost:${PORT}?room=<name>`);
+  console.log(`  in the game:  http://localhost:5173/?room=<name>`);
+  console.log(`  meta REST:    http://localhost:${PORT}/api/health`);
+});

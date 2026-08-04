@@ -1,0 +1,469 @@
+/* =========================================================================
+ * LOBBY — layout only. Every component (.btn, .tile, .bar, .chip, .avatar)
+ * comes from tokens.css; this file positions them and adds the two pieces of
+ * identity the lobby owns: the sticky player bar and the event banner.
+ *
+ * Scoped entirely under [data-screen="lobby"] so nothing here can reach another
+ * screen. All sizing is in `em` off the shell's one root scale — see the header
+ * of tokens.css before adding a px anywhere.
+ *
+ * NOTE ON INLINE min-height: Shell._enforceTapTargets() stamps
+ * `min-height: var(--tap)` inline on every button that has none, and an inline
+ * style beats any selector here. The elements that must be TALLER than a
+ * 44 px tap target (tiles, the event banner, the mode and daily rows) therefore
+ * carry their own inline min-height in lobby.js, pointing at the three custom
+ * properties below. Change the heights here, not there.
+ * ====================================================================== */
+
+[data-screen="lobby"] {
+  --tile-h: 6.6em;
+  --evt-h: 5.6em;
+  --row-h: 3.5em;
+  --dock-h: 5.2em;
+}
+
+/* ======================================================================== */
+/* IDENTITY BAR — sticky by construction: it is a flex sibling of .page-body, */
+/* so it is outside the scroll container and cannot scroll away.             */
+/* ======================================================================== */
+
+[data-screen="lobby"] .lob-id {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'av name coins'
+    'xp xp   xp';
+  align-items: center;
+  gap: 0.4em 0.55em;
+  padding-top: calc(0.5em + var(--safe-t));
+  padding-bottom: 0.55em;
+  /* The plate is full-bleed but its CONTENT lines up with the .wrap-wide column
+     below it, or the avatar and the coins float off on their own on a monitor.
+     64em is .wrap-wide's max-width in tokens.css — keep the two in step. */
+  padding-left: max(calc(1em + var(--safe-l)), calc((100% - 64em) / 2));
+  padding-right: max(calc(1em + var(--safe-r)), calc((100% - 64em) / 2));
+  background: var(--glass);
+  border-bottom: 1px solid var(--stroke);
+  box-shadow: 0 0.5em 1.4em rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+
+[data-screen="lobby"] .lob-av {
+  grid-area: av;
+  width: var(--tap); min-width: var(--tap);
+  display: grid; place-items: center;
+  padding: 0; border: 0; background: transparent;
+  /* Without this the button keeps the UA's 13 px font and the em-sized avatar
+     inside it shrinks to two thirds of every other avatar in the game. */
+  font: inherit;
+  cursor: pointer;
+}
+[data-screen="lobby"] .lob-av .avatar {
+  width: 2.4em; height: 2.4em;
+  font-size: 0.95em; font-weight: 900;
+  color: var(--ac, var(--aqua));
+  text-shadow: 0 0.06em 0.2em rgba(0, 0, 0, 0.8);
+  transition: transform 0.14s var(--ease-back);
+}
+[data-screen="lobby"] .lob-av:active .avatar { transform: scale(0.9); }
+
+[data-screen="lobby"] .lob-idmid { grid-area: name; min-width: 0; }
+
+[data-screen="lobby"] .lob-name {
+  display: flex; align-items: center; gap: 0.4em;
+  width: 100%; min-width: 0;
+  padding: 0.3em 0.55em;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--txt);
+  font: inherit; font-size: 1.05em; font-weight: 800;
+  text-align: left; cursor: pointer;
+  transition: background 0.14s var(--ease);
+}
+[data-screen="lobby"] .lob-name .nm-txt {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .lob-name.unset .nm-txt { color: var(--dim); font-weight: 700; }
+[data-screen="lobby"] .lob-name .nm-pen { flex: 0 0 auto; font-size: 0.68em; color: var(--dimmer); }
+[data-screen="lobby"] .lob-name:active { background: rgba(255, 255, 255, 0.10); }
+
+[data-screen="lobby"] .lob-nameinput {
+  width: 100%; min-width: 0;
+  min-height: var(--tap);
+  padding: 0.3em 0.55em;
+  border: 1px solid var(--hot);
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+  color: var(--txt);
+  font: inherit; font-size: 1.05em; font-weight: 800;
+  outline: none;
+  box-shadow: 0 0 0 0.18em color-mix(in srgb, var(--hot) 26%, transparent);
+}
+/* display:flex on .lob-name would otherwise defeat the `hidden` attribute. */
+[data-screen="lobby"] .lob-name[hidden],
+[data-screen="lobby"] .lob-nameinput[hidden] { display: none; }
+
+[data-screen="lobby"] .lob-coins {
+  grid-area: coins;
+  display: flex; align-items: center; gap: 0.35em;
+  padding: 0.3em 0.75em 0.3em 0.55em;
+  border: 1px solid color-mix(in srgb, var(--sun) 45%, var(--stroke));
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, rgba(255, 201, 60, 0.24), rgba(255, 201, 60, 0.06));
+  color: var(--txt);
+  font: inherit; font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.12s var(--ease-back), filter 0.14s var(--ease);
+}
+[data-screen="lobby"] .lob-coins .ci { font-size: 1.05em; line-height: 1; }
+[data-screen="lobby"] .lob-coins .cv { font-variant-numeric: tabular-nums; }
+[data-screen="lobby"] .lob-coins:active { transform: scale(0.94); filter: brightness(1.15); }
+
+[data-screen="lobby"] .lob-xprow {
+  grid-area: xp;
+  display: flex; align-items: center; gap: 0.5em;
+  min-width: 0;
+}
+[data-screen="lobby"] .lob-lvl {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: baseline; gap: 0.22em;
+  padding: 0.14em 0.5em;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--hot), var(--hot-deep));
+  color: #fff;
+  font-size: 0.62em; font-weight: 900; letter-spacing: 0.12em;
+  box-shadow: 0 0.12em 0 rgba(0, 0, 0, 0.4);
+}
+[data-screen="lobby"] .lob-lvl b { font-size: 1.3em; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+[data-screen="lobby"] .lob-xprow .bar { flex: 1 1 auto; height: 0.5em; }
+[data-screen="lobby"] .lob-xptxt { flex: 0 0 auto; color: var(--dim); font-weight: 700; }
+
+/* ======================================================================== */
+/* BODY                                                                     */
+/* ======================================================================== */
+
+[data-screen="lobby"] .lob-body {
+  /* Room for the bottom PLAY dock, which floats over the scroll area. */
+  padding-top: 0.9em;
+  padding-bottom: calc(var(--dock-h) + var(--safe-b));
+  display: flex; flex-direction: column;
+}
+[data-screen="lobby"] .lob-wrap {
+  display: flex; flex-direction: column; gap: 0.85em;
+  width: 100%;
+  /* auto on both axes: centred in the spare room on a monitor, and exactly 0
+     the moment the content is taller than the viewport, so a phone still
+     scrolls from the top. */
+  margin: auto;
+}
+
+/* ---- the play block: the loudest thing on the screen ------------------- */
+
+[data-screen="lobby"] .lob-hero {
+  display: flex; flex-direction: column; gap: 0.5em;
+  animation: lob-rise 0.34s var(--ease-back) backwards;
+}
+
+[data-screen="lobby"] .lob-playbtn {
+  position: relative;
+  overflow: hidden;
+  padding: 0.86em 1.2em;
+  font-size: 1.55em; font-weight: 900; letter-spacing: 0.18em;
+  background: linear-gradient(180deg, #ff7ab1 0%, var(--hot) 44%, var(--hot-deep) 100%);
+  box-shadow:
+    0 0.32em 0 #9c0f4c,
+    0 0.7em 1.5em rgba(255, 61, 139, 0.34),
+    var(--lift-2);
+}
+[data-screen="lobby"] .lob-playbtn:active {
+  transform: translateY(0.26em);
+  box-shadow: 0 0.06em 0 #9c0f4c, 0 0.3em 0.7em rgba(255, 61, 139, 0.28);
+}
+/* A slow gloss sweep. This is the one element allowed to move on its own — it
+   is what the eye is supposed to land on when the lobby opens. */
+[data-screen="lobby"] .lob-playbtn::after {
+  content: '';
+  position: absolute; top: -40%; bottom: -40%; left: 0;
+  width: 24%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+  transform: translateX(-160%) skewX(-18deg);
+  animation: lob-shine 4.4s var(--ease) 0.6s infinite;
+  pointer-events: none;
+}
+
+[data-screen="lobby"] .lob-mode {
+  display: flex; align-items: center; gap: 0.7em;
+  width: 100%;
+  padding: 0.45em 0.75em;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-md);
+  background: var(--glass-flat);
+  color: var(--txt);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: background 0.14s var(--ease), transform 0.14s var(--ease-back);
+}
+[data-screen="lobby"] .lob-mode:active { background: rgba(255, 255, 255, 0.09); transform: scale(0.99); }
+[data-screen="lobby"] .lm-ico { flex: 0 0 auto; font-size: 1.5em; line-height: 1; }
+[data-screen="lobby"] .lm-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+[data-screen="lobby"] .lm-txt b {
+  font-size: 0.98em; font-weight: 800;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .lm-txt i {
+  font-style: normal; font-size: 0.74em; color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .lm-cta {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 0.2em;
+  font-size: 0.68em; font-weight: 900; letter-spacing: 0.12em;
+  color: var(--aqua);
+}
+
+/* ---- limited-time event ----------------------------------------------- */
+
+[data-screen="lobby"] .lob-event {
+  position: relative;
+  display: flex; align-items: center; gap: 0.75em;
+  width: 100%;
+  padding: 0.8em 0.85em;
+  border: 1px solid color-mix(in srgb, var(--cc) 55%, var(--stroke));
+  border-radius: var(--r-lg);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--cc) 40%, transparent) 0%,
+                            rgba(10, 17, 31, 0.92) 58%),
+    var(--glass);
+  box-shadow:
+    var(--lift-2),
+    0 0 1.5em color-mix(in srgb, var(--cc) 22%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  color: var(--txt);
+  font: inherit; text-align: left; cursor: pointer;
+  overflow: hidden;
+  animation: lob-rise 0.36s var(--ease-back) 60ms backwards;
+  transition: transform 0.16s var(--ease-back), filter 0.16s var(--ease);
+}
+[data-screen="lobby"] .lob-event:active { transform: scale(0.985); filter: brightness(1.1); }
+[data-screen="lobby"] .ev-glow {
+  position: absolute; inset: -40% -20%;
+  background: radial-gradient(42% 60% at 18% 10%,
+              color-mix(in srgb, var(--cc) 60%, transparent) 0%, transparent 70%);
+  opacity: 0.55;
+  animation: lob-breathe 3.8s ease-in-out infinite;
+  pointer-events: none;
+}
+[data-screen="lobby"] .ev-ico {
+  position: relative;
+  flex: 0 0 auto;
+  font-size: 2.1em; line-height: 1;
+  filter: drop-shadow(0 0.1em 0.3em rgba(0, 0, 0, 0.55));
+}
+[data-screen="lobby"] .ev-body {
+  position: relative;
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; gap: 0.1em;
+}
+[data-screen="lobby"] .ev-top { display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap; }
+[data-screen="lobby"] .ev-kicker {
+  font-size: 0.58em; font-weight: 900; letter-spacing: 0.2em;
+  color: color-mix(in srgb, var(--cc) 72%, #ffffff);
+}
+[data-screen="lobby"] .ev-name {
+  font-size: 1.15em; font-weight: 900; letter-spacing: 0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .ev-blurb {
+  font-size: 0.76em; color: var(--dim); line-height: 1.28;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+[data-screen="lobby"] .ev-meta {
+  margin-top: 0.12em;
+  font-size: 0.68em; font-weight: 800; letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--cc) 62%, #ffffff);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .ev-go { position: relative; flex: 0 0 auto; font-size: 1.6em; color: var(--dim); }
+
+/* ---- the tile grid ----------------------------------------------------- */
+
+[data-screen="lobby"] .lob-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6em;
+}
+[data-screen="lobby"] .lob-tiles .tile {
+  /* Staggered entrance, capped so the last tile has landed inside ~250 ms. */
+  animation: lob-pop 0.34s var(--ease-back) backwards;
+  animation-delay: calc(min(var(--i, 0), 6) * 38ms);
+}
+[data-screen="lobby"] .lob-tiles .tile-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .lob-tiles .tile-sub {
+  line-height: 1.25;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- daily strip ------------------------------------------------------- */
+
+[data-screen="lobby"] .lob-daily {
+  display: flex; align-items: center; gap: 0.7em;
+  width: 100%;
+  padding: 0.45em 0.75em;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-md);
+  background:
+    linear-gradient(120deg, rgba(255, 148, 48, 0.20) 0%, rgba(10, 17, 31, 0.72) 62%),
+    var(--glass-flat);
+  color: var(--txt);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: transform 0.14s var(--ease-back), filter 0.14s var(--ease);
+}
+[data-screen="lobby"] .lob-daily:active { transform: scale(0.99); filter: brightness(1.1); }
+[data-screen="lobby"] .dl-ico { flex: 0 0 auto; font-size: 1.45em; line-height: 1; }
+[data-screen="lobby"] .dl-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+[data-screen="lobby"] .dl-txt b {
+  font-size: 0.95em; font-weight: 800;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .dl-txt i {
+  font-style: normal; font-size: 0.73em; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The bar lives in the text column, not stranded at the far right of a 60em
+   strip where it reads as an empty input box. */
+[data-screen="lobby"] .dl-bar {
+  height: 0.4em;
+  max-width: 16em;
+  margin-top: 0.3em;
+  /* --sunk disappears on this already-dark strip; the track has to read as a
+     track or the fill looks like a stray coloured smear. */
+  background: rgba(255, 255, 255, 0.15);
+}
+[data-screen="lobby"] .dl-bar > i { background: linear-gradient(90deg, var(--sun), var(--orange)); }
+[data-screen="lobby"] .dl-go { flex: 0 0 auto; font-size: 1.4em; color: var(--dim); }
+
+/* ---- footer ------------------------------------------------------------ */
+
+[data-screen="lobby"] .lob-foot {
+  display: flex; align-items: center; gap: 0.6em;
+  padding-top: 0.15em;
+}
+[data-screen="lobby"] .lob-code {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 0.05em;
+  padding: 0.3em 0.75em;
+  border: 1px dashed var(--stroke);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--dim);
+  font: inherit; text-align: left; cursor: pointer;
+  transition: background 0.14s var(--ease);
+}
+[data-screen="lobby"] .lob-code:active { background: rgba(255, 255, 255, 0.07); }
+[data-screen="lobby"] .fc-k {
+  letter-spacing: 0.1em;
+  max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen="lobby"] .fc-v {
+  font-size: 0.95em; font-weight: 900; letter-spacing: 0.24em;
+  color: var(--txt);
+}
+
+/* ======================================================================== */
+/* BOTTOM PLAY DOCK                                                         */
+/* Thumb reach: once the hero PLAY has scrolled out of the body, a compact   */
+/* one slides up over the bottom edge. Toggled by an IntersectionObserver in */
+/* lobby.js, so on a screen tall enough to show everything it never appears. */
+/* ======================================================================== */
+
+[data-screen="lobby"] .lob-dock {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 3;
+  padding:
+    0.9em calc(1em + var(--safe-r))
+    calc(0.7em + var(--safe-b)) calc(1em + var(--safe-l));
+  background: linear-gradient(180deg, transparent, rgba(6, 11, 21, 0.94) 44%);
+  transform: translateY(115%);
+  transition: transform 0.26s var(--ease);
+  pointer-events: none;
+}
+[data-screen="lobby"] .lob-dock.on { transform: none; pointer-events: auto; }
+[data-screen="lobby"] .lob-dockbtn {
+  display: flex; align-items: baseline; justify-content: center; gap: 0.55em;
+  font-size: 1.12em; letter-spacing: 0.14em;
+}
+[data-screen="lobby"] .lob-dockbtn em {
+  min-width: 0;
+  font-style: normal; font-size: 0.62em; font-weight: 800; letter-spacing: 0.02em;
+  opacity: 0.82;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ======================================================================== */
+/* MOTION                                                                   */
+/* ======================================================================== */
+
+@keyframes lob-pop {
+  from { opacity: 0; transform: translateY(0.7em) scale(0.96); }
+}
+@keyframes lob-rise {
+  from { opacity: 0; transform: translateY(0.9em); }
+}
+@keyframes lob-shine {
+  0%        { transform: translateX(-160%) skewX(-18deg); }
+  46%, 100% { transform: translateX(560%) skewX(-18deg); }
+}
+@keyframes lob-breathe {
+  50% { opacity: 0.22; }
+}
+
+/* ======================================================================== */
+/* RESPONSIVE                                                               */
+/* ======================================================================== */
+
+/* Tablet and desktop: the tiles become one wide bank rather than a long list. */
+@media (min-width: 760px) {
+  [data-screen="lobby"] { --tile-h: 7.4em; }
+  [data-screen="lobby"] .lob-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  /* A 1000 px-wide PLAY button reads as a banner, not a button. Hold the hero
+     to a phone-ish column and let the event and tiles use the full width. */
+  [data-screen="lobby"] .lob-hero { width: 100%; max-width: 32em; align-self: center; }
+  [data-screen="lobby"] .lob-playbtn { font-size: 1.75em; }
+}
+
+/* Landscape phone: vertical space is the scarce resource, so the hero shrinks
+   and the event blurb goes — the name and the LIVE chip still carry it. */
+@media (orientation: landscape) and (max-height: 460px) {
+  [data-screen="lobby"] { --tile-h: 4.6em; --evt-h: 4.2em; --row-h: 3em; --dock-h: 4.4em; }
+  /* One row, so the identity plate costs ~14% of a 360 px-tall screen instead
+     of a quarter of it. */
+  [data-screen="lobby"] .lob-id {
+    grid-template-columns: auto minmax(0, 1fr) minmax(6em, 1.2fr) auto;
+    grid-template-areas: 'av name xp coins';
+    padding-top: calc(0.3em + var(--safe-t));
+    padding-bottom: 0.3em;
+  }
+  [data-screen="lobby"] .lob-body { padding-top: 0.6em; }
+  [data-screen="lobby"] .lob-wrap { gap: 0.55em; }
+  [data-screen="lobby"] .lob-playbtn { font-size: 1.2em; padding: 0.5em 1.2em; }
+  [data-screen="lobby"] .lob-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  [data-screen="lobby"] .ev-blurb { display: none; }
+  [data-screen="lobby"] .ev-ico { font-size: 1.7em; }
+}
+
+/* Very narrow phones (320 px): the build line goes, the friend code stays. */
+@media (max-width: 340px) {
+  [data-screen="lobby"] .fc-k { display: none; }
+}

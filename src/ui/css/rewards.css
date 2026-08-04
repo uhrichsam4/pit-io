@@ -1,0 +1,497 @@
+/* =========================================================================
+ * REWARDS SCREEN — level, dailies, streak, season rail, achievements.
+ *
+ * Scoped entirely under [data-screen="rewards"]. Everything structural
+ * (.panel, .btn, .bar, .chip, .rows) comes from tokens.css; this file only
+ * adds the layouts that are unique to the progression hub.
+ *
+ * PORTRAIT PHONE IS THE TARGET. Every grid here starts as one or two columns
+ * at 360 px and only widens on real estate it can prove it has. The season
+ * rail is the single horizontally scrolling element on the page — the page
+ * body itself must never scroll sideways.
+ * ====================================================================== */
+
+/* src/ui/styles.css loads first and declares `.panel { position: absolute }`
+   for the in-game HUD plates. tokens.css re-skins .panel but never resets
+   position, so without this every panel on this screen is pulled out of flow
+   and they all stack on top of each other at the top of the page. `relative`
+   rather than `static` because that same stylesheet hangs an absolutely
+   positioned ::before hairline off .panel. */
+[data-screen='rewards'] .panel { position: relative; }
+
+[data-screen='rewards'] .rv-root { padding-top: 0.2em; }
+
+/* Entrance stagger. Only on the first paint (`.anim`), never on a rebuild —
+   replaying the whole page after every claim reads as a bug, not as polish. */
+[data-screen='rewards'] .rv-root.anim .rv-in {
+  animation: rv-pop 0.34s var(--ease-back) both;
+  animation-delay: var(--d, 0ms);
+}
+[data-screen='rewards'] .rv-root.anim .rv-sec {
+  animation: rv-rise 0.36s var(--ease) both;
+}
+[data-screen='rewards'] .rv-root.anim #sec-daily { animation-delay: 0.05s; }
+[data-screen='rewards'] .rv-root.anim #sec-streak { animation-delay: 0.10s; }
+[data-screen='rewards'] .rv-root.anim #sec-season { animation-delay: 0.15s; }
+[data-screen='rewards'] .rv-root.anim #sec-ach { animation-delay: 0.20s; }
+
+@keyframes rv-pop { from { opacity: 0; transform: translateY(0.9em) scale(0.97); } }
+@keyframes rv-rise { from { opacity: 0; transform: translateY(1.1em); } }
+
+[data-screen='rewards'] .sec-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6em; margin-bottom: 0.55em;
+}
+[data-screen='rewards'] .sec-head h2 {
+  margin: 0; font-size: 1.08em; font-weight: 900; letter-spacing: 0.01em;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen='rewards'] .coin-chip { font-size: 0.95em; }
+
+/* ======================================================================== */
+/* LEVEL CARD                                                               */
+/* ======================================================================== */
+
+[data-screen='rewards'] .lvl-card {
+  background:
+    radial-gradient(120% 140% at 8% 0%, rgba(255, 61, 139, 0.30) 0%, transparent 58%),
+    var(--glass-hi);
+  border-color: var(--stroke-hi);
+}
+[data-screen='rewards'] .lvl-row { display: flex; align-items: center; gap: 0.95em; }
+
+/* Conic ring so the level badge itself is the progress read, then the bar
+   under the text repeats it for anyone who cannot judge an arc. */
+[data-screen='rewards'] .lvl-ring {
+  flex: 0 0 auto;
+  width: 4.4em; height: 4.4em;
+  border-radius: 50%;
+  padding: 0.28em;
+  background:
+    conic-gradient(var(--sun) 0 var(--p, 0%), rgba(255, 255, 255, 0.12) var(--p, 0%) 100%);
+  box-shadow: 0 0 1.4em rgba(255, 201, 60, 0.28), var(--lift-1);
+  display: grid; place-items: center;
+}
+[data-screen='rewards'] .lvl-core {
+  width: 100%; height: 100%;
+  border-radius: 50%;
+  background: linear-gradient(168deg, #16233c 0%, #0a1120 100%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  line-height: 1;
+}
+[data-screen='rewards'] .lvl-core b { font-size: 1.65em; font-weight: 900; }
+[data-screen='rewards'] .lvl-core span {
+  font-size: 0.56em; letter-spacing: 0.16em; color: var(--dim); margin-top: 0.25em;
+}
+
+[data-screen='rewards'] .lvl-meta { flex: 1 1 auto; min-width: 0; }
+[data-screen='rewards'] .lvl-name {
+  font-size: 1.1em; font-weight: 900; margin-bottom: 0.4em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen='rewards'] .lvl-sub {
+  display: flex; justify-content: space-between; gap: 0.6em;
+  margin-top: 0.4em; font-size: 0.74em; font-weight: 700;
+}
+[data-screen='rewards'] .lvl-sub span:last-child {
+  text-align: right; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ======================================================================== */
+/* JUMP NAV                                                                 */
+/* ======================================================================== */
+
+[data-screen='rewards'] .jump {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35em;
+  padding: 0.3em;
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-pill);
+  position: sticky; top: 0; z-index: 3;
+  backdrop-filter: blur(6px);
+}
+[data-screen='rewards'] .jump-chip {
+  min-height: calc(var(--tap) - 0.5em);
+  min-width: 0;
+  padding: 0.4em 0.3em;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--dim);
+  font: inherit; font-size: 0.82em; font-weight: 800;
+  cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.16s var(--ease), color 0.16s var(--ease), transform 0.1s var(--ease);
+}
+[data-screen='rewards'] .jump-chip:active {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.08));
+  color: var(--txt);
+  transform: scale(0.96);
+}
+
+/* ======================================================================== */
+/* DAILY CHALLENGES                                                         */
+/* ======================================================================== */
+
+[data-screen='rewards'] .ch-card {
+  display: flex; align-items: center; gap: 0.75em;
+  padding: 0.8em;
+  border-radius: var(--r-md);
+  border: 1px solid var(--stroke);
+  background: var(--glass);
+  box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  position: relative; overflow: hidden;
+}
+[data-screen='rewards'] .ch-card.is-done {
+  border-color: color-mix(in srgb, var(--lime) 62%, transparent);
+  background:
+    linear-gradient(100deg, color-mix(in srgb, var(--lime) 16%, transparent) 0%, transparent 55%),
+    var(--glass-hi);
+}
+[data-screen='rewards'] .ch-card.is-claimed { opacity: 0.62; }
+
+[data-screen='rewards'] .ch-ico {
+  flex: 0 0 auto;
+  width: 2.5em; height: 2.5em;
+  display: grid; place-items: center;
+  font-size: 1.15em;
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+}
+[data-screen='rewards'] .ch-body { flex: 1 1 auto; min-width: 0; }
+[data-screen='rewards'] .ch-text {
+  font-size: 0.92em; font-weight: 800; line-height: 1.25;
+  margin-bottom: 0.42em;
+  overflow-wrap: anywhere;
+}
+[data-screen='rewards'] .ch-bar { height: 0.5em; }
+[data-screen='rewards'] .ch-card.is-done .ch-bar > i { background: linear-gradient(90deg, var(--lime), var(--aqua)); }
+[data-screen='rewards'] .ch-foot {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 0.6em; margin-top: 0.36em; font-size: 0.74em; font-weight: 800;
+}
+[data-screen='rewards'] .ch-prog { color: var(--dim); }
+[data-screen='rewards'] .ch-rew { color: var(--sun); white-space: nowrap; }
+[data-screen='rewards'] .ch-rew i { font-style: normal; opacity: 0.5; margin: 0 0.3em; }
+[data-screen='rewards'] .ch-mode {
+  margin-top: 0.45em;
+  background: color-mix(in srgb, var(--r-epic) 24%, transparent);
+  border-color: color-mix(in srgb, var(--r-epic) 70%, transparent);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block;
+}
+
+[data-screen='rewards'] .ch-claim {
+  flex: 0 0 auto;
+  font-size: 0.82em; padding: 0.5em 0.95em;
+  animation: ch-nudge 1.9s var(--ease) infinite;
+}
+@keyframes ch-nudge {
+  0%, 82%, 100% { transform: none; }
+  88% { transform: translateY(-0.14em) scale(1.03); }
+  94% { transform: translateY(0.04em) scale(0.99); }
+}
+[data-screen='rewards'] .ch-done {
+  flex: 0 0 auto;
+  width: 2.2em; height: 2.2em; border-radius: 50%;
+  display: grid; place-items: center;
+  color: var(--lime); font-weight: 900; font-size: 1.05em;
+  background: color-mix(in srgb, var(--lime) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--lime) 55%, transparent);
+}
+
+[data-screen='rewards'] .daily-clear {
+  margin-top: 0.55em; padding: 0.7em;
+  text-align: center; font-size: 0.8em; font-weight: 700; color: var(--dim);
+  border: 1px dashed var(--stroke); border-radius: var(--r-sm);
+}
+
+/* ======================================================================== */
+/* STREAK                                                                   */
+/* ======================================================================== */
+
+[data-screen='rewards'] .week {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 0.3em;
+}
+[data-screen='rewards'] .wk-day {
+  display: flex; flex-direction: column; align-items: center; gap: 0.3em;
+}
+[data-screen='rewards'] .wk-dot {
+  width: 100%; aspect-ratio: 1 / 1; max-width: 3em;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 0.95em; line-height: 1;
+  background: var(--sunk);
+  border: 0.13em solid var(--stroke);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+[data-screen='rewards'] .wk-day.played .wk-dot {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 46%, transparent), rgba(10, 17, 31, 0.7));
+  border-color: var(--hot);
+  box-shadow: 0 0 0.7em color-mix(in srgb, var(--hot) 60%, transparent);
+}
+[data-screen='rewards'] .wk-day.today .wk-dot { border-color: var(--sun); }
+[data-screen='rewards'] .wk-day.tomorrow .wk-dot {
+  border-style: dashed;
+  border-color: var(--aqua);
+  color: var(--aqua);
+  background: color-mix(in srgb, var(--aqua) 14%, transparent);
+  animation: wk-breathe 2.4s var(--ease) infinite;
+}
+@keyframes wk-breathe {
+  50% { box-shadow: 0 0 0.9em color-mix(in srgb, var(--aqua) 65%, transparent); }
+}
+[data-screen='rewards'] .wk-lab {
+  font-size: 0.66em; font-weight: 800; letter-spacing: 0.06em; color: var(--dim);
+}
+[data-screen='rewards'] .wk-day.today .wk-lab { color: var(--sun); }
+[data-screen='rewards'] .wk-day.tomorrow .wk-lab { color: var(--aqua); }
+
+[data-screen='rewards'] .wk-foot {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 0.6em; margin-top: 0.7em; flex-wrap: wrap;
+}
+[data-screen='rewards'] .wk-cta { color: var(--aqua); font-weight: 800; }
+
+/* ======================================================================== */
+/* SEASON                                                                   */
+/* ======================================================================== */
+
+[data-screen='rewards'] .season-head {
+  background:
+    linear-gradient(150deg, color-mix(in srgb, var(--cc) 34%, transparent) 0%, rgba(10, 17, 31, 0.92) 60%),
+    var(--glass);
+  border-color: color-mix(in srgb, var(--cc) 45%, var(--stroke));
+  margin-bottom: 0.7em;
+}
+[data-screen='rewards'] .sh-top {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 0.7em;
+}
+[data-screen='rewards'] .sh-title { min-width: 0; }
+[data-screen='rewards'] .sh-name {
+  font-size: 1.05em; font-weight: 900; line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+[data-screen='rewards'] .sh-blurb { margin-top: 0.15em; }
+[data-screen='rewards'] .sh-ends { flex: 0 0 auto; }
+[data-screen='rewards'] .sh-bar { margin-top: 0.8em; }
+[data-screen='rewards'] .sh-bar .bar > i { background: linear-gradient(90deg, var(--cc), var(--sun)); }
+[data-screen='rewards'] .sh-sub {
+  display: flex; justify-content: space-between; gap: 0.6em;
+  margin-top: 0.4em; font-size: 0.76em; font-weight: 800;
+}
+[data-screen='rewards'] .sh-sub span:last-child {
+  text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen='rewards'] .sh-ready {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.7em;
+  margin-top: 0.8em; padding: 0.55em 0.55em 0.55em 0.9em;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--sun) 20%, transparent);
+  border: 1px solid var(--sun);
+  font-size: 0.86em; font-weight: 800;
+  animation: sh-glow 2.2s var(--ease) infinite;
+}
+@keyframes sh-glow {
+  50% { box-shadow: 0 0 1.1em color-mix(in srgb, var(--sun) 55%, transparent); }
+}
+[data-screen='rewards'] .sh-ready .btn { font-size: 0.85em; padding: 0.5em 1em; }
+[data-screen='rewards'] .sh-free {
+  margin-top: 0.6em; color: var(--dimmer);
+  letter-spacing: 0.04em; text-transform: uppercase; font-weight: 800;
+}
+
+/* The rail is the only horizontal scroller on the page. */
+[data-screen='rewards'] .rail {
+  display: flex; gap: 0.5em;
+  overflow-x: auto; overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+  padding: 0.35em 0.2em 0.7em;
+  margin: 0 -0.2em;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+[data-screen='rewards'] .rail::-webkit-scrollbar { height: 0.35em; }
+[data-screen='rewards'] .rail::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22); border-radius: var(--r-pill);
+}
+
+[data-screen='rewards'] .tr {
+  flex: 0 0 auto;
+  width: 7.4em; min-height: 9.6em;
+  scroll-snap-align: center;
+  display: flex; flex-direction: column; gap: 0.4em;
+  padding: 0.6em;
+  border-radius: var(--r-md);
+  border: 1px solid var(--stroke);
+  background: var(--glass);
+  box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  position: relative;
+}
+[data-screen='rewards'] .tr-head {
+  display: flex; align-items: center; justify-content: space-between;
+}
+[data-screen='rewards'] .tr-n {
+  font-size: 0.72em; font-weight: 900; letter-spacing: 0.08em; color: var(--dim);
+}
+[data-screen='rewards'] .tr-n::before { content: 'TIER '; }
+[data-screen='rewards'] .tr-tick { color: var(--lime); font-weight: 900; }
+[data-screen='rewards'] .tr-at {
+  margin-top: auto; font-size: 0.68em; font-weight: 800; color: var(--dimmer);
+  text-align: center;
+}
+
+[data-screen='rewards'] .tr-coins,
+[data-screen='rewards'] .tr-xp {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.15em;
+  font-size: 0.82em; font-weight: 800; text-align: center;
+}
+[data-screen='rewards'] .tr-coins { color: var(--sun); }
+[data-screen='rewards'] .tr-xp { color: var(--aqua); }
+
+[data-screen='rewards'] .tr-item {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.25em; text-align: center;
+}
+[data-screen='rewards'] .tr-item-glyph {
+  width: 2.3em; height: 2.3em; border-radius: var(--r-sm);
+  display: grid; place-items: center; font-size: 1.1em;
+  background: color-mix(in srgb, var(--rc) 22%, rgba(8, 14, 26, 0.8));
+  border: 0.12em solid var(--rc);
+  box-shadow: 0 0 0.8em color-mix(in srgb, var(--rc) 45%, transparent);
+}
+[data-screen='rewards'] .tr-item-name {
+  font-size: 0.64em; font-weight: 800; line-height: 1.15;
+  color: var(--rc); overflow-wrap: anywhere;
+}
+
+[data-screen='rewards'] .tr.locked { opacity: 0.55; }
+[data-screen='rewards'] .tr.locked .tr-item-glyph { filter: grayscale(0.8); box-shadow: none; }
+[data-screen='rewards'] .tr.claimed {
+  border-color: color-mix(in srgb, var(--lime) 50%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--lime) 12%, transparent), transparent 60%),
+    var(--glass);
+}
+/* Claimable has to shout — an unclaimed reward the player never notices is a
+   reward that was never given. */
+[data-screen='rewards'] .tr.claimable {
+  border-color: var(--sun);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--sun) 24%, transparent), rgba(10, 17, 31, 0.9) 70%),
+    var(--glass-hi);
+  animation: tr-pulse 1.8s var(--ease) infinite;
+}
+@keyframes tr-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sun) 55%, transparent), var(--lift-1); }
+  55% { box-shadow: 0 0 1.3em 0.15em color-mix(in srgb, var(--sun) 60%, transparent), var(--lift-1); }
+}
+[data-screen='rewards'] .tr-claim {
+  margin-top: auto;
+  width: 100%;
+  font-size: 0.72em; padding: 0.45em 0.4em;
+}
+
+/* ======================================================================== */
+/* ACHIEVEMENTS                                                             */
+/* ======================================================================== */
+
+[data-screen='rewards'] .ach-total { margin-bottom: 0.9em; }
+[data-screen='rewards'] .ach-total > i { background: linear-gradient(90deg, var(--r-epic), var(--sun)); }
+
+[data-screen='rewards'] .ach-group + .ach-group { margin-top: 1em; }
+[data-screen='rewards'] .ach-group h3 {
+  margin: 0 0 0.45em;
+  font-size: 0.74em; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--tc);
+  display: flex; align-items: center; gap: 0.5em;
+}
+[data-screen='rewards'] .ach-group h3::after {
+  content: ''; flex: 1 1 auto; height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tc) 50%, transparent), transparent);
+}
+[data-screen='rewards'] .ach-group h3 .num { color: var(--dim); letter-spacing: 0.02em; }
+
+[data-screen='rewards'] .ach-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.2em, 1fr));
+  gap: 0.5em;
+}
+[data-screen='rewards'] .ach {
+  display: flex; flex-direction: column; align-items: center; gap: 0.28em;
+  padding: 0.75em 0.5em 0.6em;
+  text-align: center;
+  border-radius: var(--r-md);
+  border: 1px solid var(--stroke);
+  background: var(--sunk);
+  filter: grayscale(1) brightness(0.72);
+  transition: filter 0.2s var(--ease);
+}
+[data-screen='rewards'] .ach.got {
+  filter: none;
+  border-color: color-mix(in srgb, var(--tc) 60%, transparent);
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--tc) 26%, transparent) 0%, transparent 62%),
+    var(--glass);
+  box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+}
+[data-screen='rewards'] .ach-ico {
+  width: 2.4em; height: 2.4em; border-radius: 50%;
+  display: grid; place-items: center; font-size: 1.15em;
+  background: rgba(4, 8, 16, 0.5);
+  border: 0.12em solid var(--stroke);
+}
+[data-screen='rewards'] .ach.got .ach-ico {
+  border-color: var(--tc);
+  box-shadow: 0 0 0.8em color-mix(in srgb, var(--tc) 45%, transparent);
+}
+[data-screen='rewards'] .ach-name {
+  font-size: 0.78em; font-weight: 900; line-height: 1.2; overflow-wrap: anywhere;
+}
+[data-screen='rewards'] .ach.got .ach-name { color: var(--tc); }
+[data-screen='rewards'] .ach-desc {
+  font-size: 0.66em; line-height: 1.25; color: var(--dim); overflow-wrap: anywhere;
+}
+[data-screen='rewards'] .ach-foot {
+  margin-top: 0.25em;
+  font-size: 0.62em; font-weight: 800; letter-spacing: 0.05em;
+  color: var(--dimmer);
+}
+[data-screen='rewards'] .ach.got .ach-foot { color: var(--lime); }
+
+/* ======================================================================== */
+/* RESPONSIVE                                                               */
+/* ======================================================================== */
+
+/* Small Android portrait (360 px): the achievement grid must not drop to a
+   single column — three-across thumbnails are what make it read as a trophy
+   case rather than a list. */
+@media (max-width: 380px) {
+  [data-screen='rewards'] .ach-grid { grid-template-columns: repeat(3, 1fr); gap: 0.35em; }
+  [data-screen='rewards'] .ach { padding: 0.6em 0.3em 0.5em; }
+  [data-screen='rewards'] .ach-desc { display: none; }
+  [data-screen='rewards'] .lvl-ring { width: 3.8em; height: 3.8em; }
+  [data-screen='rewards'] .tr { width: 6.6em; }
+}
+
+/* Landscape phone: the rail and the level card are the height hogs. */
+@media (orientation: landscape) and (max-height: 460px) {
+  [data-screen='rewards'] .lvl-ring { width: 3.6em; height: 3.6em; }
+  [data-screen='rewards'] .tr { min-height: 8.4em; }
+  [data-screen='rewards'] .jump { position: static; }
+}
+
+/* Desktop: the rail gets room and the achievements spread out. */
+@media (min-width: 900px) {
+  [data-screen='rewards'] .ach-grid { grid-template-columns: repeat(auto-fill, minmax(9.5em, 1fr)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-screen='rewards'] .ch-claim,
+  [data-screen='rewards'] .tr.claimable,
+  [data-screen='rewards'] .sh-ready,
+  [data-screen='rewards'] .wk-day.tomorrow .wk-dot { animation: none; }
+}

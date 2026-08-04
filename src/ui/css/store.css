@@ -1,0 +1,349 @@
+/* =========================================================================
+ * STORE — layout for the cosmetic store.
+ *
+ * Scoped to [data-screen="store"] so nothing here can reach another screen.
+ * Components (.btn, .chip, .tabs, .bar, .panel, the rarity ramp) come from
+ * tokens.css; this file only arranges them and styles the parts that are
+ * genuinely unique to a shop: the collection rail, the item card and the
+ * detail sheet.
+ *
+ * Keyframes cannot be scoped, so every one here is prefixed `store-`.
+ * ====================================================================== */
+
+[data-screen="store"] .store-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;              /* lets the rail below actually clip instead of
+                                stretching the page into a horizontal scroll */
+}
+
+/* ======================================================================== */
+/* COIN BALANCE — pinned in the header, counts down after a purchase        */
+/* ======================================================================== */
+
+[data-screen="store"] .store-coins {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  min-height: var(--tap);
+  padding: 0.3em 0.85em 0.3em 0.5em;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  border: 1px solid var(--stroke-hi);
+  box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  font-weight: 800; font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+[data-screen="store"] .store-coins .coin { width: 1.35em; height: 1.35em; flex: 0 0 auto; }
+[data-screen="store"] .store-coins.bump { animation: store-coin-bump 0.5s var(--ease-back); }
+[data-screen="store"] .store-coins.bump .coin-val { animation: store-coin-flash 0.5s var(--ease); }
+
+@keyframes store-coin-bump { 30% { transform: scale(1.12); } }
+@keyframes store-coin-flash { 20% { color: var(--sun); } }
+
+/* ======================================================================== */
+/* COLLECTION RAIL — one full-width card per set, swipe or tap the dots     */
+/* ======================================================================== */
+
+[data-screen="store"] .store-sets { margin-bottom: var(--gap); }
+
+[data-screen="store"] .set-rail {
+  display: flex; gap: 0.6em;
+  overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+[data-screen="store"] .set-rail::-webkit-scrollbar { display: none; }
+
+[data-screen="store"] .set-card {
+  position: relative; overflow: hidden;
+  flex: 0 0 100%; min-width: 0;
+  scroll-snap-align: start;
+  padding: 0.9em;
+  border-radius: var(--r-md);
+  border: 1px solid color-mix(in srgb, var(--sc, var(--aqua)) 42%, var(--stroke));
+  background:
+    linear-gradient(148deg, color-mix(in srgb, var(--sc, var(--aqua)) 28%, transparent) 0%,
+                            rgba(10, 17, 31, 0.92) 58%),
+    var(--glass);
+  box-shadow: var(--lift-2), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  animation: store-rise 0.34s var(--ease) both;
+}
+[data-screen="store"] .set-card::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(80% 60% at 100% 0%,
+              color-mix(in srgb, var(--sc, var(--aqua)) 34%, transparent) 0%, transparent 62%);
+  opacity: 0.55; pointer-events: none;
+}
+[data-screen="store"] .set-card > * { position: relative; z-index: 1; }
+[data-screen="store"] .set-card.done { border-color: var(--sc, var(--aqua)); }
+
+[data-screen="store"] .set-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5em;
+  min-height: 1.6em;
+}
+[data-screen="store"] .set-kicker {
+  font-size: 0.64em; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--sc, var(--aqua));
+}
+[data-screen="store"] .set-chips { display: flex; gap: 0.3em; flex-wrap: wrap; justify-content: flex-end; }
+[data-screen="store"] .set-name {
+  margin: 0.15em 0 0.1em; font-size: 1.3em; font-weight: 900; letter-spacing: 0.01em;
+  text-shadow: 0 0.06em 0.3em rgba(0, 0, 0, 0.55);
+}
+[data-screen="store"] .set-blurb {
+  margin: 0 0 0.75em; font-size: 0.8em; color: var(--dim);
+}
+
+[data-screen="store"] .set-minis { display: flex; flex-wrap: wrap; gap: 0.4em; }
+[data-screen="store"] .set-mini {
+  position: relative;
+  flex: 1 1 3.1em; max-width: 5.2em;
+  min-height: var(--tap);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0.25em;
+  border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--rc, var(--stroke-hi)) 55%, transparent);
+  background: var(--sunk);
+  cursor: pointer;
+  opacity: 0.5; filter: grayscale(0.55);
+  transition: transform 0.14s var(--ease-back), opacity 0.18s var(--ease), filter 0.18s var(--ease);
+}
+[data-screen="store"] .set-mini.mine {
+  opacity: 1; filter: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rc) 45%, transparent), var(--lift-1);
+}
+[data-screen="store"] .set-mini:active { transform: scale(0.93); }
+[data-screen="store"] .mini-pv { display: block; width: 100%; }
+[data-screen="store"] .mini-pv svg { display: block; width: 100%; height: auto; }
+[data-screen="store"] .mini-tick {
+  position: absolute; right: 0.1em; bottom: 0.05em;
+  font-size: 0.7em; font-weight: 800; color: var(--lime);
+  opacity: 0; transition: opacity 0.18s var(--ease);
+  text-shadow: 0 0 0.3em rgba(0, 0, 0, 0.8);
+}
+[data-screen="store"] .set-mini.mine .mini-tick { opacity: 1; }
+
+[data-screen="store"] .set-prog {
+  display: flex; align-items: center; gap: 0.6em; margin-top: 0.8em;
+}
+[data-screen="store"] .set-prog .bar { flex: 1 1 auto; }
+[data-screen="store"] .set-prog .bar > i {
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--sc, var(--aqua)) 55%, #ffffff), var(--sc, var(--aqua)));
+}
+[data-screen="store"] .set-frac { flex: 0 0 auto; font-size: 0.82em; font-weight: 800; }
+[data-screen="store"] .set-note { margin: 0.55em 0 0; color: var(--dim); }
+[data-screen="store"] .set-card.done .set-note { color: var(--sc, var(--aqua)); }
+
+/* Pager. The dots are real buttons because a desktop player has no swipe. */
+[data-screen="store"] .set-dots {
+  display: flex; justify-content: center; align-items: center; gap: 0.1em;
+}
+[data-screen="store"] .set-dot {
+  min-height: var(--tap); min-width: 2.2em;
+  display: grid; place-items: center;
+  padding: 0; border: 0; background: transparent; cursor: pointer;
+}
+[data-screen="store"] .set-dot i {
+  display: block; width: 0.5em; height: 0.5em; border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.26);
+  transition: width 0.2s var(--ease-back), background 0.2s var(--ease);
+}
+[data-screen="store"] .set-dot[aria-current="true"] i {
+  width: 1.5em;
+  background: var(--dc, var(--aqua));
+  box-shadow: 0 0 0.5em var(--dc, var(--aqua));
+}
+
+/* ======================================================================== */
+/* CATEGORY TABS — sticky, and scrollable when six labels will not fit      */
+/* ======================================================================== */
+
+[data-screen="store"] .store-tabs {
+  position: sticky; top: 0; z-index: 4;
+  overflow-x: auto; scrollbar-width: none;
+  /* A sticky pill over scrolling cards needs its own backing, or item previews
+     slide visibly through the translucent --sunk fill. */
+  background: rgba(8, 14, 26, 0.88);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--lift-1);
+}
+[data-screen="store"] .store-tabs::-webkit-scrollbar { display: none; }
+[data-screen="store"] .store-tabs button { flex: 0 0 auto; padding: 0.45em 1.1em; }
+
+/* ======================================================================== */
+/* ITEM CARDS                                                               */
+/* ======================================================================== */
+
+[data-screen="store"] .cos-card {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column; align-items: center; gap: 0.3em;
+  padding: 0.85em 0.5em 0.65em;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-md);
+  background: var(--glass);
+  box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: var(--txt); font: inherit; text-align: center;
+  cursor: pointer;
+  transition: transform 0.14s var(--ease-back), border-color 0.16s var(--ease),
+              box-shadow 0.16s var(--ease);
+  animation: store-pop 0.3s var(--ease-back) both;
+  animation-delay: calc(var(--i, 0) * 22ms);
+}
+[data-screen="store"] .cos-card:active { transform: scale(0.965); }
+
+[data-screen="store"] .cos-strip {
+  position: absolute; top: 0; left: 0; right: 0; height: 0.26em;
+  background: var(--rc, var(--r-common));
+}
+[data-screen="store"] .cos-card.rarity-legendary,
+[data-screen="store"] .cos-card.rarity-mythic {
+  border-color: color-mix(in srgb, var(--rc) 55%, var(--stroke));
+}
+[data-screen="store"] .cos-card.rarity-mythic::before {
+  content: '';
+  position: absolute; inset: -40% -40% auto -40%; height: 90%;
+  background: radial-gradient(50% 60% at 50% 50%,
+              color-mix(in srgb, var(--rc) 34%, transparent), transparent 70%);
+  pointer-events: none;
+}
+
+[data-screen="store"] .cos-pv { display: block; width: 100%; max-width: 6.4em; }
+[data-screen="store"] .cos-pv svg { display: block; width: 100%; height: auto; }
+
+[data-screen="store"] .cos-name {
+  max-width: 100%;
+  font-size: 0.82em; font-weight: 800;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Exactly one state per card — never a price beside a tick. */
+[data-screen="store"] .cos-state {
+  display: inline-flex; align-items: center; gap: 0.25em;
+  padding: 0.12em 0.6em;
+  border-radius: var(--r-pill);
+  font-size: 0.76em; font-weight: 800; font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+[data-screen="store"] .cos-state .coin { width: 1em; height: 1em; }
+[data-screen="store"] .cos-state.price { background: var(--sunk); border: 1px solid var(--stroke); }
+[data-screen="store"] .cos-state.price.short { opacity: 0.45; }
+[data-screen="store"] .cos-state.own { color: var(--dim); }
+[data-screen="store"] .cos-state.lock { color: var(--dimmer); }
+[data-screen="store"] .cos-state.eq {
+  background: var(--lime); color: #04231f;
+  box-shadow: 0 0 0.6em color-mix(in srgb, var(--lime) 50%, transparent);
+}
+[data-screen="store"] .cos-state.claim { background: var(--sun); color: #2a1c00; }
+
+[data-screen="store"] .cos-card.st-equipped {
+  border-color: var(--lime);
+  box-shadow: inset 0 0 0 1px var(--lime), var(--lift-1);
+}
+[data-screen="store"] .cos-card.st-locked .cos-pv { filter: grayscale(0.6) brightness(0.72); }
+
+[data-screen="store"] .store-foot { margin: 1.3em 0 0; }
+
+/* ======================================================================== */
+/* DETAIL SHEET — bottom sheet on a phone, centred card on a desktop        */
+/* ======================================================================== */
+
+[data-screen="store"] .cos-sheet-scrim {
+  position: fixed; inset: 0; z-index: 30;
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(4, 8, 16, 0.66);
+  backdrop-filter: blur(3px);
+  animation: store-fade-in 0.18s var(--ease) both;
+}
+[data-screen="store"] .cos-sheet-scrim.closing { animation: store-fade-out 0.18s var(--ease) both; }
+
+[data-screen="store"] .cos-sheet {
+  position: relative;
+  width: 100%; max-width: 30em;
+  max-height: 88vh; overflow-y: auto;
+  padding: 0.9em 1.2em calc(1.2em + var(--safe-b));
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  border-top: 2px solid var(--rc, var(--stroke-hi));
+  text-align: center;
+  animation: store-sheet-up 0.28s var(--ease-back) both;
+}
+[data-screen="store"] .closing .cos-sheet { animation: store-sheet-down 0.18s var(--ease) both; }
+
+[data-screen="store"] .sheet-grab {
+  display: block; width: 2.6em; height: 0.28em; margin: 0 auto 0.5em;
+  border-radius: var(--r-pill); background: rgba(255, 255, 255, 0.26);
+}
+[data-screen="store"] .sheet-x { position: absolute; top: 0.5em; right: 0.5em; font-size: 1em; }
+[data-screen="store"] .sheet-hero { width: 10em; margin: 0.1em auto 0.6em; }
+[data-screen="store"] .sheet-hero svg {
+  display: block; width: 100%; height: auto;
+  filter: drop-shadow(0 0.4em 0.9em rgba(0, 0, 0, 0.55));
+}
+[data-screen="store"] .sheet-name {
+  margin: 0 0 0.45em; font-size: 1.3em; font-weight: 900;
+  overflow-wrap: anywhere;
+}
+[data-screen="store"] .sheet-tags {
+  display: flex; flex-wrap: wrap; gap: 0.35em; justify-content: center; margin-bottom: 0.75em;
+}
+[data-screen="store"] .rar-chip {
+  color: var(--rc); border-color: var(--rc);
+  background: color-mix(in srgb, var(--rc) 22%, transparent);
+}
+[data-screen="store"] .sheet-desc {
+  margin: 0 0 1.1em; font-size: 0.88em; color: var(--dim); line-height: 1.45;
+}
+/* The action lives at the bottom of the sheet, where the thumb already is. */
+[data-screen="store"] .sheet-foot { display: flex; flex-direction: column; gap: 0.5em; }
+[data-screen="store"] .sheet-note { margin: 0; font-size: 0.8em; color: var(--dim); }
+[data-screen="store"] .sheet-note.bad { color: var(--hot); }
+[data-screen="store"] .sheet-foot .btn .coin { width: 1.2em; height: 1.2em; }
+
+/* ======================================================================== */
+/* ANIMATIONS                                                               */
+/* ======================================================================== */
+
+@keyframes store-pop {
+  from { opacity: 0; transform: translateY(0.7em) scale(0.94); }
+}
+@keyframes store-rise {
+  from { opacity: 0; transform: translateY(0.9em); }
+}
+@keyframes store-fade-in { from { opacity: 0; } }
+@keyframes store-fade-out { to { opacity: 0; } }
+@keyframes store-sheet-up { from { transform: translateY(100%); } }
+@keyframes store-sheet-down { to { transform: translateY(100%); opacity: 0; } }
+@keyframes store-sheet-in { from { opacity: 0; transform: scale(0.94); } }
+
+/* ======================================================================== */
+/* RESPONSIVE                                                               */
+/* ======================================================================== */
+
+/* Roomier screens: the sheet becomes a centred card and the grid gets a
+   comfortable card size instead of stretching two-up. */
+@media (min-width: 46em) {
+  [data-screen="store"] .cos-sheet-scrim { align-items: center; padding: 1.4em; }
+  [data-screen="store"] .cos-sheet {
+    max-width: 26em; max-height: 86vh;
+    border-radius: var(--r-lg);
+    border: 1px solid var(--stroke);
+    border-top: 2px solid var(--rc, var(--stroke-hi));
+    padding-bottom: 1.2em;
+    animation-name: store-sheet-in;
+  }
+  [data-screen="store"] .closing .cos-sheet { animation-name: store-fade-out; }
+  [data-screen="store"] .sheet-grab { display: none; }
+  [data-screen="store"] .set-card { flex-basis: calc(50% - 0.3em); }
+}
+
+/* Landscape phone: vertical space is the scarce resource, so the collection
+   card sheds its blurb and the previews shrink rather than pushing the grid
+   off the bottom of the screen. */
+@media (orientation: landscape) and (max-height: 460px) {
+  [data-screen="store"] .set-blurb { display: none; }
+  [data-screen="store"] .cos-pv { max-width: 4.6em; }
+  [data-screen="store"] .sheet-hero { width: 7em; }
+  [data-screen="store"] .cos-sheet { max-height: 94vh; }
+}

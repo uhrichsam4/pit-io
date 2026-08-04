@@ -1,0 +1,303 @@
+/* =========================================================================
+ * LEADERBOARD SCREEN
+ *
+ * Layout only. Every component here — .tabs, .rows, .panel, .avatar, .chip —
+ * comes from tokens.css; this file positions them and adds the one thing a
+ * leaderboard needs that a design system cannot supply generically: a podium.
+ *
+ * Scoped to [data-screen="leaderboard"] so nothing leaks into another screen.
+ * All sizes are em, off the shell's single --ui-scale knob.
+ * ====================================================================== */
+
+/* html/body carry `touch-action: none` for the game canvas. The shell's scroll
+   containers have to opt back in or the page cannot be scrolled by thumb. */
+[data-screen='leaderboard'] .page-body { touch-action: pan-y; }
+
+/* src/ui/styles.css — the in-match HUD sheet, loaded before tokens.css —
+   declares a GLOBAL `.panel { position: absolute }` for its floating HUD
+   plates. tokens.css's `.panel` never sets `position`, so nothing overrides it
+   and every meta-screen panel silently leaves the flow, collapsing the list
+   into the row above it. Load order cannot fix it (same specificity, different
+   property), so it is corrected here, scoped to this screen. */
+[data-screen='leaderboard'] .panel { position: relative; }
+
+[data-screen='leaderboard'] .lb { padding-top: 0.2em; }
+
+/* Two stacked tab rows would otherwise eat 2em of a phone's vertical budget. */
+[data-screen='leaderboard'] .tabs.boards { margin-bottom: 0.45em; }
+
+[data-screen='leaderboard'] .tabs.metrics {
+  margin-bottom: 0.7em;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+[data-screen='leaderboard'] .tabs.metrics::-webkit-scrollbar { display: none; }
+[data-screen='leaderboard'] .tabs.metrics button {
+  /* Grow to fill a wide screen, refuse to shrink into unreadability on a
+     narrow one — the strip scrolls instead. */
+  flex: 1 0 auto;
+  font-size: 0.78em;
+  padding-inline: 0.85em;
+}
+
+/* ------------------------------------------------------------ source line --- */
+
+[data-screen='leaderboard'] .lb-source {
+  display: flex; align-items: center; gap: 0.5em;
+  min-height: 1.9em;
+  margin-bottom: 0.8em;
+  padding: 0 0.2em;
+}
+[data-screen='leaderboard'] .lb-source .chip.local {
+  background: color-mix(in srgb, var(--sun) 20%, transparent);
+  border-color: var(--sun);
+  color: var(--sun);
+}
+[data-screen='leaderboard'] .lb-source .src-txt {
+  min-width: 0;
+  font-size: 0.76em;
+  color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen='leaderboard'] .lb-source[data-src='loading'] .src-txt { opacity: 0.75; }
+
+[data-screen='leaderboard'] .icon-btn.spin { animation: lb-spin 0.9s linear infinite; }
+@keyframes lb-spin { to { transform: rotate(360deg); } }
+
+/* ================================================================ podium === */
+
+[data-screen='leaderboard'] .podium {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0.5em;
+  margin: 0.3em 0 1em;
+}
+
+[data-screen='leaderboard'] .pod {
+  position: relative;
+  flex: 1 1 0; min-width: 0;
+  max-width: 9em;
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center;
+  animation: pod-rise 0.42s var(--ease-back) both;
+}
+[data-screen='leaderboard'] .pod.p2 { animation-delay: 0.05s; }
+[data-screen='leaderboard'] .pod.p1 { animation-delay: 0.14s; flex-grow: 1.25; }
+[data-screen='leaderboard'] .pod.p3 { animation-delay: 0.10s; }
+@keyframes pod-rise { from { opacity: 0; transform: translateY(1.4em) scale(0.9); } }
+
+/* A one- or two-entry board must not leave the champion floating off-centre. */
+[data-screen='leaderboard'] .podium.count-1 .pod { max-width: 12em; }
+
+[data-screen='leaderboard'] .pod .crown {
+  font-size: 1.5em; line-height: 1;
+  margin-bottom: 0.05em;
+  filter: drop-shadow(0 0.08em 0.25em rgba(0, 0, 0, 0.6));
+  animation: crown-bob 2.6s var(--ease) infinite;
+}
+@keyframes crown-bob { 50% { transform: translateY(-0.14em) rotate(-4deg); } }
+
+[data-screen='leaderboard'] .pod-ring {
+  position: relative;
+  padding: 0.24em;
+  border-radius: 50%;
+  background: conic-gradient(from 210deg,
+      var(--pc) 0deg, color-mix(in srgb, var(--pc) 25%, transparent) 130deg,
+      var(--pc) 240deg, color-mix(in srgb, var(--pc) 35%, transparent) 360deg);
+  box-shadow: 0 0 1.1em color-mix(in srgb, var(--pc) 45%, transparent), var(--lift-2);
+}
+[data-screen='leaderboard'] .pod .avatar {
+  width: 3.1em; height: 3.1em;
+  font-size: 1em; font-weight: 900;
+  border-width: 0.16em;
+}
+[data-screen='leaderboard'] .pod.p1 .avatar { width: 4em; height: 4em; font-size: 1.15em; }
+
+[data-screen='leaderboard'] .pod-medal {
+  position: absolute; right: -0.15em; bottom: -0.15em;
+  display: grid; place-items: center;
+  width: 1.5em; height: 1.5em;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--pc), color-mix(in srgb, var(--pc) 55%, #000));
+  color: #17110a;
+  font-size: 0.8em; font-weight: 900; font-variant-numeric: tabular-nums;
+  border: 0.12em solid rgba(8, 13, 24, 0.9);
+  box-shadow: var(--lift-1);
+}
+
+[data-screen='leaderboard'] .pod-nm {
+  width: 100%;
+  margin-top: 0.45em;
+  font-size: 0.85em; font-weight: 800;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+[data-screen='leaderboard'] .pod.p1 .pod-nm { font-size: 0.95em; }
+[data-screen='leaderboard'] .pod-sc {
+  font-size: 0.8em; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--pc);
+  text-shadow: 0 0.08em 0.3em rgba(0, 0, 0, 0.55);
+}
+[data-screen='leaderboard'] .pod.me .pod-nm { color: var(--hot); }
+
+[data-screen='leaderboard'] .plinth {
+  position: relative;
+  width: 100%;
+  margin-top: 0.5em;
+  height: 2.2em;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--pc) 42%, transparent) 0%, rgba(10, 17, 31, 0.86) 90%),
+    var(--glass);
+  border: 1px solid var(--stroke);
+  border-bottom: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  display: grid; place-items: center;
+  animation: plinth-grow 0.5s var(--ease-back) both 0.12s;
+  transform-origin: bottom;
+}
+[data-screen='leaderboard'] .pod.p1 .plinth { height: 3.3em; }
+[data-screen='leaderboard'] .pod.p3 .plinth { height: 1.7em; }
+[data-screen='leaderboard'] .plinth span {
+  font-size: 1.25em; font-weight: 900; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--pc) 80%, #fff);
+  text-shadow: 0 0.06em 0.2em rgba(0, 0, 0, 0.7);
+}
+@keyframes plinth-grow { from { transform: scaleY(0.2); opacity: 0; } }
+
+/* ================================================================== rows === */
+
+[data-screen='leaderboard'] .lb-list { margin-bottom: 0.7em; }
+
+[data-screen='leaderboard'] .rows .row.in { animation: row-in 0.3s var(--ease) both var(--d, 0ms); }
+@keyframes row-in { from { opacity: 0; transform: translateX(0.7em); } }
+
+[data-screen='leaderboard'] .rows .nm-wrap {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; gap: 0.1em;
+}
+[data-screen='leaderboard'] .rows .nm { font-size: 0.95em; }
+[data-screen='leaderboard'] .rows .nm .you {
+  margin-left: 0.4em;
+  padding: 0.05em 0.4em;
+  border-radius: var(--r-pill);
+  background: var(--hot);
+  color: #fff;
+  font-size: 0.62em; font-weight: 900; letter-spacing: 0.08em;
+  vertical-align: middle;
+}
+[data-screen='leaderboard'] .rows .sub {
+  display: flex; align-items: center; gap: 0.4em;
+  font-size: 0.68em; color: var(--dim);
+  overflow: hidden; white-space: nowrap;
+}
+[data-screen='leaderboard'] .rows .lv { font-variant-numeric: tabular-nums; }
+[data-screen='leaderboard'] .rows .no-data { font-style: italic; }
+
+[data-screen='leaderboard'] .tier-badge {
+  display: inline-flex; align-items: center; gap: 0.3em;
+  color: var(--tc);
+  font-weight: 800; letter-spacing: 0.04em;
+}
+[data-screen='leaderboard'] .tier-badge i {
+  width: 0.55em; height: 0.55em;
+  transform: rotate(45deg);
+  border-radius: 0.1em;
+  background: var(--tc);
+  box-shadow: 0 0 0.4em color-mix(in srgb, var(--tc) 60%, transparent);
+}
+
+[data-screen='leaderboard'] .rows .row.unknown { opacity: 0.62; }
+[data-screen='leaderboard'] .rows .sc { font-size: 0.95em; }
+
+[data-screen='leaderboard'] .lb-note { margin: 0 0.3em 0.7em; }
+
+/* The player's own row, pinned when they rank below the visible list. */
+[data-screen='leaderboard'] .pin-wrap {
+  position: sticky; bottom: 0;
+  padding-bottom: 0.2em;
+  margin-top: 0.4em;
+}
+[data-screen='leaderboard'] .pin-label {
+  padding: 0 0.3em 0.25em;
+  letter-spacing: 0.09em; text-transform: uppercase;
+}
+[data-screen='leaderboard'] .pin-wrap .panel {
+  border-color: color-mix(in srgb, var(--hot) 55%, var(--stroke));
+  box-shadow: var(--lift-2);
+}
+
+/* ================================================== loading & empty state === */
+
+[data-screen='leaderboard'] .sk {
+  display: block;
+  border-radius: var(--r-sm);
+  background: linear-gradient(100deg,
+      rgba(255, 255, 255, 0.06) 30%, rgba(255, 255, 255, 0.14) 50%, rgba(255, 255, 255, 0.06) 70%);
+  background-size: 300% 100%;
+  animation: sk-shimmer 1.3s linear infinite;
+}
+@keyframes sk-shimmer { to { background-position: -300% 0; } }
+
+[data-screen='leaderboard'] .sk-podium .pod { animation: none; }
+[data-screen='leaderboard'] .sk-podium .plinth { animation: none; }
+[data-screen='leaderboard'] .sk-pav { width: 3.1em; height: 3.1em; border-radius: 50%; }
+[data-screen='leaderboard'] .sk-pav.big { width: 4em; height: 4em; }
+[data-screen='leaderboard'] .sk-pnm { width: 3.6em; height: 0.7em; margin-top: 0.5em; }
+
+[data-screen='leaderboard'] .sk-row {
+  display: flex; align-items: center; gap: 0.7em;
+  min-height: var(--tap);
+  padding: 0.5em 0.7em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+[data-screen='leaderboard'] .sk-row:last-child { border-bottom: 0; }
+[data-screen='leaderboard'] .sk-rk { width: 1.2em; height: 0.8em; }
+[data-screen='leaderboard'] .sk-av { width: 2.1em; height: 2.1em; border-radius: 50%; }
+[data-screen='leaderboard'] .sk-nm { flex: 1 1 auto; height: 0.8em; }
+[data-screen='leaderboard'] .sk-sc { width: 3em; height: 0.8em; }
+
+[data-screen='leaderboard'] .lb-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 0.45em;
+  padding: 2.6em 1.2em;
+  text-align: center;
+  border-radius: var(--r-md);
+  border: 1px dashed var(--stroke-hi);
+  background: var(--sunk);
+  animation: pg-fade 0.3s var(--ease) both;
+}
+[data-screen='leaderboard'] .lb-empty-ico {
+  font-size: 2.4em; line-height: 1;
+  filter: grayscale(0.35) drop-shadow(0 0.08em 0.3em rgba(0, 0, 0, 0.5));
+}
+[data-screen='leaderboard'] .lb-empty-h { font-size: 1.05em; font-weight: 800; }
+[data-screen='leaderboard'] .lb-empty-s {
+  max-width: 22em;
+  font-size: 0.84em; color: var(--dim); line-height: 1.4;
+}
+[data-screen='leaderboard'] .lb-empty .btn { margin-top: 0.5em; }
+
+/* =========================================================== responsive === */
+
+/* Very narrow phones: the podium is the first thing to run out of room. */
+@media (max-width: 360px) {
+  [data-screen='leaderboard'] .pod .avatar { width: 2.7em; height: 2.7em; }
+  [data-screen='leaderboard'] .pod.p1 .avatar { width: 3.4em; height: 3.4em; }
+  [data-screen='leaderboard'] .pod-nm { font-size: 0.78em; }
+  [data-screen='leaderboard'] .tabs.metrics button { font-size: 0.74em; padding-inline: 0.7em; }
+}
+
+/* Landscape phone: vertical space is scarce, so the podium flattens. */
+@media (orientation: landscape) and (max-height: 460px) {
+  [data-screen='leaderboard'] .podium { margin-bottom: 0.6em; }
+  [data-screen='leaderboard'] .pod .avatar { width: 2.4em; height: 2.4em; }
+  [data-screen='leaderboard'] .pod.p1 .avatar { width: 3em; height: 3em; }
+  [data-screen='leaderboard'] .plinth { height: 1.4em; }
+  [data-screen='leaderboard'] .pod.p1 .plinth { height: 2em; }
+  [data-screen='leaderboard'] .pod.p3 .plinth { height: 1.1em; }
+  [data-screen='leaderboard'] .crown { display: none; }
+}

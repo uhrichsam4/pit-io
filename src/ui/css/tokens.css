@@ -1,0 +1,455 @@
+/* =========================================================================
+ * MIAMI DEVOUR — META-LAYER DESIGN SYSTEM
+ *
+ * THE CONTRACT every meta screen styles against. Six screens written by six
+ * people have to look like one app, so the components live here and the screen
+ * files only ever add layout. If you find yourself restyling `.btn` in a screen
+ * file, the component is wrong — fix it here instead.
+ *
+ * SCALING. Everything is authored in `em`, off `--ui-scale` written by
+ * src/ui/shell.js. `.shell` is the ONLY place a root font-size is set. Never
+ * put font-size on a container — em padding on its descendants compounds.
+ *
+ * TOUCH. `--tap` (44 px) is the floor for anything tappable, enforced in JS by
+ * Shell._enforceTapTargets. Thumb reach is real: primary actions belong at the
+ * BOTTOM of a portrait screen, not the top.
+ *
+ * DEPTH. This UI sits on a bright, moving, saturated city render. Nothing
+ * floats unbacked — every panel is a dark glass plate with a light top edge.
+ *
+ * Palette continues src/ui/styles.css, which is loaded first and owns :root.
+ * ====================================================================== */
+
+.shell {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  font-size: calc(16px * var(--ui-scale, 1));
+  font-family: var(--font);
+  color: var(--txt);
+  pointer-events: auto;
+  overscroll-behavior: contain;
+
+  /* ---- surfaces -------------------------------------------------------- */
+  --glass: linear-gradient(168deg, rgba(30, 45, 72, 0.86) 0%, rgba(10, 17, 31, 0.92) 100%);
+  --glass-hi: linear-gradient(168deg, rgba(44, 63, 98, 0.90) 0%, rgba(16, 25, 43, 0.94) 100%);
+  --glass-flat: rgba(14, 22, 38, 0.78);
+  --sunk: rgba(4, 8, 16, 0.46);
+  --stroke: rgba(255, 255, 255, 0.13);
+  --stroke-hi: rgba(255, 255, 255, 0.30);
+
+  /* ---- rarity: one ramp, used by the store, drops and nameplates -------- */
+  --r-common: #9fb0c6;
+  --r-rare: #4dc4ff;
+  --r-epic: #b46bff;
+  --r-legendary: #ffb01f;
+  --r-mythic: #ff3d8b;
+
+  /* ---- geometry -------------------------------------------------------- */
+  --r-sm: 0.6em;
+  --r-md: 1em;
+  --r-lg: 1.5em;
+  --r-pill: 999px;
+  --gap: 0.9em;
+
+  /* ---- elevation ------------------------------------------------------- */
+  --lift-1: 0 0.15em 0.5em rgba(0, 0, 0, 0.35);
+  --lift-2: 0 0.6em 1.6em rgba(0, 0, 0, 0.45);
+  --lift-3: 0 1.2em 3em rgba(0, 0, 0, 0.55);
+
+  /* Safe area — a phone notch and a home indicator both eat real estate. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+
+.shell-hidden { display: none !important; }
+
+.shell-layer { position: absolute; inset: 0; }
+
+/* Scrim so the city behind never fights the text. Sits on the layer, not on
+   each page, so it does not re-fade on every navigation. */
+.shell-layer::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(10, 18, 34, 0.30) 0%, rgba(6, 11, 21, 0.86) 72%),
+    linear-gradient(180deg, rgba(255, 61, 139, 0.10) 0%, transparent 40%);
+  pointer-events: none;
+}
+
+/* ======================================================================== */
+/* PAGE SCAFFOLD                                                            */
+/* ======================================================================== */
+
+.screen-page {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  animation: pg-in 0.26s var(--ease) both;
+}
+.screen-page.dir-back { animation-name: pg-in-back; }
+.screen-page.dir-replace { animation-name: pg-fade; }
+
+@keyframes pg-in      { from { opacity: 0; transform: translateX(2.2em); } }
+@keyframes pg-in-back { from { opacity: 0; transform: translateX(-2.2em); } }
+@keyframes pg-fade    { from { opacity: 0; transform: scale(0.985); } }
+
+.page-head {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--gap);
+  padding: calc(0.7em + var(--safe-t)) calc(1em + var(--safe-r)) 0.7em calc(1em + var(--safe-l));
+}
+.page-head h1 {
+  flex: 1 1 auto; margin: 0;
+  font-size: 1.5em; font-weight: 800; letter-spacing: 0.01em;
+  text-shadow: 0 0.08em 0.3em rgba(0, 0, 0, 0.6);
+}
+.page-head .spacer { width: var(--tap); }
+.page-head .head-actions { display: flex; gap: 0.5em; align-items: center; }
+
+.page-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding: 0 calc(1em + var(--safe-r)) calc(1.6em + var(--safe-b)) calc(1em + var(--safe-l));
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+.page-body::-webkit-scrollbar { width: 0.4em; }
+.page-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22); border-radius: var(--r-pill);
+}
+
+/* Content never runs edge-to-edge on a wide monitor — a 2560 px lobby with
+   full-bleed rows reads as a spreadsheet. */
+.wrap { width: 100%; max-width: 46em; margin: 0 auto; }
+.wrap-wide { width: 100%; max-width: 64em; margin: 0 auto; }
+
+/* ======================================================================== */
+/* PANELS & CARDS                                                           */
+/* ======================================================================== */
+
+.panel {
+  background: var(--glass);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-md);
+  box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  padding: 1em;
+}
+.panel-tight { padding: 0.7em; }
+.panel-flush { padding: 0; overflow: hidden; }
+
+.panel h2, .panel h3 { margin: 0 0 0.5em; font-weight: 800; }
+.panel h2 { font-size: 1.15em; }
+.panel h3 { font-size: 0.95em; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
+
+/* A big colourful lobby tile. `--cc` is its accent. */
+.tile {
+  position: relative;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  gap: 0.2em;
+  min-height: 5.4em;
+  padding: 0.9em;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-md);
+  background:
+    linear-gradient(150deg, color-mix(in srgb, var(--cc, var(--aqua)) 34%, transparent) 0%,
+                            rgba(10, 17, 31, 0.90) 62%),
+    var(--glass);
+  box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  color: var(--txt);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: transform 0.16s var(--ease-back), box-shadow 0.16s var(--ease), filter 0.16s var(--ease);
+}
+.tile::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(90% 70% at 100% 0%,
+              color-mix(in srgb, var(--cc, var(--aqua)) 40%, transparent) 0%, transparent 62%);
+  opacity: 0.5; pointer-events: none;
+}
+.tile:active { transform: scale(0.975); filter: brightness(1.12); }
+.tile .tile-ico { font-size: 1.7em; line-height: 1; margin-bottom: auto; }
+.tile .tile-name { font-size: 1.05em; font-weight: 800; position: relative; }
+.tile .tile-sub { font-size: 0.76em; color: var(--dim); position: relative; }
+.tile.tall { min-height: 8.5em; }
+
+/* ======================================================================== */
+/* BUTTONS                                                                  */
+/* ======================================================================== */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 0.45em;
+  min-height: var(--tap);
+  padding: 0.6em 1.35em;
+  border: 0; border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--hot) 0%, var(--hot-deep) 100%);
+  color: #fff;
+  font: inherit; font-size: 1em; font-weight: 800; letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 0.28em 0 color-mix(in srgb, var(--hot-deep) 70%, #000), var(--lift-1);
+  transition: transform 0.1s var(--ease), box-shadow 0.1s var(--ease), filter 0.14s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+}
+/* The press has to move: on a phone there is no hover, so the depress IS the
+   entire affordance that the tap registered. */
+.btn:active {
+  transform: translateY(0.22em);
+  box-shadow: 0 0.06em 0 color-mix(in srgb, var(--hot-deep) 70%, #000);
+}
+.btn:disabled, .btn[aria-disabled='true'] {
+  filter: grayscale(0.7) brightness(0.72); cursor: not-allowed;
+  box-shadow: none; transform: none;
+}
+.btn-lg { font-size: 1.2em; padding: 0.8em 1.8em; }
+.btn-block { display: flex; width: 100%; }
+
+.btn-ghost {
+  background: var(--glass-flat);
+  border: 1px solid var(--stroke-hi);
+  color: var(--txt);
+  box-shadow: var(--lift-1);
+}
+.btn-ghost:active { transform: translateY(0.12em); box-shadow: none; }
+
+.btn-aqua { background: linear-gradient(180deg, var(--aqua) 0%, #16a89a 100%);
+            box-shadow: 0 0.28em 0 #0e7a70, var(--lift-1); color: #04231f; }
+.btn-sun  { background: linear-gradient(180deg, var(--sun) 0%, #d99a08 100%);
+            box-shadow: 0 0.28em 0 #a97600, var(--lift-1); color: #2a1c00; }
+
+.icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--tap); height: var(--tap); min-width: var(--tap);
+  padding: 0; border-radius: var(--r-pill);
+  border: 1px solid var(--stroke);
+  background: var(--glass-flat);
+  color: var(--txt); font: inherit; font-size: 1.35em; line-height: 1;
+  cursor: pointer;
+  transition: transform 0.12s var(--ease), background 0.12s var(--ease);
+}
+.icon-btn:active { transform: scale(0.9); background: rgba(255, 255, 255, 0.14); }
+
+/* ======================================================================== */
+/* CHIPS, BADGES, TABS                                                      */
+/* ======================================================================== */
+
+.chip {
+  display: inline-flex; align-items: center; gap: 0.35em;
+  padding: 0.25em 0.7em;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  font-size: 0.75em; font-weight: 700; letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.chip.hot { background: color-mix(in srgb, var(--hot) 26%, transparent); border-color: var(--hot); }
+.chip.aqua { background: color-mix(in srgb, var(--aqua) 22%, transparent); border-color: var(--aqua); }
+.chip.sun { background: color-mix(in srgb, var(--sun) 22%, transparent); border-color: var(--sun); }
+.chip.live::before {
+  content: ''; width: 0.5em; height: 0.5em; border-radius: 50%;
+  background: var(--lime); box-shadow: 0 0 0.5em var(--lime);
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes pulse-dot { 50% { opacity: 0.35; } }
+
+/* Rarity is a colour AND a border weight, so it survives a greyscale phone
+   screen in sunlight. */
+.rarity-common    { --rc: var(--r-common); }
+.rarity-rare      { --rc: var(--r-rare); }
+.rarity-epic      { --rc: var(--r-epic); }
+.rarity-legendary { --rc: var(--r-legendary); }
+.rarity-mythic    { --rc: var(--r-mythic); }
+
+.tabs {
+  display: flex; gap: 0.3em;
+  padding: 0.3em;
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-pill);
+  margin-bottom: var(--gap);
+}
+.tabs button {
+  flex: 1 1 0; min-width: 0;
+  min-height: calc(var(--tap) - 0.6em);
+  padding: 0.45em 0.6em;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--dim);
+  font: inherit; font-size: 0.85em; font-weight: 800;
+  cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.16s var(--ease), color 0.16s var(--ease);
+}
+.tabs button[aria-selected='true'] {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0.08));
+  color: var(--txt);
+  box-shadow: var(--lift-1);
+}
+
+/* ======================================================================== */
+/* PROGRESS                                                                 */
+/* ======================================================================== */
+
+.bar {
+  position: relative;
+  height: 0.6em; border-radius: var(--r-pill);
+  background: var(--sunk);
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+.bar > i {
+  display: block; height: 100%;
+  width: 0%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--aqua), var(--lime));
+  transition: width 0.5s var(--ease);
+}
+.bar.xp > i { background: linear-gradient(90deg, var(--sun), var(--hot)); }
+
+/* ======================================================================== */
+/* LISTS — leaderboards, rosters, challenges                                */
+/* ======================================================================== */
+
+.rows { display: flex; flex-direction: column; }
+.rows .row {
+  display: flex; align-items: center; gap: 0.7em;
+  min-height: var(--tap);
+  padding: 0.5em 0.7em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.rows .row:last-child { border-bottom: 0; }
+.rows .row.me {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hot) 24%, transparent), transparent 70%);
+  box-shadow: inset 0.18em 0 0 var(--hot);
+}
+.rows .rk {
+  flex: 0 0 auto; width: 1.9em; text-align: center;
+  font-weight: 800; font-variant-numeric: tabular-nums; color: var(--dim);
+}
+.rows .row.p1 .rk { color: var(--sun); }
+.rows .row.p2 .rk { color: #d7dde6; }
+.rows .row.p3 .rk { color: var(--orange); }
+.rows .nm { flex: 1 1 auto; min-width: 0; font-weight: 700;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rows .sc { flex: 0 0 auto; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* Player avatar. Procedural — no image assets anywhere in this project. */
+.avatar {
+  flex: 0 0 auto;
+  width: 2.1em; height: 2.1em;
+  border-radius: 50%;
+  border: 0.14em solid var(--rc, var(--stroke-hi));
+  background: radial-gradient(circle at 50% 42%, #0a0f1a 34%, var(--ac, var(--aqua)) 36%, #0a0f1a 100%);
+  display: grid; place-items: center;
+  font-size: 0.9em; line-height: 1;
+  box-shadow: var(--lift-1);
+}
+
+/* ======================================================================== */
+/* STAT TILES                                                               */
+/* ======================================================================== */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7em, 1fr));
+  gap: 0.55em;
+}
+.stat-tile {
+  display: flex; flex-direction: column; gap: 0.1em;
+  padding: 0.7em;
+  border-radius: var(--r-sm);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+}
+.stat-tile .sv { font-size: 1.35em; font-weight: 800; font-variant-numeric: tabular-nums; }
+.stat-tile .sl { font-size: 0.7em; letter-spacing: 0.07em; text-transform: uppercase; color: var(--dim); }
+
+/* ======================================================================== */
+/* TOASTS & MODALS                                                          */
+/* ======================================================================== */
+
+.shell-toasts {
+  position: absolute;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(1.4em + var(--safe-b));
+  display: flex; flex-direction: column; gap: 0.4em;
+  align-items: center;
+  pointer-events: none;
+  z-index: 40;
+}
+.toast {
+  padding: 0.6em 1.1em;
+  border-radius: var(--r-pill);
+  background: var(--glass-hi);
+  border: 1px solid var(--stroke-hi);
+  box-shadow: var(--lift-2);
+  font-size: 0.9em; font-weight: 700;
+  animation: toast-in 0.24s var(--ease-back) both;
+}
+.toast.ok { border-color: var(--lime); }
+.toast.bad { border-color: var(--hot); }
+.toast.out { animation: toast-out 0.3s var(--ease) forwards; }
+@keyframes toast-in  { from { opacity: 0; transform: translateY(0.9em) scale(0.94); } }
+@keyframes toast-out { to   { opacity: 0; transform: translateY(-0.5em); } }
+
+.shell-modal {
+  position: absolute; inset: 0; z-index: 50;
+  display: grid; place-items: center;
+  padding: 1.2em;
+  background: rgba(4, 8, 16, 0.68);
+  backdrop-filter: blur(3px);
+  animation: pg-fade 0.18s var(--ease) both;
+}
+.modal-card { width: min(24em, 100%); text-align: center; }
+.modal-q { font-size: 1.05em; font-weight: 700; margin-bottom: 1em; }
+.modal-actions { display: flex; gap: 0.6em; justify-content: center; flex-wrap: wrap; }
+.modal-actions .btn { flex: 1 1 8em; }
+
+/* ======================================================================== */
+/* UTILITY                                                                  */
+/* ======================================================================== */
+
+.muted { color: var(--dim); }
+.tiny { font-size: 0.74em; }
+.center { text-align: center; }
+.row-between { display: flex; align-items: center; justify-content: space-between; gap: var(--gap); }
+.stack { display: flex; flex-direction: column; gap: var(--gap); }
+.stack-sm { display: flex; flex-direction: column; gap: 0.45em; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6em; }
+.grid-auto { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5em, 1fr)); gap: 0.6em; }
+.num { font-variant-numeric: tabular-nums; }
+.empty {
+  padding: 2.4em 1em; text-align: center; color: var(--dim); font-size: 0.9em;
+}
+
+/* Anything a screen wants pinned above the thumb. */
+.sticky-actions {
+  position: sticky; bottom: 0;
+  margin: var(--gap) -1em calc(-1.6em - var(--safe-b));
+  padding: 0.8em 1em calc(0.8em + var(--safe-b));
+  background: linear-gradient(180deg, transparent, rgba(6, 11, 21, 0.92) 34%);
+  display: flex; gap: 0.6em;
+}
+.sticky-actions .btn { flex: 1 1 0; }
+
+/* ======================================================================== */
+/* RESPONSIVE                                                               */
+/* ======================================================================== */
+
+/* Landscape phone: vertical space is the scarce resource. */
+@media (orientation: landscape) and (max-height: 460px) {
+  .shell .page-head { padding-top: calc(0.4em + var(--safe-t)); padding-bottom: 0.4em; }
+  .shell .page-head h1 { font-size: 1.2em; }
+  .shell .tile { min-height: 4.2em; }
+  .shell .tile.tall { min-height: 5.6em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell *, .shell *::before, .shell *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
