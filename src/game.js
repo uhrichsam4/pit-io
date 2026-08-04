@@ -47,9 +47,12 @@ const CH = {
  * Team Devour identities. Two teams, both drawn from the game's own accents so
  * a teammate's rim reads as "mine" at a glance from the gameplay camera.
  */
+// Short on purpose: the end card puts these in a fixed-width column beside a
+// bar and a score, and "Team Flamingo" ellipsised to "Team Fla…" on a 390 px
+// phone. Neither name collides with a bot handle in ai.js.
 const TEAMS = [
-  { id: 0, name: 'Team Flamingo', hex: 0xff3d8b },
-  { id: 1, name: 'Team Riptide', hex: 0x37e6d5 },
+  { id: 0, name: 'Team Pink', hex: 0xff3d8b },
+  { id: 1, name: 'Team Aqua', hex: 0x37e6d5 },
 ];
 
 /**
@@ -232,6 +235,10 @@ export class Game {
     );
 
     this.hud = new HUD(this.uiRoot, eng.camera);
+    // The meta layer is glass, so anything left under it shows through. frame()
+    // hides the HUD outside a match, but the first frame may be seconds away on
+    // a slow device and the lobby must never open over a ghost score panel.
+    this.hud.root.style.opacity = '0';
 
     this._wireNet();
 

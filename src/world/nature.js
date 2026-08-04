@@ -141,6 +141,55 @@ const CELL = {
    * in Miami that is silver), while the Washingtonia beside it just reuses
    * fanA on a trunk twice as tall as anything else on the street. */
   fanBlue: [1280, 1024, 256, 256],    // Bismarckia: near-circular silver-blue fan
+
+  /* --- THE REBUILD PASS --------------------------------------------------
+   * Fourteen kinds in this file were graded "cheaped out on" and every one of
+   * the diagnoses came down to the same two sentences: the plant was two or
+   * three flat cards, and the card was painted with a cell borrowed from a tree
+   * canopy. Cards do not survive a 40-degree camera at three metres, and a
+   * bougainvillea canopy printed on a knee-high bed reads as a grey-mauve
+   * pancake. So the geometry below gets real volume, and volume needs cells
+   * that are OPAQUE — a solid skin the alpha-tested cards then break up rather
+   * than have to define on their own.
+   *
+   * Everything from y=1280 down is new. The band is packed cutout-first,
+   * opaque-last for the same mip-bleed reason as the original layout note. */
+  agaveB: [1536, 512, 128, 256],      // ONE stiff glaucous agave blade, hinged low
+  agaveDry: [1664, 512, 128, 256],    // a shed agave blade — the dried skirt
+  moss: [1792, 512, 128, 256],        // Spanish moss strand, for the live oak
+
+  bedYel: [0, 1280, 256, 256],        // bedding: 5-petal heads on stalks, NOT a canopy
+  bedPink: [256, 1280, 256, 256],
+  crotonB: [512, 1280, 256, 256],     // croton, lime-and-gold form
+  crotonC: [768, 1280, 256, 256],     // croton, oxblood form
+  shrubTop: [1024, 1280, 256, 256],   // shrub mass lit from above — a stop over shrubA
+  fernLeaf: [1280, 1280, 256, 256],   // poinciana's bipinnate green, mixed into the bloom
+  hibBloomA: [1536, 1280, 128, 128],  // hibiscus trumpet, face on: coral
+  hibBloomB: [1664, 1280, 128, 128],  // ... pink
+  hibBloomC: [1536, 1408, 128, 128],  // ... yellow
+  hibBloomD: [1664, 1408, 128, 128],  // ... white
+  netMesh: [1792, 1280, 128, 128],    // basketball net cord, diamond mesh
+  waterVeil: [1792, 1408, 128, 128],  // falling water: streaked, cut out between strands
+
+  /* opaque from here down */
+  flagUS: [0, 1536, 384, 240],
+  flagMiami: [384, 1536, 384, 240],
+  crotonCore: [768, 1536, 128, 128],  // the oxblood rosette UNDER a croton clump
+  bedFoliage: [896, 1536, 128, 128],  // clipped bedding foliage, solid
+  bloomYel: [1024, 1536, 128, 128],   // a bloom tuft's skin
+  bloomPink: [1152, 1536, 128, 128],
+  stoneFine: [1280, 1536, 128, 128],  // even fine limestone — replaces the mottle
+  stoneCope: [1408, 1536, 128, 128],  // the lighter coping course over it
+  mosaic: [1536, 1536, 128, 128],     // fountain basin floor
+  paintTop: [1664, 1536, 128, 128],   // painted steel: sun face
+  paintSide: [1792, 1536, 128, 128],  // ... flank
+  paintDark: [0, 1792, 128, 128],     // ... underside
+  bronze: [128, 1792, 128, 128],      // dark bronze lamp frame
+  glassWarm: [256, 1792, 128, 128],   // warm white lamp glazing
+  timberLt: [384, 1792, 128, 128],    // pergola slat, bleached
+  timberDk: [512, 1792, 128, 128],    // pergola slat, weathered
+  rubber: [640, 1792, 128, 128],      // playground crash padding / safety mat
+  soilDark: [768, 1792, 128, 128],    // the dark soil a bed is planted IN
 };
 
 /** Flat colour swatches, 64x128 each, along the bottom row. */
@@ -201,13 +250,23 @@ const blendHex = (a, b, t) => {
  * a regrade of the greens, and it stays inside the Miami palette while sitting
  * far enough off every other plant in the city to read from 200 m.
  */
+/*
+ * REGRADED, and hard. The first cut started from the three palm greens and
+ * pulled them toward SEAWALL, which is a warm grey — so every mix landed on a
+ * pale YELLOW-green and the review said exactly that: "renders sage green
+ * rather than silver-blue, so the whole point is lost". The fix is to start
+ * from the cool end and let the green in as a trace rather than as the base:
+ * SEAWALL toward STUCCO_SKY is a dusty powder blue before any green is added,
+ * which is what a real Bismarckia and a real silver saw palmetto look like,
+ * and it is now unambiguously the coldest hue in the planting set.
+ */
 const GLAUCOUS = {
-  light: blendHex(blendHex(PALETTE.PALM_FROND_LIGHT, PALETTE.SEAWALL, 0.45),
-    PALETTE.FLOWER_WHITE, 0.30),
-  mid: blendHex(blendHex(PALETTE.PALM_FROND, PALETTE.SEAWALL, 0.55),
-    PALETTE.SEA_SHALLOW, 0.25),
-  dark: blendHex(blendHex(PALETTE.PALM_FROND_DARK, PALETTE.SEAWALL, 0.40),
-    PALETTE.SEA_DEEP, 0.18),
+  light: blendHex(blendHex(PALETTE.SEAWALL, PALETTE.STUCCO_SKY, 0.58),
+    PALETTE.FLOWER_WHITE, 0.26),
+  mid: blendHex(blendHex(PALETTE.SEAWALL, PALETTE.STUCCO_SKY, 0.62),
+    PALETTE.PALM_FROND, 0.13),
+  dark: blendHex(blendHex(PALETTE.SEAWALL, PALETTE.SEA_DEEP, 0.44),
+    PALETTE.PALM_FROND_DARK, 0.24),
 };
 
 /* ------------------------------------------------------- cell painters --- */
@@ -292,6 +351,14 @@ function drawFan(g, rect, seed, {
   N = 26,
   base = 0.52,
   amp = 0.44,
+  /* HOW WIDE THE VALUE RANGE IS ACROSS THE BLADES.
+     At 1.0 the fan came out inside a single stop and thirteen wedges mushed
+     into one green artichoke from the overhead camera — the review's word, and
+     the right one. Alternating light and dark fills blade to blade, plus a
+     dark basal band under all of them, is what separates the segments at the
+     distance the crown is actually seen from. */
+  contrast = 1.0,
+  costa = false,
 } = {}) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
@@ -299,10 +366,15 @@ function drawFan(g, rect, seed, {
   for (let i = 0; i < N; i++) {
     const t = (i + 0.5) / N;
     const a = -Math.PI / 2 - spread / 2 + spread * t;
-    // Longest at the crown of the fan, shorter at the two outer wings.
-    const len = H * (base + amp * Math.sin(Math.PI * t)) * (0.92 + rand() * 0.16);
+    // Longest at the crown of the fan, shorter at the two outer wings, with a
+    // per-blade length roll wide enough that the outline is ragged not round.
+    const len = H * (base + amp * Math.sin(Math.PI * t)) * (0.86 + rand() * 0.28);
     const wide = len * 0.085;
-    const sh = Math.abs(t - 0.42) * 1.5 + rand() * 0.3;
+    // Alternate the fill blade to blade before the radial ramp is applied, so
+    // neighbours are never the same value however the ramp lands.
+    const alt = (i % 2 ? -0.22 : 0.22) * contrast;
+    const sh = Math.min(1.2, Math.max(0, Math.abs(t - 0.42) * 1.5 * contrast
+      + rand() * 0.3 - alt));
     g.fillStyle = sh < 0.45 ? mixHex(light, mid, sh / 0.45) : mixHex(mid, dark, Math.min(1, (sh - 0.45) / 0.55));
     const tx = ox + Math.cos(a) * len, ty = oy + Math.sin(a) * len;
     const px = -Math.sin(a) * wide, py = Math.cos(a) * wide;
@@ -315,7 +387,30 @@ function drawFan(g, rect, seed, {
     g.lineTo(ox - px * 0.4, oy - py * 0.4);
     g.closePath();
     g.fill();
+    /* Costa: the stiff rib that runs a third of the way up a costapalmate
+       blade. On a Bismarckia it is the thing that stops the crown reading as a
+       stack of flat plates, because it catches the key light on a different
+       plane from the segment either side of it. */
+    if (costa) {
+      g.strokeStyle = cssOf(blendHex(light, 0xffffff, 0.30), 0.34);
+      g.lineWidth = Math.max(1.4, wide * 0.55);
+      g.beginPath();
+      g.moveTo(ox + Math.cos(a) * len * 0.08, oy + Math.sin(a) * len * 0.08);
+      g.lineTo(ox + Math.cos(a) * len * 0.72, oy + Math.sin(a) * len * 0.72);
+      g.stroke();
+    }
   }
+  /* A dark band across the base of the fan. This is the underside of the blades
+     nearest the bud, it is always in shadow on the real plant, and it gives the
+     cell the top-to-bottom value break that a flat radiating disc has not got. */
+  const bg = g.createRadialGradient(ox, oy, 0, ox, oy, H * (base + amp) * 0.75);
+  bg.addColorStop(0.00, cssOf(dark, 0.55 * contrast));
+  bg.addColorStop(0.45, cssOf(dark, 0.24 * contrast));
+  bg.addColorStop(1.00, cssOf(dark, 0));
+  g.globalCompositeOperation = 'source-atop';
+  g.fillStyle = bg;
+  g.fillRect(X, Y, W, H);
+  g.globalCompositeOperation = 'source-over';
   /* Hastula: the pale wedge where the segments meet the petiole. */
   g.fillStyle = mixHex(light, mid, 0.3);
   g.beginPath();
@@ -400,11 +495,21 @@ function drawCanopy(g, rect, seed, base, dark, light, flower, flowerP) {
   g.globalCompositeOperation = 'source-over';
 }
 
-/** Dense low shrub mass — flat-bottomed so it sits on the ground. */
-function drawShrub(g, rect, seed) {
+/**
+ * Dense low shrub mass — flat-bottomed so it sits on the ground.
+ *
+ * `top` paints the same mass a stop brighter and with the light coming from
+ * straight above. It skins the CROWN of a clipped hedge while the flanks keep
+ * the standard cell, which is the value separation that makes a hedge run read
+ * as a clipped box rather than as one smooth extruded green tube.
+ */
+function drawShrub(g, rect, seed, top = false) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
-  const base = PALETTE.HEDGE, light = PALETTE.HEDGE_LIGHT, dark = PALETTE.TREE_CANOPY_DARK;
+  const base = top ? PALETTE.HEDGE_LIGHT : PALETTE.HEDGE;
+  const light = top ? blendHex(PALETTE.HEDGE_LIGHT, PALETTE.GRASS_LIGHT, 0.55)
+    : PALETTE.HEDGE_LIGHT;
+  const dark = top ? PALETTE.HEDGE : PALETTE.TREE_CANOPY_DARK;
   for (let i = 0; i < 900; i++) {
     // Bias the mass into a dome that meets the bottom edge squarely.
     const u = rand(), v = Math.pow(rand(), 0.7);
@@ -504,13 +609,12 @@ function drawSeagrape(g, rect, seed) {
  * non-green colour at ankle height, which is exactly where a park reads as
  * planted rather than mown.
  */
-function drawCroton(g, rect, seed) {
+function drawCroton(g, rect, seed, tones = [
+  PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_ORANGE, PALETTE.GRASS_LIGHT,
+  PALETTE.RUST, PALETTE.TREE_CANOPY_DARK, PALETTE.CAR_RED,
+]) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
-  const tones = [
-    PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_ORANGE, PALETTE.GRASS_LIGHT,
-    PALETTE.RUST, PALETTE.TREE_CANOPY_DARK, PALETTE.CAR_RED,
-  ];
   for (let i = 0; i < 120; i++) {
     const u = rand(), v = Math.pow(rand(), 0.62);
     const dome = Math.sin(Math.PI * (0.07 + u * 0.86));
@@ -611,28 +715,497 @@ function drawAgave(g, rect, seed) {
   }
 }
 
-/** Ornamental grass: a fan of thin arcing blades. */
+/**
+ * Ornamental grass: a fan of thin arcing blades.
+ *
+ * The tips run STRAW and the bases run green, which is the one thing that
+ * stops a tuft reading as a flat green paper cutout from above: a real
+ * miscanthus is bleached at the top third and dark at the crown, so the card
+ * carries a top-to-bottom value gradient of its own before any lighting.
+ */
 function drawGrassTuft(g, rect, seed) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
   const ox = X + W * 0.5, oy = Y + H * 0.99;
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 88; i++) {
     const a = -Math.PI / 2 + (rand() - 0.5) * 1.5;
     const len = H * (0.42 + rand() * 0.55);
     const bend = (rand() - 0.5) * W * 0.55;
     const t = rand();
-    g.strokeStyle = t < 0.3 ? cssOf(PALETTE.GRASS_DRY, 0.95)
-      : t < 0.7 ? cssOf(PALETTE.GRASS, 0.95) : cssOf(PALETTE.GRASS_LIGHT, 0.95);
+    // Segment the blade so its own tip can go dry while its base stays green.
+    const tipY = oy + Math.sin(a) * len;
+    const midX = ox + Math.cos(a) * len * 0.5, midY = oy + Math.sin(a) * len * 0.6;
+    const tipX = ox + Math.cos(a) * len * 0.7 + bend;
+    const dry = Math.min(1, Math.max(0, (oy - tipY) / (H * 0.82)));
     g.lineWidth = Math.max(1.4, W * 0.016 * (0.6 + rand()));
     g.lineCap = 'round';
+    // Lower half: green.
+    g.strokeStyle = t < 0.34 ? cssOf(PALETTE.GRASS_DARK, 0.95) : cssOf(PALETTE.GRASS, 0.95);
     g.beginPath();
     g.moveTo(ox + (rand() - 0.5) * W * 0.2, oy);
-    g.quadraticCurveTo(
-      ox + Math.cos(a) * len * 0.5, oy + Math.sin(a) * len * 0.6,
-      ox + Math.cos(a) * len * 0.7 + bend, oy + Math.sin(a) * len
-    );
+    g.quadraticCurveTo(midX, midY, (midX + tipX) / 2, (midY + tipY) / 2);
+    g.stroke();
+    // Upper half: bleached toward straw in proportion to how high it reaches.
+    g.strokeStyle = mixHex(PALETTE.GRASS_LIGHT, PALETTE.GRASS_DRY, 0.35 + dry * 0.6);
+    g.beginPath();
+    g.moveTo((midX + tipX) / 2, (midY + tipY) / 2);
+    g.quadraticCurveTo(tipX * 0.6 + midX * 0.4, tipY * 0.6 + midY * 0.4, tipX, tipY);
     g.stroke();
   }
+  /* Seed heads. Painted into the cell as well as built as geometry, so a tuft
+     seen edge-on to its spike cards still shows the flower spikes. */
+  for (let i = 0; i < 7; i++) {
+    const sx = ox + (rand() - 0.5) * W * 0.62;
+    const sy = Y + H * (0.04 + rand() * 0.18);
+    g.strokeStyle = cssOf(PALETTE.GRASS_DRY, 0.9);
+    g.lineWidth = Math.max(1.2, W * 0.012);
+    g.beginPath(); g.moveTo(sx, sy + H * 0.20); g.lineTo(sx, sy); g.stroke();
+    g.fillStyle = mixHex(PALETTE.GRASS_DRY, PALETTE.FLOWER_WHITE, 0.35);
+    for (let k = 0; k < 9; k++) {
+      const t = k / 9;
+      g.beginPath();
+      g.ellipse(sx + (rand() - 0.5) * W * 0.05, sy + t * H * 0.17,
+        W * 0.022, W * 0.010, (rand() - 0.5) * 1.2, 0, 6.29);
+      g.fill();
+    }
+  }
+}
+
+/**
+ * ONE agave blade, hinged on the cell's bottom edge and running up it.
+ *
+ * The rosette used to be a cell of its own painted with 21 blades and then
+ * mapped onto two or three crossed cards. At the game camera's pitch a crossed
+ * pair presents EDGE ON from two of its four quadrants, so 116 agaves could
+ * and did vanish, leaving nothing but the rectangular blob shadow on the turf.
+ * One blade per card, radiating for real, cannot do that from any yaw — which
+ * is the whole reason this cell exists and the old `agave` cell no longer has
+ * any geometry pointing at it.
+ */
+function drawAgaveBlade(g, rect, seed, dry = false) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const ox = X + W * 0.5, oy = Y + H * 0.995, ty = Y + H * 0.015;
+  const lo = dry ? mixHex(PALETTE.GRASS_DRY, PALETTE.RUST, 0.25) : GLAUCOUS.light;
+  const mid = dry ? mixHex(PALETTE.GRASS_DRY, PALETTE.WOOD_DARK, 0.30) : GLAUCOUS.mid;
+  const hi = dry ? mixHex(PALETTE.RUST, PALETTE.WOOD_DARK, 0.45) : GLAUCOUS.dark;
+  // Widest at a third of the way up, then a long straight taper to a spine.
+  const halfW = (t) => W * 0.40 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.10 + t * 0.86)), 0.55)
+    * (dry ? 0.86 : 1);
+  const spine = (t) => oy + (ty - oy) * t + (dry ? Math.sin(t * 2.4) * H * 0.05 : 0);
+
+  const grad = g.createLinearGradient(X, 0, X + W, 0);
+  grad.addColorStop(0.00, cssOf(hi));
+  grad.addColorStop(0.30, cssOf(mid));
+  grad.addColorStop(0.55, cssOf(lo));
+  grad.addColorStop(1.00, cssOf(hi));
+  g.fillStyle = grad;
+  g.beginPath();
+  for (let k = 0; k <= 18; k++) { const t = k / 18; g.lineTo(ox - halfW(t), spine(t)); }
+  for (let k = 18; k >= 0; k--) { const t = k / 18; g.lineTo(ox + halfW(t), spine(t)); }
+  g.closePath();
+  g.fill();
+
+  if (dry) {
+    // A shed blade is collapsed and split; the tears are what say "dead" at a
+    // glance, since the colour alone reads as shadow at this size.
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = '#000';
+    for (let k = 0; k < 7; k++) {
+      const t = 0.20 + rand() * 0.7, s = rand() < 0.5 ? -1 : 1;
+      g.beginPath();
+      g.moveTo(ox + s * halfW(t), spine(t) - H * 0.012);
+      g.lineTo(ox + s * halfW(t), spine(t) + H * 0.012);
+      g.lineTo(ox + s * halfW(t) * (0.2 + rand() * 0.4), spine(t));
+      g.closePath(); g.fill();
+    }
+    g.globalCompositeOperation = 'source-over';
+  } else {
+    // The pale central band and the fine marginal teeth an agave carries.
+    g.strokeStyle = cssOf(blendHex(GLAUCOUS.light, 0xffffff, 0.35), 0.42);
+    g.lineWidth = Math.max(1.6, W * 0.055);
+    g.beginPath();
+    for (let k = 0; k <= 12; k++) {
+      const t = k / 12;
+      if (k === 0) g.moveTo(ox, spine(t)); else g.lineTo(ox, spine(t));
+    }
+    g.stroke();
+    g.strokeStyle = cssOf(PALETTE.RUST, 0.55);
+    g.lineWidth = Math.max(1, W * 0.016);
+    for (let k = 2; k < 15; k++) {
+      const t = k / 16;
+      for (const s of [-1, 1]) {
+        g.beginPath();
+        g.moveTo(ox + s * halfW(t), spine(t));
+        g.lineTo(ox + s * halfW(t) * 1.14, spine(t) + H * 0.018);
+        g.stroke();
+      }
+    }
+  }
+  /* The terminal spine. On an agave it is black-brown, hard, and the single
+     most identifiable thing about the plant. */
+  g.strokeStyle = cssOf(dry ? PALETTE.WOOD_DARK : PALETTE.RUST, 0.95);
+  g.lineWidth = Math.max(2, W * 0.055);
+  g.lineCap = 'round';
+  g.beginPath();
+  g.moveTo(ox, spine(0.90)); g.lineTo(ox, ty + H * 0.005);
+  g.stroke();
+}
+
+/** Spanish moss: a hanging curtain of grey-green strands. */
+function drawMoss(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const base = blendHex(PALETTE.GRASS_DRY, PALETTE.SEAWALL, 0.42);
+  for (let i = 0; i < 46; i++) {
+    const x = X + W * (0.10 + rand() * 0.80);
+    const len = H * (0.35 + rand() * 0.62);
+    g.strokeStyle = cssOf(rand() < 0.4 ? blendHex(base, PALETTE.TREE_CANOPY_DARK, 0.4) : base,
+      0.9);
+    g.lineWidth = Math.max(1.6, W * (0.020 + rand() * 0.030));
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(x, Y + H * 0.02);
+    g.quadraticCurveTo(x + (rand() - 0.5) * W * 0.3, Y + len * 0.5,
+      x + (rand() - 0.5) * W * 0.42, Y + len);
+    g.stroke();
+  }
+}
+
+/**
+ * Bedding in flower: five-petal heads on short stalks standing over dark leaf
+ * dabs, drawn as a low dome that meets the bottom edge.
+ *
+ * This is the cell `flowerYellow` and `flowerPink` should always have had.
+ * They were painted with `canopyYel` and `canopyPink` — a tabebuia's bracts and
+ * a bougainvillea's, i.e. TREE CANOPIES, complete with the grey branch
+ * structure drawCanopy puts behind the flowers. Printed on a 2.2 m card lying
+ * near-flat in a park, canopyPink reads as a greyish-mauve pancake with blotches
+ * on it, which is exactly what the review saw.
+ */
+function drawBedding(g, rect, seed, bloomA, bloomB) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const leaf = PALETTE.HEDGE, leafD = 0x1d4a2b, leafL = PALETTE.HEDGE_LIGHT;
+  const dome = (u) => Math.sin(Math.PI * (0.04 + u * 0.92));
+  for (let i = 0; i < 620; i++) {
+    const u = rand(), v = Math.pow(rand(), 0.72);
+    const px = X + W * (0.04 + u * 0.92);
+    const py = Y + H * (1.0 - v * (0.18 + dome(u) * 0.66));
+    const k = Math.max(0, Math.min(1, (1 - (py - Y) / H) * 1.05 + rand() * 0.3 - 0.15));
+    g.fillStyle = k > 0.5 ? mixHex(leaf, leafL, (k - 0.5) * 1.6) : mixHex(leafD, leaf, k * 2);
+    const lr = W * (0.016 + rand() * 0.020);
+    g.beginPath();
+    g.ellipse(px, py, lr, lr * (0.6 + rand() * 0.45), rand() * 3.14, 0, 6.29);
+    g.fill();
+  }
+  /* The heads. On stalks that are visibly SEPARATE from the foliage — the
+     flowers of a bedding scheme stand proud of the leaves, and a bloom painted
+     as a recoloured leaf dab averages back into olive one mip level down. */
+  for (let i = 0; i < 62; i++) {
+    const u = rand(), v = Math.pow(rand(), 0.55);
+    const px = X + W * (0.06 + u * 0.88);
+    const top = Y + H * (0.94 - v * (0.22 + dome(u) * 0.74));
+    const r = W * (0.026 + rand() * 0.018);
+    g.strokeStyle = cssOf(PALETTE.HEDGE, 0.85);
+    g.lineWidth = Math.max(1.2, W * 0.008);
+    g.beginPath(); g.moveTo(px, top + r * 3.2); g.lineTo(px, top); g.stroke();
+    const hue = rand() < 0.62 ? bloomA : bloomB;
+    g.fillStyle = mixHex(hue, PALETTE.FLOWER_WHITE, rand() * 0.28);
+    for (let p = 0; p < 5; p++) {
+      const a = (p / 5) * 6.283 + rand() * 0.25;
+      g.beginPath();
+      g.ellipse(px + Math.cos(a) * r * 0.60, top + Math.sin(a) * r * 0.60,
+        r * 0.58, r * 0.46, a, 0, 6.29);
+      g.fill();
+    }
+    g.fillStyle = cssOf(mixHex(PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_WHITE, 0.4), 0.95);
+    g.beginPath(); g.ellipse(px, top, r * 0.22, r * 0.22, 0, 0, 6.29); g.fill();
+  }
+}
+
+/**
+ * A hibiscus trumpet, seen face on: five overlapping petals, a pale throat and
+ * the long protruding staminal column that is the whole species read.
+ *
+ * Four of these rather than one tinted cell, because the per-instance tint is a
+ * MULTIPLY and no multiplier takes a red flower to a yellow one. Four cells is
+ * four variants of the bush, each with its own bloom colour, which is what the
+ * street actually looks like.
+ */
+function drawHibiscusBloom(g, rect, seed, hex) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const cx = X + W * 0.5, cy = Y + H * 0.54;
+  const R = Math.min(W, H) * 0.44;
+  for (let p = 0; p < 5; p++) {
+    const a = (p / 5) * 6.283 + 0.3;
+    g.fillStyle = mixHex(hex, PALETTE.FLOWER_WHITE, 0.06 + rand() * 0.22);
+    g.beginPath();
+    g.ellipse(cx + Math.cos(a) * R * 0.56, cy + Math.sin(a) * R * 0.56,
+      R * 0.62, R * 0.50, a, 0, 6.29);
+    g.fill();
+    // Vein flare from the throat outward — a hibiscus petal is not a flat disc.
+    g.strokeStyle = cssOf(blendHex(hex, 0x000000, 0.35), 0.26);
+    g.lineWidth = Math.max(1, R * 0.05);
+    g.beginPath();
+    g.moveTo(cx, cy);
+    g.lineTo(cx + Math.cos(a) * R * 1.02, cy + Math.sin(a) * R * 1.02);
+    g.stroke();
+  }
+  // Deep throat.
+  g.fillStyle = cssOf(blendHex(hex, PALETTE.CAR_RED, 0.55), 0.9);
+  g.beginPath(); g.ellipse(cx, cy, R * 0.30, R * 0.30, 0, 0, 6.29); g.fill();
+  g.fillStyle = cssOf(PALETTE.FLOWER_YELLOW, 0.95);
+  g.beginPath(); g.ellipse(cx, cy, R * 0.15, R * 0.15, 0, 0, 6.29); g.fill();
+  // The staminal column, thrown clear of the face.
+  g.strokeStyle = cssOf(mixHex(PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_WHITE, 0.3), 0.95);
+  g.lineWidth = Math.max(1.6, R * 0.10);
+  g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + R * 0.62, cy - R * 0.72); g.stroke();
+  g.fillStyle = cssOf(PALETTE.FLOWER_YELLOW, 0.95);
+  for (let k = 0; k < 5; k++) {
+    g.beginPath();
+    g.ellipse(cx + R * (0.50 + rand() * 0.28), cy - R * (0.58 + rand() * 0.30),
+      R * 0.07, R * 0.07, 0, 0, 6.29);
+    g.fill();
+  }
+}
+
+/**
+ * Bipinnate fern-leaf foliage — the green half of a royal poinciana.
+ *
+ * A poinciana in the park overview read as a flat magenta-red mass because the
+ * bloom cell was doing all the work and there was no green anywhere in the
+ * crown. A flame tree is red on TOP and green underneath; mixing this cell
+ * through the same crown at roughly 50/50 is what gets that back.
+ */
+function drawFern(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const base = PALETTE.TREE_CANOPY, dark = PALETTE.TREE_CANOPY_DARK, light = PALETTE.GRASS_LIGHT;
+  // Opaque cores first: a mip chain averages alpha, and a crown that is only
+  // just opaque at level 0 goes see-through at level 3.
+  const lobes = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * 6.283 + rand() * 0.6;
+    const d = Math.min(W, H) * (0.06 + rand() * 0.26);
+    lobes.push({ x: X + W * 0.5 + Math.cos(a) * d, y: Y + H * 0.52 + Math.sin(a) * d * 0.86,
+      r: Math.min(W, H) * (0.16 + rand() * 0.12) });
+  }
+  for (const L of lobes) {
+    g.fillStyle = mixHex(dark, base, 0.62);
+    g.beginPath(); g.ellipse(L.x, L.y, L.r * 0.80, L.r * 0.72, 0, 0, 6.29); g.fill();
+  }
+  // Then the pinnae: short combs of tiny leaflets, which is what makes a
+  // poinciana's foliage read as lace rather than as a leaf.
+  for (let i = 0; i < 150; i++) {
+    const L = lobes[Math.floor(rand() * lobes.length)];
+    const a = rand() * 6.283, d = Math.sqrt(rand()) * L.r * 1.15;
+    const px = L.x + Math.cos(a) * d, py = L.y + Math.sin(a) * d;
+    const ang = rand() * 3.14;
+    const len = W * (0.055 + rand() * 0.055);
+    const lit = 1 - (py - (Y + H * 0.08)) / (H * 0.9);
+    const k = Math.max(0, Math.min(1, lit * 0.95 + rand() * 0.32 - 0.12));
+    g.fillStyle = k > 0.5 ? mixHex(base, light, (k - 0.5) * 1.5) : mixHex(dark, base, k * 2);
+    g.save();
+    g.translate(px, py); g.rotate(ang);
+    for (let s = -1; s <= 1; s += 2) {
+      for (let k2 = 1; k2 <= 6; k2++) {
+        const t = k2 / 6;
+        g.beginPath();
+        g.ellipse(t * len - len * 0.5, s * W * 0.014,
+          W * 0.017, W * 0.010, 0, 0, 6.29);
+        g.fill();
+      }
+    }
+    g.restore();
+  }
+}
+
+/** A flat opaque cell with a fine speckle — stone, paint, timber, rubber. */
+function drawFlatCell(g, rect, seed, hex, fleck, amt = 900, streak = 0) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  g.fillStyle = cssOf(hex);
+  g.fillRect(X, Y, W, H);
+  if (streak) {
+    // Timber grain / brushed metal: long low-contrast lines along the cell.
+    for (let i = 0; i < 46; i++) {
+      const y = Y + rand() * H;
+      g.strokeStyle = cssOf(rand() < 0.5 ? fleck : blendHex(hex, 0xffffff, 0.35),
+        0.05 + rand() * 0.14);
+      g.lineWidth = 0.8 + rand() * (streak * 2.4);
+      g.beginPath();
+      g.moveTo(X, y);
+      for (let k = 1; k <= 4; k++) g.lineTo(X + (W / 4) * k, y + (rand() - 0.5) * H * 0.03);
+      g.stroke();
+    }
+  }
+  for (let i = 0; i < amt; i++) {
+    const a = 0.02 + rand() * 0.07;
+    g.fillStyle = rand() < 0.5 ? cssOf(blendHex(hex, 0xffffff, 0.55), a) : cssOf(fleck, a);
+    g.fillRect(X + rand() * W, Y + rand() * H, 1 + rand() * 2, 1 + rand() * 2);
+  }
+  /* A soft vertical form ramp. Everything painted with these cells is a box or
+     a tube, and a dead-flat fill on a box is the loudest cheap-3D tell there
+     is; half a stop of gradient across the face does most of the bevelling the
+     geometry cannot afford. */
+  const gr = g.createLinearGradient(X, 0, X + W, 0);
+  gr.addColorStop(0.00, 'rgba(0,0,0,0.13)');
+  gr.addColorStop(0.42, 'rgba(255,255,255,0.09)');
+  gr.addColorStop(1.00, 'rgba(0,0,0,0.15)');
+  g.fillStyle = gr;
+  g.fillRect(X, Y, W, H);
+}
+
+/** Small glass mosaic, for the floor of a fountain basin. */
+function drawMosaic(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const n = 11, s = W / n;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      const t = rand();
+      const hex = t < 0.42 ? PALETTE.SEA_SHALLOW : t < 0.72 ? PALETTE.SEA_MID
+        : t < 0.9 ? PALETTE.PATINA : PALETTE.FLOWER_WHITE;
+      g.fillStyle = mixHex(hex, PALETTE.SEA_DEEP, rand() * 0.3);
+      g.fillRect(X + i * s + 0.7, Y + j * s + 0.7, s - 1.4, s - 1.4);
+    }
+  }
+}
+
+/**
+ * A falling sheet of water — the skirt that hangs from a fountain's upper bowl.
+ *
+ * Vertical strands with real gaps between them, because the shared material is
+ * alpha-TESTED: a uniformly translucent veil would either be fully there or
+ * fully gone. Strands that break up as they fall read as water and cost the
+ * same two triangles.
+ */
+function drawWaterVeil(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  g.clearRect(X, Y, W, H);
+  for (let i = 0; i < 22; i++) {
+    const x = X + W * (0.02 + rand() * 0.96);
+    const w = W * (0.020 + rand() * 0.045);
+    const top = Y + H * rand() * 0.10;
+    const bot = Y + H * (0.55 + rand() * 0.45);
+    const gr = g.createLinearGradient(0, top, 0, bot);
+    gr.addColorStop(0.00, cssOf(PALETTE.FLOWER_WHITE, 0.98));
+    gr.addColorStop(0.62, cssOf(PALETTE.WATER_WAKE, 0.92));
+    gr.addColorStop(1.00, cssOf(PALETTE.SEA_SHALLOW, 0.20));
+    g.fillStyle = gr;
+    g.beginPath();
+    g.moveTo(x - w * 0.5, top);
+    g.lineTo(x + w * 0.5, top);
+    g.lineTo(x + w * 0.18, bot);
+    g.lineTo(x - w * 0.18, bot);
+    g.closePath();
+    g.fill();
+  }
+  // Droplets breaking off the bottom of the sheet.
+  for (let i = 0; i < 26; i++) {
+    g.fillStyle = cssOf(PALETTE.WATER_WAKE, 0.55 + rand() * 0.4);
+    g.beginPath();
+    g.ellipse(X + rand() * W, Y + H * (0.55 + rand() * 0.44),
+      W * 0.014, W * 0.026, 0, 0, 6.29);
+    g.fill();
+  }
+}
+
+/** A basketball net: diamond mesh, cut out between the cords. */
+function drawNetMesh(g, rect) {
+  const [X, Y, W, H] = rect;
+  g.clearRect(X, Y, W, H);
+  g.strokeStyle = cssOf(PALETTE.FLOWER_WHITE, 0.95);
+  g.lineCap = 'round';
+  for (let i = -6; i <= 12; i++) {
+    for (const s of [-1, 1]) {
+      g.lineWidth = Math.max(2.5, W * 0.030);
+      g.beginPath();
+      g.moveTo(X + (i / 6) * W, Y);
+      g.lineTo(X + (i / 6) * W + s * W * 0.55, Y + H);
+      g.stroke();
+    }
+  }
+  // The heavier hem loop round the bottom of a real net.
+  g.lineWidth = Math.max(3, W * 0.05);
+  g.beginPath(); g.moveTo(X, Y + H * 0.93); g.lineTo(X + W, Y + H * 0.93); g.stroke();
+}
+
+/**
+ * The Stars and Stripes.
+ *
+ * It rendered as a flat mint-green rectangle, which is not identifiable as a
+ * flag of any nation — the pole was being handed `sw_coral` (a plain colour
+ * swatch) because no flag cell existed. Thirteen stripes, a canton and a grid
+ * of stars is four lines of canvas and it is the entire difference.
+ */
+function drawFlagUS(g, rect) {
+  const [X, Y, W, H] = rect;
+  const sh = H / 13;
+  for (let i = 0; i < 13; i++) {
+    g.fillStyle = cssOf(i % 2 === 0 ? PALETTE.CAR_RED : PALETTE.CAR_WHITE);
+    g.fillRect(X, Y + i * sh, W, sh + 0.6);
+  }
+  const cw = W * 0.40, ch = sh * 7;
+  g.fillStyle = cssOf(PALETTE.CAR_NAVY);
+  g.fillRect(X, Y, cw, ch);
+  g.fillStyle = cssOf(PALETTE.CAR_WHITE, 0.96);
+  for (let r = 0; r < 9; r++) {
+    const n = r % 2 === 0 ? 6 : 5;
+    for (let c = 0; c < n; c++) {
+      const x = X + cw * ((c + (r % 2 ? 1 : 0.5)) / 6.2) + cw * 0.06;
+      const y = Y + ch * ((r + 0.7) / 9.6);
+      g.beginPath(); g.ellipse(x, y, cw * 0.030, cw * 0.030, 0, 0, 6.29); g.fill();
+    }
+  }
+  // Hoist band and a shadow reveal down the fly, so the strip reads as cloth
+  // with a leading edge rather than as a printed rectangle.
+  g.fillStyle = 'rgba(0,0,0,0.22)';
+  g.fillRect(X, Y, W * 0.035, H);
+  g.fillStyle = 'rgba(0,0,0,0.10)';
+  g.fillRect(X + W * 0.90, Y, W * 0.10, H);
+}
+
+/** The city flag: blue and white bands with a seal disc on the middle band. */
+function drawFlagMiami(g, rect) {
+  const [X, Y, W, H] = rect;
+  const bands = [PALETTE.CAR_NAVY, PALETTE.STUCCO_WHITE, PALETTE.SEA_SHALLOW];
+  for (let i = 0; i < 3; i++) {
+    g.fillStyle = cssOf(bands[i]);
+    g.fillRect(X, Y + (i * H) / 3, W, H / 3 + 0.6);
+  }
+  const cx = X + W * 0.50, cy = Y + H * 0.50, R = H * 0.20;
+  g.fillStyle = cssOf(PALETTE.CAR_NAVY);
+  g.beginPath(); g.ellipse(cx, cy, R, R, 0, 0, 6.29); g.fill();
+  g.fillStyle = cssOf(PALETTE.STUCCO_WHITE);
+  g.beginPath(); g.ellipse(cx, cy, R * 0.86, R * 0.86, 0, 0, 6.29); g.fill();
+  // A sun over water with a palm on it — the device reads at 9 m up, which is
+  // the only place this is ever seen from.
+  g.fillStyle = cssOf(PALETTE.ACCENT_SUN);
+  g.beginPath(); g.ellipse(cx, cy - R * 0.18, R * 0.40, R * 0.40, 0, 0, 6.29); g.fill();
+  g.fillStyle = cssOf(PALETTE.SEA_SHALLOW);
+  g.beginPath();
+  g.moveTo(cx - R * 0.86, cy + R * 0.20);
+  g.lineTo(cx + R * 0.86, cy + R * 0.20);
+  g.lineTo(cx + R * 0.60, cy + R * 0.72);
+  g.lineTo(cx - R * 0.60, cy + R * 0.72);
+  g.closePath(); g.fill();
+  g.strokeStyle = cssOf(PALETTE.TREE_CANOPY_DARK, 0.95);
+  g.lineWidth = Math.max(1.6, R * 0.10);
+  g.beginPath(); g.moveTo(cx, cy + R * 0.24); g.lineTo(cx - R * 0.08, cy - R * 0.30); g.stroke();
+  g.fillStyle = cssOf(PALETTE.PALM_FROND_DARK);
+  for (let i = 0; i < 5; i++) {
+    const a = Math.PI + 0.35 + (i / 4) * (Math.PI - 0.7);
+    g.beginPath();
+    g.ellipse(cx - R * 0.08 + Math.cos(a) * R * 0.22, cy - R * 0.30 + Math.sin(a) * R * 0.16,
+      R * 0.24, R * 0.07, a, 0, 6.29);
+    g.fill();
+  }
+  g.fillStyle = 'rgba(0,0,0,0.22)';
+  g.fillRect(X, Y, W * 0.035, H);
 }
 
 /**
@@ -1011,7 +1584,25 @@ const CUTOUT_CELLS = new Set([
   'grassTuft', 'coconut', 'canopyA', 'canopyB', 'canopyPink', 'canopyYel',
   'canopyRed', 'canopyPurple', 'canopyOlive', 'croton', 'groundcov', 'agave',
   'frondDead', 'cycad', 'paddle', 'hibiscus',
+  // The rebuild pass.
+  'agaveB', 'agaveDry', 'moss', 'bedYel', 'bedPink', 'crotonB', 'crotonC',
+  'shrubTop', 'fernLeaf', 'hibBloomA', 'hibBloomB', 'hibBloomC', 'hibBloomD',
+  'netMesh', 'waterVeil',
 ]);
+
+/**
+ * OPAQUE cells the per-instance colour is still allowed to touch.
+ *
+ * Two separate needs, and both used to be unmet. Public art has to roll its
+ * accent hue per instance while its stone plinth stays stone — one pool, one
+ * geometry, so the only place that distinction can live is the vertex tag. And
+ * a bedding scheme's bloom tufts are solid cones, not cutout cards, so without
+ * this the 202 flower beds in the city would all be the same yellow.
+ *
+ * Deliberately NOT in CUTOUT_CELLS: these have no transparent margin, so
+ * dilating them would be ~10 M wasted ops at boot for an identical result.
+ */
+const SOLID_TINTABLE = ['paintTop', 'paintSide', 'paintDark', 'bloomYel', 'bloomPink'];
 
 /**
  * Costapalmate cells are painted radiating UP the cell from a hinge on its
@@ -1024,7 +1615,8 @@ const CUTOUT_CELLS = new Set([
 const FAN_CELLS = new Set(['fanA', 'fanBlue']);
 
 /** Cells whose colour the per-instance foliage tint is allowed to touch. */
-const TINTABLE_CELLS = new Set([...CUTOUT_CELLS, 'crownshaft', 'sw_leaf', 'sw_leafDark']);
+const TINTABLE_CELLS = new Set([...CUTOUT_CELLS, 'crownshaft', 'sw_leaf', 'sw_leafDark',
+  ...SOLID_TINTABLE]);
 // A coconut is brown fruit hanging in a green crown; tinting it with the fronds
 // turns a ripe nut lime. A shed frond is the same problem: the skirt is the one
 // part of a sabal that is NOT the colour of its crown, and that contrast is the
@@ -1081,7 +1673,64 @@ function atlasTexture() {
   drawFan(g, CELL.fanBlue, 0x6fd3a1, {
     light: GLAUCOUS.light, mid: GLAUCOUS.mid, dark: GLAUCOUS.dark,
     spread: Math.PI * 1.10, N: 34, base: 0.76, amp: 0.22,
+    contrast: 1.35, costa: true,
   });
+
+  /* ---- the rebuild pass ------------------------------------------------- */
+  drawAgaveBlade(g, CELL.agaveB, 0x2ef19a, false);
+  drawAgaveBlade(g, CELL.agaveDry, 0x91c07d, true);
+  drawMoss(g, CELL.moss, 0x40b1c7);
+  drawBedding(g, CELL.bedYel, 0x7ac1e2, PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_ORANGE);
+  drawBedding(g, CELL.bedPink, 0xc21e77, PALETTE.FLOWER_PINK, PALETTE.FLOWER_MAGENTA);
+  // Three crotons rather than one: the leaves of a single bush really are three
+  // different colours, and a per-instance tint cannot say that — it multiplies.
+  drawCroton(g, CELL.crotonB, 0x11cc55, [
+    PALETTE.FLOWER_YELLOW, PALETTE.GRASS_LIGHT, PALETTE.CAR_LIME,
+    PALETTE.FLOWER_ORANGE, PALETTE.HEDGE, PALETTE.GRASS_DRY,
+  ]);
+  drawCroton(g, CELL.crotonC, 0x8a2f0d, [
+    PALETTE.BRICK_DARK, PALETTE.RUST, PALETTE.CAR_RED,
+    PALETTE.TREE_CANOPY_DARK, PALETTE.TERRACOTTA, 0x5a2430,
+  ]);
+  drawShrub(g, CELL.shrubTop, 0x5b2d91, true);
+  drawFern(g, CELL.fernLeaf, 0x3aa2ef);
+  drawHibiscusBloom(g, CELL.hibBloomA, 0x71ca31, PALETTE.CAR_CORAL);
+  drawHibiscusBloom(g, CELL.hibBloomB, 0x22e199, PALETTE.FLOWER_PINK);
+  drawHibiscusBloom(g, CELL.hibBloomC, 0x5c1fb0, PALETTE.FLOWER_YELLOW);
+  drawHibiscusBloom(g, CELL.hibBloomD, 0xc4409a, PALETTE.FLOWER_WHITE);
+  drawNetMesh(g, CELL.netMesh);
+  drawWaterVeil(g, CELL.waterVeil, 0x1d99f4);
+
+  drawFlagUS(g, CELL.flagUS);
+  drawFlagMiami(g, CELL.flagMiami);
+  drawFlatCell(g, CELL.crotonCore, 0x3311bb,
+    blendHex(PALETTE.BRICK_DARK, PALETTE.TREE_CANOPY_DARK, 0.42), PALETTE.RUST, 700);
+  drawFlatCell(g, CELL.bedFoliage, 0x77aa22,
+    blendHex(PALETTE.HEDGE, PALETTE.TREE_CANOPY_DARK, 0.30), PALETTE.HEDGE_LIGHT, 1400);
+  drawFlatCell(g, CELL.bloomYel, 0x2b8f31, PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_ORANGE, 900);
+  drawFlatCell(g, CELL.bloomPink, 0x9f2b6d, PALETTE.FLOWER_PINK, PALETTE.FLOWER_MAGENTA, 900);
+  /* An EVEN fine limestone, not the blotchy brown-on-cream mottle stoneTex has.
+     On a 5 m planter that mottle read as camouflage rather than as masonry —
+     the review's word — so the planters, the fountain rims and the flag bases
+     all move onto this pair and stoneTex keeps the rougher jobs. */
+  drawFlatCell(g, CELL.stoneFine, 0x51a7c3, PALETTE.PRECAST, PALETTE.CONCRETE_DARK, 2400);
+  drawFlatCell(g, CELL.stoneCope, 0x7d31f0,
+    blendHex(PALETTE.CONCRETE_WARM, PALETTE.FLOWER_WHITE, 0.35), PALETTE.CONCRETE_DARK, 2000);
+  drawMosaic(g, CELL.mosaic, 0x4f21a8);
+  drawFlatCell(g, CELL.paintTop, 0xa11f4c,
+    blendHex(0xffffff, PALETTE.CONCRETE, 0.22), 0xd8d0c0, 500, 0.4);
+  drawFlatCell(g, CELL.paintSide, 0xb27e33, 0xcfc9bd, 0x9a948a, 500, 0.4);
+  drawFlatCell(g, CELL.paintDark, 0x3e91d7, 0x8e8a84, 0x5d5a55, 500, 0.4);
+  drawFlatCell(g, CELL.bronze, 0x1c7f4a,
+    blendHex(PALETTE.STEEL_DARK, PALETTE.RUST, 0.30), 0x2c3230, 700, 0.5);
+  drawFlatCell(g, CELL.glassWarm, 0xd15a2f,
+    blendHex(PALETTE.LAMP_GLOW, PALETTE.FLOWER_WHITE, 0.30), PALETTE.ACCENT_SUN, 400);
+  drawFlatCell(g, CELL.timberLt, 0x66c1e1,
+    blendHex(PALETTE.WOOD_DECK, PALETTE.SAND, 0.40), PALETTE.WOOD_DARK, 400, 1.0);
+  drawFlatCell(g, CELL.timberDk, 0x2a5b9c,
+    blendHex(PALETTE.WOOD_DECK, PALETTE.WOOD_DARK, 0.45), PALETTE.WOOD_DARK, 400, 1.0);
+  drawFlatCell(g, CELL.rubber, 0x8c3c71, PALETTE.BOLLARD_DARK, 0x2f3634, 1600);
+  drawFlatCell(g, CELL.soilDark, 0x14aa7e, PALETTE.MULCH, PALETTE.DIRT, 1800);
 
   drawBark(g, CELL.barkRoyal, 'royal', 0x1a2b3c);
   drawBark(g, CELL.barkCoco, 'coco', 0x2b3c4d);
@@ -1619,7 +2268,7 @@ function liftNormals(geo, k) {
  * y = 0 at the base. `bend` leans the top toward +x, `sway` swings it in z.
  */
 function trunkGeo(h, rBot, rTop, cellName, {
-  sides = 6, rings = 5, bend = 0, sway = 0, bulge = 0,
+  sides = 6, rings = 5, bend = 0, sway = 0, bulge = 0, flute = 0,
 } = {}) {
   const pos = [], nor = [], uv = [], idx = [];
   const rect = uvOf(cellName);
@@ -1633,8 +2282,15 @@ function trunkGeo(h, rBot, rTop, cellName, {
     for (let j = 0; j <= sides; j++) {
       const a = (j / sides) * Math.PI * 2;
       const cx = Math.cos(a), cz = Math.sin(a);
-      pos.push(ox + cx * r, y, oz + cz * r);
-      nor.push(cx, 0.12, cz);
+      /* FLUTING. Alternate facets are pulled in a few percent, which changes
+         their normal as well as their radius — so a six-sided prism gets a 6-8%
+         value break facet to facet and stops reading as smooth plastic. It is
+         bark relief for zero extra triangles, which matters because the alt-
+         ernative (a bark normal map) is a second texture on the shared atlas
+         material and therefore a second material for the whole city. */
+      const fk = flute ? 1 - flute * (j % 2) * (0.55 + 0.45 * (1 - t)) : 1;
+      pos.push(ox + cx * r * fk, y, oz + cz * r * fk);
+      nor.push(cx * (flute && j % 2 ? 0.72 : 1.12), 0.12 + (flute && j % 2 ? -0.06 : 0.06), cz * (flute && j % 2 ? 0.72 : 1.12));
       uv.push(rect.u0 + (j / sides) * (rect.u1 - rect.u0), rect.v0 + t * (rect.v1 - rect.v0));
     }
   }
@@ -1709,32 +2365,92 @@ function cardGeo(w, h, cellName) {
  * line up. The crossed vertical cards still fill the middle from directly
  * above, so the dome is not a doughnut.
  */
-function canopyGeo(radius, height, cellName, seedRng) {
+function canopyGeo(radius, height, cellName, seedRng, opts = {}) {
+  const {
+    cellTop = cellName,      // lit upper surface — poinciana is red on top, green under
+    cellCore = 'sw_leafDark',
+    outer = 8,               // cards on the ellipsoid's flank
+    caps = 3,                // near-horizontal cards over the crown
+    lobeN = 1,               // stacked core lobes (a mahogany is three, not one)
+    core = 0.60,
+  } = opts;
   const parts = [];
   const cy = height;
-  for (let i = 0; i < 3; i++) {
-    const g = cardGeo(radius * 2.05, radius * 1.75, cellName);
-    g.translate(0, cy - radius * 0.875, 0);
-    g.rotateY((i / 3) * Math.PI + seedRng() * 0.4);
-    parts.push(g);
+  const flat = Math.max(0.42, height / Math.max(0.1, radius));
+
+  /* THE CORE. A solid dome at 60% of the crown radius, in TREE_CANOPY_DARK.
+     Every card-cloud crown in this file showed daylight straight through the
+     middle from above, which is the one thing a real shade tree never does, and
+     no amount of extra cards fixes it because cards seen edge-on are free.
+     One squashed dome does, for 30 triangles. */
+  for (let L = 0; L < lobeN; L++) {
+    const u = lobeN === 1 ? 0 : (L / (lobeN - 1) - 0.5);
+    const lr = radius * core * (1 - Math.abs(u) * 0.34);
+    const ly = cy + u * radius * flat * 0.62;
+    const dome = domeGeo(cellCore, [
+      [-radius * flat * 0.34, lr * 0.86],
+      [0, lr],
+      [radius * flat * 0.36, lr * 0.82],
+      [radius * flat * 0.56, lr * 0.40],
+    ], 6, { lobes: 3, amp: 0.20, rng: seedRng, jitter: 0.18 });
+    dome.translate(Math.cos(L * 2.1) * radius * 0.14 * lobeN,
+      ly, Math.sin(L * 2.1) * radius * 0.14 * lobeN);
+    parts.push(dome);
   }
-  for (let i = 0; i < 4; i++) {
-    const g = cardGeo(radius * 1.30, radius * 1.20, cellName);
-    g.translate(0, -radius * 0.60, 0);
-    // 35-59 degrees off horizontal: enough lean to catch the key light on a
-    // different plane from the flat top, not so much that the crown loses the
-    // horizontal mass the overhead camera needs.
-    _m4.makeRotationX(-Math.PI / 2 + 0.62 + seedRng() * 0.42);
+
+  /* THE FLANK CARDS. Distributed on an implicit ellipsoid, each turned to face
+     OUTWARD along its own radial bearing.
+     This is the whole fix. The old build crossed three full-diameter cards
+     through the trunk axis, so from anywhere near the tree you saw two flat
+     planes meeting in a hard dark X down the middle with straight alpha-cut
+     edges either side — "reads as a tree from 30 m and as billboards from 5 m",
+     and 94 live oaks are the hero shade tree in every park in the city. No two
+     of these cards share a plane, so there is no X to see. */
+  for (let i = 0; i < outer; i++) {
+    // Golden angle, so the ring never falls into a rosette however many cards.
+    const a = i * 2.39996 + seedRng() * 0.35;
+    const band = (i % 3) / 3;                       // three staggered heights
+    const el = -0.30 + band * 1.05 + (seedRng() - 0.5) * 0.30;
+    const rr = radius * (0.72 + seedRng() * 0.34);  // staggered radii: a lumpy edge
+    const w = radius * (0.86 + seedRng() * 0.46);
+    const g = cardGeo(w, w * 0.90, cellName);
+    g.translate(0, -w * 0.45, 0);
+    // Pitch the card back so its face turns up toward the sky as it climbs the
+    // dome — a card on the shoulder of a crown is not vertical.
+    _m4.makeRotationX(-el * 0.85);
     g.applyMatrix4(_m4);
-    const a = (i / 4) * Math.PI * 2 + seedRng() * 0.9;
     _m4.makeRotationY(a);
     g.applyMatrix4(_m4);
-    g.translate(Math.cos(a) * radius * 0.55, cy + radius * 0.24, Math.sin(a) * radius * 0.55);
+    g.translate(
+      Math.cos(a) * rr * Math.cos(el * 0.9),
+      cy + Math.sin(el) * radius * flat * 0.72,
+      Math.sin(a) * rr * Math.cos(el * 0.9)
+    );
+    // Low lift: these keep their outward normal and therefore sit a stop under
+    // the crown cards, which is the value separation the review asked for and
+    // it costs nothing because the key light is high.
+    radialNormals(g, 0, cy, 0, 0.85);
+    liftNormals(g, 0.10);
     parts.push(g);
   }
-  const merged = BufferGeometryUtils.mergeGeometries(parts, false);
-  radialNormals(merged, 0, cy, 0, 0.72);
-  return merged;
+
+  /* THE CROWN CAPS. Near-horizontal, staggered, and lifted hard toward +Y so
+     they read a stop ABOVE the flanks. */
+  for (let i = 0; i < caps; i++) {
+    const a = i * 2.39996 + seedRng() * 0.5;
+    const w = radius * (0.92 + seedRng() * 0.40);
+    const g = cardGeo(w, w * 0.86, cellTop);
+    g.translate(0, -w * 0.43, 0);
+    _m4.makeRotationX(-Math.PI / 2 + 0.20 + seedRng() * 0.30);
+    g.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    g.applyMatrix4(_m4);
+    g.translate(Math.cos(a) * radius * 0.26, cy + radius * flat * (0.42 + seedRng() * 0.22),
+      Math.sin(a) * radius * 0.26);
+    liftNormals(g, 0.72);
+    parts.push(g);
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
 function finishGeo(pos, nor, uv, idx) {
@@ -1840,6 +2556,314 @@ function ringWall(rIn, rOut, h, y, sides, cellName, x = 0, z = 0) {
   const m = BufferGeometryUtils.mergeGeometries(parts, false);
   m.translate(x, y, z);
   return m;
+}
+
+/* ======================================================================== */
+/*  SOLID PRIMITIVES                                                        */
+/* ======================================================================== */
+/*
+ * THE ONE DIAGNOSIS BEHIND FOURTEEN FAILED KINDS.
+ *
+ * Every low plant in this file was two to four alpha cards and nothing else,
+ * and every review verdict said the same thing in different words: from the
+ * game's 40-degree camera a crossed pair of cards presents EDGE ON from half
+ * its azimuths, so a shrub is a flat green kite, an agave disappears entirely
+ * and leaves its rectangular blob shadow lying on the grass, and a hedge run is
+ * intersecting sheets of torn paper with daylight between them.
+ *
+ * Cards are not the problem — cards are excellent at breaking a SILHOUETTE.
+ * The problem is asking them to BE the silhouette. So everything below builds
+ * the mass as a small solid, cards go back to fraying its outline, and the
+ * contact shadow finally has something to come from.
+ *
+ * All four are cheap on purpose: a shrub is instanced 275 times and a hedge
+ * 2,354 times, so the whole point is a dozen quads that read as volume rather
+ * than a hundred that read as a sphere.
+ */
+
+/**
+ * A lobed dome. `profile` is [[y, r], ...] from the ground up; the plan outline
+ * is modulated by `lobes` sine bulges plus per-azimuth jitter, so no two
+ * instances share an outline and none of them is a circle.
+ *
+ * Open underneath and capped on top: nothing ever sees the bottom of a shrub,
+ * and the top is the face the game camera spends all its time looking at.
+ */
+function domeGeo(cellName, profile, sides, {
+  lobes = 3, amp = 0.20, rng = null, jitter = 0.14, highSeg = -1, highK = 1.28,
+  capTop = true, vFrom = 0, vTo = 1,
+} = {}) {
+  const rect = uvOf(cellName);
+  const pos = [], nor = [], uv = [], idx = [];
+  const R = rng || (() => 0.5);
+  const phase = R() * 6.283;
+  const rk = new Array(sides), yk = new Array(sides);
+  for (let j = 0; j < sides; j++) {
+    const a = (j / sides) * Math.PI * 2;
+    rk[j] = (1 + Math.sin(a * lobes + phase) * amp) * (1 - jitter * 0.5 + R() * jitter);
+    yk[j] = j === highSeg ? highK : 1;
+  }
+  const rows = profile.length;
+  for (let i = 0; i < rows; i++) {
+    const t = i / (rows - 1);
+    for (let j = 0; j <= sides; j++) {
+      const jj = j % sides;
+      const a = (j / sides) * Math.PI * 2;
+      const rr = profile[i][1] * rk[jj];
+      // A pushed lobe lifts the TOP of that sector and leaves its base alone,
+      // which is what a shrub that has been growing unevenly looks like.
+      const yy = profile[i][0] * (1 + (yk[jj] - 1) * t * t);
+      pos.push(Math.cos(a) * rr, yy, Math.sin(a) * rr);
+      const up = t * t;
+      nor.push(Math.cos(a) * (1 - up * 0.7), 0.28 + up * 0.95, Math.sin(a) * (1 - up * 0.7));
+      uv.push(rect.u0 + (j / sides) * (rect.u1 - rect.u0),
+        rect.v0 + (vFrom + t * (vTo - vFrom)) * (rect.v1 - rect.v0));
+    }
+  }
+  const row = sides + 1;
+  for (let i = 0; i < rows - 1; i++) {
+    for (let j = 0; j < sides; j++) {
+      const a2 = i * row + j, b2 = a2 + 1, c2 = a2 + row, d2 = c2 + 1;
+      idx.push(a2, c2, b2, b2, c2, d2);
+    }
+  }
+  if (capTop) {
+    const base = pos.length / 3;
+    const top = profile[rows - 1];
+    let cy = 0;
+    for (let j = 0; j < sides; j++) cy += top[0] * (1 + (yk[j] - 1));
+    pos.push(0, cy / sides, 0); nor.push(0, 1, 0);
+    uv.push((rect.u0 + rect.u1) * 0.5, rect.v0 + vTo * (rect.v1 - rect.v0));
+    const last = (rows - 1) * row;
+    for (let j = 0; j < sides; j++) idx.push(base, last + j, last + j + 1);
+  }
+  const g = finishGeo(pos, nor, uv, idx);
+  g.normalizeNormals?.();
+  return cellTag(g, cellName);
+}
+
+/**
+ * Loft a cross-section along a straight run in X, with the ridge line perturbed
+ * station to station.
+ *
+ * `section` is [[u, v], ...] where u is across the depth in -0.5..0.5 and v is
+ * up in 0..1. `wob` is the per-station height wobble, and it is the whole
+ * reason this exists rather than an extrusion: a hedge whose section is
+ * constant along its length reads from the game camera as a smooth green
+ * sausage laid along the kerb, however many variants it has.
+ */
+function loftGeo(section, len, dep, hgt, spans, strips, {
+  rng = null, wob = 0.08, caps = null,
+} = {}) {
+  const R = rng || (() => 0.5);
+  const lift = [], bow = [];
+  for (let s = 0; s <= spans; s++) {
+    lift.push((R() - 0.5) * 2 * wob);
+    bow.push((R() - 0.5) * 2 * wob * 0.7);
+  }
+  const at = (s, i) => {
+    const [u, v] = section[i];
+    // The wobble only moves the crown; the base line stays on the ground.
+    return [-len / 2 + (len * s) / spans, v * hgt + lift[s] * v * v, u * dep + bow[s] * v * 0.5];
+  };
+  const parts = [];
+  for (const st of strips) {
+    const rect = uvOf(st.cell);
+    const cols = st.to - st.from + 1;
+    const pos = [], nor = [], uv = [], idx = [];
+    for (let s = 0; s <= spans; s++) {
+      for (let i = st.from; i <= st.to; i++) {
+        const p = at(s, i);
+        pos.push(p[0], p[1], p[2]);
+        const [u, v] = section[i];
+        // Side faces keep most of their real outward normal so they sit a stop
+        // under the crown; the crown itself points at the sky.
+        const nu = Math.sign(u) * (1 - Math.min(1, v * 1.15));
+        nor.push(0, Math.min(1, v * 1.25), nu === 0 ? 0.2 : nu);
+        uv.push(rect.u0 + (s / spans) * (rect.u1 - rect.u0),
+          rect.v0 + ((i - st.from) / Math.max(1, cols - 1)) * (rect.v1 - rect.v0));
+      }
+    }
+    for (let s = 0; s < spans; s++) {
+      for (let i = 0; i < cols - 1; i++) {
+        const a = s * cols + i, b = a + 1, c = a + cols, d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
+    }
+    const g = finishGeo(pos, nor, uv, idx);
+    g.normalizeNormals?.();
+    parts.push(cellTag(g, st.cell));
+  }
+  if (caps) {
+    const rect = uvOf(caps);
+    const pos = [], nor = [], uv = [], idx = [];
+    for (const s of [0, spans]) {
+      const o = pos.length / 3;
+      for (let i = 0; i < section.length; i++) {
+        const p = at(s, i);
+        pos.push(p[0], p[1], p[2]);
+        nor.push(s === 0 ? -1 : 1, 0.2, 0);
+        uv.push(rect.u0 + (section[i][0] + 0.5) * (rect.u1 - rect.u0),
+          rect.v0 + section[i][1] * (rect.v1 - rect.v0));
+      }
+      for (let i = 1; i < section.length - 1; i++) {
+        if (s === 0) idx.push(o, o + i, o + i + 1);
+        else idx.push(o, o + i + 1, o + i);
+      }
+    }
+    const g = finishGeo(pos, nor, uv, idx);
+    g.normalizeNormals?.();
+    parts.push(cellTag(g, caps));
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/**
+ * A box with its horizontal edges chamfered.
+ *
+ * "Bevel everything. Sharp 90-degree box edges are the #1 tell of cheap 3D" is
+ * the art bible's own rule and the raw `box()` above breaks it everywhere it is
+ * used. 26 triangles instead of 12 buys the two edges the camera actually sees.
+ */
+function bevelBox(w, h, d, c, cellSide, cellTop = cellSide) {
+  const rs = uvOf(cellSide);
+  const pos = [], nor = [], uv = [], idx = [];
+  const rings = [
+    [0, w - c * 2, d - c * 2], [c, w, d], [h - c, w, d], [h, w - c * 2, d - c * 2],
+  ];
+  const corner = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5], [-0.5, -0.5]];
+  for (let i = 0; i < rings.length; i++) {
+    const [y, rw, rd] = rings[i];
+    for (let k = 0; k < corner.length; k++) {
+      pos.push(corner[k][0] * rw, y, corner[k][1] * rd);
+      const ny = i === 0 ? -0.5 : i === rings.length - 1 ? 0.7 : 0.05;
+      nor.push(corner[k][0] * 2, ny, corner[k][1] * 2);
+      uv.push(rs.u0 + (k / 4) * (rs.u1 - rs.u0), rs.v0 + (y / Math.max(h, 1e-3)) * (rs.v1 - rs.v0));
+    }
+  }
+  const row = corner.length;
+  for (let i = 0; i < rings.length - 1; i++) {
+    for (let k = 0; k < 4; k++) {
+      const a = i * row + k, b = a + 1, cc = a + row, dd = cc + 1;
+      idx.push(a, cc, b, b, cc, dd);
+    }
+  }
+  const g = finishGeo(pos, nor, uv, idx);
+  g.normalizeNormals?.();
+  const parts = [cellTag(g, cellSide)];
+  // Top face in its own cell, so a painted slab can be lighter on top than on
+  // its flanks without a second material.
+  const rt = uvOf(cellTop);
+  const tp = [], tn = [], tu = [], ti = [];
+  tp.push(0, h, 0); tn.push(0, 1, 0); tu.push((rt.u0 + rt.u1) / 2, (rt.v0 + rt.v1) / 2);
+  for (let k = 0; k < corner.length; k++) {
+    tp.push(corner[k][0] * (w - c * 2), h, corner[k][1] * (d - c * 2));
+    tn.push(0, 1, 0);
+    tu.push(rt.u0 + (corner[k][0] + 0.5) * (rt.u1 - rt.u0), rt.v0 + (corner[k][1] + 0.5) * (rt.v1 - rt.v0));
+  }
+  for (let k = 1; k <= 4; k++) ti.push(0, k, k + 1);
+  parts.push(cellTag(finishGeo(tp, tn, tu, ti), cellTop));
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/**
+ * A hollow rectangular ring with CLOSED CORNERS.
+ *
+ * The planters were four independent wall slabs that did not mitre, and from
+ * the game camera you could see straight through the dark notch where the
+ * panels failed to meet — visible in the isolated shot of all 71 of them. One
+ * lofted ring cannot have that defect: outer skin, inner skin and a top face
+ * are the same continuous vertex loop.
+ */
+function rectRing(w, d, t, h, cellSide, cellTop) {
+  const loop = (rw, rd) => [
+    [-rw / 2, -rd / 2], [rw / 2, -rd / 2], [rw / 2, rd / 2], [-rw / 2, rd / 2], [-rw / 2, -rd / 2],
+  ];
+  const out = loop(w, d), inn = loop(w - t * 2, d - t * 2);
+  const rs = uvOf(cellSide), rt = uvOf(cellTop);
+  const pos = [], nor = [], uv = [], idx = [];
+  // Four vertex rings: outer base, outer top, inner top, inner base.
+  const rows = [
+    { pts: out, y: 0, n: 1, cell: rs, v: 0 },
+    { pts: out, y: h, n: 1, cell: rs, v: 1 },
+    { pts: inn, y: h, n: -1, cell: rt, v: 1 },
+    { pts: inn, y: h - Math.min(h * 0.9, t * 2.2), n: -1, cell: rs, v: 0.4 },
+  ];
+  for (const r of rows) {
+    for (let k = 0; k < r.pts.length; k++) {
+      pos.push(r.pts[k][0], r.y, r.pts[k][1]);
+      nor.push(r.pts[k][0] * r.n, r.y >= h ? 0.5 : 0.1, r.pts[k][1] * r.n);
+      uv.push(r.cell.u0 + (k / 4) * (r.cell.u1 - r.cell.u0),
+        r.cell.v0 + r.v * (r.cell.v1 - r.cell.v0));
+    }
+  }
+  const row = out.length;
+  for (let i = 0; i < rows.length - 1; i++) {
+    for (let k = 0; k < 4; k++) {
+      const a = i * row + k, b = a + 1, c = a + row, dd = c + 1;
+      idx.push(a, c, b, b, c, dd);
+    }
+  }
+  const g = finishGeo(pos, nor, uv, idx);
+  g.normalizeNormals?.();
+  return cellTag(g, cellSide);
+}
+
+/**
+ * A tapered tube swept along a polyline — aerial roots, stilt roots, gooseneck
+ * arms, halyards, swing chains, guard rails.
+ *
+ * `pts` are Vector-ish {x,y,z}; `r` may be a number or a function of t.
+ */
+function pipeGeo(pts, r, sides, cellName) {
+  const rect = uvOf(cellName);
+  const pos = [], nor = [], uv = [], idx = [];
+  const rf = typeof r === 'function' ? r : () => r;
+  for (let i = 0; i < pts.length; i++) {
+    const t = i / (pts.length - 1);
+    const p = pts[i];
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    let dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const l = Math.hypot(dx, dy, dz) || 1;
+    dx /= l; dy /= l; dz /= l;
+    // Any two vectors perpendicular to the tangent will do; pick the stabler.
+    let ux = -dy, uy = dx, uz = 0;
+    if (Math.hypot(ux, uy, uz) < 0.2) { ux = 0; uy = -dz; uz = dy; }
+    const ul = Math.hypot(ux, uy, uz) || 1; ux /= ul; uy /= ul; uz /= ul;
+    const vx = dy * uz - dz * uy, vy = dz * ux - dx * uz, vz = dx * uy - dy * ux;
+    const rr = rf(t);
+    for (let j = 0; j <= sides; j++) {
+      const ang = (j / sides) * Math.PI * 2;
+      const cx = Math.cos(ang), sy = Math.sin(ang);
+      const nx = ux * cx + vx * sy, ny = uy * cx + vy * sy, nz = uz * cx + vz * sy;
+      pos.push(p.x + nx * rr, p.y + ny * rr, p.z + nz * rr);
+      nor.push(nx, ny * 0.6 + 0.2, nz);
+      uv.push(rect.u0 + (j / sides) * (rect.u1 - rect.u0), rect.v0 + t * (rect.v1 - rect.v0));
+    }
+  }
+  const row = sides + 1;
+  for (let i = 0; i < pts.length - 1; i++) {
+    for (let j = 0; j < sides; j++) {
+      const a = i * row + j, b = a + 1, c = a + row, dd = c + 1;
+      idx.push(a, c, b, b, c, dd);
+    }
+  }
+  const g = finishGeo(pos, nor, uv, idx);
+  g.normalizeNormals?.();
+  return cellTag(g, cellName);
+}
+
+/** A flat rectangular slab of a single cell, lying in XZ. Mulch collars, plaques. */
+function plate(w, d, y, cellName) {
+  const g = new THREE.PlaneGeometry(w, d);
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, y, 0);
+  return mapUV(g, uvOf(cellName));
+}
+
+/** A small radial disc of `sides` triangles — soil collars, mulch rings. */
+function collar(r, sides, y, cellName) {
+  return disc(r, sides, 0, y, 0, cellName);
 }
 
 /* ======================================================================== */
@@ -2179,25 +3203,60 @@ function makeTree(spec) {
   const parts = [];
   const H = spec.h;
   const trunkH = H * spec.trunkF;
+  const tipX = spec.bend * trunkH, tipZ = spec.sway * trunkH * 0.9;
 
   parts.push(trunkGeo(trunkH, spec.rBot, spec.rTop, spec.bark, {
-    sides: 6, rings: 4, bend: spec.bend, sway: spec.sway, bulge: 0.05,
+    sides: spec.trunkSides || 6, rings: 4,
+    bend: spec.bend, sway: spec.sway, bulge: 0.05,
+    flute: spec.flute || 0,
   }));
 
-  /* Two stub limbs lifting out of the fork — cheap, but it is the difference
-     between a tree and a lollipop. */
+  /* THE ROOT FLARE. A broadleaf does not meet the ground at the same diameter
+     it carries at chest height; a mahogany's smooth pale untapered pole was
+     "the single thing that separates a shade tree from a lamp post" in the
+     review, and this is half of that. Kept short so it stays inside the contact
+     band the physics measures without widening it much. */
+  if (spec.flare > 1.01) {
+    const fh = Math.min(1.1, trunkH * 0.14);
+    parts.push(trunkGeo(fh, spec.rBot * spec.flare, spec.rBot * 1.02, spec.bark,
+      { sides: spec.trunkSides || 6, rings: 2, flute: (spec.flute || 0) * 1.6 }));
+  }
+
+  /* THE LIMBS. Long enough to REACH the crown instead of stopping just above
+     the fork — a live oak's identity is heavy near-horizontal limbs carrying a
+     wide low crown, and a poinciana's is three or four of them spreading to the
+     edge of the umbrella. `limbPitch` near 1.4 is upright, near 0.45 is a live
+     oak. */
+  const limbPitch = spec.limbPitch ?? 0.95;
+  const limbLen = (spec.limbLen ?? 0.30) * H;
+  const limbY = trunkH * (spec.limbAt ?? 0.80);
+  const limbEnds = [];
   for (let i = 0; i < spec.limbs; i++) {
-    const a = rng() * Math.PI * 2;
-    const l = trunkGeo(H * 0.26, spec.rTop * 0.72, spec.rTop * 0.34, spec.bark, { sides: 5, rings: 2 });
-    _m4.makeRotationZ(0.85 + rng() * 0.35);
+    const a = i * 2.39996 + rng() * 0.6;
+    const pitch = limbPitch + (rng() - 0.5) * 0.42;
+    const len = limbLen * (0.78 + rng() * 0.5);
+    const l = trunkGeo(len, spec.rTop * 0.78, spec.rTop * 0.30, spec.bark,
+      { sides: 4, rings: 2, bend: 0.10 });
+    _m4.makeRotationZ(pitch);
     l.applyMatrix4(_m4);
     _m4.makeRotationY(a);
     l.applyMatrix4(_m4);
-    l.translate(spec.bend * trunkH, trunkH * 0.82, spec.sway * trunkH * 0.9);
+    l.translate(tipX, limbY, tipZ);
     parts.push(l);
+    limbEnds.push({
+      x: tipX + Math.cos(a) * Math.cos(pitch) * len,
+      y: limbY + Math.sin(pitch) * len,
+      z: tipZ + Math.sin(a) * Math.cos(pitch) * len,
+    });
   }
 
-  const c = canopyGeo(spec.canopyR, spec.canopyR * spec.canopyF, spec.cell, rng);
+  const c = canopyGeo(spec.canopyR, spec.canopyR * spec.canopyF, spec.cell, rng, {
+    cellTop: spec.cellTop || spec.cell,
+    cellCore: spec.cellCore || 'sw_leafDark',
+    outer: spec.canopyCards ?? 8,
+    caps: spec.canopyCaps ?? 3,
+    lobeN: spec.canopyLobes ?? 1,
+  });
   c.computeBoundingBox();
   const cb = c.boundingBox;
   let cy = trunkH * 0.96;
@@ -2208,8 +3267,101 @@ function makeTree(spec) {
     const need = top * 0.235 - cb.min.y;      // 23.5% > the 20% band, with margin
     if (need > cy) cy = need;
   }
-  c.translate(spec.bend * trunkH, cy, spec.sway * trunkH * 0.9);
+  c.translate(tipX, cy, tipZ);
   parts.push(c);
+
+  /* BLOSSOM CLUSTERS standing proud of the crown edge — jacaranda, tabebuia.
+     A flowering tree whose bloom is only ever painted INSIDE the canopy cell
+     reads as a green tree that happens to be purple; the flowers have to break
+     the outline. */
+  for (let i = 0; i < (spec.blossom || 0); i++) {
+    const a = i * 2.39996 + rng() * 0.7;
+    const w = spec.canopyR * (0.34 + rng() * 0.20);
+    const g = cardGeo(w, w * 0.86, spec.blossomCell || spec.cell);
+    g.translate(0, -w * 0.43, 0);
+    _m4.makeRotationX(-0.5 - rng() * 0.8);
+    g.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    g.applyMatrix4(_m4);
+    const rr = spec.canopyR * (0.90 + rng() * 0.24);
+    g.translate(tipX + Math.cos(a) * rr,
+      cy + spec.canopyR * spec.canopyF * (0.10 + rng() * 0.55),
+      tipZ + Math.sin(a) * rr);
+    liftNormals(g, 0.42);
+    parts.push(g);
+  }
+
+  /* SPANISH MOSS hanging off the limbs. Two triangles each and it is the single
+     loudest "this is a live oak in Florida" signal there is. */
+  for (let i = 0; i < (spec.moss || 0) && limbEnds.length; i++) {
+    const e = limbEnds[i % limbEnds.length];
+    const w = spec.canopyR * 0.16, hgt = spec.canopyR * (0.30 + rng() * 0.30);
+    const g = cardGeo(w, hgt, 'moss');
+    g.translate(0, -hgt, 0);
+    g.rotateY(rng() * 3.14);
+    g.translate(e.x * (0.7 + rng() * 0.4), e.y + hgt * 0.10, e.z * (0.7 + rng() * 0.4));
+    parts.push(g);
+  }
+
+  /* AERIAL PROP ROOTS. A banyan without them is just a big spreading tree —
+     they and the buttressed base are the only two features that name the
+     species. Landing radius is deliberately held under `rootR`: worldBuild
+     measures the lowest fifth of the geometry as the physics footprint, and a
+     root cage reaching the tree's full crown spread would triple the hole a
+     banyan needs to fall through. */
+  const rootN = spec.roots || 0;
+  for (let i = 0; i < rootN; i++) {
+    const a = i * 2.39996 + rng() * 0.5;
+    // Two or three have already thickened into secondary trunks.
+    const heavy = i < (spec.rootTrunks || 0);
+    const rr = spec.rootR * (heavy ? 0.62 + rng() * 0.22 : 0.42 + rng() * 0.58);
+    const fromY = cy - spec.canopyR * spec.canopyF * (0.10 + rng() * 0.35);
+    const r0 = spec.rTop * (heavy ? 0.55 : 0.16) * (0.8 + rng() * 0.5);
+    const pts = [];
+    for (let k = 0; k <= 3; k++) {
+      const t = k / 3;
+      pts.push({
+        x: tipX * (1 - t) + Math.cos(a) * rr * Math.pow(t, 0.7),
+        y: fromY * (1 - t * t) ,
+        z: tipZ * (1 - t) + Math.sin(a) * rr * Math.pow(t, 0.7),
+      });
+    }
+    parts.push(pipeGeo(pts, (t) => r0 * (1 - t * 0.32) * (heavy ? 1 + t * 0.5 : 1),
+      heavy ? 4 : 3, spec.bark));
+  }
+
+  /* STILT ROOTS + a mud mound: the mangrove. It was standing on top of the
+     water with nothing under it, which on 101 waterfront trees — the closest
+     planting to the camera in every bay frame — is the whole species missing. */
+  const stiltN = spec.stilts || 0;
+  if (stiltN) {
+    const sr = spec.stiltR || 0.95;
+    for (let i = 0; i < stiltN; i++) {
+      const a = i * 2.39996 + rng() * 0.4;
+      const rr = sr * (0.62 + rng() * 0.42);
+      const fromY = trunkH * (0.30 + rng() * 0.42);
+      const pts = [];
+      for (let k = 0; k <= 3; k++) {
+        const t = k / 3;
+        // Arched: out fast, then down — a rhizophora stands in a basket.
+        pts.push({
+          x: tipX * (1 - t) + Math.cos(a) * rr * Math.sin(t * 1.35),
+          y: fromY * (1 - t * t * 0.98),
+          z: tipZ * (1 - t) + Math.sin(a) * rr * Math.sin(t * 1.35),
+        });
+      }
+      parts.push(pipeGeo(pts, (t) => spec.rBot * 0.30 * (1 - t * 0.25), 3, spec.bark));
+    }
+    const mound = domeGeo('sw_shade', [[0, sr * 0.92], [0.16, sr * 0.72], [0.28, sr * 0.34]], 6,
+      { lobes: 3, amp: 0.24, rng, jitter: 0.2 });
+    parts.push(mound);
+    // Pneumatophores: the breathing spikes that stand out of the mud.
+    for (let i = 0; i < 4; i++) {
+      const a = rng() * 6.283, rr = sr * (0.45 + rng() * 0.42);
+      parts.push(trunkGeo(0.30 + rng() * 0.22, 0.045, 0.012, spec.bark, { sides: 3, rings: 1 })
+        .translate(Math.cos(a) * rr, 0.04, Math.sin(a) * rr));
+    }
+  }
 
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   liftNormals(geo, 0.18);
@@ -2223,70 +3375,400 @@ function makeTree(spec) {
 }
 
 /**
- * Low mass: hedge units, shrubs, flower beds, ornamental grass.
- *
- * `depth` makes the mass LINEAR instead of round. A shrub is a blob and its
- * crossed cards are right, but a hedge is a line, and building one out of the
- * same crossed cards gave every hedge unit a 3.3 x 3.3 m ground footprint — as
- * deep as it was long. Since worldBuild measures that footprint for the
- * physics, all 2,400 hedges in the city were claiming 1.65 m of the pavement in
- * front of them and 1.65 m of the setback behind, which is most of a Miami
- * sidewalk — and hedge-against-pedestrian was far and away the commonest
- * overlapping pair on the map. Two parallel faces plus a cap is the same three
- * cards, the same six triangles, and an object the shape of the thing it draws.
+ * Give a finished low plant its wind weight. Everything below shares it.
+ * A shrub sways a little; the mass at its base does not move at all.
  */
-function makeBush(spec) {
+function lowWind(geo, h, k = 0.45) {
+  windAttr(geo, (x, y) => Math.pow(Math.min(1, Math.max(0, y) / Math.max(0.1, h)), 1.6) * k);
+  return geo;
+}
+
+/**
+ * A CLIPPED HEDGE, 2,354 of them, and the worst object in the slice.
+ *
+ * It was two vertical alpha cards plus two pitched top cards — eight triangles
+ * — so at the game's own camera range it read as intersecting sheets of torn
+ * green paper with daylight between them, a hard ridge seam and jagged low-res
+ * alpha edges. A run along a park edge was a lumpy green blanket rather than
+ * clipped planting.
+ *
+ * So: a real lofted solid with a seven-point section (vertical flanks, radiused
+ * shoulders, a domed crown), a ridge line that wanders +-8 cm station to station
+ * so a run undulates instead of extruding, the crown skinned a stop lighter than
+ * the flanks, a shadow gap at the base with woody stems showing through it, and
+ * alpha fringe hung ONLY over the crown edge — never a horizontal card spanning
+ * the top, which is what made it read flat in the first place.
+ *
+ * ~78 triangles against the old 8. Across 2,354 units that is real, and it is
+ * the right place to spend it: this is the most numerous object in the city.
+ */
+function makeHedge(spec) {
   const rng = makeRNG(spec.seed);
   const parts = [];
-  const n = spec.cards || 3;
-  const dep = spec.depth || 0;
-  for (let i = 0; i < n; i++) {
-    const g = cardGeo(spec.w, spec.h, spec.cell);
-    if (dep) {
-      // Faces of a slab: both broadside to the run, offset either side of it.
-      g.translate(0, 0, (i / Math.max(1, n - 1) - 0.5) * dep);
-      g.rotateY((rng() - 0.5) * 0.12);
-    } else {
-      g.rotateY((i / n) * Math.PI + rng() * 0.3);
-    }
+  const L = spec.w, D = spec.depth, H = spec.h;
+  // Shoulders start a fixed 20 cm below the crown whatever the unit's height.
+  const sh = Math.max(0.52, 1 - 0.20 / Math.max(0.45, H));
+  const sec = [
+    [-0.50, 0.075], [-0.50, sh], [-0.31, 0.985], [0, 1.04],
+    [0.31, 0.985], [0.50, sh], [0.50, 0.075],
+  ];
+  const spans = 4;
+  parts.push(loftGeo(sec, L, D, H, spans, [
+    { from: 0, to: 1, cell: 'shrubA' },      // flank
+    { from: 1, to: 5, cell: 'shrubTop' },    // shoulders + crown, a stop lighter
+    { from: 5, to: 6, cell: 'shrubA' },      // flank
+  ], { rng, wob: 0.075, caps: 'shrubA' }));
+
+  /* THE SHADOW GAP. A hedge does not grow out of the pavement — it stands in a
+     strip of soil with 10 cm of dark under it and its own stems showing. That
+     gap is most of what makes the mass read as sitting ON something. */
+  for (let i = 0; i < 2; i++) {
+    const t = (i + 0.5) / 2;
+    parts.push(trunkGeo(H * 0.16, 0.05, 0.038, 'sw_wood', { sides: 3, rings: 1 })
+      .translate(-L / 2 + L * t + (rng() - 0.5) * L * 0.2, 0, (rng() - 0.5) * D * 0.3));
+  }
+
+  /* FRINGE over the crown edge and the corners. Short — 12-16 cm — so it frays
+     the silhouette without ever becoming the silhouette. */
+  for (let i = 0; i < 4; i++) {
+    const fh = H * (0.11 + rng() * 0.05);
+    const g = cardGeo(L * 0.30, fh, 'shrubA');
+    g.translate(0, -fh * 0.55, 0);
+    _m4.makeRotationX((rng() - 0.5) * 0.5);
+    g.applyMatrix4(_m4);
+    const s = i % 2 ? 1 : -1;
+    g.translate(-L * 0.30 + L * 0.60 * (i < 2 ? 0.15 : 0.85) + (rng() - 0.5) * L * 0.2,
+      H * (0.99 + rng() * 0.05), s * D * (0.30 + rng() * 0.16));
     parts.push(g);
   }
-  if (spec.top !== false && dep) {
-    /* A CLIPPED HEDGE HAS A RIDGE, NOT A LID.
-       One horizontal card spanning the full depth gave every hedge in the city
-       a single flat top plane, and a run of them at 3.2 m centres therefore
-       read from the game camera as one smooth extruded tube — a green sausage
-       laid along the kerb. Two cards pitched off a centre ridge cost the same
-       six triangles and give the top a lit face and a turned-away face, which
-       is the value separation that makes the mass read as a clipped box. */
-    const half = dep * 0.62;
-    for (const s of [-1, 1]) {
-      const t = cardGeo(spec.w * 0.96, half, spec.cell);
-      t.translate(0, -half * 0.5, 0);
-      _m4.makeRotationX(-Math.PI / 2 + s * 0.32);
-      t.applyMatrix4(_m4);
-      t.translate(0, spec.h * 0.84, s * half * 0.47);
-      parts.push(t);
+
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.16);
+  // Yaw jitter baked in: callers set the run's rotation, so a per-VARIANT skew
+  // is the only place a hedge run can get its "somebody has been clipping this
+  // for years" wobble from.
+  geo.rotateY((rng() - 0.5) * 0.14);
+  return lowWind(geo, H, 0.34);
+}
+
+/**
+ * A SHRUB with an actual mass under its cards.
+ *
+ * Was four alpha quads, one of them horizontal, and from the 40-degree camera
+ * that horizontal cap card IS what you see — so 275 shrubs rendered as flat
+ * green kites with a hard straight edge. The dome does the volume, the cards go
+ * back to their real job of breaking the outline, and the horizontal card is
+ * gone for good.
+ */
+function makeShrubMass(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const H = spec.h, R = spec.w * 0.5;
+  parts.push(domeGeo('shrubA', [
+    [0, R * 0.94], [H * 0.38, R * 1.02], [H * 0.72, R * 0.82], [H, R * 0.30],
+  ], 6, {
+    lobes: 2 + Math.floor(rng() * 3), amp: 0.26, rng, jitter: 0.24,
+    // One lobe pushed a third higher than the rest, so no two read alike even
+    // at the same scale and the same yaw.
+    highSeg: Math.floor(rng() * 6), highK: 1.22 + rng() * 0.22,
+  }));
+  for (let i = 0; i < 3; i++) {
+    const g = cardGeo(spec.w * (0.86 + rng() * 0.24), H * (0.74 + rng() * 0.24), 'shrubA');
+    g.rotateY((i / 3) * Math.PI + rng() * 0.45);
+    g.translate((rng() - 0.5) * R * 0.36, H * 0.16, (rng() - 0.5) * R * 0.36);
+    parts.push(g);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.26);
+  return lowWind(geo, H, 0.42);
+}
+
+/**
+ * CROTON — the loudest plant in Miami, previously three alpha cards lying
+ * nearly flat, i.e. a coloured splat smeared on the pavement with a rectangular
+ * blob shadow larger than the plant.
+ *
+ * Cards STAND UP now, crossed and tilted only 15-25 degrees off vertical on a
+ * short stem, over a solid oxblood rosette that gives the contact shadow
+ * something to come from. Three leaf-colour cells are mixed inside a single
+ * clump, which is what a real croton is — one bush carrying lime, gold and
+ * oxblood at once — rather than one tinted card set.
+ */
+function makeCrotonClump(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const H = spec.h, R = spec.w * 0.5;
+  parts.push(domeGeo('crotonCore', [
+    [0, R * 0.58], [H * 0.18, R * 0.62], [H * 0.34, R * 0.34],
+  ], 6, { lobes: 3, amp: 0.26, rng, jitter: 0.22 }));
+  parts.push(trunkGeo(H * 0.36, 0.055, 0.038, 'sw_wood', { sides: 3, rings: 1 }));
+  const cells = ['croton', 'crotonB', 'crotonC'];
+  const lead = Math.floor(rng() * 3);
+  for (let i = 0; i < 5; i++) {
+    // Card size capped at 1.1 m: the old ones were wider than the plant, so the
+    // blob shadow was too.
+    const cw = Math.min(1.1, spec.w * 0.66) * (0.80 + rng() * 0.38);
+    const g = cardGeo(cw, cw * (0.96 + rng() * 0.34), cells[(lead + i) % 3]);
+    _m4.makeRotationZ((i % 2 ? 1 : -1) * (0.26 + rng() * 0.18));
+    g.applyMatrix4(_m4);
+    g.rotateY(i * 1.31 + rng() * 0.45);
+    g.translate((rng() - 0.5) * R * 0.26, H * 0.22, (rng() - 0.5) * R * 0.26);
+    parts.push(g);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.28);
+  return lowWind(geo, H, 0.38);
+}
+
+/**
+ * GROUNDCOVER, built as a MOUND rather than as cards.
+ *
+ * From the game camera the old one was a flat hard-edged rectangle of dotted
+ * green lying ON the paving — four visible corners, no volume, nothing under
+ * it, "a scrap of astroturf dropped on the sidewalk". A seven-sided tube gives
+ * it a lobed plan outline and real thickness; leaf tufts scattered over and
+ * around it make the silhouette ragged; flower dabs stand proud of the foliage;
+ * and it always sits on a mulch disc so it reads as PLANTED rather than laid.
+ */
+function makeGroundcoverMound(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const R = spec.w * 0.5, H = spec.h;
+  parts.push(collar(R * 1.14, 8, 0.01, 'mulchTex'));
+  parts.push(domeGeo('groundcov', [
+    [0.05, R], [H * 0.43, R * 0.94], [H * 0.81, R * 0.65], [H, R * 0.26],
+  ], 7, {
+    lobes: 2 + Math.floor(rng() * 3), amp: 0.24 + rng() * 0.10, rng, jitter: 0.24,
+    highSeg: Math.floor(rng() * 7), highK: 1.18,
+  }));
+  // Small radial leaf tufts over and around the dome — the ragged edge.
+  for (let i = 0; i < 6; i++) {
+    const a = i * 2.39996 + rng() * 0.5;
+    const rr = R * (0.35 + rng() * 0.70);
+    const w = 0.26 * (0.8 + rng() * 0.5);
+    for (let k = 0; k < 2; k++) {
+      const g = cardGeo(w, w * 1.1, 'groundcov');
+      g.rotateY(a + k * 1.57 + rng() * 0.3);
+      g.translate(Math.cos(a) * rr, H * (0.28 + rng() * 0.5), Math.sin(a) * rr);
+      parts.push(g);
     }
-  } else if (spec.top !== false) {
-    const td = spec.w * 0.94;
-    const t = cardGeo(spec.w * 0.94, td, spec.cell);
-    t.translate(0, -td * 0.5, 0);
-    _m4.makeRotationX(-Math.PI / 2);
-    t.applyMatrix4(_m4);
-    t.translate(0, spec.h * 0.86, 0);
+  }
+  // Flower dabs on short stems, standing clear of the leaves.
+  const petals = ['sw_white', 'sw_pink', 'sw_sun'];
+  for (let i = 0; i < 8; i++) {
+    const a = rng() * 6.283, rr = R * Math.sqrt(rng()) * 0.88;
+    const c = trunkGeo(0.11, 0.045, 0.010, petals[i % 3], { sides: 3, rings: 1 });
+    c.translate(Math.cos(a) * rr, H * (0.62 + rng() * 0.42), Math.sin(a) * rr);
+    parts.push(c);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.34);
+  return lowWind(geo, H, 0.30);
+}
+
+/**
+ * A FLOWER BED that is a bed of flowers rather than a paint splash.
+ *
+ * flowerYellow and flowerPink were two crossed 2.2 m cards plus one horizontal
+ * top card painted with `canopyYel` and `canopyPink` — a tabebuia's bracts and
+ * a bougainvillea's. Those are TREE CANOPY cells, complete with the grey branch
+ * structure drawCanopy paints behind the blooms, so on grass the pink one read
+ * as a greyish-mauve pancake and the yellow one as a smear with two thin fins
+ * poking out sideways where the vertical cards escaped the top card.
+ *
+ * Now: a clipped dome of real foliage, blooms sitting ON it as small cone-topped
+ * tufts, a dedicated bedding cell for the cards that fray the edge, a mulch
+ * collar under the lot, and a footprint smaller than the paving module it sits
+ * on.
+ */
+function makeFlowerBed(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const R = spec.w * 0.5, H = spec.h;
+  parts.push(collar(R * 1.22, 8, 0.01, 'mulchTex'));
+  parts.push(domeGeo('bedFoliage', [
+    [0.03, R * 0.98], [H * 0.42, R], [H * 0.78, R * 0.78], [H, R * 0.34],
+  ], 7, { lobes: 3, amp: 0.20, rng, jitter: 0.20 }));
+  // The cards only fray the outline; they are not the plant.
+  for (let i = 0; i < 3; i++) {
+    const w = R * (1.30 + rng() * 0.40);
+    const g = cardGeo(w, w * 0.78, spec.bedCell);
+    g.rotateY(i * 1.31 + rng() * 0.5);
+    g.translate(0, H * 0.20, 0);
+    parts.push(g);
+  }
+  /* The blooms. Solid five-sided cone-topped tufts standing on the foliage, the
+     way a planter trough already does it — a bloom painted as part of the leaf
+     texture never sits proud of the mass and averages into olive one mip level
+     down. Tinted per instance (the cells are in SOLID_TINTABLE), so 200 beds
+     are not one colour. */
+  for (let i = 0; i < 9; i++) {
+    const a = i * 2.39996 + rng() * 0.4;
+    const rr = R * Math.sqrt(rng()) * 0.80;
+    const th = 0.10 + rng() * 0.06;
+    const dome = H * (0.86 - (rr / R) * 0.42);
+    const t = trunkGeo(th, 0.052, 0.016, spec.bloomCell, { sides: 5, rings: 1 });
+    t.translate(Math.cos(a) * rr, dome, Math.sin(a) * rr);
     parts.push(t);
   }
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  /* A BLOB IS ROUND; A HEDGE IS NOT.
-     The round pair (0.6 / 0.35) points a linear mass's side faces most of the
-     way at the sky, so the two long faces and the top all caught the key light
-     equally and the unit inflated into a smooth cylinder. Keeping more of the
-     side faces' real outward normal is what puts them a stop under the top. */
-  const lin = dep > 0;
-  radialNormals(geo, 0, spec.h * 0.45, 0, lin ? 0.30 : 0.6);
-  liftNormals(geo, lin ? 0.17 : 0.35);
-  windAttr(geo, (x, y) => Math.pow(Math.min(1, y / spec.h), 1.6) * 0.45);
+  liftNormals(geo, 0.32);
+  return lowWind(geo, H, 0.30);
+}
+
+/**
+ * ORNAMENTAL GRASS. The crossed-card construction was exposed — you could see
+ * the flat plane of the front card edge-on down the middle of the tuft — and it
+ * sat straight onto paving with a hard cut line and no soil under it.
+ *
+ * Five cards at IRREGULAR rotations (evenly spaced is what put two of them
+ * edge-on together), each tilted outward so no two present flat at once, a
+ * mulch collar that removes the stuck-on read for eight triangles, and seed-head
+ * spikes rising clear of the mass.
+ */
+function makeGrassClump(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const H = spec.h, W = spec.w;
+  parts.push(collar(W * 0.30, 8, 0.012, 'mulchTex'));
+  let a = rng() * 3.14;
+  for (let i = 0; i < 5; i++) {
+    // Irregular, not (i/n)*PI: an even fan puts two cards in one plane.
+    a += 0.42 + rng() * 0.62;
+    const g = cardGeo(W * (0.80 + rng() * 0.34), H * (0.80 + rng() * 0.34), 'grassTuft');
+    _m4.makeRotationZ((rng() - 0.5) * 0.34);
+    g.applyMatrix4(_m4);
+    g.rotateY(a);
+    g.translate((rng() - 0.5) * W * 0.16, 0, (rng() - 0.5) * W * 0.16);
+    parts.push(g);
+  }
+  for (let i = 0; i < 4; i++) {
+    const sh = H * (0.30 + rng() * 0.28);
+    const g = cardGeo(W * 0.13, sh, 'grassTuft');
+    g.rotateY(rng() * 3.14);
+    g.translate((rng() - 0.5) * W * 0.42, H * (0.78 + rng() * 0.12), (rng() - 0.5) * W * 0.42);
+    parts.push(g);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  radialNormals(geo, 0, H * 0.45, 0, 0.5);
+  liftNormals(geo, 0.34);
+  return lowWind(geo, H, 0.62);
+}
+
+/**
+ * HIBISCUS. It was three crossed cards plus a horizontal top card, so from the
+ * 3/4 camera it read as a flat green sheet lying on the pavement with red dots
+ * painted on it — the blooms were IN the leaf texture and could never sit proud
+ * of the mass.
+ *
+ * Woody stems fan out of a narrow base, a lumped dome carries the foliage, three
+ * cards tuck INSIDE it to soften the edge rather than define it, and the flowers
+ * are discrete five-petal discs standing off the surface at their own angles.
+ * The bloom colour is per VARIANT rather than per instance because the instance
+ * tint is a multiply and no multiplier takes a red hibiscus to a yellow one.
+ */
+function makeHibiscusBush(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const H = spec.h, R = spec.w * 0.5;
+  parts.push(collar(R * 0.62, 8, 0.012, 'mulchTex'));
+  for (let i = 0; i < 5; i++) {
+    const a = i * 1.31 + rng() * 0.4;
+    const lean = 0.16 + rng() * 0.16;
+    const s = trunkGeo(H * (0.55 + rng() * 0.25), 0.05, 0.022, 'barkOak',
+      { sides: 3, rings: 1, bend: Math.cos(a) * lean, sway: Math.sin(a) * lean });
+    s.translate(Math.cos(a) * 0.11, 0, Math.sin(a) * 0.11);
+    parts.push(s);
+  }
+  const dome = domeGeo('hibiscus', [
+    [H * 0.22, R * 0.86], [H * 0.52, R], [H * 0.82, R * 0.80], [H * 1.02, R * 0.30],
+  ], 8, { lobes: 3, amp: 0.22, rng, jitter: 0.26, highSeg: Math.floor(rng() * 8) });
+  parts.push(dome);
+  for (let i = 0; i < 3; i++) {
+    const g = cardGeo(R * 1.5, H * 0.62, 'hibiscus');
+    g.rotateY(i * 1.31 + rng() * 0.4);
+    g.translate(0, H * 0.30, 0);
+    parts.push(g);
+  }
+  /* Discrete blooms, 3-5 cm proud of the local surface and tilted 20-60 degrees
+     off its normal — a hibiscus flower is 15 cm across on a 1.5 m bush, and at
+     that ratio it has to be geometry or it averages away. */
+  for (let i = 0; i < 11; i++) {
+    const a = i * 2.39996 + rng() * 0.3;
+    const el = 0.10 + rng() * 1.05;
+    const rr = R * (0.72 + rng() * 0.26) * Math.cos(el * 0.85);
+    const f = disc(0.085 + rng() * 0.035, 5, 0, 0, 0, spec.bloomCell);
+    _m4.makeRotationX(-Math.PI / 2 + 0.35 + rng() * 0.70);
+    f.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    f.applyMatrix4(_m4);
+    f.translate(Math.cos(a) * rr, H * (0.34 + Math.sin(el) * 0.66), Math.sin(a) * rr);
+    parts.push(f);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.26);
+  return lowWind(geo, H, 0.40);
+}
+
+/**
+ * AGAVE, rebuilt as radiating quad blades.
+ *
+ * It was two to four crossed cards hinged at the ground, and at the catalogue
+ * camera's pitch a crossed pair presents EDGE ON from half its azimuths — so
+ * the plant was photographed twice and was not there either time. All that
+ * remained at the target point was a hard-edged dark-green rectangle lying on
+ * the turf: 116 instances that can vanish and leave their own blob shadow
+ * behind, which is anti-pattern territery twice over.
+ *
+ * Radiating blades cannot do that from any yaw, and there is no azimuth without
+ * a facing blade because every one of them has a normal that points partly up.
+ * Plus the dried lower skirt every agave carries, a glaucous tint set so 116 of
+ * them are not one hue, and a bud in the middle so the rosette has a centre.
+ */
+function makeAgave(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const R = spec.w * 0.33;
+  const n = 9 + Math.floor(rng() * 4);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * 6.283 + (rng() - 0.5) * 0.30;
+    // 35-55 degrees, which is what stops the rosette being a flat star.
+    const pitch = 0.61 + rng() * 0.35;
+    const len = R * (0.84 + rng() * 0.36);
+    const f = frondGeo(len, len * 0.34, 'agaveB', {
+      segs: 2, rise: 0.10, droop: 0.26, roll: 0.18 + rng() * 0.16, alongV: true,
+    });
+    _m4.makeRotationZ(pitch);
+    f.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    f.applyMatrix4(_m4);
+    f.translate(0, spec.h * 0.10, 0);
+    parts.push(f);
+  }
+  /* The dried skirt. Every agave in a Miami median has one, it is the only
+     non-green thing on the plant, and it is what makes the rosette look grown
+     rather than moulded. Short and shallow so it stays clear of the contact
+     band the physics measures. */
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * 6.283 + rng() * 0.7;
+    const len = R * (0.52 + rng() * 0.20);
+    const f = frondGeo(len, len * 0.40, 'agaveDry', {
+      segs: 2, rise: 0.04, droop: 0.30, roll: 0.42 + rng() * 0.24, alongV: true,
+    });
+    _m4.makeRotationZ(-(0.08 + rng() * 0.16));
+    f.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    f.applyMatrix4(_m4);
+    f.translate(0, spec.h * 0.075, 0);
+    parts.push(f);
+  }
+  parts.push(trunkGeo(spec.h * 0.16, R * 0.20, R * 0.055, 'agaveB', { sides: 4, rings: 1 }));
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  radialNormals(geo, 0, spec.h * 0.06, 0, 0.42);
+  liftNormals(geo, 0.34);
+  // Stiff, succulent leaves. They barely move — that stillness against a
+  // swaying palm is half of why the silhouette contrast reads.
+  windAttr(geo, (x, y) => Math.pow(Math.min(1, Math.max(0, y) / (R * 0.8)), 2.2) * 0.09);
   return geo;
 }
 
@@ -2306,41 +3788,124 @@ function makeFountain(scale, tiers) {
   const push = (g, w, lit = 0) => { windAttr(g, () => w); glowAttr(g, () => lit); parts.push(g); };
   const R = 3.1 * scale;
   const rimH = 0.62 * scale;
+  /* 12 sides on the big one. At 7.9 m radius an octagon is visibly faceted from
+     the game camera — the review's word was "reads as a stop sign" — and a
+     grand fountain is the biggest landmark in a park. */
+  const N = scale > 1.3 ? 12 : 10;
 
-  // The stone is washed by the water it holds, so the rim gets a little of the
-  // warm-side glow rather than none at all.
-  push(ringWall(R * 0.86, R, rimH, 0, 8, 'stoneTex'), 0, 1.12);
-  // Basin floor, sunk a little so the rim reads as a lip.
-  push(disc(R * 0.87, 8, 0, rimH * 0.55, 0, 'waterDisc'), -1.0, -0.85);
+  /**
+   * A MOULDED rim instead of a plain ring wall.
+   *
+   * Every rim in this object was one flat octagonal ring in one cream tone, so
+   * a plaza landmark that fills the frame had no profile on it at all. A real
+   * basin coping is three courses: a chamfered top that catches the key light,
+   * a shadow reveal under it that goes dark whatever the sun does, and the wall
+   * proper. Nine extra quads per rim on 26 instances in the whole city.
+   */
+  const rim = (rIn, rOut, h, y, lit) => {
+    const t = (rOut - rIn);
+    // Wall, slightly battered.
+    push(ringWall(rIn, rOut * 0.985, h * 0.72, y, N, 'stoneFine'), 0, lit);
+    // Shadow reveal: pulled IN, so it is in shadow from every sun angle.
+    push(ringWall(rIn, rOut - t * 0.34, h * 0.14, y + h * 0.72, N, 'stoneTex'), 0, lit * 0.5);
+    // Coping: proud of the wall, chamfered, in the lighter of the two stones.
+    push(ringWall(rIn - t * 0.10, rOut * 1.035, h * 0.14, y + h * 0.86, N, 'stoneCope'), 0, lit);
+  };
 
-  const ped = trunkGeo(rimH * 1.9, R * 0.22, R * 0.16, 'stoneTex', { sides: 8, rings: 2 });
+  rim(R * 0.86, R, rimH, 0, 1.12);
+  /* A WET BAND just above the waterline. Stone that is permanently splashed is
+     two stops darker than stone that is not, and it is the cheapest possible
+     signal that there is water in the bowl. */
+  push(ringWall(R * 0.855, R * 0.872, rimH * 0.20, rimH * 0.42, N, 'sw_shade'), 0, 0.4);
+  // Mosaic floor, then the water sheet over it.
+  push(disc(R * 0.86, N, 0, rimH * 0.50, 0, 'mosaic'), 0, 0.3);
+  push(disc(R * 0.87, N, 0, rimH * 0.55, 0, 'waterDisc'), -1.0, -0.85);
+
+  /* Pedestal with a moulded torus band at its foot and its neck — a plain
+     tapered drum is a bollard, the two bands are what make it a pedestal. */
+  const ped = trunkGeo(rimH * 1.9, R * 0.22, R * 0.16, 'stoneFine', { sides: 8, rings: 2 });
   ped.translate(0, rimH * 0.5, 0);
   push(ped, 0, 1.18);
+  push(ringWall(R * 0.20, R * 0.29, rimH * 0.22, rimH * 0.48, 8, 'stoneCope'), 0, 1.18);
+  push(ringWall(R * 0.15, R * 0.23, rimH * 0.20, rimH * 2.16, 8, 'stoneCope'), 0, 1.18);
 
   let topY = rimH * 2.4;
   for (let i = 0; i < tiers; i++) {
     const br = R * (0.46 - i * 0.14);
-    push(ringWall(br * 0.78, br, 0.22 * scale, topY, 8, 'stoneTex'), 0, 1.14);
-    push(disc(br * 0.79, 8, 0, topY + 0.15 * scale, 0, 'waterDisc'), -0.7, -0.8);
-    const stem = trunkGeo(0.9 * scale, br * 0.24, br * 0.18, 'stoneTex', { sides: 6, rings: 1 });
+    rim(br * 0.78, br, 0.30 * scale, topY, 1.14);
+    push(disc(br * 0.79, N, 0, topY + 0.19 * scale, 0, 'waterDisc'), -0.7, -0.8);
+    /* THE SKIRT. Nothing fell between the tiers, so the bowls read as stacked
+       rather than connected — the one thing that makes a tiered fountain a
+       fountain. A translucent-looking sheet hanging from the lip to the water
+       below, cut out between its strands so the alpha test can carry it. */
+    const drop = i === 0 ? topY - rimH * 0.55 : 1.1 * scale;
+    const skirt = new THREE.CylinderGeometry(br * 1.02, br * 0.94, drop, N, 1, true);
+    skirt.translate(0, topY - drop / 2, 0);
+    mapUV(skirt, uvOf('waterVeil'));
+    push(skirt, -0.45, -0.55);
+    const stem = trunkGeo(0.9 * scale, br * 0.24, br * 0.18, 'stoneFine', { sides: 6, rings: 1 });
     stem.translate(0, topY + 0.2 * scale, 0);
     push(stem, 0, 1.16);
     topY += 1.1 * scale;
   }
 
-  /* Jet: a tapered column of water. It gets a positive (foliage) weight so it
-     sways instead of bobbing — a jet leans in the wind, it does not pulse. */
-  const jet = trunkGeo(1.6 * scale, 0.10 * scale, 0.035 * scale, 'sw_white', { sides: 5, rings: 3 });
-  jet.translate(0, topY, 0);
-  windAttr(jet, (x, y) => Math.max(0, (y - topY) / (1.6 * scale)) * 0.5);
-  // Brightest where it leaves the nozzle and the fixture is pointing at it.
-  glowAttr(jet, (x, y) => -1.15 + Math.min(0.7, Math.max(0, y - topY) * 0.4));
-  parts.push(jet);
-  // The bead of spray at the top of the jet.
-  const bead = disc(0.34 * scale, 8, 0, topY + 1.62 * scale, 0, 'sw_white');
-  windAttr(bead, () => 0.55);
-  glowAttr(bead, () => -0.5);
-  parts.push(bead);
+  /* THE JET. It was a cream tapered cone with a flat disc on top — a stone
+     obelisk with a mushroom cap, which is exactly what the review called it.
+     Water is not a solid: it is three nested shells of different heights and
+     radii, lit near-white, on the same additive night treatment the water discs
+     use, and it breaks into droplets at the top rather than ending in a bead. */
+  for (let k = 0; k < 3; k++) {
+    const jh = (1.35 + k * 0.30) * scale;
+    const jr = (0.13 - k * 0.032) * scale;
+    const shell = trunkGeo(jh, jr, jr * 0.30, 'sw_white', { sides: 5, rings: 3 });
+    shell.translate(0, topY, 0);
+    windAttr(shell, (x, y) => Math.max(0, (y - topY) / jh) * 0.5);
+    glowAttr(shell, (x, y) => -1.20 + Math.min(0.65, Math.max(0, y - topY) * 0.4));
+    parts.push(shell);
+  }
+  // Splayed droplet cones at the top: spray, not a lampshade.
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * 6.283 + 0.4;
+    const d = trunkGeo(0.42 * scale, 0.075 * scale, 0.012 * scale, 'sw_white',
+      { sides: 3, rings: 1 });
+    _m4.makeRotationZ(0.55 + (k % 2) * 0.28);
+    d.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    d.applyMatrix4(_m4);
+    d.translate(0, topY + 1.55 * scale, 0);
+    windAttr(d, () => 0.62);
+    glowAttr(d, () => -0.85);
+    parts.push(d);
+  }
+
+  /* Bronze spout heads round the basin rim of the grand fountain, each throwing
+     its own short arc back into the bowl. */
+  if (tiers > 1) {
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * 6.283 + 0.2;
+      const sx = Math.cos(a) * R * 0.80, sz = Math.sin(a) * R * 0.80;
+      const sp = trunkGeo(0.30 * scale, 0.075 * scale, 0.055 * scale, 'bronze',
+        { sides: 5, rings: 1 });
+      _m4.makeRotationZ(-1.05);
+      sp.applyMatrix4(_m4);
+      _m4.makeRotationY(a + Math.PI);
+      sp.applyMatrix4(_m4);
+      sp.translate(sx, rimH * 1.02, sz);
+      push(sp, 0, 1.2);
+      const pts = [];
+      for (let q = 0; q <= 3; q++) {
+        const t = q / 3;
+        pts.push({
+          x: sx * (1 - t * 0.42), y: rimH * (1.05 + t * 0.42 - t * t * 1.35),
+          z: sz * (1 - t * 0.42),
+        });
+      }
+      const arc = pipeGeo(pts, (t) => 0.035 * scale * (1 - t * 0.4), 3, 'sw_white');
+      windAttr(arc, () => 0.25);
+      glowAttr(arc, () => -0.9);
+      parts.push(arc);
+    }
+  }
 
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
@@ -2358,63 +3923,115 @@ function makeFountain(scale, tiers) {
 function makeParkLamp() {
   const parts = [];
   const H = 4.3;
-  parts.push(mapUV(box(0.52, 0.16, 0.52, 0, 0.08, 0, 1), uvOf('stoneTex')));
-  parts.push(mapUV(box(0.40, 0.26, 0.40, 0, 0.29, 0, 1), uvOf('stoneTex')));
-  parts.push(trunkGeo(H - 0.42, 0.10, 0.065, 'sw_steel', { sides: 6, rings: 3 })
-    .translate(0, 0.42, 0));
-  // Lantern: a short tapered glass drum under a cap. Six sides is enough at the
-  // distance a 4 m lamp is ever seen from, and it keeps the pool cheap.
-  const glass = trunkGeo(0.62, 0.20, 0.26, 'sw_white', { sides: 6, rings: 1 });
-  glass.translate(0, H - 0.62, 0);
+  /* TWO-TONE, and that is the whole read. It was one flat white from the plinth
+     to the cap, so at 20 m it was a pale stick with a lump on top and nothing
+     said "light fitting". A dark bronze frame against warm white glass is what
+     the eye picks up before it can resolve any of the detail below. */
+  parts.push(bevelBox(0.56, 0.15, 0.56, 0.045, 'stoneFine', 'stoneCope').translate(0, 0, 0));
+  parts.push(bevelBox(0.42, 0.26, 0.42, 0.04, 'bronze', 'bronze').translate(0, 0.15, 0));
+  // Fluted, tapered column with a moulded collar a third of the way up.
+  parts.push(trunkGeo(H - 0.46, 0.105, 0.062, 'bronze', { sides: 6, rings: 3, flute: 0.16 })
+    .translate(0, 0.41, 0));
+  parts.push(ringWall(0.085, 0.135, 0.10, 1.62, 6, 'bronze'));
+  // A wider drip skirt under the lantern — the flare that throws rain clear of
+  // the glass, and the thing that gives the fitting a waist.
+  parts.push(trunkGeo(0.20, 0.10, 0.30, 'bronze', { sides: 6, rings: 1 })
+    .translate(0, H - 1.06, 0));
+  /* The lens box. Twelve sides with alternate facets pulled in and skinned in
+     bronze, so the glazing reads as six panels separated by real corner
+     mullions rather than as one tapered drum. */
+  const glass = trunkGeo(0.66, 0.23, 0.27, 'glassWarm', { sides: 12, rings: 1 });
+  glass.translate(0, H - 0.98, 0);
   parts.push(glass);
-  parts.push(mapUV(box(0.62, 0.10, 0.62, 0, H - 0.01, 0, 1), uvOf('sw_steel')));
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * 6.283;
+    const m = trunkGeo(0.68, 0.028, 0.030, 'bronze', { sides: 3, rings: 1 });
+    m.translate(Math.cos(a) * 0.235, H - 0.99, Math.sin(a) * 0.235);
+    parts.push(m);
+  }
+  // Hipped cap and a finial spike over it.
+  parts.push(trunkGeo(0.20, 0.34, 0.10, 'bronze', { sides: 6, rings: 1 })
+    .translate(0, H - 0.32, 0));
+  parts.push(trunkGeo(0.22, 0.045, 0.008, 'bronze', { sides: 4, rings: 1 })
+    .translate(0, H - 0.12, 0));
+  // The ladder bar a lamplighter's hook sits on — small, and unmistakably a
+  // street-furniture detail.
+  parts.push(mapUV(box(0.72, 0.035, 0.035, 0, H - 1.16, 0, 1), uvOf('bronze')));
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   windAttr(geo, () => 0);
   // >1 means "a fixture, always lit". A lamp that only comes on for a third of
   // the posts on the path is worse than no lamps at all — which is exactly what
   // the hash-gated branch would do to it. The column just under the lantern
   // catches a little of its own light.
-  glowAttr(geo, (x, y) => (y > H - 0.75 ? 2.45 : y > H - 1.6 ? 1.22 : 0));
+  glowAttr(geo, (x, y) => (y > H - 1.02 && y < H - 0.30 ? 2.45 : y > H - 1.7 ? 1.22 : 0));
   return geo;
 }
 
 /**
- * A stemless rosette — agave, yucca, bird of paradise. Crossed cards hinged at
- * the ground, so its whole footprint is the 30 cm the leaves actually rise
- * from, not the metre they spread over.
+ * Raised plaza planter.
+ *
+ * Two defects, both visible in the isolated shot. The box was four independent
+ * wall slabs that did not mitre, so from the game camera you saw dark notches
+ * where the panels failed to meet — 71 of them. And the "planting" was two
+ * intersecting flat cards whose rectangular silhouette was completely exposed
+ * from a 3/4 view, standing up out of a box with no coping course, no bevel and
+ * a blotchy brown-on-cream stone that read as camouflage rather than masonry.
+ *
+ * So: one lofted ring (corners closed by construction), a plinth, a proud
+ * chamfered coping course in a lighter stone, an even fine limestone on the
+ * walls, a dark soil plane 15 cm down, and five to seven overlapping shrub
+ * cards at mixed heights so the top edge is lumpy and no single card edge is
+ * legible — plus a small palm out of the middle of the big ones.
  */
-function makeRosette(cell, w, h, cards = 3) {
+function makePlanter(w, d, h, seed = 7, tree = false) {
+  const rng = makeRNG(seed);
   const parts = [];
-  for (let i = 0; i < cards; i++) {
-    const g = cardGeo(w, h, cell);
-    g.rotateY((i / cards) * Math.PI + i * 0.17);
-    parts.push(g);
-  }
-  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  radialNormals(geo, 0, h * 0.35, 0, 0.55);
-  liftNormals(geo, 0.3);
-  // Stiff, succulent leaves. They barely move — that stillness against a
-  // swaying palm is half of why the silhouette contrast reads.
-  windAttr(geo, (x, y) => Math.pow(Math.min(1, y / h), 2.2) * 0.10);
-  return geo;
-}
+  const t = 0.26;
+  // Plinth, wall, coping — three courses, each proud of the one above or below.
+  parts.push(rectRing(w, d, t * 1.5, 0.12, 'stoneFine', 'stoneCope'));
+  parts.push(rectRing(w - 0.10, d - 0.10, t, h - 0.10, 'stoneFine', 'soilDark')
+    .translate(0, 0.10, 0));
+  // Seat-height coping: 8 cm proud of the wall, chamfered, lighter stone.
+  parts.push(bevelBox(w - 0.10 + 0.16, 0.10, d - 0.10 + 0.16, 0.035, 'stoneCope', 'stoneCope')
+    .translate(0, h - 0.10, 0));
+  parts.push(bevelBox(w - t * 2.2, 0.10, d - t * 2.2, 0.03, 'stoneCope', 'stoneCope')
+    .translate(0, h - 0.10, 0));
+  // Visible soil, 15 cm below the coping.
+  parts.push(plate(w - t * 2.2, d - t * 2.2, h - 0.15, 'soilDark'));
 
-/** Raised plaza planter: a stone box with a shrub mass sitting in it. */
-function makePlanter(w, d, h) {
-  const parts = [];
-  const t = 0.22;
-  parts.push(mapUV(box(w, h, t, 0, h / 2, -d / 2 + t / 2, 1.2), uvOf('stoneTex')));
-  parts.push(mapUV(box(w, h, t, 0, h / 2, d / 2 - t / 2, 1.2), uvOf('stoneTex')));
-  parts.push(mapUV(box(t, h, d - t * 2, -w / 2 + t / 2, h / 2, 0, 1.2), uvOf('stoneTex')));
-  parts.push(mapUV(box(t, h, d - t * 2, w / 2 - t / 2, h / 2, 0, 1.2), uvOf('stoneTex')));
-  parts.push(mapUV(box(w, 0.1, d, 0, h - 0.16, 0, 1.2), uvOf('mulchTex')));
-  // Planting: three crossed cards rising out of the box.
-  const bushH = Math.max(1.1, Math.min(w, d) * 0.95);
-  for (let i = 0; i < 3; i++) {
-    const c = cardGeo(Math.min(w, d) * 1.15, bushH, 'shrubA');
-    c.rotateY((i / 3) * Math.PI + i * 0.2);
-    c.translate(0, h - 0.2, 0);
+  const bushH = Math.max(1.05, Math.min(w, d) * 0.92);
+  const n = 5 + Math.floor(rng() * 3);
+  for (let i = 0; i < n; i++) {
+    const cw = Math.min(w, d) * (0.62 + rng() * 0.55);
+    const c = cardGeo(cw, bushH * (0.62 + rng() * 0.52), rng() < 0.22 ? 'croton' : 'shrubA');
+    c.rotateY(rng() * 3.14);
+    c.translate((rng() - 0.5) * (w - t * 3) * 0.7, h - 0.30, (rng() - 0.5) * (d - t * 3) * 0.6);
     parts.push(c);
+  }
+  // A low solid mound under the cards so the planting has a body and the box is
+  // not full of daylight when the cards go edge-on.
+  parts.push(domeGeo('shrubA', [
+    [0, Math.min(w, d) * 0.40], [bushH * 0.32, Math.min(w, d) * 0.36],
+    [bushH * 0.52, Math.min(w, d) * 0.16],
+  ], 6, { lobes: 3, amp: 0.24, rng, jitter: 0.2 }).translate(0, h - 0.22, 0));
+
+  if (tree) {
+    // A small palm rising out of the middle: the thing that makes a 5 m planter
+    // a landmark rather than a long box with a hedge in it.
+    parts.push(trunkGeo(1.5, 0.15, 0.10, 'barkQueen', { sides: 5, rings: 2 })
+      .translate(0, h - 0.16, 0));
+    for (let i = 0; i < 6; i++) {
+      const a = i * 2.39996 + rng() * 0.4;
+      const len = 1.25 * (0.82 + rng() * 0.36);
+      const f = frondGeo(len, len * 0.46, i % 2 ? 'frondC' : 'frondA',
+        { segs: 2, rise: 0.42, droop: 1.0, roll: 0.34 });
+      _m4.makeRotationZ(0.28 + rng() * 0.4);
+      f.applyMatrix4(_m4);
+      _m4.makeRotationY(a);
+      f.applyMatrix4(_m4);
+      f.translate(0, h + 1.34, 0);
+      parts.push(f);
+    }
   }
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   liftNormals(geo, 0.2);
@@ -2422,43 +4039,252 @@ function makePlanter(w, d, h) {
   return geo;
 }
 
-/** Shade pergola: four posts, a header beam, slatted top. */
+/**
+ * Shade pergola.
+ *
+ * The silhouette was right and it threw a good striped shadow, but every joint
+ * was wrong: the slats were cut flush with the header beams so there was no
+ * rafter overhang, there were no knee braces, the posts had no base plates or
+ * capitals, and the whole thing was one flat timber tone with nothing growing
+ * on it. All five are joinery, and joinery is what makes a timber structure
+ * read as built rather than as extruded.
+ */
 function makePergola(w, d, h) {
+  const rng = makeRNG(0x5eed);
   const parts = [];
-  const p = 0.16;
+  const p = 0.18;
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      parts.push(mapUV(box(p, h, p, sx * (w / 2 - p), h / 2, sz * (d / 2 - p), 1), uvOf('sw_wood')));
+      const px = sx * (w / 2 - p), pz = sz * (d / 2 - p);
+      // Steel base plate with four bolt heads, then the post, then a capital.
+      parts.push(bevelBox(0.40, 0.05, 0.40, 0.014, 'sw_steel').translate(px, 0, pz));
+      for (const bx of [-1, 1]) {
+        for (const bz of [-1, 1]) {
+          parts.push(trunkGeo(0.045, 0.028, 0.024, 'sw_steel', { sides: 4, rings: 1 })
+            .translate(px + bx * 0.13, 0.05, pz + bz * 0.13));
+        }
+      }
+      parts.push(bevelBox(p, h - 0.05, p, 0.022, 'timberDk', 'timberLt')
+        .translate(px, 0.05, pz));
+      parts.push(bevelBox(p * 1.55, 0.10, p * 1.55, 0.026, 'timberLt', 'timberLt')
+        .translate(px, h - 0.10, pz));
+      /* KNEE BRACES. A 45-degree brace at each post/beam junction is the single
+         detail that separates a pergola from four sticks and a grid. */
+      const br = bevelBox(0.11, 0.62, 0.11, 0.018, 'timberDk', 'timberDk');
+      br.translate(0, -0.31, 0);
+      br.rotateZ(-sx * 0.785);
+      br.translate(px + sx * 0.28, h - 0.30, pz);
+      parts.push(br);
     }
   }
-  parts.push(mapUV(box(w, 0.18, p * 1.4, 0, h, -d / 2 + p, 1), uvOf('sw_wood')));
-  parts.push(mapUV(box(w, 0.18, p * 1.4, 0, h, d / 2 - p, 1), uvOf('sw_wood')));
-  const slats = Math.max(4, Math.round(w / 0.75));
+  for (const s of [-1, 1]) {
+    parts.push(bevelBox(w, 0.20, p * 1.4, 0.03, 'timberDk', 'timberLt')
+      .translate(0, h - 0.02, s * (d / 2 - p)));
+  }
+  /* Rafters run 25 cm past the header on both ends with the exposed end cut to
+     a 45-degree tail — the overhang is what throws the striped shadow past the
+     frame instead of stopping dead at it. */
+  const slats = Math.max(5, Math.round(w / 0.68));
   for (let i = 0; i < slats; i++) {
     const x = -w / 2 + (i + 0.5) * (w / slats);
-    parts.push(mapUV(box(0.13, 0.16, d, x, h + 0.16, 0, 1), uvOf('sw_wood')));
+    const tone = i % 3 === 0 ? 'timberLt' : i % 3 === 1 ? 'sw_wood' : 'timberDk';
+    parts.push(bevelBox(0.14, 0.17, d + 0.50, 0.024, tone, 'timberLt')
+      .translate(x, h + 0.18, 0));
+    for (const s of [-1, 1]) {
+      // The 45-degree tail: a wedge on the end of each rafter.
+      const tail = trunkGeo(0.20, 0.075, 0.02, tone, { sides: 4, rings: 1 });
+      _m4.makeRotationX(s * Math.PI * 0.5);
+      tail.applyMatrix4(_m4);
+      tail.translate(x, h + 0.20, s * (d / 2 + 0.25));
+      parts.push(tail);
+    }
   }
+  /* A bougainvillea threaded over one end. A shade structure with nothing
+     growing on it is a frame; this is what makes it a planted one. */
+  for (let i = 0; i < 7; i++) {
+    const cw = 1.1 + rng() * 0.9;
+    const c = cardGeo(cw, cw * 0.75, i % 3 === 0 ? 'shrubA' : 'canopyPink');
+    c.translate(0, -cw * 0.30, 0);
+    _m4.makeRotationX(-1.1 - rng() * 0.7);
+    c.applyMatrix4(_m4);
+    c.rotateY(rng() * 3.14);
+    c.translate(w * (0.28 + rng() * 0.20), h + 0.30 + rng() * 0.22,
+      (rng() - 0.5) * d * 0.9);
+    parts.push(c);
+  }
+  parts.push(trunkGeo(h + 0.3, 0.07, 0.04, 'barkOak', { sides: 4, rings: 3, bend: 0.06 })
+    .translate(w * 0.40, 0, d * 0.42));
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  windAttr(geo, () => 0);
+  windAttr(geo, (x, y) => (y > h ? 0.16 : 0));
   return geo;
 }
 
-/** Abstract public art: three stacked, rotated slabs. Tinted per instance. */
+/**
+ * Abstract public art.
+ *
+ * It was 48 triangles of untextured box with razor 90-degree edges, ALL in one
+ * flat hot pink including the plinth, standing 8.6 m tall in the middle of a
+ * plaza where the camera looks straight at it. That is the art bible's own
+ * anti-pattern list, item 3, in a landmark position.
+ *
+ * The material moves onto the shared atlas so the two halves can be separated:
+ * the plinth is stone and stays stone (aTint 0), and only the slabs take the
+ * per-instance accent (aTint 1, see SOLID_TINTABLE). Every edge is chamfered,
+ * every slab is twisted AND tapered rather than a straight prism, one is pierced
+ * so the silhouette has a hole in it, top faces are painted lighter than flanks
+ * and flanks lighter than undersides, and there is a plaque on the plinth.
+ */
 function makeSculpture(seed) {
   const rng = makeRNG(seed);
   const parts = [];
-  let y = 0;
-  parts.push(box(2.6, 0.4, 2.6, 0, 0.2, 0, 1));
-  y = 0.4;
+  // Two chamfered stone courses, in cream and grey — NOT the accent colour.
+  parts.push(bevelBox(3.0, 0.30, 3.0, 0.075, 'stoneFine', 'stoneCope'));
+  parts.push(bevelBox(2.5, 0.34, 2.5, 0.065, 'stoneCope', 'stoneCope').translate(0, 0.30, 0));
+  // The engraved plaque.
+  const pl = bevelBox(0.62, 0.30, 0.05, 0.012, 'bronze', 'bronze');
+  pl.translate(0, 0.22, 1.27);
+  parts.push(pl);
+
+  let y = 0.64;
+  const pierced = 1 + Math.floor(rng() * 2);
   for (let i = 0; i < 3; i++) {
-    const w = 2.1 - i * 0.42, h = 1.5 + rng() * 1.6, d = 0.85 - i * 0.14;
-    const g = box(w, h, d, 0, h / 2, 0, 1);
+    const w0 = 2.0 - i * 0.36, d0 = 0.90 - i * 0.13;
+    const h = 1.5 + rng() * 1.5;
+    if (i === pierced) {
+      parts.push(piercedSlab(w0, h, d0, Math.min(w0, h) * 0.24, rng));
+    } else {
+      /* Twisted AND tapered: four rings, each rotated a little further and each
+         a little smaller, so no two faces are parallel and the form still reads
+         when it is entirely in shade. */
+      parts.push(twistSlab(w0, d0, h, (rng() - 0.5) * 0.9, 0.62 + rng() * 0.26));
+    }
+    const g = parts[parts.length - 1];
     g.rotateY(rng() * Math.PI);
-    g.translate((rng() - 0.5) * 0.4, y, (rng() - 0.5) * 0.4);
-    parts.push(g);
+    g.translate((rng() - 0.5) * 0.42, y, (rng() - 0.5) * 0.42);
     y += h * 0.86;
   }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, () => 0);
+  glowAttr(geo, (x, yy) => (yy < 0.7 ? 0.5 : 0));
+  return geo;
+}
+
+/** A slab that twists and tapers as it rises — 4 rings, chamfered top and base. */
+function twistSlab(w, d, h, twist, taper) {
+  const rings = [
+    [0.00, 1.00, 0.00], [0.05, 0.96, twist * 0.12],
+    [0.92, taper * 1.02, twist * 0.88], [1.00, taper * 0.92, twist],
+  ];
+  const corner = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5], [-0.5, -0.5]];
+  const rs = uvOf('paintSide'), rb = uvOf('paintDark');
+  const pos = [], nor = [], uv = [], idx = [];
+  for (let i = 0; i < rings.length; i++) {
+    const [t, k, a] = rings[i];
+    const ca = Math.cos(a), sa = Math.sin(a);
+    for (let c = 0; c < corner.length; c++) {
+      const x0 = corner[c][0] * w * k, z0 = corner[c][1] * d * k;
+      pos.push(x0 * ca - z0 * sa, t * h, x0 * sa + z0 * ca);
+      nor.push(corner[c][0] * 2, i === 0 ? -0.4 : 0.12, corner[c][1] * 2);
+      const r = i === 0 ? rb : rs;
+      uv.push(r.u0 + (c / 4) * (r.u1 - r.u0), r.v0 + t * (r.v1 - r.v0));
+    }
+  }
+  const row = corner.length;
+  for (let i = 0; i < rings.length - 1; i++) {
+    for (let c = 0; c < 4; c++) {
+      const a2 = i * row + c, b2 = a2 + 1, c2 = a2 + row, d2 = c2 + 1;
+      idx.push(a2, c2, b2, b2, c2, d2);
+    }
+  }
+  const g = finishGeo(pos, nor, uv, idx);
+  g.normalizeNormals?.();
+  const parts = [cellTag(g, 'paintSide')];
+  // A LIGHTER top face and a darker underside: the form has to stay readable in
+  // shade, and value is the only thing that does that on a single-hue object.
+  const rt = uvOf('paintTop');
+  const tp = [], tn = [], tu = [], ti = [];
+  const ca = Math.cos(rings[3][2]), sa = Math.sin(rings[3][2]), k = rings[3][1];
+  tp.push(0, h, 0); tn.push(0, 1, 0); tu.push((rt.u0 + rt.u1) / 2, (rt.v0 + rt.v1) / 2);
+  for (let c = 0; c < corner.length; c++) {
+    const x0 = corner[c][0] * w * k, z0 = corner[c][1] * d * k;
+    tp.push(x0 * ca - z0 * sa, h, x0 * sa + z0 * ca);
+    tn.push(0, 1, 0);
+    tu.push(rt.u0 + (corner[c][0] + 0.5) * (rt.u1 - rt.u0),
+      rt.v0 + (corner[c][1] + 0.5) * (rt.v1 - rt.v0));
+  }
+  for (let c = 1; c <= 4; c++) ti.push(0, c, c + 1);
+  parts.push(cellTag(finishGeo(tp, tn, tu, ti), 'paintTop'));
   return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** A slab with a circular void through it — the hole IS the silhouette. */
+function piercedSlab(w, h, d, hr, rng) {
+  const N = 8;
+  const rs = uvOf('paintSide'), rt = uvOf('paintTop');
+  const pos = [], nor = [], uv = [], idx = [];
+  const rect = [[-0.5, 0], [0.5, 0], [0.5, 1], [-0.5, 1]];
+  // Each face is a ring of N sectors: hole vertex out to the nearest rectangle
+  // point, so the plate is genuinely holed rather than faked with a dark decal.
+  for (const s of [-1, 1]) {
+    const base = pos.length / 3;
+    const r = s < 0 ? rs : rt;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * 6.283;
+      pos.push(Math.cos(a) * hr, h * 0.5 + Math.sin(a) * hr, s * d * 0.5);
+      nor.push(-Math.cos(a) * 0.3, -Math.sin(a) * 0.3, s);
+      uv.push(r.u0 + (0.5 + Math.cos(a) * 0.18) * (r.u1 - r.u0),
+        r.v0 + (0.5 + Math.sin(a) * 0.18) * (r.v1 - r.v0));
+    }
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * 6.283;
+      // Project the hole direction out to the rectangle boundary.
+      const cx = Math.cos(a), cy = Math.sin(a);
+      const tx = Math.abs(cx) < 1e-4 ? 1e9 : (w * 0.5) / Math.abs(cx);
+      const ty = Math.abs(cy) < 1e-4 ? 1e9 : (h * 0.5) / Math.abs(cy);
+      const t = Math.min(tx, ty);
+      pos.push(cx * t, h * 0.5 + cy * t, s * d * 0.5);
+      nor.push(0, 0, s);
+      uv.push(r.u0 + (0.5 + cx * 0.5) * (r.u1 - r.u0), r.v0 + (0.5 + cy * 0.5) * (r.v1 - r.v0));
+    }
+    for (let i = 0; i < N; i++) {
+      const a = base + i, b = base + (i + 1) % N;
+      const c = base + N + i, dd = base + N + (i + 1) % N;
+      if (s < 0) idx.push(a, c, b, b, c, dd);
+      else idx.push(a, b, c, b, dd, c);
+    }
+  }
+  // Inner wall of the hole.
+  const wall = pos.length / 3;
+  for (const s of [-1, 1]) {
+    for (let i = 0; i <= N; i++) {
+      const a = (i % N / N) * 6.283;
+      pos.push(Math.cos(a) * hr, h * 0.5 + Math.sin(a) * hr, s * d * 0.5);
+      nor.push(-Math.cos(a), -Math.sin(a), 0);
+      uv.push(rs.u0 + (i / N) * (rs.u1 - rs.u0), rs.v0 + (s < 0 ? 0.1 : 0.9) * (rs.v1 - rs.v0));
+    }
+  }
+  for (let i = 0; i < N; i++) {
+    const a = wall + i, b = a + 1, c = wall + N + 1 + i, dd = c + 1;
+    idx.push(a, c, b, b, c, dd);
+  }
+  // Outer rim, so the plate has thickness at its edges too.
+  const rim = pos.length / 3;
+  for (const s of [-1, 1]) {
+    for (let i = 0; i <= 4; i++) {
+      const p = rect[i % 4];
+      pos.push(p[0] * w, p[1] * h, s * d * 0.5);
+      nor.push(p[0] * 2, p[1] * 2 - 1, 0);
+      uv.push(rs.u0 + (i / 4) * (rs.u1 - rs.u0), rs.v0 + (s < 0 ? 0 : 1) * (rs.v1 - rs.v0));
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    const a = rim + i, b = a + 1, c = rim + 5 + i, dd = c + 1;
+    idx.push(a, b, c, b, dd, c);
+  }
+  const g = finishGeo(pos, nor, uv, idx);
+  g.normalizeNormals?.();
+  g.rotateY((rng() - 0.5) * 0.6);
+  return cellTag(g, 'paintSide');
 }
 
 /** Bandshell: a quarter-barrel acoustic shell over a stage. */
@@ -2483,61 +4309,267 @@ function makeBandshell() {
   return geo;
 }
 
-/** Basketball hoop: post, arm, backboard, ring. */
+/**
+ * Basketball hoop.
+ *
+ * Four raw axis-aligned boxes with flat colour and razor edges: the "rim" was a
+ * 0.5 x 0.07 x 0.5 m flat PLATE standing in for a 45 cm ring, there was no net,
+ * and nothing was bevelled. Heights were right and everything else was a
+ * placeholder. Nine instances, so it can afford to be a real one.
+ */
 function makeHoop() {
   const parts = [];
-  parts.push(mapUV(box(0.18, 3.6, 0.18, 0, 1.8, 0, 1), uvOf('sw_steel')));
-  parts.push(mapUV(box(1.1, 0.14, 0.14, 0.55, 3.55, 0, 1), uvOf('sw_steel')));
-  parts.push(mapUV(box(0.08, 1.05, 1.75, 1.12, 3.35, 0, 1), uvOf('sw_white')));
-  parts.push(mapUV(box(0.5, 0.07, 0.5, 1.35, 3.05, 0, 1), uvOf('sw_coral')));
-  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  windAttr(geo, () => 0);
-  return geo;
-}
-
-/** Playground climbing frame + slide. Bright, chunky, obviously a toy. */
-function makePlayground() {
-  const parts = [];
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      parts.push(mapUV(box(0.16, 2.4, 0.16, sx * 1.3, 1.2, sz * 1.1, 1), uvOf('sw_aqua')));
+  const rimY = 3.05, boardY = 3.35;
+  // Base plate + four anchor bolts, then a round post with crash padding.
+  parts.push(bevelBox(0.52, 0.06, 0.52, 0.018, 'sw_steel'));
+  for (const bx of [-1, 1]) {
+    for (const bz of [-1, 1]) {
+      parts.push(trunkGeo(0.05, 0.032, 0.026, 'sw_steel', { sides: 4, rings: 1 })
+        .translate(bx * 0.17, 0.06, bz * 0.17));
     }
   }
-  parts.push(mapUV(box(2.9, 0.18, 2.4, 0, 1.6, 0, 1), uvOf('sw_sun')));
-  parts.push(mapUV(box(2.9, 0.5, 0.14, 0, 2.1, -1.1, 1), uvOf('sw_coral')));
-  const slide = box(0.9, 0.14, 3.4, 0, 0, 0, 1);
-  slide.rotateX(0.55);
-  slide.translate(1.9, 1.05, 0.9);
-  parts.push(mapUV(slide, uvOf('sw_pink')));
+  parts.push(trunkGeo(3.62, 0.075, 0.062, 'sw_steel', { sides: 8, rings: 2 })
+    .translate(0, 0.06, 0));
+  // Blue crash padding on the lower 1.2 m — every municipal court has it and it
+  // is the one splash of colour on an otherwise grey object.
+  parts.push(trunkGeo(1.20, 0.105, 0.100, 'sw_aqua', { sides: 8, rings: 1 })
+    .translate(0, 0.10, 0));
+  /* GOOSENECK: two beams with a 30-degree knee, not one straight box. The
+     offset arm is what puts the backboard over the key instead of over the
+     post, and it is the thing that makes the object read as a hoop in
+     silhouette. */
+  const a1 = bevelBox(0.13, 0.62, 0.13, 0.022, 'sw_steel');
+  a1.translate(0, -0.31, 0);
+  a1.rotateZ(-0.52);
+  a1.translate(0.16, 3.42, 0);
+  parts.push(a1);
+  parts.push(bevelBox(0.72, 0.12, 0.12, 0.022, 'sw_steel').translate(0.62, 3.62, 0));
+  // Backboard: 1.80 x 1.05 with a raised white frame and a painted inner box.
+  parts.push(bevelBox(0.07, 1.05, 1.80, 0.018, 'sw_steel', 'sw_steel')
+    .translate(1.06, boardY - 0.52, 0));
+  parts.push(bevelBox(0.05, 1.11, 1.86, 0.016, 'sw_white', 'sw_white')
+    .translate(1.02, boardY - 0.55, 0));
+  const inner = cardGeo(0.59, 0.45, 'sw_coral');
+  inner.rotateY(Math.PI / 2);
+  inner.translate(0.985, rimY + 0.02, 0);
+  parts.push(inner);
+  for (const s of [-1, 1]) {
+    const gu = bevelBox(0.40, 0.08, 0.08, 0.016, 'sw_steel');
+    gu.rotateZ(0.42);
+    gu.translate(0.86, boardY - 0.34, s * 0.40);
+    parts.push(gu);
+  }
+  /* A REAL RING: a torus 45 cm across on two brackets, with a net hanging 40 cm
+     under it. The net is eight tapering quads on a diamond-mesh cutout, which
+     is 16 triangles and the difference between a hoop and a diagram. */
+  const ring = new THREE.TorusGeometry(0.225, 0.022, 4, 8);
+  ring.rotateX(Math.PI / 2);
+  ring.translate(1.30, rimY, 0);
+  parts.push(mapUV(ring, uvOf('sw_coral')));
+  for (const s of [-1, 1]) {
+    parts.push(bevelBox(0.16, 0.05, 0.05, 0.012, 'sw_steel')
+      .translate(1.03, rimY, s * 0.09));
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * 6.283;
+    const n = cardGeo(0.20, 0.40, 'netMesh');
+    n.translate(0, -0.40, 0);
+    _m4.makeRotationZ(0.22);
+    n.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    n.applyMatrix4(_m4);
+    n.translate(1.30 + Math.cos(a) * 0.20, rimY, Math.sin(a) * 0.20);
+    parts.push(n);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, (x, y) => (y < rimY - 0.05 && y > rimY - 0.5 ? 0.10 : 0));
+  return geo;
+}
+
+/**
+ * Playground climbing frame + slide.
+ *
+ * The massing read as a playground and the colours were joyful in the right
+ * way, but every part was a bare box: the deck was a flat slab with NO RAILINGS
+ * (a child would walk straight off it), there was no ladder up to it, the slide
+ * was a plank with no side rails, the swing seats were flat plates on 5 cm
+ * pencil-thin chains, and the posts had no caps or footings.
+ *
+ * A guard rail and a ladder are the two things that make it a climbing frame
+ * rather than a table, so they come first.
+ */
+function makePlayground() {
+  const parts = [];
+  const deckY = 1.60, DW = 2.9, DD = 2.4;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const px = sx * 1.3, pz = sz * 1.1;
+      // Rubber mat footing, post, coloured dome cap.
+      parts.push(trunkGeo(0.07, 0.20, 0.17, 'rubber', { sides: 6, rings: 1 })
+        .translate(px, 0, pz));
+      parts.push(bevelBox(0.17, 2.55, 0.17, 0.028, 'sw_aqua', 'sw_aqua')
+        .translate(px, 0.07, pz));
+      parts.push(domeGeo('sw_sun', [[0, 0.115], [0.055, 0.10], [0.10, 0.045]], 6, {})
+        .translate(px, 2.62, pz));
+    }
+  }
+  parts.push(bevelBox(DW, 0.18, DD, 0.030, 'sw_sun', 'sw_sun').translate(0, deckY, 0));
+  // Canopy roof, so the deck reads as a house and throws a shadow onto it.
+  for (const s of [-1, 1]) {
+    const r = bevelBox(DW * 0.62, 0.10, DD + 0.5, 0.026, 'sw_coral', 'sw_coral');
+    r.translate(0, -0.05, 0);
+    r.rotateZ(-s * 0.52);
+    r.translate(s * DW * 0.26, 3.02, 0);
+    parts.push(r);
+  }
+  /* GUARD RAIL on three sides: uprights plus two horizontal rails. */
+  const rails = [
+    [-DW / 2, 0, DW / 2, 0, -DD / 2], [-DW / 2, 0, DW / 2, 0, DD / 2],
+  ];
+  for (const [x0, , x1, , z] of rails) {
+    for (const ry of [0.42, 0.78]) {
+      parts.push(bevelBox(DW, 0.075, 0.075, 0.016, 'sw_coral')
+        .translate(0, deckY + 0.18 + ry, z));
+    }
+    for (let i = 0; i <= 3; i++) {
+      parts.push(bevelBox(0.075, 0.86, 0.075, 0.016, 'sw_coral')
+        .translate(x0 + (x1 - x0) * (i / 3), deckY + 0.18, z));
+    }
+  }
+  for (const ry of [0.42, 0.78]) {
+    parts.push(bevelBox(0.075, 0.075, DD, 0.016, 'sw_coral')
+      .translate(-DW / 2, deckY + 0.18 + ry, 0));
+  }
+  /* LADDER up the back face. Two stringers and four rungs. */
+  for (const s of [-1, 1]) {
+    const st = bevelBox(0.09, 2.05, 0.09, 0.018, 'sw_teal');
+    st.translate(0, -1.02, 0);
+    st.rotateX(-0.30);
+    st.translate(-DW / 2 - 0.28, deckY + 1.05, s * 0.42);
+    parts.push(st);
+  }
+  for (let i = 0; i < 4; i++) {
+    const t = (i + 0.5) / 4;
+    parts.push(bevelBox(0.10, 0.07, 0.95, 0.016, 'sw_steel')
+      .translate(-DW / 2 - 0.28 - Math.sin(0.30) * (0.9 - t * 1.8), deckY * t + 0.12, 0));
+  }
+  /* SLIDE: a bed with raised side rails and a flat run-out at the bottom. */
+  const bed = bevelBox(0.86, 0.10, 3.3, 0.02, 'sw_pink', 'sw_pink');
+  bed.translate(0, -0.05, 0);
+  bed.rotateX(0.55);
+  bed.translate(1.90, 1.42, 1.05);
+  parts.push(bed);
+  for (const s of [-1, 1]) {
+    const r = bevelBox(0.09, 0.24, 3.3, 0.018, 'sw_white', 'sw_white');
+    r.rotateX(0.55);
+    r.translate(1.90 + s * 0.44, 1.42, 1.05);
+    parts.push(r);
+  }
+  parts.push(bevelBox(0.86, 0.10, 0.70, 0.02, 'sw_pink', 'sw_pink')
+    .translate(1.90, 0.30, 2.55));
   // A-frame swing beside it.
   for (const sx of [-1, 1]) {
-    const l = box(0.14, 2.6, 0.14, 0, 1.3, 0, 1);
+    const l = bevelBox(0.15, 2.62, 0.15, 0.026, 'sw_teal', 'sw_teal');
     l.rotateZ(sx * 0.22);
     l.translate(sx * 1.9 - 3.6, 0, 0);
-    parts.push(mapUV(l, uvOf('sw_teal')));
+    parts.push(l);
+    parts.push(trunkGeo(0.07, 0.22, 0.18, 'rubber', { sides: 6, rings: 1 })
+      .translate(sx * 1.9 - 3.6 + sx * 0.29, 0, 0));
   }
-  parts.push(mapUV(box(4.0, 0.16, 0.16, -3.6, 2.55, 0, 1), uvOf('sw_teal')));
+  parts.push(bevelBox(4.0, 0.17, 0.17, 0.030, 'sw_teal', 'sw_teal').translate(-3.6, 2.47, 0));
   for (const sx of [-1, 1]) {
-    parts.push(mapUV(box(0.05, 1.5, 0.05, -3.6 + sx * 0.7, 1.8, 0, 1), uvOf('sw_steel')));
-    parts.push(mapUV(box(0.5, 0.09, 0.22, -3.6 + sx * 0.7, 1.05, 0, 1), uvOf('sw_sun')));
+    // Two visible uprights per seat instead of one pencil-thin chain.
+    for (const sz of [-1, 1]) {
+      parts.push(bevelBox(0.045, 1.40, 0.045, 0.010, 'sw_steel')
+        .translate(-3.6 + sx * 0.7, 1.07, sz * 0.19));
+    }
+    // A DISHED seat — a flat plate is a shelf, a dished one is a swing.
+    parts.push(bevelBox(0.52, 0.07, 0.26, 0.022, 'sw_sun', 'sw_sun')
+      .translate(-3.6 + sx * 0.7, 1.00, 0));
+    for (const sz of [-1, 1]) {
+      const lip = bevelBox(0.52, 0.09, 0.05, 0.014, 'sw_sun', 'sw_sun');
+      lip.translate(-3.6 + sx * 0.7, 1.03, sz * 0.14);
+      parts.push(lip);
+    }
   }
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   windAttr(geo, () => 0);
   return geo;
 }
 
-/** Flag pole with a stiffened banner — the banner catches the wind shader. */
-function makeFlagpole(cell) {
+/**
+ * Flag pole.
+ *
+ * Both flags were a single flat perfectly-rectangular card painted with a plain
+ * colour SWATCH — no seal, no stripes, no canton, no fold, no hoist edge and no
+ * ripple. A US flag rendered as a solid pastel rectangle is not identifiable as
+ * a flag of any kind. The pole was a bare 5-sided taper on a raw 0.7 m stone
+ * cube with no truck ball, no halyard and no cleat.
+ *
+ * The flag is now geometry with a wave in it: a 5-segment strip whose Z grows
+ * from nothing at the hoist to +-18 cm at the fly, so alternating faces catch
+ * the key light and the shared wind shader travels the wave along it. Only 17
+ * of these exist in the whole city, so everything else is affordable too.
+ */
+function makeFlagpole(cell, seed = 3) {
+  const rng = makeRNG(seed);
   const parts = [];
   const H = 9.5;
-  parts.push(mapUV(box(0.7, 0.3, 0.7, 0, 0.15, 0, 1), uvOf('stoneTex')));
-  parts.push(trunkGeo(H, 0.11, 0.06, 'sw_steel', { sides: 5, rings: 2 }));
-  const flag = cardGeo(2.4, 1.5, cell);
-  flag.translate(1.2, 0, 0);
-  flag.translate(0, H - 1.9, 0);
+  // Stepped chamfered precast base instead of a raw cube.
+  parts.push(bevelBox(0.92, 0.16, 0.92, 0.05, 'stoneFine', 'stoneCope'));
+  parts.push(bevelBox(0.70, 0.14, 0.70, 0.04, 'stoneFine', 'stoneCope').translate(0, 0.16, 0));
+  parts.push(bevelBox(0.50, 0.22, 0.50, 0.035, 'stoneCope', 'stoneCope').translate(0, 0.30, 0));
+  parts.push(trunkGeo(H, 0.105, 0.055, 'sw_steel', { sides: 8, rings: 3 }).translate(0, 0.50, 0));
+  // Truck ball finial.
+  const ball = new THREE.SphereGeometry(0.095, 6, 4);
+  ball.translate(0, H + 0.60, 0);
+  parts.push(mapUV(ball, uvOf('sw_steel')));
+  // Halyard: two thin lines down to a cleat at 1.4 m. It is 12 triangles and it
+  // is the detail that says "this is rigged" rather than "this is a stick".
+  for (const s of [-1, 1]) {
+    parts.push(pipeGeo([
+      { x: s * 0.055, y: H + 0.42, z: 0 }, { x: s * 0.075, y: 4.0, z: 0.01 },
+      { x: s * 0.085, y: 1.45, z: 0 },
+    ], 0.012, 3, 'sw_steel'));
+  }
+  parts.push(bevelBox(0.22, 0.05, 0.05, 0.012, 'sw_steel').translate(0.10, 1.40, 0));
+
+  /* THE WAVE. 5 segments, 6 x 2 vertices, sine displacement in Z growing to the
+     fly, jittered per instance so a row of three poles does not show three
+     identical flags. */
+  const FW = 2.4, FH = 1.5, SEG = 5;
+  const rect = uvOf(cell);
+  const pos = [], nor = [], uv = [], idx = [];
+  const phase = rng() * 6.283, amp = 0.13 + rng() * 0.09;
+  for (let i = 0; i <= SEG; i++) {
+    const t = i / SEG;
+    const z = Math.sin(phase + t * 4.4) * amp * t * t;
+    // A flag droops a little toward the fly and its lower edge lifts.
+    const sag = -t * t * 0.13;
+    for (let k = 0; k < 2; k++) {
+      pos.push(t * FW, sag + k * FH * (1 - t * 0.10), z * (k ? 1 : 0.72));
+      const dz = Math.cos(phase + t * 4.4) * amp * t;
+      nor.push(-dz * 0.8, 0.12, 1);
+      uv.push(rect.u0 + t * (rect.u1 - rect.u0), rect.v0 + k * (rect.v1 - rect.v0));
+    }
+  }
+  for (let i = 0; i < SEG; i++) {
+    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+    idx.push(a, c, b, b, c, d);
+  }
+  const flag = finishGeo(pos, nor, uv, idx);
+  flag.normalizeNormals?.();
+  cellTag(flag, cell);
+  flag.translate(0.08, H - 1.30, 0);
   parts.push(flag);
+  // A hoist sleeve, so the flag is attached to something.
+  parts.push(trunkGeo(FH, 0.035, 0.032, 'sw_white', { sides: 4, rings: 1 })
+    .translate(0.06, H - 1.32, 0));
+
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
-  windAttr(geo, (x, y) => (y > H - 2.1 ? Math.min(1, x / 2.4) * 0.9 : 0));
+  // The wave TRAVELS: weight grows along the fly, so the shared shader pushes
+  // the free edge much further than the hoist and the ripple runs outward.
+  windAttr(geo, (x, y) => (y > H - 1.6 && x > 0.05 ? Math.pow(Math.min(1, x / FW), 1.4) * 1.5 : 0));
   return geo;
 }
 
@@ -2707,20 +4739,32 @@ function treeVariant(b, r) {
   });
 }
 
+/**
+ * One variant of a low plant.
+ *
+ * `hVar` widens the height roll for the species that get planted in long runs.
+ * A hedge line whose units are all within +-19% of each other reads as one
+ * extruded box however many variants it has; at +-31% it reads as a hedge
+ * someone has been clipping for years.
+ *
+ * `build` is the species' own geometry function — there is no longer a single
+ * `makeBush` that a shrub, a hedge, a flower bed, a croton, a grass tuft and a
+ * groundcover mat all pass through, because that shared builder was the reason
+ * six completely different plants were all the same four alpha cards.
+ */
 function bushVariant(b, r) {
-  // `hVar` widens the height roll for the species that get planted in long
-  // runs. A hedge line whose units are all within +-19% of each other reads as
-  // one extruded box however many variants it has; at +-31% it reads as a
-  // hedge someone has been clipping for years.
   const hv = b.hVar ?? 0.38;
-  return makeBush({
+  return b.build({
     seed: b.seed * 31 + Math.floor(r() * 8192),
     w: b.w * (0.86 + r() * 0.30),
     h: b.h * (1.01 - hv * 0.5 + r() * hv),
     cell: b.cell,
-    cards: b.cards,
     depth: b.depth ? b.depth * (0.85 + r() * 0.3) : 0,
-    top: b.top,
+    // Bloom colour is a per-VARIANT choice, not a per-instance tint: the tint
+    // is a multiply and no multiplier takes a red hibiscus to a yellow one.
+    bloomCell: b.blooms ? b.blooms[Math.floor(r() * b.blooms.length) % b.blooms.length]
+      : b.bloomCell,
+    bedCell: b.bedCell,
   });
 }
 
@@ -2742,6 +4786,16 @@ const TINT_SETS = {
   // only ever take colour away — so this set varies the warmth of the silver
   // and nothing else. A green tint here would quietly undo the cell.
   glaucous: [0xffffff, 0xf3f7f0, 0xe9f3f6, 0xfbf4e8, 0xeef5ea, 0xf7f2ec],
+  /* An agave is not a green plant and 116 of them were all one hue, because the
+     species carried `tints: 'none'`. Two blue-greens, a dusty sage and a warm
+     stone, all near enough white that the glaucous cell survives the multiply. */
+  agave: [0xffffff, 0xe6f0ee, 0xd6e6e4, 0xf2ece0, 0xcfe2e8, 0xe4ecd8],
+  /* A mangrove is dark, dense and glossy. These read as bright lime-green
+     cabbages because the tint set was `canopy`, which is a set of NEAR-WHITE
+     multipliers — it can only ever leave the cell where it is or brighten the
+     impression of it. Deep, cool and desaturated, with exactly one lighter
+     entry for the new growth at the top of a crown. */
+  mangrove: [0x9dc4ac, 0x86b39c, 0x7fae9c, 0x93bda6, 0x8fb8b0, 0xb8d2bc],
   none: [0xffffff],
 };
 

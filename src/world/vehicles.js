@@ -318,7 +318,7 @@ function paletteFor(v) {
     seat: 0x3a3c40,
     hull: v.hull ?? PALETTE.HULL_WHITE,
     deck: v.deck ?? PALETTE.TEAK,
-    sail: PALETTE.SAIL,
+    sail: v.sail ?? PALETTE.SAIL,
     glassDk: v.glassDk ?? 0x1b2b33,
     antifoul: v.antifoul ?? 0x2b3f4a,
     deckLo: v.deckLo ?? darken(v.deck ?? PALETTE.TEAK, 0.68),
@@ -326,7 +326,7 @@ function paletteFor(v) {
     grime: v.grime ?? 0x6b6053,
     hazard: v.hazard ?? PALETTE.ACCENT_SUN,
     sailLo: v.sailLo ?? darken(PALETTE.SAIL, 0.80),
-    steel: PALETTE.STEEL,
+    steel: v.steel ?? PALETTE.STEEL,
     blue: v.blue ?? PALETTE.POLICE_BLUE,
     red: v.red ?? PALETTE.CAR_RED,
     green: v.green ?? PALETTE.BIN_GREEN,
@@ -1131,7 +1131,20 @@ function roadster(sh) {
   mirrors(sh, 0.98, 1.02, 0.42);
 }
 
-/** Grand tourer: very long bonnet, tight fastback cabin set well back. */
+/**
+ * Grand tourer: very long bonnet, tight fastback cabin set well back.
+ *
+ * WHY THE GLASS AND THE SILLS ARE FIXED COLOURS HERE
+ * --------------------------------------------------
+ * This shape is painted graphite, navy, black and teal. With the fleet's shared
+ * glass tone (a mid slate) the roof, the screen and the flank all landed within
+ * a few percent of each other, and a dark instance read from the game camera as
+ * ONE UNBROKEN LUMP — no glasshouse, no shoulder, no wheels. So the cabin tint
+ * and the knocked-back sills are pinned in `FLEET` to values that do not follow
+ * the paint: a near-black cabin band under a bright sky band, and a sill at 35%
+ * of the body colour. Whatever the instance is painted, the flank now carries a
+ * horizontal light-dark-light rhythm.
+ */
 function gtCoupe(sh) {
   sweep(sh, SEC.OCT, [
     { z: -2.42, w: 1.76, h: 0.66, y0: 0.36 },
@@ -1144,20 +1157,44 @@ function gtCoupe(sh) {
     { z: -2.06, w: 1.52, h: 0.26, y0: 0.98, rake: 0.10 },
     { z: -1.10, w: 1.74, h: 0.46, y0: 0.98 },
     { z: 0.34, w: 1.60, h: 0.40, y0: 0.94, rake: -0.66 },
-  ], { edgeRoles: CABIN_GLOSS_ROLES, skip: new Set([0]), capStart: ROLE.GLOSS, capEnd: ROLE.GLASS_HI });
+  ], { edgeRoles: CABIN_GLOSS_ROLES, skip: new Set([0]), capStart: ROLE.GLASS, capEnd: ROLE.GLASS });
   pillar(sh, 0.87, 1.20, -1.10, 0.12, 0.30);
+  // Sky-reflection bands across the top of both screens. The flanks get theirs
+  // from CABIN_GLOSS_ROLES; the screens are caps, so they need it drawn on.
+  sh.flat([-0.62, 1.30, 0.09], [0.62, 1.30, 0.09], [0.66, 1.25, 0.15], [-0.66, 1.25, 0.15],
+    ROLE.GLASS_HI, [0, 0.6, 0.8]);
+  sh.flat([0.60, 1.21, -1.95], [-0.60, 1.21, -1.95], [-0.64, 1.17, -1.88], [0.64, 1.17, -1.88],
+    ROLE.GLASS_HI, [0, 0.6, -0.8]);
   // Bonnet power bulge and a pair of vents: the long nose needs an event.
   chamfer(sh, 0, 1.02, 1.50, 1.10, 0.06, 0.90, 0.05, ROLE.GLOSS);
   for (const s of [-1, 1]) faceY(sh, s * 0.58, 0.99, 0.98, 0.26, 0.44, ROLE.CARBON);
   topDetail(sh, { y: 0.985, zCowl: 0.50, w: 1.30 });
+  // Shoulder crease + door shut line. Five metres of flank was one plane.
+  for (const s of [-1, 1]) {
+    faceX(sh, s * 0.98, 0.86, 0.10, 3.30, 0.05, ROLE.GLOSS_LO, s);
+    faceX(sh, s * 0.98, 0.62, -0.62, 0.05, 0.62, ROLE.CARBON, s);
+    faceX(sh, s * 0.98, 0.62, 1.06, 0.05, 0.62, ROLE.CARBON, s);
+  }
   chamfer(sh, 0, 1.16, -2.28, 1.40, 0.06, 0.30, 0.03, ROLE.GLOSS_LO);
-  faceZ(sh, 0, 0.38, -2.44, 1.24, 0.24, ROLE.CARBON, -1);
-  exhaust(sh, 0.48, 0.44, -2.52, 0.07);
-  wheels4(sh, 0.93, 1.62, -1.56, 0.39, 0.31);
+  /* Tail: a full-width lamp bar with a dark centre panel, over a body-colour
+   * diffuser valance with the pipes RECESSED into it. The old pair of pale
+   * chrome cubes stuck on the bumper corners read as a modelling mistake. */
+  faceZ(sh, 0, 0.86, -2.44, 1.46, 0.10, ROLE.TAIL, -1);
+  faceZ(sh, 0, 0.86, -2.452, 0.52, 0.11, ROLE.DARK, -1);
+  for (const s of [-1, 1]) faceZ(sh, s * 0.52, 0.86, -2.452, 0.42, 0.13, ROLE.TAIL, -1);
+  chamfer(sh, 0, 0.40, -2.40, 1.52, 0.30, 0.24, 0.06, ROLE.GLOSS_LO);
+  faceZ(sh, 0, 0.34, -2.53, 1.16, 0.18, ROLE.CARBON, -1);
+  for (const s of [-1, 1]) faceZ(sh, s * 0.30, 0.42, -2.535, 0.22, 0.10, ROLE.DARK, -1);
+  wheels4(sh, 0.93, 1.62, -1.56, 0.39, 0.31, 8);
   carLamps(sh, { zF: 2.52, zR: -2.42, yH: 0.70, yT: 0.84, dx: 0.58, wL: 0.42, hL: 0.11, yG: 0.44, wG: 1.14, yP: 0.42, rx: 0.99, rz: 1.05 });
   mirrors(sh, 1.01, 1.06, 0.60);
 }
 
+/**
+ * Roadster with the roof down — and the one body in the fleet whose interior is
+ * a first-class surface, because the game's camera looks straight down INTO it.
+ * It used to be a flat pan with two headrests standing on nothing.
+ */
 function convertible(sh) {
   sweep(sh, SEC.OCT, [
     { z: -2.17, w: 1.62, h: 0.72, y0: 0.38 },
@@ -1165,45 +1202,115 @@ function convertible(sh) {
     { z: 1.10, w: 1.84, h: 0.76, y0: 0.33 },
     { z: 2.17, w: 1.58, h: 0.58, y0: 0.35 },
   ], { edgeRoles: OCT_SILL, capStart: ROLE.BODY_LO, capEnd: ROLE.BODY_LO });
-  // Open cockpit: a sunk tub, two headrests and a raked screen.
-  faceY(sh, 0, 1.04, -0.30, 1.48, 1.70, ROLE.SEAT);
-  for (const s of [-1, 1]) chamfer(sh, s * 0.40, 1.20, -0.92, 0.44, 0.30, 0.24, 0.07, ROLE.SEAT);
-  const zw = 0.62;
+  const zw = 0.62;                                   // windscreen base
+  // Sunk footwell floor and a transmission tunnel: the cockpit is a well now.
+  box(sh, 0, 0.92, -0.30, 1.44, 0.10, 1.94, ROLE.DARK);
+  box(sh, 0, 1.02, -0.16, 0.32, 0.14, 1.30, ROLE.INTERIOR);
+  // Door tops in body colour over a darker inner panel.
+  for (const s of [-1, 1]) {
+    chamfer(sh, s * 0.83, 1.08, -0.30, 0.18, 0.10, 1.94, 0.04, ROLE.BODY);
+    faceX(sh, s * 0.73, 1.00, -0.30, 1.90, 0.18, ROLE.INTERIOR, s);
+    // Door shut line and a side crease, so the flank is not a soap bar.
+    faceX(sh, s * 0.93, 0.72, -0.68, 0.05, 0.60, ROLE.BODY_LO, s);
+    faceX(sh, s * 0.93, 0.86, 0.10, 3.00, 0.05, ROLE.BODY_LO, s);
+  }
+  // Two buckets: squab, backrest, headrest.
+  for (const s of [-1, 1]) {
+    box(sh, s * 0.40, 1.02, -0.50, 0.50, 0.12, 0.54, ROLE.SEAT);
+    chamfer(sh, s * 0.40, 1.24, -0.86, 0.48, 0.44, 0.20, 0.07, ROLE.SEAT);
+    box(sh, s * 0.40, 1.50, -0.90, 0.28, 0.18, 0.16, ROLE.DARK);
+  }
+  // Dash cowl with a dark instrument binnacle, and a wheel on the left.
+  chamfer(sh, 0, 1.04, 0.42, 1.44, 0.14, 0.36, 0.06, ROLE.INTERIOR);
+  faceZ(sh, 0, 1.07, 0.24, 1.16, 0.12, ROLE.DARK, -1);
+  stamp(sh, (s2) => {
+    cyl(s2, 0, 0, 0, 0.17, 0.17, 0.04, 6, 'z', ROLE.DARK, [false, false]);
+    box(s2, 0, 0, -0.07, 0.05, 0.05, 0.14, ROLE.INTERIOR);
+  }, { x: -0.40, y: 1.19, z: 0.14, rx: -0.50 });
+  // Folded soft-top stack under a tonneau behind the seats.
+  chamfer(sh, 0, 1.16, -1.34, 1.54, 0.22, 0.60, 0.09, ROLE.DARK);
+  box(sh, 0, 1.10, -1.74, 1.58, 0.08, 0.44, ROLE.BODY_LO);
+  // Raked screen in a chrome frame.
   sh.quad([-0.78, 1.06, zw], [0.78, 1.06, zw], [0.68, 1.46, zw - 0.30], [-0.68, 1.46, zw - 0.30],
     ROLE.GLASS_HI, [0, 0.6, -1]);
   for (const s of [-1, 1]) {
     box(sh, s * 0.73, 1.26, zw - 0.15, 0.05, 0.42, 0.34, ROLE.CHROME);
   }
+  box(sh, 0, 1.46, zw - 0.31, 1.40, 0.05, 0.06, ROLE.CHROME);
+  faceY(sh, 0, 1.10, 1.62, 1.34, 0.05, ROLE.BODY_LO);        // bonnet shut line
   wheels4(sh, 0.87, 1.36, -1.36, 0.37, 0.27);
   carLamps(sh, { zF: 2.17, zR: -2.17, yH: 0.70, yT: 0.78, dx: 0.56, wL: 0.38, yP: 0.44, rx: 0.93, rz: 0.95 });
   mirrors(sh, 0.95, 1.06, 0.52);
 }
 
+/**
+ * Taxi. 175 of them — the highest-count body in the city — so everything here
+ * is chosen for what survives at 40 m and costs nothing at 175 copies.
+ *
+ * The three things that were wrong: the roof box was a blank white brick, the
+ * livery band was authored at x = 0.92, which is the OCT section's own
+ * half-width, so it sank into the chamfer and vanished; and one of the three
+ * operators was painted white, which made those cabs indistinguishable from a
+ * sedan. All three fixed: a real chequer standing 20 mm proud, a lit sign with
+ * a dark bar reading as lettering, and a fleet that is taxi-yellow throughout.
+ */
 function taxi(sh) {
   sedan(sh);
-  // Roof sign: a lit box, not a painted one. It is the single most legible
-  // "this city has taxis in it" cue after dark, and it costs one band.
-  chamfer(sh, 0, 1.58, 0.10, 0.74, 0.22, 0.28, 0.05, ROLE.SIGN);
-  box(sh, 0, 1.45, 0.10, 0.60, 0.06, 0.22, ROLE.DARK);             // mounting foot
-  // Livery band down the doors plus a chequer stripe above it.
+  // Roof sign: a dark plinth carrying a lit box with a dark bar across 60% of
+  // the lit face, which is what "TAXI" looks like from the game camera.
+  box(sh, 0, 1.44, 0.10, 0.62, 0.08, 0.24, ROLE.DARK);
+  chamfer(sh, 0, 1.61, 0.10, 0.86, 0.24, 0.30, 0.05, ROLE.SIGN);
+  for (const dz of [1, -1]) faceZ(sh, 0, 1.61, 0.10 + dz * 0.15, 0.52, 0.10, ROLE.DARK, dz);
+  for (const s of [-1, 1]) faceX(sh, s * 0.43, 1.61, 0.10, 0.18, 0.10, ROLE.DARK, s);
+  /* Chequer band: six alternating quads a door, pushed 20 mm proud of the
+   * flank on a box so it can never sink into the body section. */
   for (const s of [-1, 1]) {
-    faceX(sh, s * 0.92, 0.66, -0.1, 2.5, 0.24, ROLE.ACCENT, s);
-    faceX(sh, s * 0.92, 0.86, -0.1, 2.5, 0.10, ROLE.WHITE, s);
+    for (let i = 0; i < 6; i++) {
+      const z = -1.32 + i * 0.44;
+      box(sh, s * 0.95, 0.80, z, 0.05, 0.16, 0.42, i % 2 ? ROLE.WHITE : ROLE.DARK);
+    }
+    faceX(sh, s * 0.93, 0.60, -0.10, 2.40, 0.20, ROLE.ACCENT, s);   // operator band
+    faceX(sh, s * 0.90, 1.02, -1.78, 0.44, 0.22, ROLE.SIGN, s);     // medallion number
+    faceX(sh, s * 0.86, 1.26, 0.84, 0.16, 0.42, ROLE.DARK, s);      // dark A-pillar
   }
 }
 
+/**
+ * Marked patrol SUV. It inherits a sound body; what makes it a police car is
+ * the dressing, and the dressing was one flat blue rectangle on the door.
+ */
 function police(sh) {
   suv(sh);
-  // Light bar with red and blue ends, plus a door shield panel.
-  chamfer(sh, 0, 2.02, 0.20, 1.24, 0.16, 0.32, 0.05, ROLE.DARK);
-  for (const dz of [1, -1]) {
-    faceZ(sh, -0.42, 2.02, 0.20 + dz * 0.16, 0.38, 0.13, ROLE.TAIL, dz);
-    faceZ(sh, 0.42, 2.02, 0.20 + dz * 0.16, 0.38, 0.13, ROLE.BEACON, dz);
+  /* Light bar: six separate lenses in a dark housing with a low aerofoil
+   * section, instead of one chamfered box with four coloured end faces. */
+  chamfer(sh, 0, 1.99, 0.20, 1.30, 0.09, 0.34, 0.04, ROLE.DARK);
+  chamfer(sh, 0, 2.07, 0.20, 1.18, 0.11, 0.26, 0.05, ROLE.DARK);
+  for (let i = 0; i < 6; i++) {
+    const x = -0.50 + i * 0.20;
+    const role = i % 2 ? ROLE.BEACON : ROLE.TAIL;
+    for (const dz of [1, -1]) faceZ(sh, x, 2.07, 0.20 + dz * 0.13, 0.17, 0.09, role, dz);
+    faceY(sh, x, 2.125, 0.20, 0.17, 0.22, role);
   }
+  for (const s of [-1, 1]) faceX(sh, s * 0.60, 2.07, 0.20, 0.24, 0.09, ROLE.BEACON, s);
   for (const s of [-1, 1]) {
-    faceX(sh, s * 0.98, 0.96, -0.2, 1.9, 0.5, ROLE.BLUE, s);
-    faceX(sh, s * 0.63, 2.02, 0.20, 0.30, 0.13, ROLE.BEACON, s);
+    // Two-part door livery: a swept band, a shield, and a lettering block.
+    faceX(sh, s * 0.99, 1.10, -0.30, 2.10, 0.34, ROLE.BLUE, s);
+    faceX(sh, s * 0.99, 0.84, -0.30, 2.10, 0.16, ROLE.SIGN, s);
+    faceX(sh, s * 1.00, 1.22, 0.42, 0.44, 0.44, ROLE.WHITE, s);
+    faceX(sh, s * 1.01, 1.22, 0.42, 0.22, 0.22, ROLE.BLUE, s);
+    faceX(sh, s * 0.99, 1.20, -1.34, 1.20, 0.18, ROLE.WHITE, s);
   }
+  // Push bar, pillar spotlight, whip antenna.
+  box(sh, 0, 0.86, 2.50, 1.66, 0.10, 0.09, ROLE.CHROME);
+  for (const s of [-1, 1]) {
+    box(sh, s * 0.62, 1.06, 2.48, 0.09, 0.50, 0.09, ROLE.CHROME);
+    box(sh, s * 0.55, 1.28, 2.48, 0.09, 0.09, 0.09, ROLE.CHROME);
+  }
+  stamp(sh, (s2) => {
+    cyl(s2, 0, 0, 0, 0.09, 0.09, 0.22, 6, 'z', ROLE.DARK);
+    faceZ(s2, 0, 0, 0.11, 0.14, 0.10, ROLE.HEAD, 1);
+  }, { x: -0.90, y: 1.62, z: 0.94, ry: -0.5 });
+  cyl(sh, 0.72, 2.06, -2.10, 0.025, 0.02, 1.10, 4, 'y', ROLE.DARK);
 }
 
 /* ================================================ shape: vans, trucks == */
@@ -1263,47 +1370,156 @@ function boxTruck(sh) {
   mirrors(sh, 1.22, 2.30, 3.30);
 }
 
-function flatbed(sh) {
+/**
+ * A working truck's face.
+ *
+ * Every truck cab in the fleet was a smooth rounded box: no grille, no lamp
+ * bezels, no shut line, no step. This is the shared kit, because the flatbed,
+ * the mixer and the refuse truck all present the same 2.2 m frontal panel to a
+ * camera that is usually looking at it from three metres away.
+ */
+function truckFace(sh, o) {
+  const { zN, zL, xF, wF, yG, yL, ySill, yDoor, zDoor } = o;
+  // Chrome grille with three bars, half-let into the nose panel.
+  chamfer(sh, 0, yG, zN + 0.02, wF * 0.62, 0.46, 0.14, 0.04, ROLE.CHROME);
+  for (let i = 0; i < 3; i++) {
+    faceZ(sh, 0, yG - 0.15 + i * 0.15, zN + 0.09, wF * 0.56, 0.07, ROLE.DARK, 1);
+  }
+  for (const s of [-1, 1]) {
+    // Lamp bezel, sitting just BEHIND the lamp plane so the lens reads inside it.
+    box(sh, s * o.dxL, yL, zL - 0.07, 0.36, 0.28, 0.14, ROLE.CHROME);
+    // Door shut line, handle, and a step under the door.
+    faceX(sh, s * xF, yDoor, zDoor, 0.05, 1.00, ROLE.DARK, s);
+    box(sh, s * (xF + 0.03), yDoor + 0.16, zDoor - 0.34, 0.05, 0.06, 0.26, ROLE.CHROME);
+    box(sh, s * (xF - 0.16), ySill, zDoor - 0.30, 0.30, 0.07, 0.56, ROLE.DARK);
+  }
+  // Stepped bumper and a sun visor over the screen.
+  chamfer(sh, 0, ySill + 0.10, zN + 0.16, wF * 1.04, 0.32, 0.22, 0.05, ROLE.DARK);
+  chamfer(sh, 0, o.yVisor, zN - 0.06, wF * 0.92, 0.06, 0.26, 0.03, ROLE.BODY_LO);
+}
+
+/**
+ * Flatbed. `load` builds the strapped-cargo variant — half the fleet runs
+ * loaded, and an always-empty deck is the loudest tell that a truck is scenery.
+ */
+function flatbedBody(sh, load) {
   sweep(sh, SEC.OCT, [
     { z: 1.30, w: 2.20, h: 1.95, y0: 0.60 },
     { z: 3.30, w: 2.20, h: 1.90, y0: 0.60 },
     { z: 3.86, w: 2.06, h: 1.66, y0: 0.60 },
   ], { edgeRoles: OCT_SILL, capStart: false, capEnd: ROLE.BODY_LO });
-  for (const s of [-1, 1]) faceX(sh, s * 1.10, 2.00, 3.00, 1.10, 0.70, ROLE.GLASS, s);
-  faceZ(sh, 0, 2.06, 3.86, 1.82, 0.74, ROLE.GLASS, 1);
-  chamfer(sh, 0, 1.02, -1.30, 2.34, 0.26, 5.60, 0.06, ROLE.DECK);
-  // Stake sides — an open deck needs an edge or it reads as a plank.
+  for (const s of [-1, 1]) faceX(sh, s * 1.10, 1.78, 3.00, 1.10, 0.62, ROLE.GLASS, s);
+  faceZ(sh, 0, 2.02, 3.86, 1.82, 0.70, ROLE.GLASS, 1);
+  truckFace(sh, {
+    zN: 3.86, zL: 3.96, xF: 1.10, wF: 2.06, yG: 1.20, yL: 0.86, dxL: 0.78,
+    ySill: 0.42, yDoor: 1.55, zDoor: 3.00, yVisor: 2.42,
+  });
+  cyl(sh, 0.92, 2.70, 1.42, 0.09, 0.09, 1.60, 6, 'y', ROLE.CHROME);        // stack
+  chamfer(sh, 0, 3.44, 1.42, 0.20, 0.16, 0.20, 0.04, ROLE.DARK);
+  /* --- the deck ------------------------------------------------------------
+   * 5.6 m of one saturated colour was the single largest flat surface on the
+   * vehicle. It is a steel frame now, planked in two timber tones with a real
+   * reveal between the boards, and a diamond-plate strip over each wheel line. */
+  chamfer(sh, 0, 1.02, -1.30, 2.34, 0.26, 5.60, 0.06, ROLE.DARK);
+  for (let i = 0; i < 10; i++) {
+    faceY(sh, -1.00 + i * 0.222, 1.15, -1.30, 0.19, 5.44, i % 2 ? ROLE.DECK_LO : ROLE.DECK);
+  }
+  for (const s of [-1, 1]) faceY(sh, s * 0.98, 1.152, -2.30, 0.24, 2.60, ROLE.STEEL);
+  // Headache rack behind the cab.
+  for (const s of [-1, 1]) box(sh, s * 1.02, 1.90, 1.36, 0.10, 1.40, 0.12, ROLE.DARK);
+  box(sh, 0, 2.56, 1.36, 2.14, 0.12, 0.12, ROLE.DARK);
+  for (const s of [-1, 1]) box(sh, s * 0.36, 1.90, 1.36, 0.07, 1.40, 0.08, ROLE.STEEL);
+  // Stake sides: a rail, four posts a side, and a top rail linking them.
   for (const s of [-1, 1]) {
     chamfer(sh, s * 1.12, 1.30, -1.30, 0.10, 0.34, 5.50, 0.04, ROLE.BODY_LO);
-    for (let i = 0; i < 4; i++) box(sh, s * 1.12, 1.72, -3.6 + i * 1.5, 0.10, 0.86, 0.12, ROLE.STEEL);
+    for (let i = 0; i < 4; i++) box(sh, s * 1.12, 1.72, -3.6 + i * 1.5, 0.10, 0.86, 0.14, ROLE.DARK);
+    box(sh, s * 1.12, 2.12, -2.35, 0.08, 0.09, 4.60, ROLE.DARK);
   }
   chamfer(sh, 0, 0.60, -1.30, 2.20, 0.34, 5.50, 0.06, ROLE.DARK);
-  wheels4(sh, 1.00, 2.70, -2.20, 0.48, 0.30);
+  // Mudguards over the rear bogie, fuel tank and battery box on the rail.
+  for (const s of [-1, 1]) {
+    box(sh, s * 1.02, 1.02, -2.70, 0.42, 0.10, 2.00, ROLE.DARK);
+    box(sh, s * 1.02, 1.02, 2.70, 0.42, 0.10, 1.10, ROLE.DARK);
+  }
+  cyl(sh, -1.06, 0.72, 0.30, 0.30, 0.30, 0.34, 6, 'x', ROLE.CHROME);
+  box(sh, 1.06, 0.76, 0.30, 0.30, 0.44, 0.60, ROLE.DARK);
+  if (load) {
+    // Two crate stacks and a pipe bundle under a ratchet strap.
+    chamfer(sh, -0.48, 1.58, -0.40, 1.02, 0.80, 1.60, 0.06, ROLE.DECK_LO);
+    chamfer(sh, 0.55, 1.42, -0.10, 0.86, 0.48, 1.10, 0.05, ROLE.DECK);
+    for (let i = 0; i < 3; i++) {
+      cyl(sh, 0.10 + i * 0.30, 1.35, -2.60, 0.16, 0.16, 2.20, 6, 'z', ROLE.STEEL);
+    }
+    for (const z of [-0.90, 0.10]) box(sh, -0.48, 1.60, z, 1.10, 0.86, 0.05, ROLE.HAZARD);
+  }
+  wheels4(sh, 1.00, 2.70, -2.20, 0.48, 0.30, 7);
   wheel(sh, 1.00, 0.48, -3.20, 0.48, 0.30, 7); wheel(sh, -1.00, 0.48, -3.20, 0.48, 0.30, 7);
-  carLamps(sh, { zF: 3.96, zR: -4.10, yH: 0.86, yT: 1.02, dx: 0.78, wL: 0.38, yG: 0.52, wG: 1.2, yP: 0.48 });
+  carLamps(sh, { zF: 3.96, zR: -4.10, yH: 0.86, yT: 1.02, dx: 0.78, wL: 0.38, grille: false, yP: 0.48 });
   mirrors(sh, 1.20, 2.24, 3.30);
 }
+function flatbed(sh) { flatbedBody(sh, false); }
+function flatbedLoad(sh) { flatbedBody(sh, true); }
 
+/**
+ * Rear-loader refuse truck.
+ *
+ * It read as a generic box truck because the cab and the body were the same
+ * flat green and the rear was a plain chamfered plate. A refuse truck is
+ * recognised from behind: a packer body overhanging the chassis, a hopper mouth
+ * you can see into, rams down each side and chevrons across the tailgate.
+ */
 function garbageTruck(sh) {
   sweep(sh, SEC.OCT, [
     { z: 1.60, w: 2.28, h: 2.20, y0: 0.58 },
     { z: 3.40, w: 2.28, h: 2.10, y0: 0.58 },
     { z: 3.92, w: 2.14, h: 1.86, y0: 0.58 },
-  ], { edgeRoles: OCT_SILL, capStart: false, capEnd: ROLE.BODY_LO });
-  for (const s of [-1, 1]) faceX(sh, s * 1.14, 2.20, 3.10, 1.10, 0.74, ROLE.GLASS, s);
-  faceZ(sh, 0, 2.26, 3.92, 1.90, 0.80, ROLE.GLASS, 1);
-  // Hopper with the classic sloped back and a tipped rear loader.
+  ], { role: ROLE.WHITE, edgeRoles: { 0: ROLE.DARK, 1: ROLE.DARK, 2: ROLE.DARK },
+    capStart: false, capEnd: ROLE.WHITE });
+  for (const s of [-1, 1]) faceX(sh, s * 1.14, 1.92, 3.10, 1.10, 0.62, ROLE.GLASS, s);
+  faceZ(sh, 0, 2.20, 3.92, 1.90, 0.72, ROLE.GLASS, 1);
+  truckFace(sh, {
+    zN: 3.92, zL: 4.02, xF: 1.14, wF: 2.14, yG: 1.24, yL: 0.90, dxL: 0.82,
+    ySill: 0.44, yDoor: 1.62, zDoor: 3.10, yVisor: 2.62,
+  });
+  // Amber beacon bar across the cab roof.
+  box(sh, 0, 2.86, 3.20, 1.34, 0.10, 0.20, ROLE.DARK);
+  for (const s of [-1, 1]) faceZ(sh, s * 0.42, 2.90, 3.31, 0.42, 0.10, ROLE.AMBER, 1);
+  // Body: green, ribbed, with a rub rail and a livery panel.
   sweep(sh, SEC.OCT, [
-    { z: -3.40, w: 2.30, h: 2.10, y0: 0.66 },
+    { z: -3.10, w: 2.30, h: 2.10, y0: 0.66 },
     { z: -2.20, w: 2.38, h: 2.55, y0: 0.66 },
     { z: 1.40, w: 2.38, h: 2.55, y0: 0.66 },
-  ], { edgeRoles: OCT_SILL, capStart: ROLE.MACH_LO, capEnd: false, role: ROLE.MACH });
-  chamfer(sh, 0, 1.34, -4.10, 2.20, 2.00, 1.20, 0.10, ROLE.MACH_LO);
-  for (const s of [-1, 1]) box(sh, s * 1.05, 2.90, -1.0, 0.16, 0.16, 4.4, ROLE.STEEL);
+  ], { edgeRoles: OCT_SILL, capStart: false, capEnd: false });
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 5; i++) faceX(sh, s * 1.20, 1.90, -1.70 + i * 0.95, 0.14, 1.30, ROLE.BODY_LO, s);
+    faceX(sh, s * 1.205, 1.32, -0.90, 4.20, 0.12, ROLE.DARK, s);         // rub rail
+    faceX(sh, s * 1.21, 2.24, -0.10, 2.60, 0.48, ROLE.WHITE, s);         // livery panel
+    faceX(sh, s * 1.22, 2.24, -0.10, 2.20, 0.14, ROLE.DARK, s);          // lettering
+    faceX(sh, s * 1.21, 1.62, 1.06, 0.56, 0.28, ROLE.HAZARD, s);         // fleet number
+    box(sh, s * 1.12, 1.08, -1.60, 0.34, 0.10, 2.40, ROLE.DARK);         // mudguard
+  }
+  faceY(sh, 0, 3.21, -0.60, 1.86, 3.00, ROLE.BODY_LO);                   // roof panel line
+  /* --- tailgate ------------------------------------------------------------
+   * A distinct packer body overhanging the chassis, with a hopper mouth cut
+   * into it, rams down each side, a rear step and a grab rail. Each decal on
+   * the tail panel gets its own standoff so nothing is coplanar. */
+  chamfer(sh, 0, 1.70, -3.86, 2.44, 2.60, 1.40, 0.12, ROLE.BODY_LO);
+  faceZ(sh, 0, 1.60, -4.570, 1.90, 1.06, ROLE.DARK, -1);                 // hopper mouth
+  faceZ(sh, 0, 0.94, -4.578, 1.60, 0.18, ROLE.GRIME, -1);                // spill lip
+  chevrons(sh, 0, 2.68, -4.586, 2.10, 0.28, 6, -1);
+  for (const s of [-1, 1]) {
+    ram(sh, [s * 1.18, 2.60, -3.30], [s * 1.18, 1.40, -4.20], 0.09);
+    box(sh, s * 0.86, 0.74, -4.62, 0.60, 0.09, 0.30, ROLE.STEEL);        // rear step
+    box(sh, s * 1.16, 1.90, -4.62, 0.07, 1.10, 0.07, ROLE.CHROME);       // grab rail
+    box(sh, s * 0.52, 1.10, -4.78, 0.14, 0.12, 0.50, ROLE.DARK);         // bin-lifter fork
+  }
+  box(sh, 0, 1.16, -4.96, 1.30, 0.12, 0.12, ROLE.DARK);
+  // Side ladder up to the body.
+  for (let i = 0; i < 3; i++) box(sh, 1.24, 1.00 + i * 0.36, -2.90, 0.10, 0.07, 0.44, ROLE.CHROME);
   chamfer(sh, 0, 0.66, -0.9, 2.24, 0.32, 6.4, 0.06, ROLE.DARK);
-  wheels4(sh, 1.02, 2.80, -1.90, 0.50, 0.32);
+  wheels4(sh, 1.02, 2.80, -1.90, 0.50, 0.32, 7);
   wheel(sh, 1.02, 0.50, -2.95, 0.50, 0.32, 7); wheel(sh, -1.02, 0.50, -2.95, 0.50, 0.32, 7);
-  carLamps(sh, { zF: 4.02, zR: -4.72, yH: 0.90, yT: 1.10, dx: 0.82, wL: 0.38, yG: 0.54, wG: 1.3, yP: 0.50 });
+  carLamps(sh, { zF: 4.02, zR: -4.72, yH: 0.90, yT: 1.10, dx: 0.82, wL: 0.38, grille: false, yP: 0.50 });
   mirrors(sh, 1.24, 2.44, 3.36);
 }
 
@@ -1313,14 +1529,27 @@ function cementMixer(sh) {
     { z: 3.40, w: 2.26, h: 2.10, y0: 0.60 },
     { z: 3.90, w: 2.12, h: 1.86, y0: 0.60 },
   ], { edgeRoles: OCT_SILL, capStart: false, capEnd: ROLE.BODY_LO });
-  for (const s of [-1, 1]) faceX(sh, s * 1.13, 2.20, 3.10, 1.10, 0.74, ROLE.GLASS, s);
-  faceZ(sh, 0, 2.26, 3.90, 1.88, 0.80, ROLE.GLASS, 1);
-  // The drum: two tapered cylinders tilted nose-up, plus the feed chute.
-  // Nose-down toward the discharge chute at the rear, like the real thing.
+  for (const s of [-1, 1]) faceX(sh, s * 1.13, 1.94, 3.10, 1.10, 0.62, ROLE.GLASS, s);
+  faceZ(sh, 0, 2.22, 3.90, 1.88, 0.72, ROLE.GLASS, 1);
+  truckFace(sh, {
+    zN: 3.90, zL: 4.00, xF: 1.13, wF: 2.12, yG: 1.24, yL: 0.90, dxL: 0.80,
+    ySill: 0.44, yDoor: 1.64, zDoor: 3.10, yVisor: 2.64,
+  });
+  /* --- the drum ------------------------------------------------------------
+   * Tilted nose-up, discharging at the rear. `dp` gives a point at axial
+   * offset t and angle a on the tilted axis, which is what lets the helical
+   * fins, the hopper and the chute all sit ON the drum rather than near it. */
   const tilt = 0.13;
   const drumY = 2.55, drumZ = -0.90;
   const sy = Math.sin(tilt), cyy = Math.cos(tilt);
   const seg = 10;
+  const dp = (t, a, r) => [
+    Math.cos(a) * r,
+    drumY - t * sy + Math.sin(a) * r * cyy,
+    drumZ + t * cyy + Math.sin(a) * r * sy,
+  ];
+  const radAt = (t) => (t < -1.20 ? 0.70 + (t + 2.70) * 0.40
+    : t < 1.50 ? 1.30 : 1.30 - (t - 1.50) * 0.40);
   const emit = (r0, r1, z0, z1, role) => {
     const mz = (z0 + z1) / 2;
     cyl(sh, 0, drumY - (mz - drumZ) * sy, drumZ + (mz - drumZ) * cyy,
@@ -1329,13 +1558,52 @@ function cementMixer(sh) {
   emit(0.70, 1.30, -3.60, -2.10, ROLE.MACH);
   emit(1.30, 1.30, -2.10, 0.40, ROLE.MACH);
   emit(1.30, 0.86, 0.40, 1.50, ROLE.MACH);
+  // Dried-concrete wash over the bottom of the barrel: this is a working truck.
+  for (let i = 0; i < 5; i++) {
+    const a0 = Math.PI * (0.62 + 0.31 * (i / 5)), a1 = Math.PI * (0.62 + 0.31 * ((i + 1) / 5));
+    for (const m of [1, -1]) {
+      sh.quad(dp(-2.20 - drumZ, m * a0, 1.31), dp(-2.20 - drumZ, m * a1, 1.31),
+        dp(0.40 - drumZ, m * a1, 1.31), dp(0.40 - drumZ, m * a0, 1.31),
+        ROLE.DUSTY, [0, drumY, drumZ]);
+    }
+  }
+  // Three raised helical fin bands. A bare cone-cylinder is not a mixer.
+  for (let b = 0; b < 3; b++) {
+    const a0 = b * 2.09;
+    const N = 7;
+    for (let i = 0; i < N; i++) {
+      const u0 = i / N, u1 = (i + 1) / N;
+      const t0 = -2.40 + u0 * 3.60, t1 = -2.40 + u1 * 3.60;
+      const g0 = a0 + u0 * 3.4, g1 = a0 + u1 * 3.4;
+      const r0 = radAt(t0), r1 = radAt(t1);
+      sh.quad(dp(t0, g0, r0), dp(t1, g1, r1), dp(t1, g1, r1 + 0.10), dp(t0, g0, r0 + 0.10),
+        ROLE.MACH_LO, [0, drumY, drumZ]);
+    }
+  }
+  // Feed hopper on top, discharge chute hinged off the tail.
   cyl(sh, 0, drumY + 0.36, -3.72, 0.72, 0.72, 0.14, seg, 'z', ROLE.MACH_LO);
-  chamfer(sh, 0, 1.60, -4.30, 1.10, 0.30, 1.30, 0.08, ROLE.STEEL);
+  cyl(sh, 0, 3.42, 1.12, 0.62, 0.34, 0.70, 8, 'y', ROLE.STEEL, [false, true]);
+  stamp(sh, (s2) => {
+    // A tapered trough: floor plus two cheeks.
+    s2.quad([-0.42, 0, -0.80], [0.42, 0, -0.80], [0.30, 0, 0.80], [-0.30, 0, 0.80],
+      ROLE.STEEL, [0, -1, 0]);
+    for (const s of [-1, 1]) {
+      s2.quad([s * 0.42, 0, -0.80], [s * 0.30, 0, 0.80], [s * 0.30, 0.24, 0.80], [s * 0.42, 0.24, -0.80],
+        ROLE.STEEL, [0, 0.1, 0]);
+    }
+  }, { x: 0, y: 1.62, z: -4.28, rx: 0.34 });
+  chamfer(sh, 0, 2.20, -3.86, 1.20, 0.36, 0.30, 0.06, ROLE.MACH_LO);       // chute hinge
+  // Water tank behind the cab, ladder up the near side to a catwalk.
+  cyl(sh, 0, 3.10, 1.90, 0.42, 0.42, 1.70, 8, 'x', ROLE.WHITE);
   for (const s of [-1, 1]) box(sh, s * 1.06, 1.30, -1.2, 0.14, 1.70, 0.20, ROLE.STEEL);
+  for (let i = 0; i < 4; i++) box(sh, 1.20, 0.90 + i * 0.42, 0.90, 0.10, 0.07, 0.46, ROLE.CHROME);
+  box(sh, 1.16, 2.62, -0.60, 0.34, 0.08, 2.60, ROLE.STEEL);                // catwalk
+  box(sh, 1.30, 3.06, -0.60, 0.07, 0.80, 0.07, ROLE.CHROME);
+  box(sh, 1.30, 3.42, -0.60, 0.07, 0.07, 2.60, ROLE.CHROME);
   chamfer(sh, 0, 0.66, -0.9, 2.16, 0.34, 6.6, 0.06, ROLE.DARK);
-  wheels4(sh, 1.02, 2.80, -1.80, 0.50, 0.32);
+  wheels4(sh, 1.02, 2.80, -1.80, 0.50, 0.32, 7);
   wheel(sh, 1.02, 0.50, -2.90, 0.50, 0.32, 7); wheel(sh, -1.02, 0.50, -2.90, 0.50, 0.32, 7);
-  carLamps(sh, { zF: 4.00, zR: -4.60, yH: 0.90, yT: 1.06, dx: 0.80, wL: 0.36, yG: 0.54, wG: 1.3, yP: 0.50 });
+  carLamps(sh, { zF: 4.00, zR: -4.60, yH: 0.90, yT: 1.06, dx: 0.80, wL: 0.36, grille: false, yP: 0.50 });
   mirrors(sh, 1.22, 2.44, 3.34);
 }
 
@@ -1390,18 +1658,40 @@ function articBus(sh) {
   for (const s of [-1, 1]) {
     faceX(sh, s * 1.28, 1.10, 4.2, 8.0, 0.52, ROLE.ACCENT, s);
     faceX(sh, s * 1.28, 1.10, -5.4, 6.0, 0.52, ROLE.ACCENT, s);
+    // Cant-rail pinstripe: carries the livery up to where the camera can see it.
+    faceX(sh, s * 1.285, 2.44, 4.2, 8.0, 0.10, ROLE.ACCENT, s);
+    faceX(sh, s * 1.285, 2.44, -5.4, 6.0, 0.10, ROLE.ACCENT, s);
   }
   for (const z of [6.60, 2.60, -4.20]) {
-    for (const s of [-1, 1]) faceX(sh, s * 1.28, 1.60, z, 1.20, 1.90, ROLE.GLASS, s);
+    for (const s of [-1, 1]) {
+      faceX(sh, s * 1.28, 1.60, z, 1.20, 1.90, ROLE.GLASS, s);
+      faceX(sh, s * 1.29, 1.60, z, 0.05, 1.90, ROLE.DARK, s);       // door leaf split
+      faceX(sh, s * 1.29, 0.68, z, 1.24, 0.10, ROLE.DARK, s);       // step well shadow
+    }
   }
   faceZ(sh, 0, 3.02, 8.92, 1.70, 0.30, ROLE.SIGN, 1);
-  // Roof kit on both halves — 18 m of blank cream otherwise. See cityBus.
-  chamfer(sh, 0, 3.30, 5.6, 1.30, 0.26, 2.20, 0.08, ROLE.STEEL);
-  box(sh, 0, 3.36, -6.6, 1.16, 0.20, 1.10, ROLE.STEEL);
-  for (const z of [1.6, -3.4]) faceY(sh, 0, 3.26, z, 0.74, 0.74, ROLE.DARK);
-  for (const z of [0.7, 2.9, 7.5, -2.6, -4.6, -7.8]) {
-    faceY(sh, 0, 3.26, z, 1.92, 0.09, ROLE.BODY_LO);
+  for (const s of [-1, 1]) faceX(sh, s * 1.285, 2.62, 7.30, 0.80, 0.30, ROLE.SIGN, s);
+  /* --- the roof ------------------------------------------------------------
+   * 18 m x 2.5 m of white, and the game's camera spends most of its time
+   * looking straight at it. It gets treated as a facade: a full-length raised
+   * centre spine, a real AC pack with a louvred face, framed hatches, and a
+   * transverse rib rhythm, plus the livery band carried over the shoulder at
+   * the articulation so the joint is legible from directly above. */
+  chamfer(sh, 0, 3.37, 3.90, 0.80, 0.22, 7.80, 0.06, ROLE.BODY_LO);
+  chamfer(sh, 0, 3.37, -5.35, 0.80, 0.22, 6.40, 0.06, ROLE.BODY_LO);
+  chamfer(sh, 0, 3.52, 6.10, 1.36, 0.36, 2.30, 0.08, ROLE.STEEL);          // AC pack
+  for (let i = 0; i < 4; i++) faceZ(sh, 0, 3.44 + i * 0.09, 7.26, 1.10, 0.06, ROLE.DARK, 1);
+  box(sh, 0, 3.42, -6.60, 1.20, 0.28, 1.20, ROLE.STEEL);                   // equipment pod
+  for (let i = 0; i < 3; i++) faceY(sh, 0, 3.57, -6.60 - 0.30 + i * 0.30, 1.10, 0.07, ROLE.DARK);
+  for (const z of [1.60, -3.40]) {                                         // framed hatches
+    box(sh, 0, 3.30, z, 0.86, 0.10, 0.86, ROLE.BODY_LO);
+    faceY(sh, 0, 3.35, z, 0.66, 0.66, ROLE.DARK);
   }
+  for (const z of [0.30, 2.80, 4.80, 7.40, -2.50, -4.40, -6.00, -7.90]) {
+    faceY(sh, 0, 3.26, z, 2.02, 0.10, ROLE.BODY_LO);
+  }
+  // Livery over the roof shoulder at the joint.
+  for (const s of [-1, 1]) faceY(sh, s * 0.78, 3.262, -1.20, 0.46, 1.30, ROLE.ACCENT);
   chamfer(sh, 0, 0.42, 3.6, 2.34, 0.34, 10.4, 0.06, ROLE.DARK);
   chamfer(sh, 0, 0.42, -5.4, 2.34, 0.34, 7.0, 0.06, ROLE.DARK);
   wheels4(sh, 1.22, 7.20, 1.10, 0.56, 0.36);
@@ -1410,6 +1700,13 @@ function articBus(sh) {
   mirrors(sh, 1.34, 2.70, 8.50);
 }
 
+/**
+ * Airport shuttle. The body sweep, the roof pod, the wheels and the lamps were
+ * all well made — and the thing rendered as a blank cream slab, because the
+ * only glazing on 7.3 m of coach was a single 1.0 m door window on one side.
+ * A coach is READ by its window band; everything below adds one, both sides,
+ * with mullions and a proper glazed entry door.
+ */
 function shuttleBus(sh) {
   sweep(sh, SEC.COACH, [
     { z: -3.55, w: 2.06, h: 2.34, y0: 0.36, rake: 0.10 },
@@ -1417,10 +1714,26 @@ function shuttleBus(sh) {
     { z: 2.60, w: 2.22, h: 2.38, y0: 0.32 },
     { z: 3.55, w: 2.04, h: 2.20, y0: 0.32, rake: -0.26 },
   ], { edgeRoles: COACH_ROLES, capStart: ROLE.BODY, capEnd: ROLE.GLASS });
-  for (const s of [-1, 1]) faceX(sh, s * 1.12, 1.00, 0, 5.8, 0.42, ROLE.ACCENT, s);
-  faceX(sh, 1.12, 1.44, 1.60, 1.00, 1.70, ROLE.GLASS, 1);
+  for (const s of [-1, 1]) {
+    faceX(sh, s * 1.12, 1.00, 0, 5.8, 0.42, ROLE.ACCENT, s);
+    // Continuous saloon glazing, z -2.6 .. 2.4, split by four dark mullions.
+    faceX(sh, s * 1.12, 1.80, -0.10, 5.00, 0.90, ROLE.GLASS, s);
+    faceX(sh, s * 1.125, 2.21, -0.10, 5.00, 0.09, ROLE.GLASS_HI, s);
+    for (let i = 0; i < 4; i++) {
+      faceX(sh, s * 1.13, 1.80, -2.00 + i * 1.00, 0.09, 0.92, ROLE.DARK, s);
+    }
+    faceX(sh, s * 1.13, 1.34, -0.10, 5.00, 0.07, ROLE.DARK, s);      // waist rail
+  }
+  // Glazed entry door with a step well, behind the front axle, kerb side.
+  faceX(sh, 1.13, 1.60, 1.62, 0.98, 1.42, ROLE.DARK, 1);
+  faceX(sh, 1.14, 1.72, 1.62, 0.84, 1.10, ROLE.GLASS, 1);
+  faceX(sh, 1.14, 0.78, 1.62, 0.90, 0.24, ROLE.DARK, 1);
+  faceZ(sh, 0, 1.70, -3.62, 1.44, 0.86, ROLE.GLASS, -1);             // rear window
+  faceZ(sh, 0, 2.66, 3.42, 1.44, 0.28, ROLE.SIGN, 1);                // destination blind
   // Knocked-back paint, not white: a white pod on a white roof is no pod.
   chamfer(sh, 0, 2.86, -1.40, 1.50, 0.30, 2.40, 0.08, ROLE.BODY_LO);  // roof luggage pod
+  for (let i = 0; i < 5; i++) faceY(sh, 0, 3.02, -2.40 + i * 0.50, 1.30, 0.08, ROLE.DARK);
+  for (const s of [-1, 1]) box(sh, s * 0.80, 2.78, -1.40, 0.06, 0.06, 2.30, ROLE.CHROME);
   for (const z of [0.3, 1.3, 2.3]) faceY(sh, 0, 2.70, z, 1.62, 0.09, ROLE.BODY_LO);
   chamfer(sh, 0, 0.42, 0, 2.06, 0.32, 6.6, 0.06, ROLE.DARK);
   wheels4(sh, 1.07, 2.30, -2.20, 0.48, 0.32);
@@ -1485,26 +1798,101 @@ function scooter(sh) {
  * profile is what stops it reading as "small car" at 40 m, which is the only
  * thing a bike has to get right in this game.
  */
+/**
+ * Sports bike. Longer than it was — 1.44 m of wheelbase and 2.16 m overall,
+ * against 1.32 / 2.30 before, which read as stubby next to the cars.
+ *
+ * The front end was the real failure: dark forks against a dark yoke against a
+ * dark nose, with the headlight painted on as a 19 cm rectangle, so from the
+ * game camera the whole front of the bike was one blob. It now has splayed
+ * chrome fork legs, a round headlamp disc under a dark screen, and — like the
+ * cars beside it, which is what made the omission conspicuous — wheels with a
+ * light alloy rim inside the dark tyre.
+ */
 function motorcycle(sh) {
-  const rF = 0.33, rR = 0.35;
-  wheel(sh, 0.0, rF, 0.70, rF, 0.13, 7, { twin: true });
-  wheel(sh, 0.0, rR, -0.62, rR, 0.18, 7, { twin: true });
-  // Fork legs and yoke, raked forward over the front wheel.
-  for (const s of [-1, 1]) box(sh, s * 0.13, 0.66, 0.64, 0.06, 0.74, 0.09, ROLE.CHROME);
-  chamfer(sh, 0, 0.98, 0.58, 0.30, 0.26, 0.26, 0.07, ROLE.DARK);
-  chamfer(sh, 0, 0.46, 0.04, 0.40, 0.44, 0.62, 0.09, ROLE.DARK);     // engine
-  chamfer(sh, 0, 0.86, 0.16, 0.42, 0.32, 0.68, 0.12, ROLE.BODY);     // tank
-  chamfer(sh, 0, 0.84, -0.30, 0.34, 0.10, 0.44, 0.05, ROLE.SEAT);
-  chamfer(sh, 0, 0.94, -0.66, 0.26, 0.22, 0.40, 0.08, ROLE.BODY);    // tail unit
-  box(sh, 0, 1.14, 0.54, 0.66, 0.05, 0.06, ROLE.DARK);               // bars
-  for (const s of [-1, 1]) box(sh, s * 0.31, 1.22, 0.52, 0.11, 0.08, 0.05, ROLE.CHROME);
-  chamfer(sh, 0, 1.02, 0.74, 0.24, 0.22, 0.14, 0.05, ROLE.BODY);
-  faceZ(sh, 0, 1.02, 0.81, 0.19, 0.15, ROLE.HEAD, 1);
-  faceZ(sh, 0, 0.98, -0.86, 0.17, 0.10, ROLE.TAIL, -1);
-  faceZ(sh, 0, 0.62, -0.88, 0.20, 0.07, ROLE.PLATE, -1);
-  for (const s of [-1, 1]) faceX(sh, s * 0.19, 1.06, 0.68, 0.11, 0.08, ROLE.AMBER, s);
-  cyl(sh, 0.22, 0.42, -0.52, 0.08, 0.09, 0.66, 6, 'z', ROLE.CHROME); // exhaust can
-  sh.lamp = { zF: 0.81, zR: -0.86, yH: 1.02, yT: 0.98, dx: 0, wL: 0.19, hL: 0.10 };
+  const rF = 0.34, rR = 0.36, zF = 0.82, zR = -0.62;
+  wheel(sh, 0.0, rF, zF, rF, 0.13, 8, { twin: true, arch: false });
+  wheel(sh, 0.0, rR, zR, rR, 0.19, 8, { twin: true, arch: false });
+  // Chain run and sprocket on the left, and a rear shock behind the engine.
+  cyl(sh, -0.12, rR, zR, 0.15, 0.15, 0.03, 7, 'x', ROLE.CHROME);
+  box(sh, -0.12, rR - 0.03, zR + 0.30, 0.04, 0.05, 0.62, ROLE.DARK);
+  stamp(sh, (s2) => cyl(s2, 0, 0, 0, 0.05, 0.05, 0.42, 6, 'y', ROLE.RED),
+    { y: 0.62, z: -0.30, rx: -0.55 });
+  // Swingarm.
+  for (const s of [-1, 1]) box(sh, s * 0.13, 0.40, -0.30, 0.06, 0.09, 0.72, ROLE.CHROME);
+  // Splayed fork legs, raked forward. Bright chrome, so the front end reads.
+  for (const s of [-1, 1]) {
+    stamp(sh, (s2) => cyl(s2, 0, 0, 0, 0.058, 0.050, 0.90, 6, 'y', ROLE.CHROME),
+      { x: s * 0.16, y: 0.72, z: 0.76, rx: 0.40, rz: -s * 0.07 });
+  }
+  chamfer(sh, 0, 1.08, 0.62, 0.34, 0.20, 0.24, 0.06, ROLE.DARK);     // top yoke
+  chamfer(sh, 0, 0.46, 0.06, 0.42, 0.46, 0.66, 0.09, ROLE.DARK);     // engine
+  box(sh, 0, 0.34, 0.30, 0.36, 0.20, 0.22, ROLE.CHROME);             // header pipes
+  chamfer(sh, 0, 0.90, 0.26, 0.44, 0.34, 0.72, 0.13, ROLE.BODY);     // tank
+  chamfer(sh, 0, 0.86, -0.26, 0.34, 0.10, 0.50, 0.05, ROLE.SEAT);
+  chamfer(sh, 0, 0.98, -0.72, 0.26, 0.24, 0.44, 0.08, ROLE.BODY);    // tail unit
+  box(sh, 0, 1.20, 0.56, 0.68, 0.05, 0.06, ROLE.DARK);               // bars
+  for (const s of [-1, 1]) box(sh, s * 0.32, 1.28, 0.54, 0.11, 0.08, 0.05, ROLE.CHROME);
+  // Nose fairing: a round lamp under a small dark screen.
+  chamfer(sh, 0, 1.06, 0.86, 0.28, 0.30, 0.20, 0.06, ROLE.BODY);
+  cyl(sh, 0, 1.02, 0.94, 0.115, 0.115, 0.06, 7, 'z', ROLE.DARK);
+  faceZ(sh, 0, 1.02, 0.975, 0.17, 0.17, ROLE.HEAD, 1);
+  sh.quad([-0.13, 1.24, 0.84], [0.13, 1.24, 0.84], [0.11, 1.36, 0.76], [-0.11, 1.36, 0.76],
+    ROLE.DARK, [0, 1.0, 0.4]);
+  faceZ(sh, 0, 1.02, -0.94, 0.17, 0.10, ROLE.TAIL, -1);
+  faceZ(sh, 0, 0.64, -0.96, 0.20, 0.07, ROLE.PLATE, -1);
+  for (const s of [-1, 1]) faceX(sh, s * 0.20, 1.10, 0.78, 0.11, 0.08, ROLE.AMBER, s);
+  cyl(sh, 0.22, 0.42, -0.56, 0.08, 0.09, 0.70, 6, 'z', ROLE.CHROME); // exhaust can
+  sh.lamp = { zF: 0.98, zR: -0.94, yH: 1.02, yT: 1.02, dx: 0, wL: 0.19, hL: 0.10 };
+}
+
+/**
+ * Cruiser. Sixty-seven identical sportbikes on one city's kerbs is a rank, so
+ * the two-wheeler count is split across two body styles: this one has a longer
+ * rake, a 1.72 m wheelbase, a wide bar, a teardrop tank, a low stepped saddle,
+ * a valanced rear fender and shotgun pipes.
+ */
+function cruiser(sh) {
+  const rF = 0.36, rR = 0.34, zF = 1.00, zR = -0.72;
+  wheel(sh, 0.0, rF, zF, rF, 0.12, 8, { twin: true, arch: false });
+  wheel(sh, 0.0, rR, zR, rR, 0.22, 8, { twin: true, arch: false });
+  cyl(sh, -0.14, rR, zR, 0.15, 0.15, 0.03, 7, 'x', ROLE.CHROME);
+  // Long raked forks running down to the front spindle.
+  for (const s of [-1, 1]) {
+    stamp(sh, (s2) => cyl(s2, 0, 0, 0, 0.055, 0.048, 1.04, 6, 'y', ROLE.CHROME),
+      { x: s * 0.15, y: 0.76, z: 0.82, rx: 0.56, rz: -s * 0.05 });
+  }
+  chamfer(sh, 0, 1.12, 0.64, 0.32, 0.18, 0.22, 0.05, ROLE.CHROME);
+  // Big lazy vee twin with chrome covers.
+  chamfer(sh, 0, 0.44, 0.06, 0.44, 0.44, 0.56, 0.09, ROLE.DARK);
+  for (const dz of [0.20, -0.16]) chamfer(sh, 0, 0.66, dz, 0.36, 0.30, 0.26, 0.07, ROLE.CHROME);
+  chamfer(sh, 0, 0.86, 0.32, 0.46, 0.30, 0.66, 0.15, ROLE.BODY);     // teardrop tank
+  chamfer(sh, 0, 0.76, -0.22, 0.40, 0.10, 0.56, 0.06, ROLE.SEAT);    // low stepped saddle
+  chamfer(sh, 0, 0.90, -0.58, 0.34, 0.16, 0.26, 0.06, ROLE.SEAT);    // pillion pad
+  // Valanced rear fender over the fat back tyre.
+  for (let i = 0; i < 4; i++) {
+    const a0 = Math.PI * (0.14 + 0.72 * (i / 4)), a1 = Math.PI * (0.14 + 0.72 * ((i + 1) / 4));
+    const p = (a, r) => [0, rR + Math.sin(a) * r, zR + Math.cos(a) * r];
+    for (const s of [-1, 1]) {
+      sh.quad([s * 0.15, p(a0, rR * 1.16)[1], p(a0, rR * 1.16)[2]],
+        [s * 0.15, p(a1, rR * 1.16)[1], p(a1, rR * 1.16)[2]],
+        [s * 0.15, p(a1, rR * 1.34)[1], p(a1, rR * 1.34)[2]],
+        [s * 0.15, p(a0, rR * 1.34)[1], p(a0, rR * 1.34)[2]], ROLE.BODY, [0, rR, zR]);
+    }
+    sh.quad([-0.15, p(a0, rR * 1.34)[1], p(a0, rR * 1.34)[2]],
+      [0.15, p(a0, rR * 1.34)[1], p(a0, rR * 1.34)[2]],
+      [0.15, p(a1, rR * 1.34)[1], p(a1, rR * 1.34)[2]],
+      [-0.15, p(a1, rR * 1.34)[1], p(a1, rR * 1.34)[2]], ROLE.BODY, [0, rR, zR]);
+  }
+  box(sh, 0, 1.26, 0.60, 0.84, 0.05, 0.06, ROLE.CHROME);             // wide bar
+  for (const s of [-1, 1]) box(sh, s * 0.40, 1.34, 0.58, 0.12, 0.09, 0.05, ROLE.CHROME);
+  cyl(sh, 0, 1.10, 0.98, 0.14, 0.14, 0.10, 7, 'z', ROLE.CHROME);     // big round lamp
+  faceZ(sh, 0, 1.10, 1.035, 0.21, 0.21, ROLE.HEAD, 1);
+  faceZ(sh, 0, 0.94, -0.98, 0.16, 0.10, ROLE.TAIL, -1);
+  faceZ(sh, 0, 0.62, -1.00, 0.20, 0.07, ROLE.PLATE, -1);
+  for (const s of [-1, 1]) faceX(sh, s * 0.24, 1.14, 0.90, 0.11, 0.08, ROLE.AMBER, s);
+  for (const s of [-1, 1]) cyl(sh, s * 0.20, 0.34, -0.44, 0.065, 0.075, 1.10, 6, 'z', ROLE.CHROME);
+  sh.lamp = { zF: 1.04, zR: -0.98, yH: 1.10, yT: 0.94, dx: 0, wL: 0.21, hL: 0.10 };
 }
 
 function bicycle(sh) {
@@ -1537,76 +1925,223 @@ const HULL_ROLES = { 5: ROLE.WHITE };
  * drop them straight onto the water plane and the bob animation is a simple
  * offset rather than a per-hull constant.
  */
+/**
+ * Flybridge motor yacht — 31 of them along the seawall.
+ *
+ * The massing was right and the boat still rendered as a stack of white boxes,
+ * for one reason: the GLASS role did not read as glass at this scale, so a
+ * 13 m yacht had NO WINDOWS. Everything else here is secondary to darkening
+ * that glazing: near-black tinted bands with a bright specular top edge do most
+ * of the work of making a white boat look like a boat.
+ */
 function motorYacht(sh) {
-  sweep(sh, SEC.HULL, [
+  sweep(sh, SEC.HULL3, [
     { z: -6.30, w: 3.50, h: 1.55, y0: -0.95 },
     { z: -4.20, w: 4.10, h: 1.70, y0: -1.05 },
     { z: 2.40, w: 4.20, h: 1.75, y0: -1.05 },
     { z: 5.60, w: 2.90, h: 1.70, y0: -0.95 },
     { z: 7.10, w: 0.80, h: 1.55, y0: -0.75 },
-  ], { role: ROLE.HULL, edgeRoles: HULL_ROLES, capStart: ROLE.HULL, capEnd: ROLE.HULL });
-  // Boot stripe at the waterline — the single cue that reads "boat" not "shed".
-  for (const s of [-1, 1]) faceX(sh, s * 2.06, -0.10, -1.0, 10.4, 0.22, ROLE.ACCENT, s);
+  ], { role: ROLE.HULL, edgeRoles: HULL3_ROLES, capStart: ROLE.ANTIFOUL, capEnd: ROLE.HULL });
+  // Sheer stripe sweeping the length of the topsides, above the boot stripe.
+  for (const s of [-1, 1]) faceX(sh, s * 2.10, 0.42, -1.0, 10.2, 0.11, ROLE.ACCENT, s);
+  // Teak side decks and cockpit sole against the white.
+  faceY(sh, 0, 0.63, -4.60, 2.60, 2.90, ROLE.DECK);
+  for (const s of [-1, 1]) faceY(sh, s * 1.86, 0.632, 1.60, 0.52, 6.60, ROLE.DECK);
   // Saloon + flybridge, stepping back as they rise.
   chamfer(sh, 0, 1.35, -0.40, 3.50, 1.50, 6.20, 0.22, ROLE.WHITE);
-  for (const s of [-1, 1]) faceX(sh, s * 1.76, 1.55, -0.40, 5.40, 0.72, ROLE.GLASS, s);
-  faceZ(sh, 0, 1.62, 2.72, 2.70, 0.80, ROLE.GLASS, 1);
-  chamfer(sh, 0, 2.70, -1.60, 2.80, 1.20, 3.80, 0.20, ROLE.WHITE);
-  for (const s of [-1, 1]) faceX(sh, s * 1.41, 2.86, -1.60, 3.20, 0.60, ROLE.GLASS, s);
-  chamfer(sh, 0, 3.42, -1.60, 2.60, 0.14, 3.60, 0.06, ROLE.WHITE);
-  // Radar arch + mast.
-  for (const s of [-1, 1]) box(sh, s * 1.10, 4.00, -2.90, 0.14, 1.20, 0.16, ROLE.STEEL);
-  box(sh, 0, 4.58, -2.90, 2.36, 0.16, 0.18, ROLE.STEEL);
-  cyl(sh, 0, 5.10, -2.90, 0.05, 0.05, 1.10, 6, 'y', ROLE.STEEL);
-  chamfer(sh, 0, 4.78, -2.90, 0.60, 0.20, 0.24, 0.06, ROLE.WHITE);
-  // Bow rail + foredeck fittings.
   for (const s of [-1, 1]) {
-    for (let i = 0; i < 4; i++) {
-      box(sh, s * (1.9 - i * 0.32), 1.02, 3.6 + i * 0.85, 0.05, 0.52, 0.05, ROLE.CHROME);
-    }
+    faceX(sh, s * 1.76, 1.52, -0.40, 5.40, 0.72, ROLE.GLASS_DK, s);
+    faceX(sh, s * 1.77, 1.86, -0.40, 5.40, 0.08, ROLE.GLASS_HI, s);
+    for (let i = 0; i < 3; i++) faceX(sh, s * 1.78, 1.52, -2.20 + i * 1.60, 0.09, 0.74, ROLE.WHITE, s);
   }
-  faceY(sh, 0, 0.62, -4.40, 2.10, 2.60, ROLE.DECK);      // cockpit sole
+  faceZ(sh, 0, 1.60, 2.72, 2.70, 0.80, ROLE.GLASS_DK, 1);
+  faceZ(sh, 0, 1.96, 2.73, 2.70, 0.09, ROLE.GLASS_HI, 1);
+  chamfer(sh, 0, 2.70, -1.60, 2.80, 1.20, 3.80, 0.20, ROLE.WHITE);
+  for (const s of [-1, 1]) {
+    faceX(sh, s * 1.41, 2.82, -1.60, 3.20, 0.60, ROLE.GLASS_DK, s);
+    faceX(sh, s * 1.42, 3.10, -1.60, 3.20, 0.08, ROLE.GLASS_HI, s);
+  }
+  chamfer(sh, 0, 3.42, -1.60, 2.60, 0.14, 3.60, 0.06, ROLE.WHITE);
+  // Bimini over the flybridge, on four posts.
+  for (const s of [-1, 1]) {
+    for (const z of [-0.30, -2.90]) box(sh, s * 1.10, 3.90, z, 0.06, 0.90, 0.06, ROLE.CHROME);
+  }
+  chamfer(sh, 0, 4.38, -1.60, 2.50, 0.10, 3.20, 0.05, ROLE.ACCENT);
+  // Radar arch, dome and mast.
+  for (const s of [-1, 1]) box(sh, s * 1.10, 4.00, -3.60, 0.14, 1.20, 0.16, ROLE.STEEL);
+  box(sh, 0, 4.58, -3.60, 2.36, 0.16, 0.18, ROLE.STEEL);
+  cyl(sh, 0, 4.86, -3.60, 0.34, 0.30, 0.40, 8, 'y', ROLE.WHITE);      // radar dome
+  cyl(sh, 0, 5.30, -3.60, 0.05, 0.05, 0.90, 6, 'y', ROLE.STEEL);
+  // Bow guardrail: stanchions WITH a wire between them. Without it they read as
+  // loose sticks standing on the foredeck, which is exactly what the review saw.
+  guardRail(sh, [
+    { x: 1.94, y: 0.66, z: 2.90 }, { x: 1.84, y: 0.68, z: 3.90 },
+    { x: 1.56, y: 0.70, z: 4.90 }, { x: 1.12, y: 0.72, z: 5.90 },
+    { x: 0.46, y: 0.74, z: 6.70 },
+  ], 0.60);
+  // Fenders hung over the side, and a cleat pair.
+  for (const s of [-1, 1]) {
+    for (const z of [-2.60, -0.40, 1.80]) {
+      cyl(sh, s * 2.12, -0.10, z, 0.16, 0.16, 0.62, 6, 'y', ROLE.DARK);
+    }
+    box(sh, s * 1.70, 0.70, 5.30, 0.24, 0.09, 0.09, ROLE.CHROME);
+  }
 }
 
+/**
+ * Sloop under sail.
+ *
+ * The old version was a 10 m hero object in the bay that read as a featureless
+ * cream slab with two needles sticking out of it: NO SAIL AREA at all (the
+ * "furled main" was a 34 cm box), a mast 90 mm across over 11 m, and one flat
+ * tone from sheer to keel. The sail is now a real hoisted main with a belly in
+ * it, the spars are thick enough to obey the no-needle-geometry rule, and the
+ * hull carries three tones with the break in the geometry rather than a decal.
+ */
 function sailBoat(sh) {
-  sweep(sh, SEC.HULL, [
+  sweep(sh, SEC.HULL3, [
     { z: -4.60, w: 2.40, h: 1.40, y0: -0.80 },
     { z: -2.60, w: 3.00, h: 1.55, y0: -0.95 },
     { z: 1.60, w: 3.10, h: 1.60, y0: -0.95 },
     { z: 4.40, w: 1.90, h: 1.55, y0: -0.85 },
     { z: 5.40, w: 0.50, h: 1.40, y0: -0.70 },
-  ], { role: ROLE.HULL, edgeRoles: HULL_ROLES, capStart: ROLE.HULL, capEnd: ROLE.HULL });
-  for (const s of [-1, 1]) faceX(sh, s * 1.52, -0.12, -0.6, 8.2, 0.18, ROLE.ACCENT, s);
-  // Coachroof + cockpit.
+  ], { role: ROLE.HULL, edgeRoles: HULL3_ROLES, capStart: ROLE.ANTIFOUL, capEnd: ROLE.HULL });
+  // Toe rail round the whole deck edge, following the hull's taper.
+  strake(sh, [
+    { x: 1.20, y: 0.60, z: -4.60 }, { x: 1.50, y: 0.60, z: -2.60 },
+    { x: 1.55, y: 0.65, z: 1.60 }, { x: 0.95, y: 0.70, z: 4.40 },
+    { x: 0.25, y: 0.70, z: 5.40 },
+  ], 0.08, 0.05, ROLE.WHITE);
+  // Coachroof with a companionway hatch and two flush deck lights.
   chamfer(sh, 0, 0.86, 0.90, 1.90, 0.50, 3.40, 0.16, ROLE.WHITE);
-  for (const s of [-1, 1]) faceX(sh, s * 0.96, 0.90, 0.90, 2.80, 0.26, ROLE.GLASS, s);
-  faceY(sh, 0, 0.58, -2.60, 1.30, 2.10, ROLE.DECK);
-  // Mast, boom and a furled main — a bare pole reads as a broken boat.
-  cyl(sh, 0, 6.20, 0.60, 0.09, 0.07, 11.2, 6, 'y', ROLE.CHROME);
-  cyl(sh, 0, 1.70, -1.20, 0.07, 0.07, 3.40, 6, 'z', ROLE.CHROME);
-  chamfer(sh, 0, 1.92, -1.20, 0.34, 0.34, 3.10, 0.12, ROLE.SAIL);
-  // Standing rigging as two thin stays, fore and aft.
-  box(sh, 0, 5.60, 2.60, 0.035, 8.6, 0.035, ROLE.CHROME);
-  box(sh, 0, 5.20, -1.80, 0.035, 8.0, 0.035, ROLE.CHROME);
+  for (const s of [-1, 1]) faceX(sh, s * 0.96, 0.88, 0.90, 2.80, 0.24, ROLE.GLASS_DK, s);
+  box(sh, 0, 1.14, -0.60, 0.86, 0.10, 0.60, ROLE.DECK);
+  for (const z of [1.60, 2.30]) faceY(sh, 0, 1.11, z, 0.44, 0.34, ROLE.GLASS_DK);
+  /* --- cockpit well --------------------------------------------------------
+   * Sunk below a coaming, with a wheel on a pedestal and a bench each side. */
+  box(sh, 0, 0.30, -2.70, 1.44, 0.10, 2.40, ROLE.DECK_LO);
+  for (const s of [-1, 1]) {
+    box(sh, s * 0.86, 0.52, -2.70, 0.14, 0.36, 2.40, ROLE.WHITE);
+    box(sh, s * 0.56, 0.44, -2.90, 0.46, 0.12, 1.90, ROLE.DECK);      // bench
+  }
+  box(sh, 0, 0.52, -3.92, 1.70, 0.36, 0.14, ROLE.WHITE);
+  cyl(sh, 0, 0.62, -1.90, 0.14, 0.12, 0.56, 6, 'y', ROLE.CHROME);     // pedestal
+  cyl(sh, 0, 0.98, -1.90, 0.30, 0.30, 0.05, 8, 'z', ROLE.DARK, [false, false]);
+  // Bow pulpit, anchor roller and a chrome cleat.
+  guardRail(sh, [
+    { x: 0.86, y: 0.68, z: 4.10 }, { x: 0.60, y: 0.70, z: 4.90 },
+    { x: 0.22, y: 0.70, z: 5.42 },
+  ], 0.58);
+  box(sh, 0, 0.76, 5.56, 0.20, 0.10, 0.42, ROLE.CHROME);              // anchor roller
+  for (const s of [-1, 1]) box(sh, s * 0.50, 0.74, 3.60, 0.24, 0.09, 0.09, ROLE.CHROME);
+  /* --- rig -----------------------------------------------------------------
+   * Mast 0.14 m at the step tapering to 0.09 at the head, stays at 0.05 with a
+   * spreader pair. Nothing on the boat is needle-thin any more. */
+  const zM = 0.60, yStep = 0.66, hM = 11.2, yHead = yStep + hM;
+  cyl(sh, 0, yStep + hM / 2, zM, 0.14, 0.09, hM, 6, 'y', ROLE.CHROME);
+  for (const s of [-1, 1]) box(sh, s * 0.44, 5.60, zM, 0.88, 0.07, 0.09, ROLE.CHROME);
+  cyl(sh, 0, 1.16, -1.10, 0.09, 0.09, 3.60, 6, 'z', ROLE.CHROME);     // boom
+  // Standing rigging: forestay, backstay and a shroud each side over a spreader.
+  const T = (a, b, r) => tube(sh, a, b, r, r, 4, ROLE.CHROME, [false, false]);
+  T([0, yHead - 0.15, zM], [0, 0.74, 5.42], 0.05);                    // forestay
+  T([0, yHead - 0.20, zM], [0, 0.66, -4.40], 0.05);                   // backstay
+  for (const s of [-1, 1]) {
+    T([0, yHead - 0.30, zM], [s * 0.86, 5.60, zM], 0.045);
+    T([s * 0.86, 5.60, zM], [s * 1.48, 0.66, zM], 0.045);
+  }
+  /* --- the mainsail --------------------------------------------------------
+   * A hoisted sheet with a belly in it, from the masthead to the boom end. It
+   * is the whole reason this object is in the bay, and it did not exist. */
+  const yTack = 1.26, zTack = zM - 0.10, zClew = -2.86, yClew = 1.22;
+  const nH = 4, nC = 3;
+  const P = (u, v) => {
+    const y = yTack + (yHead - 0.30 - yTack) * u;
+    const zL = zClew + (zM - zClew) * Math.pow(u, 0.86);
+    const z = zTack + (zL - zTack) * v;
+    const x = 0.34 * Math.sin(Math.PI * Math.pow(u, 0.8) * 0.92) * Math.sin(Math.PI * v);
+    return [x, y - (yClew - yTack) * (1 - u) * v * 0.4, z];
+  };
+  for (let i = 0; i < nH; i++) {
+    for (let j = 0; j < nC; j++) {
+      const a = P(i / nH, j / nC), b = P((i + 1) / nH, j / nC);
+      const c = P((i + 1) / nH, (j + 1) / nC), d = P(i / nH, (j + 1) / nC);
+      sh.flat(a, b, c, d, ROLE.SAIL, [1, 0, 0]);
+      sh.flat(d, c, b, a, ROLE.SAIL_LO, [-1, 0, 0]);
+    }
+  }
+  // Furled jib rolled on the forestay.
+  tube(sh, [0, 0.86, 5.20], [0, yHead - 1.20, zM + 0.10], 0.13, 0.07, 6, ROLE.SAIL, [true, true]);
 }
 
+/**
+ * Open launch working the river and the marinas. Eighteen of them sit against
+ * the seawall at three metres, so the canopy, the guardrails and the helm are
+ * all things the player reads at eye level rather than from the air.
+ */
 function waterTaxi(sh) {
-  sweep(sh, SEC.HULL, [
+  sweep(sh, SEC.HULL3, [
     { z: -3.90, w: 2.50, h: 1.30, y0: -0.72 },
     { z: -2.20, w: 2.80, h: 1.40, y0: -0.80 },
     { z: 2.00, w: 2.80, h: 1.40, y0: -0.80 },
     { z: 3.90, w: 1.40, h: 1.30, y0: -0.70 },
-  ], { role: ROLE.HULL, edgeRoles: HULL_ROLES, capStart: ROLE.HULL, capEnd: ROLE.HULL });
-  for (const s of [-1, 1]) faceX(sh, s * 1.38, -0.08, 0, 6.6, 0.20, ROLE.ACCENT, s);
-  // Open canopy on posts: passengers should read as "outside".
+  ], { role: ROLE.HULL, edgeRoles: HULL3_ROLES, capStart: ROLE.ANTIFOUL, capEnd: ROLE.HULL });
+  // Rubbing strake, with black fenders hung over it.
+  strake(sh, [
+    { x: 1.25, y: 0.52, z: -3.90 }, { x: 1.40, y: 0.55, z: -2.20 },
+    { x: 1.40, y: 0.60, z: 2.00 }, { x: 0.70, y: 0.60, z: 3.90 },
+  ], 0.09, 0.05, ROLE.WHITE);
+  for (const s of [-1, 1]) {
+    for (const z of [-1.60, 1.10]) cyl(sh, s * 1.46, 0.16, z, 0.14, 0.14, 0.54, 6, 'y', ROLE.DARK);
+    box(sh, s * 0.94, 0.66, 3.30, 0.20, 0.08, 0.08, ROLE.CHROME);      // cleats
+    box(sh, s * 1.10, 0.66, -3.40, 0.20, 0.08, 0.08, ROLE.CHROME);
+  }
+  // Deck stanchions with a rope guardrail, and a gap amidships for boarding.
+  guardRail(sh, [
+    { x: 1.32, y: 0.60, z: -3.30 }, { x: 1.38, y: 0.60, z: -2.10 },
+    { x: 1.38, y: 0.62, z: -0.90 },
+  ], 0.52);
+  guardRail(sh, [
+    { x: 1.38, y: 0.62, z: 0.90 }, { x: 1.30, y: 0.62, z: 2.20 },
+    { x: 0.86, y: 0.62, z: 3.30 },
+  ], 0.52);
+  /* --- canopy --------------------------------------------------------------
+   * Cambered in three sections with a 0.10 m crown, a scalloped fascia and a
+   * grab rail underneath. A dead-flat slab is what made it read as cardboard. */
   for (const s of [-1, 1]) {
     for (const z of [1.60, -0.20, -2.00]) box(sh, s * 1.15, 1.55, z, 0.08, 1.50, 0.08, ROLE.CHROME);
   }
-  chamfer(sh, 0, 2.36, -0.20, 2.60, 0.16, 4.40, 0.07, ROLE.ACCENT);
-  chamfer(sh, 0, 1.10, 2.30, 1.70, 1.00, 1.30, 0.12, ROLE.WHITE);
-  faceZ(sh, 0, 1.30, 2.96, 1.30, 0.52, ROLE.GLASS, 1);
+  const cw = 1.30, cy0 = 2.30, crown = 0.10;
+  for (let i = 0; i < 3; i++) {
+    const x0 = -cw + (i * 2 * cw) / 3, x1 = -cw + ((i + 1) * 2 * cw) / 3;
+    const y0 = cy0 + crown * Math.cos((x0 / cw) * Math.PI * 0.5);
+    const y1 = cy0 + crown * Math.cos((x1 / cw) * Math.PI * 0.5);
+    sh.quad([x0, y0, 2.00], [x1, y1, 2.00], [x1, y1, -2.40], [x0, y0, -2.40],
+      ROLE.ACCENT, [0, 1.4, -0.2]);
+    sh.quad([x0, y0 - 0.09, 2.00], [x1, y1 - 0.09, 2.00], [x1, y1 - 0.09, -2.40], [x0, y0 - 0.09, -2.40],
+      ROLE.ACCENT, [0, 3.4, -0.2]);
+  }
+  for (const dz of [2.00, -2.40]) {
+    // Scalloped fascia: five shallow lobes along the canopy edge.
+    for (let i = 0; i < 5; i++) {
+      const x0 = -cw + (i * 2 * cw) / 5, x1 = -cw + ((i + 1) * 2 * cw) / 5;
+      const dip = 0.06 + 0.05 * Math.sin(Math.PI * ((i + 0.5) / 5));
+      faceZ(sh, (x0 + x1) / 2, cy0 - 0.04 - dip / 2, dz, (x1 - x0) * 0.94, dip,
+        ROLE.ACCENT, dz > 0 ? 1 : -1);
+    }
+  }
+  faceZ(sh, 0, cy0 - 0.09, 2.02, 1.90, 0.16, ROLE.SIGN, 1);            // route board
+  box(sh, 0, 2.14, -0.20, 0.07, 0.07, 4.20, ROLE.CHROME);              // grab rail
+  /* --- helm ---------------------------------------------------------------- */
+  chamfer(sh, 0, 1.02, 2.30, 1.60, 0.86, 1.10, 0.10, ROLE.WHITE);
+  faceZ(sh, 0, 1.26, 2.86, 1.30, 0.34, ROLE.DARK, 1);                  // dash
+  sh.quad([-0.66, 1.48, 2.86], [0.66, 1.48, 2.86], [0.60, 1.86, 2.62], [-0.60, 1.86, 2.62],
+    ROLE.GLASS_HI, [0, 1.2, 1.6]);
+  for (const s of [-1, 1]) box(sh, s * 0.63, 1.67, 2.74, 0.05, 0.40, 0.30, ROLE.CHROME);
+  stamp(sh, (s2) => cyl(s2, 0, 0, 0, 0.16, 0.16, 0.04, 6, 'z', ROLE.DARK, [false, false]),
+    { x: -0.32, y: 1.36, z: 2.62, rx: -0.42 });
   for (const z of [0.60, -0.90, -2.40]) chamfer(sh, 0, 0.80, z, 2.10, 0.14, 0.44, 0.05, ROLE.DECK);
-  faceY(sh, 0, 0.58, -0.6, 2.10, 5.4, ROLE.SEAT);
+  faceY(sh, 0, 0.58, -0.6, 2.10, 5.4, ROLE.DECK_LO);
+  cyl(sh, 0.42, 0.10, -3.94, 0.09, 0.09, 0.30, 6, 'z', ROLE.DARK);     // transom exhaust
 }
 
 /**
@@ -1642,199 +2177,437 @@ function skiff(sh) {
   for (const z of [-0.70, 1.00]) chamfer(sh, 0, 0.50, z, 1.55, 0.10, 0.34, 0.04, ROLE.SEAT);
 }
 
+/**
+ * Convertible sportfisher. The cockpit sole used to render as a bright orange
+ * rectangle lying flat on a white deck — a texturing error, not teak. It is a
+ * recessed well now, below a coaming, in a muted teak with plank reveals.
+ */
 function sportFisher(sh) {
-  sweep(sh, SEC.HULL, [
+  sweep(sh, SEC.HULL3, [
     { z: -5.60, w: 3.20, h: 1.50, y0: -0.90 },
     { z: -3.40, w: 3.70, h: 1.62, y0: -1.00 },
     { z: 2.20, w: 3.70, h: 1.66, y0: -1.00 },
     { z: 5.00, w: 2.30, h: 1.60, y0: -0.90 },
     { z: 6.30, w: 0.60, h: 1.45, y0: -0.72 },
-  ], { role: ROLE.HULL, edgeRoles: HULL_ROLES, capStart: ROLE.HULL, capEnd: ROLE.HULL });
-  for (const s of [-1, 1]) faceX(sh, s * 1.82, -0.10, -0.6, 9.4, 0.20, ROLE.ACCENT, s);
+  ], { role: ROLE.HULL, edgeRoles: HULL3_ROLES, capStart: ROLE.ANTIFOUL, capEnd: ROLE.HULL });
+  for (const s of [-1, 1]) faceX(sh, s * 1.86, 0.36, -0.6, 9.0, 0.10, ROLE.ACCENT, s);
   chamfer(sh, 0, 1.20, 1.30, 3.10, 1.20, 4.00, 0.20, ROLE.WHITE);
-  faceZ(sh, 0, 1.42, 3.32, 2.40, 0.72, ROLE.GLASS, 1);
-  for (const s of [-1, 1]) faceX(sh, s * 1.56, 1.42, 1.30, 3.40, 0.66, ROLE.GLASS, s);
-  faceY(sh, 0, 0.62, -3.60, 2.30, 3.00, ROLE.DECK);
+  faceZ(sh, 0, 1.38, 3.32, 2.40, 0.68, ROLE.GLASS_DK, 1);
+  faceZ(sh, 0, 1.74, 3.33, 2.40, 0.09, ROLE.GLASS_HI, 1);
+  for (const s of [-1, 1]) {
+    faceX(sh, s * 1.56, 1.38, 1.30, 3.40, 0.62, ROLE.GLASS_DK, s);
+    faceX(sh, s * 1.57, 1.70, 1.30, 3.40, 0.08, ROLE.GLASS_HI, s);
+  }
+  /* --- cockpit well --------------------------------------------------------
+   * Sole dropped 0.28 m below the covering boards, inside a coaming, with a
+   * plank reveal every 0.24 m. */
+  box(sh, 0, 0.34, -3.60, 2.50, 0.10, 3.40, ROLE.DECK_LO);
+  for (let i = 0; i < 9; i++) faceY(sh, -1.08 + i * 0.27, 0.39, -3.60, 0.22, 3.30, ROLE.DECK);
+  for (const s of [-1, 1]) box(sh, s * 1.36, 0.52, -3.60, 0.20, 0.44, 3.50, ROLE.WHITE);
+  box(sh, 0, 0.52, -5.32, 2.70, 0.44, 0.20, ROLE.WHITE);
+  faceZ(sh, 0, 0.46, -5.44, 0.72, 0.52, ROLE.DECK, -1);            // transom door
+  chamfer(sh, 0, 0.72, -0.90, 1.30, 0.66, 0.50, 0.06, ROLE.WHITE); // bait station
+  faceY(sh, 0, 1.05, -0.90, 1.14, 0.40, ROLE.DECK_LO);
+  // Rod holders along the covering boards.
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      stamp(sh, (s2) => cyl(s2, 0, 0, 0, 0.055, 0.055, 0.26, 5, 'y', ROLE.CHROME),
+        { x: s * 1.36, y: 0.82, z: -2.30 - i * 0.80, rz: -s * 0.30 });
+    }
+  }
+  // Bow pulpit and rails round the foredeck.
+  guardRail(sh, [
+    { x: 1.72, y: 0.66, z: 3.60 }, { x: 1.44, y: 0.68, z: 4.60 },
+    { x: 0.96, y: 0.70, z: 5.50 }, { x: 0.34, y: 0.72, z: 6.20 },
+  ], 0.58);
   // Tuna tower — the unmistakable sportfisher silhouette.
   for (const s of [-1, 1]) {
-    box(sh, s * 1.05, 2.80, 1.30, 0.09, 2.00, 0.09, ROLE.CHROME);
-    box(sh, s * 1.05, 3.86, 1.30, 0.09, 1.30, 0.09, ROLE.CHROME);
+    box(sh, s * 1.05, 2.80, 1.30, 0.10, 2.00, 0.10, ROLE.CHROME);
+    box(sh, s * 1.05, 3.86, 1.30, 0.10, 1.30, 0.10, ROLE.CHROME);
   }
   chamfer(sh, 0, 3.86, 1.30, 2.30, 0.12, 1.60, 0.05, ROLE.WHITE);
   chamfer(sh, 0, 4.58, 1.30, 1.60, 0.14, 1.10, 0.05, ROLE.WHITE);
-  cyl(sh, 0, 5.60, -0.60, 0.05, 0.04, 2.20, 6, 'y', ROLE.CHROME);   // outrigger
+  // Two outriggers swept back and out from the tower, not one vertical pole.
+  for (const s of [-1, 1]) {
+    tube(sh, [s * 1.00, 4.40, 1.10], [s * 3.10, 5.40, -2.40], 0.07, 0.045, 5, ROLE.CHROME);
+  }
 }
 
+/**
+ * Cruise ship. Two of them, 45 m long, visible clean across the bay — and the
+ * old one was a cream wedding cake of plain stacked boxes. A ship at this
+ * distance is read from four things: the hull colour break at the waterline,
+ * continuous rows of window slots, lifeboats on davits, and a bridge. It now
+ * has all four, plus a dressed top deck, because the camera sees ship roofs.
+ */
 function cruiseShip(sh) {
-  sweep(sh, SEC.HULL, [
+  sweep(sh, SEC.HULL3, [
     { z: -22.0, w: 8.4, h: 6.4, y0: -3.6 },
     { z: -16.0, w: 10.0, h: 7.0, y0: -4.0 },
     { z: 12.0, w: 10.2, h: 7.0, y0: -4.0 },
     { z: 20.0, w: 6.4, h: 6.6, y0: -3.6 },
     { z: 23.5, w: 1.6, h: 6.0, y0: -3.0 },
-  ], { role: ROLE.HULL, edgeRoles: HULL_ROLES, capStart: ROLE.HULL, capEnd: ROLE.HULL });
+  ], {
+    role: ROLE.BLUE,
+    // Navy below the boot topping, a white stripe at it, cream topsides.
+    edgeRoles: {
+      0: ROLE.BLUE, 1: ROLE.BLUE, 2: ROLE.BLUE, 3: ROLE.BLUE,
+      4: ROLE.WHITE, 5: ROLE.HULL, 6: ROLE.WHITE, 7: ROLE.HULL, 8: ROLE.WHITE,
+    },
+    capStart: ROLE.BLUE, capEnd: ROLE.HULL,
+  });
   for (const s of [-1, 1]) {
-    faceX(sh, s * 5.05, -0.60, -2, 36, 1.10, ROLE.BLUE, s);
-    faceX(sh, s * 5.05, 1.60, -2, 34, 1.30, ROLE.GLASS, s);
+    faceX(sh, s * 5.05, 1.40, -2, 34, 1.10, ROLE.GLASS_DK, s);
+    faceX(sh, s * 5.06, 2.02, -2, 34, 0.12, ROLE.GLASS_HI, s);
   }
-  // Four stepped accommodation decks with continuous window bands.
+  /* Four stepped accommodation decks. Each gets a continuous dark window band
+   * broken by mullions, which is what turns a white box into a deck of cabins
+   * from 300 m — the single highest-value detail on the whole ship. */
   const decks = [[3.0, 9.6, 40], [6.0, 9.0, 37], [9.0, 8.0, 32], [11.8, 6.4, 24]];
   for (let i = 0; i < decks.length; i++) {
     const [y, w, L] = decks[i];
     chamfer(sh, 0, y + 1.35, -2, w, 2.70, L, 0.30, ROLE.WHITE);
-    for (const s of [-1, 1]) faceX(sh, s * w * 0.5, y + 1.55, -2, L - 3, 1.10, ROLE.GLASS, s);
+    for (const s of [-1, 1]) {
+      faceX(sh, s * w * 0.5, y + 1.50, -2, L - 3, 1.00, ROLE.GLASS_DK, s);
+      faceX(sh, s * (w * 0.5 + 0.02), y + 2.06, -2, L - 3, 0.10, ROLE.GLASS_HI, s);
+      const n = Math.round((L - 3) / 2.4);
+      for (let k = 0; k < n; k++) {
+        faceX(sh, s * (w * 0.5 + 0.03), y + 1.50, -2 - (L - 3) / 2 + (k + 0.5) * ((L - 3) / n),
+          0.10, 1.02, ROLE.WHITE, s);
+      }
+    }
+  }
+  // Promenade deck: eight lifeboats hung on davits, four a side.
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const z = -13 + i * 8.5;
+      box(sh, s * 4.95, 4.30, z, 0.30, 1.10, 0.24, ROLE.STEEL);
+      chamfer(sh, s * 5.20, 3.60, z, 0.90, 0.80, 3.20, 0.24, ROLE.HAZARD);
+      faceY(sh, s * 5.20, 3.98, z, 0.70, 2.90, ROLE.WHITE);
+    }
   }
   chamfer(sh, 0, 14.4, 2.0, 5.2, 1.6, 12.0, 0.24, ROLE.WHITE);
-  chamfer(sh, 0, 16.2, 8.0, 6.6, 2.0, 4.4, 0.26, ROLE.WHITE);       // bridge
-  for (const s of [-1, 1]) faceX(sh, s * 3.31, 16.4, 8.0, 3.8, 1.20, ROLE.GLASS, s);
-  faceZ(sh, 0, 16.4, 10.22, 5.8, 1.20, ROLE.GLASS, 1);
+  /* Bridge: raked, wrap-around dark glazing, and wings out to the ship's side
+   * — the wings are what say "bridge" rather than "another white box". */
+  chamfer(sh, 0, 16.2, 8.0, 6.6, 2.0, 4.4, 0.26, ROLE.WHITE);
+  for (const s of [-1, 1]) {
+    chamfer(sh, s * 4.30, 15.6, 8.6, 2.20, 0.60, 2.00, 0.12, ROLE.WHITE);
+    faceX(sh, s * 3.31, 16.4, 8.0, 3.8, 1.20, ROLE.GLASS_DK, s);
+    faceX(sh, s * 3.32, 17.10, 8.0, 3.8, 0.14, ROLE.GLASS_HI, s);
+  }
+  faceZ(sh, 0, 16.4, 10.22, 5.8, 1.20, ROLE.GLASS_DK, 1);
+  faceZ(sh, 0, 17.10, 10.23, 5.8, 0.14, ROLE.GLASS_HI, 1);
   cyl(sh, 0, 18.0, -6.0, 2.1, 1.8, 5.6, 10, 'y', ROLE.ACCENT);      // funnel
-  cyl(sh, 0, 21.0, -6.0, 1.8, 1.7, 0.5, 10, 'y', ROLE.DARK);
-  faceY(sh, 0, 13.2, -14.0, 5.4, 8.0, ROLE.BLUE);        // pool deck
+  cyl(sh, 0, 21.0, -6.0, 1.9, 1.8, 0.7, 10, 'y', ROLE.DARK);        // black cap
+  // Swept funnel fin.
+  sh.quad([-0.20, 16.0, -8.0], [0.20, 16.0, -8.0], [0.20, 21.2, -10.6], [-0.20, 21.2, -10.6],
+    ROLE.ACCENT, [0, 18, -6]);
+  sh.quad([-0.20, 16.0, -8.0], [-0.20, 21.2, -10.6], [-0.20, 21.2, -9.2], [-0.20, 15.6, -6.4],
+    ROLE.ACCENT, [1, 18, -8]);
+  sh.quad([0.20, 16.0, -8.0], [0.20, 21.2, -10.6], [0.20, 21.2, -9.2], [0.20, 15.6, -6.4],
+    ROLE.ACCENT, [-1, 18, -8]);
+  /* --- top deck ------------------------------------------------------------
+   * The camera looks down on ship roofs for most of the match. */
+  faceY(sh, 0, 13.20, -14.0, 6.2, 8.4, ROLE.WHITE);                 // pool surround
+  faceY(sh, 0, 13.22, -14.0, 4.6, 6.4, ROLE.BLUE);                  // pool
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      box(sh, s * 3.40, 13.34, -17.4 + i * 2.2, 0.70, 0.16, 1.60, ROLE.WHITE);
+    }
+  }
+  guardRail(sh, [
+    { x: 4.30, y: 13.2, z: -20.0 }, { x: 4.60, y: 13.2, z: -14.0 },
+    { x: 4.60, y: 13.2, z: -8.0 },
+  ], 0.90, ROLE.STEEL);
 }
 
 /* ================================================ shape: machinery ===== */
 
+/**
+ * Standard plant fittings: a rotating beacon, a ROPS/FOPS canopy and a step
+ * ladder. Every yellow machine on a site has all three, and not one of ours
+ * had any of them — which is most of why they read as toys.
+ */
+function beacon(sh, x, y, z) {
+  cyl(sh, x, y, z, 0.06, 0.06, 0.14, 5, 'y', ROLE.DARK);
+  cyl(sh, x, y + 0.16, z, 0.09, 0.07, 0.18, 6, 'y', ROLE.AMBER);
+}
+function ropsFrame(sh, o) {
+  const { x, y0, y1, z0, z1, r = 0.07 } = o;
+  for (const s of [-1, 1]) {
+    for (const z of [z0, z1]) box(sh, s * x, (y0 + y1) / 2, z, r, y1 - y0, r, ROLE.DARK);
+    box(sh, s * x, y1, (z0 + z1) / 2, r, r, z1 - z0, ROLE.DARK);
+  }
+  for (const z of [z0, z1]) box(sh, 0, y1, z, x * 2, r, r, ROLE.DARK);
+}
+function stepLadder(sh, x, y0, z, n, dx) {
+  for (let i = 0; i < n; i++) box(sh, x, y0 + i * 0.34, z, 0.30, 0.06, 0.10, ROLE.CHROME);
+  box(sh, x + dx * 0.14, y0 + n * 0.34 * 0.5 + 0.40, z, 0.06, n * 0.34 + 0.70, 0.06, ROLE.CHROME);
+}
+
+/**
+ * Tracked excavator.
+ *
+ * The blockout was good and it still read as a toy, because there was not ONE
+ * HYDRAULIC RAM on it — so the arm was a bent stick — the tracks were plain
+ * slabs with no sprocket or idler, and every surface was the same machine
+ * yellow. All three fixed below.
+ */
 function excavator(sh) {
   for (const s of [-1, 1]) {
-    chamfer(sh, s * 1.10, 0.44, 0, 0.72, 0.88, 4.30, 0.22, ROLE.DARK);
+    chamfer(sh, s * 1.10, 0.44, 0, 0.72, 0.88, 4.30, 0.22, ROLE.GRIME);
     for (let i = 0; i < 7; i++) box(sh, s * 1.10, 0.10, -1.8 + i * 0.6, 0.80, 0.10, 0.22, ROLE.STEEL);
+    // Drive sprocket, idler and three track rollers per side.
+    for (const z of [-2.00, 2.00]) cyl(sh, s * 1.10, 0.46, z, 0.42, 0.42, 0.50, 6, 'x', ROLE.MACH_LO);
+    for (const z of [-1.00, 0, 1.00]) cyl(sh, s * 1.10, 0.22, z, 0.17, 0.17, 0.44, 5, 'x', ROLE.DARK);
   }
   cyl(sh, 0, 1.02, -0.20, 1.10, 1.10, 0.28, 10, 'y', ROLE.MACH_LO);
   chamfer(sh, 0, 1.62, -1.05, 2.40, 1.00, 2.60, 0.16, ROLE.MACH);   // house + counterweight
-  chamfer(sh, -0.72, 2.10, 0.62, 1.10, 1.90, 1.60, 0.14, ROLE.MACH);
+  faceZ(sh, 0, 1.50, -2.36, 2.00, 1.20, ROLE.GRIME, -1);            // counterweight face
+  for (const s of [-1, 1]) faceX(sh, s * 1.21, 1.70, -0.90, 1.90, 0.36, ROLE.MACH_LO, s);
+  for (const s of [-1, 1]) faceX(sh, s * 1.22, 1.28, -0.90, 1.10, 0.28, ROLE.WHITE, s);
+  chamfer(sh, -0.72, 2.10, 0.62, 1.10, 1.90, 1.60, 0.14, ROLE.DARK);
   faceZ(sh, -0.72, 2.30, 1.44, 0.86, 1.10, ROLE.GLASS, 1);
   faceX(sh, -1.28, 2.30, 0.62, 1.30, 1.10, ROLE.GLASS, -1);
+  beacon(sh, -0.72, 3.06, 0.10);
+  cyl(sh, 0.72, 2.70, -1.60, 0.11, 0.09, 1.00, 6, 'y', ROLE.DARK);  // exhaust stack
+  // Handrail loop round the house roof, and a step ladder up the near side.
+  for (const s of [-1, 1]) box(sh, s * 1.10, 2.42, -1.60, 0.06, 0.60, 0.06, ROLE.CHROME);
+  box(sh, 0, 2.70, -1.60, 2.20, 0.06, 0.06, ROLE.CHROME);
+  box(sh, 1.10, 2.70, -0.70, 0.06, 0.06, 1.80, ROLE.CHROME);
+  stepLadder(sh, 1.26, 0.72, 0.30, 3, 1);
   // Boom / stick / bucket. Angles chosen so the machine reads as "working".
   const boom = (x, y, z, len, ang, w) => {
-    const c = Math.cos(ang), s2 = Math.sin(ang);
-    const sh2 = new Shape();
-    chamfer(sh2, 0, 0, 0, w, w * 1.25, len, 0.06, ROLE.MACH);
-    for (let i = 0; i < sh2.p.length; i += 3) {
-      const py = sh2.p[i + 1], pz = sh2.p[i + 2];
-      sh2.p[i + 1] = y + py * c - pz * s2;
-      sh2.p[i + 2] = z + py * s2 + pz * c;
-      sh2.p[i] += x;
-      const ny = sh2.n[i + 1], nz = sh2.n[i + 2];
-      sh2.n[i + 1] = ny * c - nz * s2;
-      sh2.n[i + 2] = ny * s2 + nz * c;
-    }
-    sh.p.push(...sh2.p); sh.n.push(...sh2.n); sh.u.push(...sh2.u); sh.r.push(...sh2.r);
+    stamp(sh, (s2) => chamfer(s2, 0, 0, 0, w, w * 1.25, len, 0.06, ROLE.MACH), { x, y, z, rx: ang });
   };
   boom(0.66, 2.70, 2.00, 3.60, 0.62, 0.44);
   boom(0.66, 3.30, 4.30, 2.80, -0.95, 0.36);
+  // The three rams. This is the silhouette cue the machine was missing.
+  ram(sh, [0.66, 1.90, 0.60], [0.66, 3.00, 2.60], 0.13);            // boom ram
+  ram(sh, [0.66, 4.10, 2.90], [0.66, 3.80, 4.60], 0.11);            // stick ram
+  ram(sh, [0.66, 2.70, 5.10], [0.66, 1.80, 5.44], 0.09);            // bucket ram
   chamfer(sh, 0.66, 1.30, 5.55, 0.98, 0.80, 0.90, 0.10, ROLE.STEEL);
   for (let i = 0; i < 4; i++) box(sh, 0.20 + i * 0.30, 0.94, 5.96, 0.12, 0.30, 0.24, ROLE.STEEL);
 }
 
+/**
+ * Centre-pivot wheel loader. The masses were right; none of the language that
+ * makes a machine read as a machine was there — no rams, no stack, no beacon,
+ * no ROPS, no ladder, no chevrons, and a bucket with no back plate or teeth.
+ */
 function wheelLoader(sh) {
   chamfer(sh, 0, 1.30, -1.50, 2.10, 1.10, 2.40, 0.18, ROLE.MACH);   // rear engine block
   chamfer(sh, 0, 1.20, 0.60, 1.90, 0.80, 2.00, 0.16, ROLE.MACH);
-  chamfer(sh, 0, 2.30, -0.55, 1.60, 1.60, 1.50, 0.14, ROLE.MACH_LO);
+  chamfer(sh, 0, 2.30, -0.55, 1.60, 1.60, 1.50, 0.14, ROLE.DARK);
   for (const s of [-1, 1]) faceX(sh, s * 0.81, 2.45, -0.55, 1.20, 1.10, ROLE.GLASS, s);
   faceZ(sh, 0, 2.45, 0.21, 1.30, 1.10, ROLE.GLASS, 1);
   chamfer(sh, 0, 3.14, -0.55, 1.66, 0.14, 1.56, 0.05, ROLE.MACH);
-  // Lift arms and bucket.
+  ropsFrame(sh, { x: 0.84, y0: 1.60, y1: 3.20, z0: -1.28, z1: 0.18 });
+  beacon(sh, 0.50, 3.22, -0.55);
+  // Exhaust stack and air-cleaner canister on the engine deck.
+  cyl(sh, -0.62, 2.40, -1.30, 0.10, 0.08, 1.10, 6, 'y', ROLE.DARK);
+  cyl(sh, 0.58, 2.16, -1.60, 0.24, 0.24, 0.90, 7, 'z', ROLE.MACH_LO);
+  // Articulation band at the waist, and a dusty scuff along the bottom.
+  chamfer(sh, 0, 1.20, -0.35, 1.60, 0.90, 0.24, 0.06, ROLE.DARK);
+  for (const s of [-1, 1]) faceX(sh, s * 1.06, 0.90, -1.50, 2.30, 0.26, ROLE.DUSTY, s);
+  chevrons(sh, 0, 1.30, -2.72, 1.70, 0.36, 6, -1);
+  stepLadder(sh, -1.02, 0.80, -0.20, 3, -1);
+  // Lift arms, with a lift ram to each and a tilt ram to the bucket linkage.
   for (const s of [-1, 1]) {
-    const sh2 = new Shape();
-    chamfer(sh2, 0, 0, 0, 0.22, 0.34, 3.30, 0.06, ROLE.MACH);
-    const ang = -0.30, c = Math.cos(ang), sn = Math.sin(ang);
-    for (let i = 0; i < sh2.p.length; i += 3) {
-      const py = sh2.p[i + 1], pz = sh2.p[i + 2];
-      sh2.p[i] += s * 0.86;
-      sh2.p[i + 1] = 1.70 + py * c - pz * sn;
-      sh2.p[i + 2] = 1.90 + py * sn + pz * c;
-      const ny = sh2.n[i + 1], nz = sh2.n[i + 2];
-      sh2.n[i + 1] = ny * c - nz * sn;
-      sh2.n[i + 2] = ny * sn + nz * c;
-    }
-    sh.p.push(...sh2.p); sh.n.push(...sh2.n); sh.u.push(...sh2.u); sh.r.push(...sh2.r);
+    stamp(sh, (s2) => chamfer(s2, 0, 0, 0, 0.22, 0.34, 3.30, 0.06, ROLE.MACH),
+      { x: s * 0.86, y: 1.70, z: 1.90, rx: -0.30 });
+    ram(sh, [s * 0.86, 1.10, 0.70], [s * 0.86, 1.86, 2.30], 0.13);
   }
+  ram(sh, [0, 2.10, 0.80], [0, 1.62, 2.70], 0.11);
   chamfer(sh, 0, 0.72, 3.34, 2.60, 1.05, 1.05, 0.12, ROLE.STEEL);
-  chamfer(sh, 0, 0.28, 3.82, 2.60, 0.18, 0.30, 0.04, ROLE.DARK);
+  faceZ(sh, 0, 0.90, 2.80, 2.36, 0.86, ROLE.MACH_LO, -1);           // bucket back plate
+  chamfer(sh, 0, 0.28, 3.82, 2.60, 0.18, 0.30, 0.04, ROLE.DARK);    // cutting edge
+  for (let i = 0; i < 5; i++) box(sh, -0.96 + i * 0.48, 0.24, 3.98, 0.20, 0.12, 0.24, ROLE.DARK);
   wheels4(sh, 0.98, 1.10, -1.70, 0.72, 0.44, 8);
 }
 
+/** Articulated site dumper: a tipping skip on six wheels. */
 function siteDumper(sh) {
   chamfer(sh, 0, 1.90, 2.30, 2.30, 1.90, 2.10, 0.16, ROLE.MACH);
   for (const s of [-1, 1]) faceX(sh, s * 1.16, 2.20, 2.40, 1.40, 0.90, ROLE.GLASS, s);
   faceZ(sh, 0, 2.20, 3.36, 1.80, 0.90, ROLE.GLASS, 1);
-  chamfer(sh, 0, 0.86, 0.20, 2.20, 0.70, 6.60, 0.10, ROLE.MACH_LO);
+  ropsFrame(sh, { x: 1.14, y0: 2.86, y1: 3.34, z0: 1.36, z1: 3.24 });
+  beacon(sh, 0.80, 3.36, 3.10);
+  stepLadder(sh, 1.22, 0.90, 2.10, 3, 1);
+  chamfer(sh, 0, 0.86, 0.20, 2.20, 0.70, 6.60, 0.10, ROLE.GRIME);
+  // Articulation joint between cab and skip.
+  cyl(sh, 0, 1.10, 1.16, 0.42, 0.42, 1.30, 8, 'x', ROLE.DARK);
   // Tipper body — raked up at the front so it reads as a skip, not a box.
   sweep(sh, SEC.OCT, [
     { z: -3.60, w: 2.60, h: 1.50, y0: 1.28 },
     { z: 0.60, w: 2.70, h: 1.60, y0: 1.28 },
     { z: 1.30, w: 2.70, h: 2.10, y0: 1.28 },
   ], { role: ROLE.MACH_LO, capStart: ROLE.MACH_LO, capEnd: ROLE.MACH_LO });
-  faceY(sh, 0, 1.60, -1.20, 2.30, 4.60, ROLE.DARK);
+  faceY(sh, 0, 1.60, -1.20, 2.30, 4.60, ROLE.GRIME);
+  // Mud and rust up the bottom third of the skip: this thing carries spoil.
+  for (const s of [-1, 1]) {
+    faceX(sh, s * 1.35, 1.62, -1.20, 4.60, 0.56, ROLE.GRIME, s);
+    faceX(sh, s * 1.34, 2.10, -1.20, 4.60, 0.10, ROLE.DARK, s);
+  }
+  faceZ(sh, 0, 1.66, -3.62, 2.20, 0.60, ROLE.GRIME, -1);
+  // Two tipping rams from the chassis to the skip underside.
+  for (const s of [-1, 1]) ram(sh, [s * 0.62, 1.16, -0.60], [s * 0.50, 1.60, 0.90], 0.11);
+  // Mudguards over all six wheels.
+  for (const s of [-1, 1]) {
+    for (const z of [2.20, -1.60, -3.05]) box(sh, s * 1.06, 1.42, z, 0.66, 0.10, 1.70, ROLE.DARK);
+  }
   wheels4(sh, 1.06, 2.20, -1.60, 0.74, 0.46, 8);
   wheel(sh, 1.06, 0.74, -3.05, 0.74, 0.46, 8);
   wheel(sh, -1.06, 0.74, -3.05, 0.74, 0.46, 8);
   carLamps(sh, { zF: 3.46, zR: -4.40, yH: 1.30, yT: 1.40, dx: 0.90, wL: 0.30, grille: false, yP: 1.00 });
 }
 
+/**
+ * Tower crane.
+ *
+ * It used to be a crane STUMP: sixteen metres of lattice with a slew ring on
+ * top and nothing above it. A tower crane's whole contribution to a skyline is
+ * the horizontal — jib, counter-jib, counterweight — and at 200 m that L is the
+ * silhouette that says "city under construction". So the top is now built, the
+ * bracing is diagonal rather than plain rungs, and the upper sections carry
+ * hazard banding.
+ */
 function craneBase(sh) {
   chamfer(sh, 0, 0.35, 0, 7.4, 0.70, 7.4, 0.14, ROLE.DARK);          // ballast pad
   for (const s of [-1, 1]) {
-    for (const t of [-1, 1]) chamfer(sh, s * 2.4, 1.00, t * 2.4, 2.0, 0.60, 2.0, 0.10, ROLE.DARK);
+    for (const t of [-1, 1]) chamfer(sh, s * 2.4, 1.00, t * 2.4, 2.0, 0.60, 2.0, 0.10, ROLE.GRIME);
   }
-  // Lattice mast: four legs plus diagonals, which is the whole visual signature.
-  const H = 16.0;
+  // Lattice mast: four chords, a horizontal at every level and a diagonal on
+  // every face, which is what a lattice actually looks like.
+  const H = 16.0, LV = 6, dy = H / LV, a = 0.90;
   for (const s of [-1, 1]) {
-    for (const t of [-1, 1]) box(sh, s * 0.90, H / 2 + 0.7, t * 0.90, 0.20, H, 0.20, ROLE.MACH);
+    for (const t of [-1, 1]) box(sh, s * a, H / 2 + 0.7, t * a, 0.22, H, 0.22, ROLE.MACH);
   }
-  for (let i = 0; i < 8; i++) {
-    const y = 1.1 + i * 2.0;
+  const diag = Math.hypot(dy, a * 2);
+  const tilt = Math.atan2(a * 2, dy);
+  for (let i = 0; i < LV; i++) {
+    const y = 0.70 + i * dy;
+    const top = i >= LV - 2;
+    const role = top ? ROLE.HAZARD : ROLE.MACH;
     for (const s of [-1, 1]) {
-      box(sh, s * 0.90, y, 0, 0.13, 0.13, 1.90, ROLE.MACH);
-      box(sh, 0, y, s * 0.90, 1.90, 0.13, 0.13, ROLE.MACH);
+      box(sh, s * a, y + dy, 0, 0.14, 0.14, a * 2, role);
+      box(sh, 0, y + dy, s * a, a * 2, 0.14, 0.14, role);
+      // One diagonal per face per level, alternating direction as it climbs.
+      const d = (i % 2) ? 1 : -1;
+      stamp(sh, (s2) => box(s2, 0, 0, 0, 0.12, diag, 0.12, role),
+        { x: s * a, y: y + dy / 2, z: 0, rx: d * tilt });
+      stamp(sh, (s2) => box(s2, 0, 0, 0, 0.12, diag, 0.12, role),
+        { x: 0, y: y + dy / 2, z: s * a, rz: -d * tilt });
     }
+    // Climbing ladder up the inside of the mast.
+    box(sh, 0.36, y + dy * 0.5, 0.62, 0.44, 0.05, 0.05, ROLE.CHROME);
   }
-  cyl(sh, 0, H + 0.9, 0, 1.15, 1.15, 0.40, 10, 'y', ROLE.MACH_LO);
+  /* --- the top ------------------------------------------------------------- */
+  const yT = H + 0.90;
+  cyl(sh, 0, yT, 0, 1.15, 1.15, 0.40, 10, 'y', ROLE.MACH_LO);        // slewing ring
+  chamfer(sh, 0, yT + 0.60, 0, 1.80, 0.90, 1.80, 0.14, ROLE.MACH);   // slew deck
+  // Operator cab, hung on the jib side.
+  chamfer(sh, 0, yT + 1.60, 1.70, 1.20, 1.40, 1.30, 0.12, ROLE.MACH_LO);
+  faceZ(sh, 0, yT + 1.70, 2.36, 0.94, 1.00, ROLE.GLASS, 1);
+  for (const s of [-1, 1]) faceX(sh, s * 0.61, yT + 1.70, 1.70, 1.00, 1.00, ROLE.GLASS, s);
+  // Jib and counter-jib as tapering lattice beams.
+  const jibY = yT + 2.50;
+  chamfer(sh, 0, jibY, 11.5, 0.60, 0.60, 20.0, 0.10, ROLE.MACH);
+  for (let i = 0; i < 6; i++) {
+    stamp(sh, (s2) => box(s2, 0, 0, 0, 0.10, 1.30, 0.10, ROLE.MACH),
+      { y: jibY - 0.45, z: 3.4 + i * 3.2, rx: (i % 2 ? 1 : -1) * 0.95 });
+  }
+  chamfer(sh, 0, jibY, -4.60, 0.70, 0.66, 7.60, 0.10, ROLE.MACH);
+  for (const t of [0, 1, 2]) {
+    chamfer(sh, 0, jibY - 0.10, -6.6 - t * 0.55, 1.70, 1.30, 0.46, 0.06, ROLE.GRIME);
+  }
+  // A-frame apex with tie bars fore and aft.
+  box(sh, 0, jibY + 1.60, 0, 0.24, 3.20, 0.24, ROLE.MACH);
+  tube(sh, [0, jibY + 3.10, 0], [0, jibY + 0.30, 18.0], 0.08, 0.08, 4, ROLE.MACH, [false, false]);
+  tube(sh, [0, jibY + 3.10, 0], [0, jibY + 0.30, -7.6], 0.08, 0.08, 4, ROLE.MACH, [false, false]);
+  // Trolley and hook block.
+  box(sh, 0, jibY - 0.42, 12.0, 0.70, 0.26, 0.80, ROLE.MACH_LO);
+  tube(sh, [0, jibY - 0.52, 12.0], [0, jibY - 5.20, 12.0], 0.045, 0.045, 4, ROLE.CHROME, [false, false]);
+  chamfer(sh, 0, jibY - 5.50, 12.0, 0.44, 0.66, 0.44, 0.08, ROLE.HAZARD);
 }
 
+/**
+ * Scissor lift. The crossed-X arm stack was right and everything around it was
+ * bare: rails with no infill, no control box, no ram, no pivot bosses, castors
+ * sitting in no forks, and one colour throughout.
+ */
 function scissorLift(sh) {
-  chamfer(sh, 0, 0.30, 0, 1.50, 0.44, 2.60, 0.10, ROLE.MACH_LO);
+  chamfer(sh, 0, 0.30, 0, 1.50, 0.44, 2.60, 0.10, ROLE.DARK);
   for (const s of [-1, 1]) {
-    // Castors, tucked under the chassis: a fender lip on a 240 mm wheel that
-    // nobody can see costs six triangles and buys nothing.
-    for (const z of [0.95, -0.95]) wheel(sh, s * 0.72, 0.24, z, 0.24, 0.18, 7, { arch: false });
+    for (const z of [0.95, -0.95]) {
+      // Castors in swivel forks, so the wheels are mounted to something.
+      box(sh, s * 0.72, 0.44, z, 0.28, 0.20, 0.34, ROLE.MACH_LO);
+      for (const d of [-1, 1]) box(sh, s * (0.72 + d * 0.13), 0.30, z, 0.05, 0.24, 0.30, ROLE.MACH_LO);
+      wheel(sh, s * 0.72, 0.24, z, 0.24, 0.18, 7, { arch: false });
+    }
   }
-  // Two crossed pairs of arms — the X is the shape people recognise.
+  // Two crossed pairs of arms, with a pivot boss at every crossing.
   for (let k = 0; k < 2; k++) {
     const y = 0.72 + k * 1.30;
     for (const s of [-1, 1]) {
       for (const d of [-1, 1]) {
-        const sh2 = new Shape();
-        box(sh2, 0, 0, 0, 0.10, 0.20, 2.30, ROLE.STEEL);
-        const ang = d * 0.55, c = Math.cos(ang), sn = Math.sin(ang);
-        for (let i = 0; i < sh2.p.length; i += 3) {
-          const py = sh2.p[i + 1], pz = sh2.p[i + 2];
-          sh2.p[i] += s * 0.60;
-          sh2.p[i + 1] = y + py * c - pz * sn;
-          sh2.p[i + 2] = py * sn + pz * c;
-          const ny = sh2.n[i + 1], nz = sh2.n[i + 2];
-          sh2.n[i + 1] = ny * c - nz * sn;
-          sh2.n[i + 2] = ny * sn + nz * c;
-        }
-        sh.p.push(...sh2.p); sh.n.push(...sh2.n); sh.u.push(...sh2.u); sh.r.push(...sh2.r);
+        stamp(sh, (s2) => box(s2, 0, 0, 0, 0.10, 0.20, 2.30, ROLE.MACH),
+          { x: s * 0.60, y, rx: d * 0.55 });
+      }
+      cyl(sh, s * 0.60, y, 0, 0.13, 0.13, 0.30, 6, 'x', ROLE.DARK);
+      for (const d of [-1, 1]) {
+        cyl(sh, s * 0.60, y + d * 0.60, d * -1.05, 0.09, 0.09, 0.28, 5, 'x', ROLE.DARK);
       }
     }
   }
-  chamfer(sh, 0, 2.72, 0, 1.60, 0.16, 2.80, 0.06, ROLE.MACH);
+  // Hydraulic ram between the lowest two arms.
+  ram(sh, [0, 0.42, -0.80], [0, 1.10, 0.60], 0.11);
+  // Platform deck, guard rails with a kick plate and mesh infill, control box.
+  chamfer(sh, 0, 2.72, 0, 1.60, 0.16, 2.80, 0.06, ROLE.STEEL);
   for (const s of [-1, 1]) {
     box(sh, s * 0.78, 3.32, 0, 0.07, 1.10, 2.72, ROLE.MACH);
     box(sh, 0, 3.32, s * 1.36, 1.60, 1.10, 0.07, ROLE.MACH);
+    faceX(sh, s * 0.79, 3.00, 0, 2.66, 0.30, ROLE.MACH_LO, s);      // kick plate
+    faceX(sh, s * 0.785, 3.52, 0, 2.66, 0.52, ROLE.DARK, s);        // mesh infill
+    faceZ(sh, 0, 3.00, s * 1.37, 1.54, 0.30, ROLE.MACH_LO, s);
+    faceZ(sh, 0, 3.52, s * 1.365, 1.54, 0.52, ROLE.DARK, s);
   }
+  // Entry gate at the rear: a lighter panel with a visible stile each side.
+  faceZ(sh, 0, 3.30, -1.375, 0.70, 1.00, ROLE.MACH_LO, -1);
+  for (const d of [-1, 1]) faceZ(sh, d * 0.38, 3.30, -1.385, 0.08, 1.04, ROLE.DARK, -1);
+  chamfer(sh, 0.52, 3.36, 1.30, 0.36, 0.44, 0.20, 0.05, ROLE.DARK); // control box
+  faceZ(sh, 0.52, 3.40, 1.41, 0.26, 0.22, ROLE.SIGN, 1);
 }
 
+/**
+ * Articulated tandem roller. Correct parts, correct proportions, and nothing
+ * ancillary at all: the drum was butted straight into the body with no yoke or
+ * pivot, and there was no scraper, canopy, beacon, step or handrail.
+ */
 function roadRoller(sh) {
   cyl(sh, 0, 0.62, 1.45, 0.62, 0.62, 1.90, 12, 'x', ROLE.STEEL);
+  // Drum yoke: two side arms carrying a visible pivot boss.
+  for (const s of [-1, 1]) {
+    chamfer(sh, s * 1.02, 0.86, 1.45, 0.16, 0.90, 1.20, 0.05, ROLE.DARK);
+    cyl(sh, s * 1.02, 0.62, 1.45, 0.16, 0.16, 0.22, 6, 'x', ROLE.MACH_LO);
+  }
+  box(sh, 0, 1.24, 1.45, 2.10, 0.18, 0.50, ROLE.DARK);
+  // Scraper bar along the drum's trailing edge.
+  box(sh, 0, 0.44, 0.84, 1.86, 0.09, 0.10, ROLE.MACH_LO);
+  for (const s of [-1, 1]) box(sh, s * 0.86, 0.62, 0.90, 0.08, 0.30, 0.08, ROLE.DARK);
   chamfer(sh, 0, 1.00, 0.35, 1.30, 0.70, 1.30, 0.12, ROLE.MACH);
   chamfer(sh, 0, 1.10, -1.10, 1.90, 1.00, 2.10, 0.14, ROLE.MACH);
-  chamfer(sh, 0, 2.10, -0.90, 1.20, 1.10, 1.20, 0.12, ROLE.MACH_LO);
+  // Articulation joint line between front and rear body.
+  cyl(sh, 0, 1.16, -0.10, 0.30, 0.30, 1.20, 8, 'x', ROLE.DARK);
+  chamfer(sh, 0, 2.10, -0.90, 1.20, 1.10, 1.20, 0.12, ROLE.DARK);
   for (const s of [-1, 1]) faceX(sh, s * 0.61, 2.20, -0.90, 0.90, 0.72, ROLE.GLASS, s);
   chamfer(sh, 0, 2.72, -0.90, 1.34, 0.12, 1.34, 0.05, ROLE.MACH);
+  ropsFrame(sh, { x: 0.72, y0: 1.60, y1: 2.90, z0: -1.50, z1: -0.30 });
+  beacon(sh, 0.42, 2.92, -0.90);
+  stepLadder(sh, 0.96, 0.60, -0.60, 2, 1);
+  // Black rubber fender band round the rear wheels.
+  for (const s of [-1, 1]) box(sh, s * 0.82, 1.32, -1.90, 0.52, 0.10, 1.40, ROLE.DARK);
+  for (const s of [-1, 1]) faceX(sh, s * 0.96, 0.70, -1.10, 2.00, 0.24, ROLE.DUSTY, s);
   wheel(sh, 0.82, 0.60, -1.90, 0.60, 0.40, 8);
   wheel(sh, -0.82, 0.60, -1.90, 0.60, 0.40, 8);
 }
@@ -1844,8 +2617,8 @@ function roadRoller(sh) {
 const SHAPE_FN = {
   sedan, suv, hatchback, pickup, sports, convertible, taxi, police,
   supercar, roadster, gtCoupe,
-  deliveryVan, boxTruck, flatbed, garbageTruck, cementMixer,
-  cityBus, articBus, shuttleBus, ambulance, scooter, motorcycle, bicycle,
+  deliveryVan, boxTruck, flatbed, flatbedLoad, garbageTruck, cementMixer,
+  cityBus, articBus, shuttleBus, ambulance, scooter, motorcycle, cruiser, bicycle,
   motorYacht, sailBoat, waterTaxi, skiff, sportFisher, cruiseShip, jetSki,
   excavator, wheelLoader, siteDumper, craneBase, scissorLift, roadRoller,
 };
@@ -2209,22 +2982,30 @@ const FLEET = {
     paints: [P.CAR_MINT, P.STUCCO_PINK, P.CAR_SILVER, P.CAR_NAVY, P.CAR_PURPLE,
       P.CAR_RED, P.STUCCO_BUTTER]
       .map((c) => exotic(c)) },
+  /* The GT's glazing and sills do NOT follow the paint — see `gtCoupe()`. A
+   * navy car with the fleet's shared mid-slate glass had no value separation
+   * between roof, screen and flank and read as one dark lump. */
   gtCoupe: { tier: 'LARGE', r: 1.6, h: 1.4, len: 5.0, cap: 29, label: 'Grand Tourer',
     paints: [P.CAR_GRAPHITE, P.CAR_NAVY, P.CAR_RED, P.CAR_SILVER, P.CAR_TEAL,
       P.CAR_BLACK, P.STUCCO_CREAM]
-      .map((c) => exotic(c)) },
+      .map((c) => ({
+        paint: c, paintLo: darken(c, 0.35), rim: P.CHROME,
+        glass: 0x171d24, glassHi: 0xbcdcea,
+      })) },
   // Three operators, because a rank of a hundred and seventy identical cabs is
-  // the same repetition problem as a kerb of identical saloons. The body stays
-  // taxi-yellow; the livery band is what changes.
+  // the same repetition problem as a kerb of identical saloons. All three are
+  // taxi-yellow — the white livery made those cabs indistinguishable from a
+  // sedan — and only the band colour changes, which costs one tint slot.
   taxi: { tier: 'LARGE', r: 1.6, h: 1.7, len: 4.7, cap: 60, label: 'Taxi',
     paints: [
       { paint: P.TAXI_YELLOW, accent: 0x24262b, paintLo: darken(P.TAXI_YELLOW, 0.72) },
       { paint: P.TAXI_YELLOW, accent: P.CAR_TEAL, paintLo: darken(P.TAXI_YELLOW, 0.72) },
-      { paint: P.CAR_WHITE, accent: P.NEON_PINK, paintLo: darken(P.CAR_WHITE, 0.72) }] },
+      { paint: P.TAXI_YELLOW, accent: P.NEON_PINK, paintLo: darken(P.TAXI_YELLOW, 0.72) }] },
+  // Black steel wheels, not civilian alloys.
   police: { tier: 'LARGE', r: 1.7, h: 1.9, len: 4.9, cap: 26, label: 'Police Car',
     paints: [
-      { paint: P.CAR_WHITE, blue: P.POLICE_BLUE, red: P.CAR_RED },
-      { paint: P.CAR_BLACK, blue: P.POLICE_BLUE, red: P.CAR_RED }] },
+      { paint: P.CAR_WHITE, blue: P.POLICE_BLUE, red: P.CAR_RED, rim: 0x3b4147 },
+      { paint: P.CAR_BLACK, blue: P.POLICE_BLUE, red: P.CAR_RED, rim: 0x3b4147 }] },
   deliveryVan: { tier: 'LARGE', r: 2.0, h: 2.6, len: 6.0, cap: 56, label: 'Delivery Van',
     paints: [
       { paint: P.TRUCK_WHITE, accent: P.NEON_PINK }, { paint: P.CAR_TEAL, accent: P.FABRIC_WHITE },
@@ -2235,12 +3016,22 @@ const FLEET = {
     paints: [
       { paint: P.CAR_BLUE, white: P.TRUCK_WHITE, accent: P.FABRIC_SKY },
       { paint: P.CAR_GRAPHITE, white: P.TRUCK_WHITE, accent: P.FABRIC_CORAL }] },
+  /* Deck timber is authored separately from the cab paint, and knocked well
+   * back from the old saturated orange, which was the largest single flat
+   * colour on the vehicle. */
   flatbed: { tier: 'XLARGE', r: 2.4, h: 2.8, len: 8.4, cap: 40, label: 'Flatbed Truck',
-    paints: [{ paint: P.CAR_NAVY }, { paint: P.TRUCK_WHITE }] },
+    paints: [P.CAR_NAVY, P.TRUCK_WHITE, P.CAR_RED, P.CAR_GREEN]
+      .map((c) => ({ paint: c, deck: P.WOOD_LIGHT, deckLo: P.WOOD_DARK })) },
+  flatbedLoad: { tier: 'XLARGE', r: 2.4, h: 2.8, len: 8.4, cap: 24, label: 'Flatbed Truck',
+    paints: [P.CAR_NAVY, P.TRUCK_WHITE, P.CAR_RED, P.CAR_GREEN]
+      .map((c) => ({ paint: c, deck: P.WOOD_LIGHT, deckLo: P.WOOD_DARK })) },
+  // Pale cab against the green body, plus a sanitation livery panel.
   garbageTruck: { tier: 'XLARGE', r: 2.6, h: 3.3, len: 9.0, cap: 24, label: 'Garbage Truck',
-    paints: [{ paint: P.BIN_GREEN, paintLo: darken(P.BIN_GREEN, 0.7) }] },
+    paints: [{ paint: P.BIN_GREEN, paintLo: darken(P.BIN_GREEN, 0.62),
+      white: P.FABRIC_WHITE, grime: 0x6d6455 }] },
   cementMixer: { tier: 'XLARGE', r: 2.6, h: 3.6, len: 8.8, cap: 34, label: 'Cement Mixer',
-    paints: [{ paint: P.CAR_ORANGE, paintLo: darken(P.CAR_ORANGE, 0.7) }] },
+    paints: [{ paint: P.CAR_ORANGE, paintLo: darken(P.CAR_ORANGE, 0.62),
+      white: P.TRUCK_WHITE, dusty: 0xc2b9a6 }] },
   cityBus: { tier: 'XLARGE', r: 3.2, h: 3.4, len: 11.8, cap: 70, label: 'City Bus',
     paints: [
       { paint: P.BUS_WHITE, accent: P.BUS_BLUE, roof: P.BUS_WHITE },
@@ -2254,47 +3045,73 @@ const FLEET = {
     paints: [{ paint: P.TRUCK_WHITE, white: P.TRUCK_WHITE, red: P.CAR_RED }] },
   scooter: { tier: 'MEDIUM', r: 0.6, h: 1.1, len: 1.9, cap: 80, label: 'Scooter',
     paints: plain([P.CAR_TEAL, P.CAR_PINK, P.STUCCO_BUTTER, P.CAR_WHITE]) },
-  motorcycle: { tier: 'MEDIUM', r: 0.7, h: 1.3, len: 2.3, cap: 70, label: 'Motorcycle',
-    paints: [P.CAR_RED, P.CAR_GRAPHITE, P.NEON_AQUA, P.CAR_ORANGE, P.CAR_BLACK]
+  motorcycle: { tier: 'MEDIUM', r: 0.7, h: 1.3, len: 2.16, cap: 46, label: 'Motorcycle',
+    paints: [P.CAR_RED, P.CAR_GRAPHITE, P.NEON_AQUA, P.CAR_ORANGE, P.CAR_BLACK,
+      P.CAR_LIME, P.CAR_BLUE]
+      .map((c) => exotic(c)) },
+  // Second two-wheeler body style: 67 identical sportbikes was a rank.
+  cruiser: { tier: 'MEDIUM', r: 0.8, h: 1.4, len: 2.56, cap: 34, label: 'Cruiser',
+    paints: [P.CAR_BLACK, P.CAR_NAVY, P.BRICK, P.CAR_GRAPHITE, P.CAR_TEAL, P.CAR_PURPLE]
       .map((c) => exotic(c)) },
   bicycle: { tier: 'MEDIUM', r: 0.55, h: 1.05, len: 1.8, cap: 150, label: 'Bicycle',
     paints: plain([P.ACCENT_AQUA, P.CAR_CORAL]) },
 
-  /* --- boats: y = 0 is the waterline ---------------------------------- */
+  /* --- boats: y = 0 is the waterline ------------------------------------
+   * `glassDk` is the one that matters. The shared road-car glass tone is far
+   * too light against a cream hull, so every boat in the bay rendered with no
+   * windows at all — a stack of white boxes. Near-black tinted bands with a
+   * bright top edge are most of what makes these read as boats.
+   * `antifoul` is the band below the boot stripe, which the HULL3 section now
+   * carries as geometry rather than a decal. */
   motorYacht: { tier: 'XLARGE', r: 3.4, h: 5.2, len: 13.4, cap: 40, label: 'Motor Yacht',
     paints: [
-      { hull: P.HULL_WHITE, accent: P.HULL_NAVY, white: P.HULL_WHITE },
-      { hull: P.HULL_WHITE, accent: P.HULL_TEAL, white: P.HULL_WHITE },
-      { hull: P.HULL_NAVY, accent: P.FABRIC_SUN, white: P.HULL_WHITE }] },
+      { hull: P.HULL_WHITE, accent: P.HULL_NAVY, white: P.HULL_WHITE, glassDk: 0x141d24, deck: 0xb0834c },
+      { hull: P.HULL_WHITE, accent: P.HULL_TEAL, white: P.HULL_WHITE, glassDk: 0x141d24, deck: 0xb0834c },
+      { hull: P.HULL_NAVY, accent: P.FABRIC_SUN, white: P.HULL_WHITE, glassDk: 0x141d24, deck: 0xb0834c }] },
   sailBoat: { tier: 'XLARGE', r: 2.4, h: 12.0, len: 10.0, cap: 40, label: 'Sailing Boat',
     paints: [
-      { hull: P.HULL_WHITE, accent: P.HULL_NAVY, white: P.HULL_WHITE },
-      { hull: P.HULL_TEAL, accent: P.FABRIC_WHITE, white: P.HULL_WHITE }] },
+      { hull: P.HULL_WHITE, accent: P.HULL_NAVY, white: P.HULL_WHITE, glassDk: 0x16222a, deck: 0xb0834c },
+      { hull: P.HULL_TEAL, accent: P.FABRIC_WHITE, white: P.HULL_WHITE, glassDk: 0x16222a, deck: 0xb0834c },
+      { hull: 0xe9dfc6, accent: 0x8f3f36, white: P.HULL_WHITE, glassDk: 0x16222a, deck: 0xb0834c }] },
+  // Canopy hue varies per instance, so a marina of them is not one boat.
   waterTaxi: { tier: 'XLARGE', r: 2.1, h: 3.0, len: 7.8, cap: 24, label: 'Water Taxi',
-    paints: [{ hull: P.HULL_WHITE, accent: P.NEON_AQUA, white: P.HULL_WHITE }] },
+    paints: [P.NEON_AQUA, P.FABRIC_CORAL, P.FABRIC_SUN, P.FABRIC_SKY].map((c) => ({
+      hull: P.HULL_WHITE, accent: c, white: P.HULL_WHITE, glassDk: 0x16222a, deck: 0xb0834c,
+    })) },
   skiff: { tier: 'LARGE', r: 1.3, h: 1.6, len: 5.0, cap: 40, label: 'Skiff',
     paints: [{ hull: P.HULL_WHITE, deck: P.WOOD_DECK }, { hull: P.HULL_TEAL, deck: P.WOOD_DECK }] },
   sportFisher: { tier: 'XLARGE', r: 3.0, h: 6.2, len: 11.9, cap: 16, label: 'Sportfisher',
-    paints: [{ hull: P.HULL_WHITE, accent: P.HULL_NAVY, white: P.HULL_WHITE }] },
+    paints: [{ hull: P.HULL_WHITE, accent: P.HULL_NAVY, white: P.HULL_WHITE,
+      glassDk: 0x141d24, deck: 0xa88a63, antifoul: 0x27363f }] },
   cruiseShip: { tier: 'HUGE', r: 9.0, h: 24.0, len: 45.5, cap: 3, label: 'Cruise Ship',
-    paints: [{ hull: P.HULL_WHITE, accent: P.NEON_PINK, white: P.HULL_WHITE, blue: P.HULL_NAVY }] },
+    paints: [{ hull: 0xf0e6cf, accent: P.NEON_PINK, white: P.HULL_WHITE, blue: P.HULL_NAVY,
+      glassDk: 0x131c22, hazard: 0xff8a2e }] },
   jetSki: { tier: 'MEDIUM', r: 0.7, h: 1.0, len: 3.1, cap: 40, label: 'Jet Ski',
     paints: [P.NEON_PINK, P.NEON_AQUA, P.ACCENT_SUN, P.CAR_LIME]
       .map((c) => ({ ...exotic(c), accent: P.HULL_WHITE, deck: P.HULL_WHITE })) },
 
-  /* --- site machinery -------------------------------------------------- */
+  /* --- site machinery ----------------------------------------------------
+   * Every machine carries ONE paint variant, so nothing here costs a tint slot
+   * and the extra role colours are baked into the geometry for free. They are
+   * spent breaking up the yellow: a dark chassis, a grimy counterweight, a
+   * dusty bottom edge — which is the difference between plant and a toy. */
   excavator: { tier: 'XLARGE', r: 2.4, h: 4.2, len: 8.0, cap: 30, label: 'Excavator',
-    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.66) }] },
+    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.66),
+      grime: 0x4a4e52, dusty: 0xb8ae9b }] },
   wheelLoader: { tier: 'XLARGE', r: 2.0, h: 3.3, len: 7.4, cap: 24, label: 'Wheel Loader',
-    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.66) }] },
+    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.66),
+      dusty: 0xbdb09a }] },
   siteDumper: { tier: 'XLARGE', r: 2.4, h: 3.4, len: 8.4, cap: 24, label: 'Site Dumper',
-    paints: [{ paint: P.CAR_ORANGE, paintLo: darken(P.CAR_ORANGE, 0.7) }] },
+    paints: [{ paint: P.CAR_ORANGE, paintLo: darken(P.CAR_ORANGE, 0.66),
+      grime: 0x6a5540 }] },
   craneBase: { tier: 'XLARGE', r: 4.2, h: 17.5, len: 7.4, cap: 10, label: 'Tower Crane Base',
-    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.66) }] },
+    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.66),
+      grime: 0x8e8880 }] },
   scissorLift: { tier: 'LARGE', r: 1.2, h: 3.9, len: 2.8, cap: 24, label: 'Scissor Lift',
-    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.66) }] },
+    paints: [{ paint: P.CRANE_YELLOW, paintLo: darken(P.CRANE_YELLOW, 0.58) }] },
   roadRoller: { tier: 'LARGE', r: 1.4, h: 2.9, len: 4.4, cap: 16, label: 'Road Roller',
-    paints: [{ paint: P.CAR_YELLOW, paintLo: darken(P.CAR_YELLOW, 0.7) }] },
+    paints: [{ paint: P.CAR_YELLOW, paintLo: darken(P.CAR_YELLOW, 0.66),
+      dusty: 0xb5aa93, steel: 0x9aa09e }] },
 };
 
 /* ================================================== spawn / pooling ==== */
@@ -3617,8 +4434,10 @@ function lanePlan(r) {
 const KERB_LANE_MIX = [
   ['sedan', 20], ['suv', 12], ['hatchback', 9], ['taxi', 11], ['pickup', 7],
   ['deliveryVan', 8], ['sports', 2], ['convertible', 2], ['cityBus', 3.6],
-  ['boxTruck', 3], ['shuttleBus', 1.6], ['flatbed', 1.2], ['police', 1.0],
-  ['scooter', 4], ['motorcycle', 3.4], ['garbageTruck', 0.9], ['cementMixer', 0.9],
+  ['boxTruck', 3], ['shuttleBus', 1.6], ['flatbed', 0.6], ['flatbedLoad', 0.6],
+  ['police', 1.0],
+  ['scooter', 4], ['motorcycle', 2.1], ['cruiser', 1.3], ['garbageTruck', 0.9],
+  ['cementMixer', 0.9],
   ['ambulance', 0.6], ['articBus', 0.7], ['gtCoupe', 1.0], ['supercar', 0.8],
   ['roadster', 0.8],
 ];
@@ -3626,17 +4445,19 @@ const KERB_LANE_MIX = [
 const INNER_LANE_MIX = [
   ['sedan', 28], ['suv', 17], ['hatchback', 12], ['taxi', 8], ['pickup', 5],
   ['sports', 6], ['convertible', 4], ['supercar', 3.2], ['roadster', 2.6],
-  ['gtCoupe', 3.0], ['police', 0.8], ['deliveryVan', 3], ['motorcycle', 2.6],
+  ['gtCoupe', 3.0], ['police', 0.8], ['deliveryVan', 3], ['motorcycle', 1.7],
+  ['cruiser', 0.9],
 ];
 /** Bus lane: transit, taxis and the two-wheelers allowed to share it. */
 const BUS_LANE_MIX = [
   ['cityBus', 28], ['articBus', 8], ['shuttleBus', 10], ['taxi', 30],
-  ['scooter', 12], ['motorcycle', 9], ['ambulance', 3], ['police', 4],
+  ['scooter', 12], ['motorcycle', 6], ['cruiser', 3], ['ambulance', 3], ['police', 4],
 ];
 const KERB_MIX = [
   ['sedan', 26], ['suv', 17], ['hatchback', 13], ['taxi', 6], ['pickup', 9],
   ['deliveryVan', 7], ['sports', 3], ['convertible', 3], ['boxTruck', 2],
-  ['scooter', 4], ['motorcycle', 3], ['police', 0.8], ['flatbed', 0.8],
+  ['scooter', 4], ['motorcycle', 1.9], ['cruiser', 1.1], ['police', 0.8],
+  ['flatbed', 0.4], ['flatbedLoad', 0.4],
   ['supercar', 1.2], ['roadster', 1.6], ['gtCoupe', 2.0],
 ];
 const LOT_MIX = [
@@ -3645,11 +4466,11 @@ const LOT_MIX = [
 ];
 
 const BIG = new Set(['cityBus', 'articBus', 'boxTruck', 'garbageTruck',
-  'cementMixer', 'flatbed', 'ambulance', 'shuttleBus']);
+  'cementMixer', 'flatbed', 'flatbedLoad', 'ambulance', 'shuttleBus']);
 /** Small enough, and driven by someone who would bother, to take a bay. */
 const CAN_PARK = new Set(['sedan', 'suv', 'hatchback', 'pickup', 'sports',
   'convertible', 'taxi', 'supercar', 'roadster', 'gtCoupe', 'deliveryVan',
-  'scooter', 'motorcycle', 'police']);
+  'scooter', 'motorcycle', 'cruiser', 'police']);
 /** Drivers who will stop where they are and put the hazards on. */
 const DOUBLE_PARKERS = new Set(['deliveryVan', 'taxi']);
 /** Transit that makes a scheduled halt at the kerb instead of parking. */
@@ -3720,10 +4541,18 @@ function clearOfPlaced(ctx, x, z, yaw, w, d, out, skip) {
     // brittle for this — measuring is not.
     if (skip && o.height < 0.35) continue;
     if (o.radius > 6.5) continue;
-    // A prop that is not one of ours has no authored contact box; its measured
-    // radius is honest for something compact, so stand a square in its place.
-    const ow = om ? om.contactW : o.radius * 1.41;
-    const od = om ? om.contactD : o.radius * 1.41;
+    /* A prop that is not one of ours has no authored contact box; its measured
+     * radius is honest for something compact, so stand a square in its place.
+     *
+     * TALL THINGS GET AN EXTRA STAND-OFF. A palm's registered radius is its
+     * trunk, about a metre — so a machine could legally park 1.5 m from one and
+     * be completely under ten metres of canopy. The catalogue proved it: all
+     * nine excavators in the city were planted so tight to a palm that four
+     * separate framing attempts came back occluded. A machine standing beside a
+     * street tree is fine; a machine standing UNDER one is not. */
+    const grow = (skip && o.height > 4) ? 2.4 : 0;
+    const ow = (om ? om.contactW : o.radius * 1.41) + grow;
+    const od = (om ? om.contactD : o.radius * 1.41) + grow;
     if (boxesClash(x, z, yaw, w, d, o.position.x, o.position.z, o.rotationY || 0, ow, od)) {
       return false;
     }
