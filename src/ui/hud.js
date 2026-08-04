@@ -195,7 +195,7 @@ export class HUD {
     // The floor is a LEGIBILITY floor, not a layout one: below it the 0.6em
     // labels stop being readable. Measured on a 1024x600 laptop, where the old
     // 0.74 put the smallest rendered glyph at 6.5 px.
-    const floor = h < 520 ? 0.60 : 0.78;
+    const floor = h < 520 ? 0.66 : 0.78;
     const s = Math.max(floor, Math.min(1.28, Math.min(w / 1500, h / 850)));
     document.documentElement.style.setProperty('--s', s.toFixed(3));
     // Fewer feed lines on a short screen — five wrapped ones are most of the

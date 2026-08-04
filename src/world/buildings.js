@@ -45,17 +45,18 @@ const P = PALETTE;
 const STOREY = 3.4;
 
 /**
- * Curtain-wall tints. PALETTE.GLASS_TINTS includes GLASS_BRONZE, which the
- * glass generator's dark sill gradient turns olive-brown at building scale —
- * fine for one hero facade, wrong for a whole skyline. Weighted here instead.
+ * Curtain-wall tints. Deliberately NOT PALETTE.GLASS_TINTS: that set is for
+ * anything that wants a sheet of architectural glass, and a whole tower is a
+ * much harsher test than a shopfront. Weighted here instead.
  */
 const GLASS_TINTS = [
   P.GLASS_TEAL, P.GLASS_BLUE, P.GLASS_AQUA, P.GLASS_SKY, P.GLASS_MINT,
   P.GLASS_TEAL, P.GLASS_SKY, P.GLASS_SMOKE, P.GLASS_BLUE, P.GLASS_AQUA,
-  // One bronze facade in twelve. It is the warm note that stops the glass half
-  // of the skyline reading as a single material, and at one-in-twelve the
-  // olive cast the sill gradient gives it lands as a hero, not as a mistake.
-  P.GLASS_BRONZE, P.GLASS_SMOKE,
+  // One warm facade in twelve: the note that stops the glass half of the
+  // skyline reading as a single material. CHAMPAGNE, not BRONZE — see the
+  // palette entry. Bronze was measured twice on downtown-wide as a dark khaki
+  // column, which is a muddy mid and banned outright by the art bible.
+  P.GLASS_CHAMPAGNE, P.GLASS_SMOKE,
 ];
 
 /**
@@ -1599,16 +1600,19 @@ function inscribedRect(plan, margin) {
  * draw call, and about sixty triangles. That is the tonal structure the eye
  * needs at the 100-200 m the review camera actually sits at.
  */
-function roofDeck(B, plan, y, hex, r) {
-  // The base is the bitumen the rolls are bedded onto: darker than they are,
-  // and what shows through at every lap and round the perimeter upstand.
-  B.trim(loft([{ p: plan, y }], { capTop: true, uScale: 3 }), jitterHex(hex, 0.78, 0.015));
-  const rect = inscribedRect(plan, 0.7);
-  if (!rect) return;
+function roofDeck(B, plan, y, hex, r, rolls = true) {
+  const rect = rolls ? inscribedRect(plan, 0.7) : null;
   const along = r.chance(0.5);
-  const span = along ? rect.w : rect.d;      // across the rolls
-  const run = along ? rect.d : rect.w;       // along them
-  if (span < 4 || run < 3) return;
+  const span = rect ? (along ? rect.w : rect.d) : 0;   // across the rolls
+  const run = rect ? (along ? rect.d : rect.w) : 0;    // along them
+  const laid = !!rect && span >= 4 && run >= 3;
+  // Under the rolls is bitumen, and it is darker than they are — that is what
+  // shows at every lap and round the perimeter upstand. A roof too small to
+  // take rolls has no bitumen showing, so it keeps its own colour instead of
+  // quietly rendering a fifth darker than every other roof of its type.
+  B.trim(loft([{ p: plan, y }], { capTop: true, uScale: 3 }),
+    laid ? jitterHex(hex, 0.78, 0.015) : hex);
+  if (!laid) return;
   const n = Math.max(2, Math.min(16, Math.round(span / 2.2)));
   const rw = span / n;
   for (let i = 0; i < n; i++) {
@@ -1641,7 +1645,10 @@ function roofScape(B, plan, y, r, o = {}) {
   const area = bb.w * bb.d;
   const ph = o.parapetH ?? (0.85 + r() * 0.7);
   B.trim(parapetGeo(plan, y, ph, 0.42), o.parapetHex || P.PARAPET);
-  roofDeck(B, plan, y + 0.03, o.surfaceHex || r.weighted(ROOF_SURFACE), r);
+  // No rolls under a terrace: terraceDeck lays a timber deck 0.5 m inside this
+  // plan and 8 cm above it, so every roll would be hidden and every one of
+  // their triangles wasted.
+  roofDeck(B, plan, y + 0.03, o.surfaceHex || r.weighted(ROOF_SURFACE), r, !o.deck);
 
   /*
    * BREAK THE FIELD BEFORE ANYTHING IS PUT ON IT.
@@ -3049,10 +3056,19 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
     fins(B, base, 0.45, 4.6, Math.max(6, Math.round((pw + pd) / 6)),
       Math.min(0.7, reach / 0.85), trim);
     B.trim(slabGeo(base, 4.3, 0.55, Math.min(0.5, reach)), trim);
-    // Lit fascia over the shopfront — the band that carries the street at
-    // night. Gated: an emissive band is a second mesh and therefore a second
-    // draw call on a building that would otherwise cost exactly one.
-    if (o.litFascia ?? r.chance(0.45)) {
+    /*
+     * Lit fascia over the shopfront — the band that carries the street at
+     * night. Still gated, because an emissive band is a second mesh and
+     * therefore a second draw call on a building that would otherwise cost
+     * exactly one; but 0.45 was too mean. Measured on the crowd preset at
+     * 21:00, better than half the low buildings on a retail street presented a
+     * dark unlit band at eye level with the pavement in front of them lit only
+     * by street lamps — "an unlit skyline at night is the thing to avoid" reads
+     * at ground level too. The marginal cost is far below the odds suggest: a
+     * midrise that already carries a roof sign or a neon blade has a lit mesh
+     * either way, and the fascia merges into it for free.
+     */
+    if (o.litFascia ?? r.chance(0.82)) {
       B.lit(loft([{ p: offsetPlan(base, 0.05), y: 4.32 }, { p: offsetPlan(base, 0.05), y: 4.82 }], {}));
     }
     if (r.chance(0.72)) awning(B, Math.min(pw * 0.62, 14), 4.2, bb2.z1 + 0.05, 1.9, 0.5, r.pick(FABRIC_COLORS));

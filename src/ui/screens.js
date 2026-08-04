@@ -209,8 +209,8 @@ export class Screens {
             diameter = 0, won = false, stats = {} } = summary || {};
     const suffix = ordinal(rank);
 
-    const stat = (label, value) =>
-      `<div class="stat"><span class="sv">${value}</span><span class="sl">${label}</span></div>`;
+    const stat = (label, value, cls = '') =>
+      `<div class="stat ${cls}"><span class="sv">${value}</span><span class="sl">${label}</span></div>`;
 
     // The card carries the whole screen, so it needs the same veil + centring
     // treatment the menu gets. It previously shipped as a bare `.screen` div
@@ -281,20 +281,19 @@ export class Screens {
 }
 
 /**
- * "Best meal" is worth a tile only when there IS one, and it reads better with
- * the number attached — "Kaseya Center 2,600" says more about the round than
- * either half alone. Match owns the label; the live HUD independently tracks
- * the same thing (uiState.bestMeal) and is the fallback when a match ended
- * without Match seeing a swallow (e.g. a net client crediting nobody).
+ * "Best meal" is worth a tile only when there IS one. Match owns the label; the
+ * live HUD independently tracks the same thing (uiState.bestMeal) and is the
+ * fallback when a match ended without Match seeing a swallow (e.g. a net client
+ * crediting nobody).
+ *
+ * The tile is marked `wide` because it is the only one holding a NAME rather
+ * than a number — at the same width as "Rivals eaten" it ellipsised to
+ * "Brickell …", which tells the player nothing.
  */
 function bestMealStat(stats, stat) {
   const label = stats.biggestMeal || (uiState.bestMeal && uiState.bestMeal.label);
   if (!label) return '';
-  const v = Math.round(stats.biggestMealScore || (uiState.bestMeal && uiState.bestMeal.score) || 0);
-  const val = v > 0
-    ? `${esc(label)} <span class="u">${v.toLocaleString()}</span>`
-    : esc(label);
-  return stat('Best meal', val);
+  return stat('Best meal', esc(label), 'wide');
 }
 
 function esc(s) {

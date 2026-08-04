@@ -1108,13 +1108,19 @@ function stuccoShell(floors, bays, size) {
       const cy = (f + 1) * fh - fh * 0.055;
       const deep = rand() < 0.45;               // some storeys get a real slab
       const ch = fh * (deep ? 0.055 : 0.028);
-      go.fillStyle = deep ? 'rgba(255,252,246,0.42)' : 'rgba(255,252,246,0.24)';
-      go.fillRect(0, cy, size, ch);
-      go.fillStyle = deep ? 'rgba(38,30,24,0.30)' : 'rgba(38,30,24,0.17)';
-      go.fillRect(0, cy + ch, size, fh * 0.030);
-      gh.fillStyle = deep ? 'rgb(228,228,228)' : 'rgb(196,196,196)';
-      gh.fillRect(0, cy, size, ch);
-      gh.fillStyle = 'rgb(62,62,62)'; gh.fillRect(0, cy + ch, size, fh * 0.022);
+      // Painted twice, one tile height apart. The bottom course's drop shadow
+      // falls past the edge of the canvas, and a clipped shadow means the tile
+      // seam — which lands every 27 m up a facade — shows as the one storey
+      // line in the building with no shadow under it.
+      for (const oy of [0, -size]) {
+        go.fillStyle = deep ? 'rgba(255,252,246,0.42)' : 'rgba(255,252,246,0.24)';
+        go.fillRect(0, cy + oy, size, ch);
+        go.fillStyle = deep ? 'rgba(38,30,24,0.30)' : 'rgba(38,30,24,0.17)';
+        go.fillRect(0, cy + ch + oy, size, fh * 0.030);
+        gh.fillStyle = deep ? 'rgb(228,228,228)' : 'rgb(196,196,196)';
+        gh.fillRect(0, cy + oy, size, ch);
+        gh.fillStyle = 'rgb(62,62,62)'; gh.fillRect(0, cy + ch + oy, size, fh * 0.022);
+      }
     }
 
     /* --- expressed piers -------------------------------------------------- */

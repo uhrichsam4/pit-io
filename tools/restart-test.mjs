@@ -62,6 +62,10 @@ const r = await p.evaluate(() => {
   g.screens.showResults(sum, g.player);
   out.summary.hasButtons = !!(document.getElementById('again-btn') && document.getElementById('lobby-btn'));
 
+  // hideUI(true) above sets #screens to display:none, which would measure the
+  // card as 0x0 and report a layout failure that is purely the harness's doing.
+  DEV.hideUI(false);
+
   // The end card has to LAY OUT, not merely exist. It shipped once as a bare
   // div whose two main blocks inherited position:absolute from .panel, so the
   // stats row and the standings list drew on top of each other in the corner
@@ -98,6 +102,8 @@ const r = await p.evaluate(() => {
     blocksOutsideCard: outside,
     blockOverlaps: overlaps,
   };
+
+  DEV.hideUI(true);
 
   // --- restart -------------------------------------------------------------
   g.startMatch();

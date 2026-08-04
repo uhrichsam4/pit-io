@@ -202,6 +202,17 @@ export const PALETTE = {
   GLASS_SKY: 0x9fd8f0,
   GLASS_SMOKE: 0x8fa6b0,
   GLASS_BRONZE: 0xd8b98c,
+  // Warm glass that survives being a whole tower.
+  //
+  // GLASS_BRONZE is right as an albedo and wrong as a building. Curtain wall
+  // renders at metalness 0.74, so most of what you see is the environment
+  // reflected THROUGH the tint, and from the game's high 3/4 camera that
+  // environment is the horizon and the ground — mid-value, not sky. A tan tint
+  // over a mid-value reflection lands on dark khaki, and a 180 m khaki column
+  // in a pastel city is the muddiest thing the skyline can contain (measured
+  // on the downtown-wide preset, twice). Champagne is the same warm note
+  // carried at a value that stays on the bright side of the grade.
+  GLASS_CHAMPAGNE: 0xf2ddb6,
   GLASS_LIT: 0xffe6b0,      // an office with the lights on
   MULLION: 0xeef1ee,        // anodised aluminium frame — warm white
   MULLION_DARK: 0x5d6265,

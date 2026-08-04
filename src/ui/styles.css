@@ -244,7 +244,7 @@ html, body {
    an already-scaled HUD renders the ordinal at 6.5 px on a 1024x600 laptop.
    Sized explicitly, and lifted by hand so the smaller run still sits high. */
 #hud-board .hd .mine sup {
-  font-size: 0.68em; vertical-align: 0.4em; line-height: 0;
+  font-size: 0.78em; vertical-align: 0.32em; line-height: 0;
 }
 #hud-board .list { position: relative; }
 
@@ -327,7 +327,7 @@ html, body {
   font-size: 1.15em; font-weight: 900; letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
-#hud-rank .n sup { font-size: 0.62em; font-weight: 900; vertical-align: 0.42em; line-height: 0; }
+#hud-rank .n sup { font-size: 0.7em; font-weight: 900; vertical-align: 0.36em; line-height: 0; }
 #hud-rank .k { font-size: 0.6em; font-weight: 800; letter-spacing: 0.2em; color: var(--dim); }
 #hud-rank.up   { border-color: rgba(77, 255, 158, 0.55); }
 #hud-rank.up .ar, #hud-rank.up .n { color: var(--lime); }
@@ -510,7 +510,7 @@ html, body {
      that ran straight through the size meter at the bottom-left. Capped
      against the VIEWPORT rather than in em so the guarantee holds at every
      scale; the oldest line is simply clipped, and it was about to expire. */
-  max-height: calc(100vh - 12em);
+  max-height: calc(100vh - 15em);
   overflow: hidden;
   pointer-events: none;
 }
@@ -995,25 +995,18 @@ html, body {
 @media (pointer: coarse) and (max-height: 500px) {
   #hud-toast { bottom: 0.6em; }
   #hud-board { top: 0.6em; right: 0.6em; }
-  .rs-rows { max-height: 26vh; }
   #hud-stick .ring { width: 7em; height: 7em; }
   #hud-stick .knob { width: 2.8em; height: 2.8em; }
 }
 
-/* Very short viewports: the menu and the end card have to fit without
-   scrolling. The results card is the tighter of the two — it carries a
-   standings list — so its head shrinks and the list gives up most of it. */
+/* Very short viewports: the menu has to fit without scrolling. The end card's
+   own short-viewport rules live at the bottom of this file, after the .rs-*
+   base rules they override. */
 @media (max-height: 470px) {
   .tagline, .eyebrow { display: none; }
   .menu-in { gap: 0.55em; padding: 0.6em; }
-  .res-card { padding: 0.7em 0.9em 0.8em; gap: 0.5em; }
-  .results-screen .res-card { gap: 0.5em; }
-  .rs-place .n { font-size: clamp(30px, 9vh, 58px); }
-  .rs-verdict { font-size: 0.78em; margin-top: 0.1em; }
-  .rs-stats { padding: 0.45em 0.35em; }
-  .rs-rows { max-height: 22vh; }
+  .res-card { padding: 0.7em 0.9em 0.8em; }
   .btn { padding: 0.55em 1.9em 0.6em; font-size: 0.95em; }
-  .btn-ghost { padding: 0.5em 1.5em 0.55em; font-size: 0.85em; }
 }
 
 @media (max-width: 720px) {
@@ -1033,7 +1026,18 @@ html, body {
  * 340px min-widths, 26px gaps) while the card around it scaled — so at 2560
  * the type was a third of the size the layout expected, and on a phone in
  * landscape the standings list forced the card wider than the screen.        */
-.results-screen .res-card { gap: 0.9em; }
+.results-screen .res-card {
+  gap: 0.9em;
+  animation: rsCardIn 0.42s var(--ease) both;
+  /* Bound the CARD, and let the standings list absorb the difference. A pile
+     of vh caps on the list alone cannot do this: the head, the stat strip and
+     the buttons are all fixed, so on a 390 px-tall phone the card still ran
+     past the bottom of the screen by the height of its own animation. */
+  max-height: calc(100vh - 1.2em);
+  overflow: hidden;
+}
+.results-screen .rs-board { display: flex; flex-direction: column; min-height: 0; }
+.results-screen .rs-rows { flex: 1 1 auto; min-height: 0; }
 .results-screen.leaving .res-card,
 .res-card.leaving { animation: rsOut .24s ease forwards; }
 @keyframes rsOut { to { opacity: 0; transform: translateY(-0.6em) scale(0.98); } }
@@ -1087,6 +1091,7 @@ html, body {
   letter-spacing: -0.01em; max-width: 100%;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.stat.wide { flex: 2 1 8.6em; }
 .stat .sv .u { font-size: 0.66em; font-weight: 800; color: var(--dim); margin-left: 0.15em; }
 .stat .sl {
   font-size: 0.58em; letter-spacing: 0.14em; text-transform: uppercase;
@@ -1144,4 +1149,35 @@ html, body {
 @media (max-width: 700px) {
   .rs-actions { flex-direction: column; width: 100%; }
   .rs-actions .btn { width: 100%; }
+}
+
+/* Entry. Deliberately NOT a fade: the 0% keyframe of a filled animation is a
+   state the card can be LEFT in whenever the document timeline is starved (a
+   backgrounded tab, a software renderer mid-city-build, the reduced-motion
+   override the capture harness runs under). Measured: with `opacity: 0` at 0%
+   the end card rendered at 15% opacity over a live city. Every keyframe here is
+   therefore fully visible and fully inside the layout box — the animation only
+   ever adds a small rise, so being stuck at its start costs 6 px of offset
+   instead of the whole screen. */
+@keyframes rsCardIn {
+  from { transform: translateY(0.5em) scale(0.99); }
+  to   { transform: none; }
+}
+
+/* ---- end card on short viewports ---------------------------------------
+   Stated AFTER the .rs-* base rules on purpose: same specificity, so source
+   order is the only thing deciding this. */
+@media (pointer: coarse) and (max-height: 500px) {
+  .rs-rows { max-height: 26vh; }
+}
+@media (max-height: 470px) {
+  .results-screen .res-card { gap: 0.5em; }
+  .rs-place .n { font-size: clamp(30px, 9vh, 58px); }
+  .rs-verdict { font-size: 0.78em; margin-top: 0.1em; }
+  .rs-kicker { font-size: 0.56em; }
+  .rs-stats { padding: 0.45em 0.35em; }
+  .rs-board { padding: 0.45em 0.5em 0.4em; }
+  .rs-rows { max-height: 20vh; }
+  .rs-rows .row { height: 1.7em; }
+  .btn-ghost { padding: 0.5em 1.5em 0.55em; font-size: 0.85em; }
 }
