@@ -131,15 +131,33 @@ function aoAt(y) {
  */
 class M {
   constructor() {
-    this.p = []; this.n = []; this.c = []; this.i = [];
+    this.p = []; this.n = []; this.c = []; this.i = []; this.g = [];
     this.v = 0;
-    this.cr = 1; this.cg = 1; this.cb = 1;
+    this.cr = 1; this.cg = 1; this.cb = 1; this.gl = 0;
     this.sa = 0; this.ca = 1; this.ox = 0; this.oy = 0; this.oz = 0;
   }
 
+  /**
+   * Set the colour of every subsequent vertex. This ALWAYS clears the glow
+   * flag: `prism`/`tube` drive their `cols` arrays through here, so if colour
+   * did not reset emission a single lit strip would leak into every section of
+   * every swept part that followed it. Emissive surfaces therefore have to say
+   * so explicitly, right where they are built, with `lit()`.
+   */
   col(hex, k = 1) {
     const c = lin(hex);
     this.cr = c[0] * k; this.cg = c[1] * k; this.cb = c[2] * k;
+    this.gl = 0;
+    return this;
+  }
+
+  /**
+   * Colour + "this surface emits after dark". `g` is how hard, relative to its
+   * own albedo: ~1.2 for a bare lamp, ~0.55 for a backlit panel. See NIGHT_U.
+   */
+  lit(hex, k = 1, g = 1) {
+    this.col(hex, k);
+    this.gl = g;
     return this;
   }
 
@@ -161,6 +179,7 @@ class M {
     this.p.push(wx, wy, wz);
     this.n.push(mx, ny, mz);
     this.c.push(this.cr * a, this.cg * a, this.cb * a);
+    this.g.push(this.gl);
     return this.v++;
   }
 
@@ -391,6 +410,7 @@ class M {
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.p), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(this.n), 3));
     g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.c), 3));
+    g.setAttribute('aGlow', new THREE.BufferAttribute(new Float32Array(this.g), 1));
     g.setIndex(this.v > 65535
       ? new THREE.BufferAttribute(new Uint32Array(this.i), 1)
       : new THREE.BufferAttribute(new Uint16Array(this.i), 1));
@@ -401,22 +421,79 @@ class M {
 
 /* ======================================================== materials ===== */
 
+/**
+ * NIGHT.
+ *
+ * The engine publishes `scene.userData.nightFactor` every frame and content
+ * modules drive their own emission from it. A prop is ONE merged geometry in
+ * ONE instanced draw, so "the menu board's face glows but its frame does not"
+ * cannot be a second material — it has to be per-vertex. `aGlow` carries it,
+ * and the shader adds `vColor * aGlow * nightFactor` to the emissive term.
+ *
+ * Consequences worth knowing:
+ *  · At nightFactor 0 the term is exactly zero, so the daytime frame every
+ *    other agent has been reviewing against is untouched, bit for bit.
+ *  · The glow inherits `vColor`, which already carries the per-instance tint
+ *    and the contact-AO ramp — so a lit panel glows in ITS OWN colour without
+ *    anything having to be authored twice.
+ *
+ * WHY THE UNIFORM IS DRIVEN FROM onBeforeRender AND NOT FROM A GAME TICK
+ * The frame loop (src/game.js) calls exactly two module hooks, `trafficUpdate`
+ * and `pedestrianUpdate`, and game.js belongs to another agent. A hook nobody
+ * calls is a feature that silently never runs. `Object3D.onBeforeRender` fires
+ * immediately before each of these meshes is drawn, in the main pass only, and
+ * the pools are `frustumCulled = false`, so it is guaranteed every frame with
+ * no cross-file contract at all. `propsUpdate` is still published for whoever
+ * eventually owns a real update list; both call the same idempotent setter.
+ */
+const NIGHT_U = { value: 0 };
+
+/** Emissive strength at full night, before the per-vertex `aGlow` weight. */
+const GLOW_GAIN = 1.15;
+
+function glowify(m) {
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uNight = NIGHT_U;
+    shader.vertexShader =
+      'attribute float aGlow;\nvarying float vGlow;\n' +
+      shader.vertexShader.replace(
+        '#include <color_vertex>',
+        '#include <color_vertex>\n\tvGlow = aGlow;'
+      );
+    shader.fragmentShader =
+      'uniform float uNight;\nvarying float vGlow;\n' +
+      shader.fragmentShader.replace(
+        '#include <emissivemap_fragment>',
+        '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += vColor.rgb * (vGlow * uNight);'
+      );
+  };
+  // Without this three would hand this material the cached program of any
+  // other MeshStandardMaterial with identical parameters — one that has never
+  // seen the injection above.
+  m.customProgramCacheKey = () => 'props-glow';
+  return m;
+}
+
 const MATS = {};
 function mat(kind) {
   if (MATS[kind]) return MATS[kind];
   let m;
+  // `name` is part of the material cache key in materials.js, so it also
+  // guarantees these instances are ours alone and glowify() cannot leak onto
+  // another module's material.
   if (kind === 'metal') {
-    m = solid({ vertexColors: true, roughness: 0.34, metalness: 0.52, envMapIntensity: 1.0 });
+    m = solid({ name: 'prop-metal', vertexColors: true, roughness: 0.34, metalness: 0.52, envMapIntensity: 1.0 });
   } else if (kind === 'gloss') {
     // Stylised shelter / kiosk glazing: opaque on purpose. Instanced transparency
     // has no reliable sort order, and a frosted opaque panel reads the same from
     // the game camera without ever showing a sorting seam.
-    m = solid({ vertexColors: true, roughness: 0.16, metalness: 0.16, envMapIntensity: 1.7 });
+    m = solid({ name: 'prop-gloss', vertexColors: true, roughness: 0.16, metalness: 0.16, envMapIntensity: 1.7 });
   } else if (kind === 'fabric') {
-    m = solid({ vertexColors: true, roughness: 0.88, metalness: 0.0, envMapIntensity: 0.5 });
+    m = solid({ name: 'prop-fabric', vertexColors: true, roughness: 0.88, metalness: 0.0, envMapIntensity: 0.5 });
   } else {
-    m = solid({ vertexColors: true, roughness: 0.63, metalness: 0.04, envMapIntensity: 0.7 });
+    m = solid({ name: 'prop-std', vertexColors: true, roughness: 0.63, metalness: 0.04, envMapIntensity: 0.7 });
   }
+  glowify(m);
   MATS[kind] = m;
   return m;
 }
@@ -456,7 +533,7 @@ function gHydrant(m) {
 
 function gUplighter(m) {
   m.col(P.STEEL_DARK).tube(0, 0, [[0, 0.16], [0.18, 0.12]], 5, { capTop: false });
-  m.col(P.LAMP_GLOW).tube(0, 0, [[0.18, 0.115], [0.21, 0.10]], 5, { capTop: true });
+  m.lit(P.LAMP_GLOW, 1, 1.35).tube(0, 0, [[0.18, 0.115], [0.21, 0.10]], 5, { capTop: true });
 }
 
 function gMooringCleat(m) {
@@ -596,7 +673,7 @@ function gSandwichBoard(m) {
   m.col(0x2b2822);
   m.board(0, 0.76, 0.03, 0.20, 0.94, 0.04, 0.05);   // chalkboard leaf, front
   m.board(0, 0.76, 0.03, -0.20, 0.94, -0.04, 0.05); // back leaf
-  m.col(P.NEON_AQUA);
+  m.lit(P.NEON_AQUA, 1, 0.85);
   m.board(0, 0.44, 0.60, 0.145, 0.66, 0.135, 0.02);
   m.col(P.SIGN_FACE);
   m.board(0, 0.34, 0.40, 0.155, 0.44, 0.148, 0.02);
@@ -605,7 +682,7 @@ function gSandwichBoard(m) {
 function gValetStand(m) {
   m.col(P.SIGN_DARK).prism(0, 0, [[0, 0.62, 0.48], [0.06, 0.56, 0.42], [0.96, 0.56, 0.42], [1.04, 0.66, 0.52]]);
   m.col(P.TEAK).prism(0, 0, [[1.04, 0.68, 0.54], [1.10, 0.64, 0.50]]);
-  m.col(P.ACCENT_HOT).prism(0, 0.28, [[1.10, 0.52, 0.03], [1.46, 0.52, 0.03]]);
+  m.lit(P.ACCENT_HOT, 1, 0.8).prism(0, 0.28, [[1.10, 0.52, 0.03], [1.46, 0.52, 0.03]]);
   m.col(P.SIGN_FACE).prism(0, 0.30, [[1.22, 0.34, 0.02], [1.30, 0.34, 0.02]]);
 }
 
@@ -633,7 +710,7 @@ function gParkingMeter(m) {
   m.col(P.PARKING_METER);
   m.tube(0, 0, [[0, 0.16], [0.05, 0.13], [1.02, 0.075]], 5, { cols: [P.STEEL_DARK, P.PARKING_METER] });
   m.prism(0, 0, [[1.02, 0.30, 0.24], [1.46, 0.28, 0.22]]);
-  m.col(P.NEON_AQUA).prism(0, 0.135, [[1.16, 0.20, 0.02], [1.34, 0.20, 0.02]]);
+  m.lit(P.NEON_AQUA, 1, 0.9).prism(0, 0.135, [[1.16, 0.20, 0.02], [1.34, 0.20, 0.02]]);
 }
 
 function gNewsBox(m) {
@@ -657,15 +734,15 @@ function gAtmKiosk(m) {
   m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 1.10, 0.86], [0.10, 1.02, 0.78]]);
   m.col(0xf0ece2).prism(0, 0, [[0.10, 1.00, 0.76], [2.02, 1.02, 0.78], [2.12, 0.94, 0.70]]);
   m.col(P.SIGN_DARK).prism(0, 0.39, [[0.94, 0.72, 0.03], [1.62, 0.72, 0.03]]);
-  m.col(P.NEON_BLUE).prism(0, 0.40, [[1.24, 0.48, 0.02], [1.52, 0.48, 0.02]]);
+  m.lit(P.NEON_BLUE, 1, 0.95).prism(0, 0.40, [[1.24, 0.48, 0.02], [1.52, 0.48, 0.02]]);
   m.col(P.ACCENT_SUN).prism(0, 0, [[2.12, 0.96, 0.72], [2.22, 0.90, 0.66]]);
 }
 
 function gPhoneKiosk(m) {
   m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.72, 0.44], [0.10, 0.64, 0.36]]);
   m.col(0x30363a).prism(0, 0, [[0.10, 0.60, 0.32], [2.30, 0.64, 0.34]]);
-  m.col(P.NEON_AQUA).prism(0, 0.18, [[0.90, 0.52, 0.02], [1.94, 0.52, 0.02]]);
-  m.col(P.NEON_PINK).prism(0, -0.18, [[0.90, 0.52, 0.02], [1.94, 0.52, 0.02]]);
+  m.lit(P.NEON_AQUA, 1, 0.85).prism(0, 0.18, [[0.90, 0.52, 0.02], [1.94, 0.52, 0.02]]);
+  m.lit(P.NEON_PINK, 1, 0.85).prism(0, -0.18, [[0.90, 0.52, 0.02], [1.94, 0.52, 0.02]]);
   m.col(P.ALUMINIUM).prism(0, 0, [[2.30, 0.72, 0.42], [2.40, 0.66, 0.36]]);
 }
 
@@ -742,12 +819,6 @@ function gPottedPalm(m) {
   }
 }
 
-function gHangBasket(m) {
-  m.col(P.STEEL_DARK).beam(0, 0, 0, 0, 0.28, 0, 0.03, 0.03, false);
-  m.col(P.PLANTER_DARK).tube(0, 0, [[0.28, 0.30], [0.46, 0.32]], 6, { capTop: false });
-  shrub(m, 0, 0.40, 0, 0.30, P.FLOWER_MAGENTA, 5);
-}
-
 /* -- café terrace --------------------------------------------------------- */
 
 function gCafeTable(m) {
@@ -797,7 +868,7 @@ function gPatioHeater(m) {
   m.col(P.STEEL_DARK).tube(0, 0, [[0, 0.42], [0.09, 0.38]], 8, { capTop: true });
   m.col(P.CHROME).tube(0, 0, [[0.09, 0.11], [1.62, 0.10]], 6);
   m.col(P.ALUMINIUM).tube(0, 0, [[1.62, 0.16], [1.78, 0.30], [1.86, 0.28]], 8);
-  m.col(P.LAMP_GLOW).tube(0, 0, [[1.86, 0.28], [1.90, 0.27]], 8);
+  m.lit(P.LAMP_GLOW, 1, 1.3).tube(0, 0, [[1.86, 0.28], [1.90, 0.27]], 8);
   m.col(P.ALUMINIUM).tube(0, 0, [[1.90, 0.30], [1.98, 0.62], [2.10, 0.56]], 8, { capTop: true, capBot: true });
 }
 
@@ -806,9 +877,49 @@ function gStringPole(m) {
   m.tube(0, 0, [[0, 0.24], [0.08, 0.20]], 6, { capTop: true });
   m.tube(0, 0, [[0.08, 0.09], [3.30, 0.075]], 6, { capTop: true });
   m.col(P.STEEL_DARK).beam(0, 3.24, 0, 0.9, 3.16, 0, 0.03, 0.03, false);
-  m.col(P.LAMP_GLOW);
+  m.lit(P.LAMP_GLOW, 1, 1.25);
   for (let k = 1; k <= 4; k++) {
     m.tube(k * 0.22, 0, [[3.24 - k * 0.018, 0.05], [3.16 - k * 0.018, 0.045]], 5, { capTop: true });
+  }
+}
+
+/**
+ * A festoon SPAN, poles included, as one object.
+ *
+ * The catenary is the whole point of string lights and it cannot be a prop of
+ * its own: a cable hanging in mid-air has no ground contact, so the consumption
+ * physics has nothing to take out from under it and the placement audit counts
+ * every one of them as a floating prop. Modelling the pair of poles AND the
+ * wire between them as a single consumable fixes both — its contact patch is
+ * two 0.24 m feet 5.4 m apart, it topples about whichever foot the hole leaves
+ * standing, and it goes down the hole the narrow way like the gate it is.
+ */
+function gStringArch(m) {
+  /* 2.0 m half-span, not the 2.7 that looked right in isolation. Everything
+     downstream reasons about props as bounding CIRCLES — the placer's reserve
+     and the audit's overlap test both do — so a wide gate cannot stand over a
+     table without one of them calling it a defect. At 4 m the circle is 2.2 m,
+     which clears a table row set 2.4 m away, and the span still arches over a
+     terrace's full depth. */
+  const S = 2.0;          // half-span; poles at -S and +S along local x
+  const TOP = 3.10, SAG = 0.55;
+  for (const s of [-1, 1]) {
+    m.col(P.WOOD_DARK);
+    m.tube(s * S, 0, [[0, 0.24], [0.08, 0.20]], 6, { capTop: true });
+    m.tube(s * S, 0, [[0.08, 0.095], [TOP + 0.10, 0.075]], 6, { capTop: true });
+  }
+  // Cable as four chords of a parabola; bulbs hang from each joint.
+  const N = 6;
+  const yOf = (t) => TOP - SAG * (1 - (2 * t - 1) * (2 * t - 1));
+  m.col(P.STEEL_DARK);
+  for (let k = 0; k < N; k++) {
+    const t0 = k / N, t1 = (k + 1) / N;
+    m.beam(-S + 2 * S * t0, yOf(t0), 0, -S + 2 * S * t1, yOf(t1), 0, 0.03, 0.03, false);
+  }
+  m.lit(P.LAMP_GLOW, 1, 1.25);
+  for (let k = 1; k < N; k++) {
+    const t = k / N, y = yOf(t);
+    m.tube(-S + 2 * S * t, 0, [[y - 0.06, 0.055], [y - 0.17, 0.045]], 5, { capTop: true });
   }
 }
 
@@ -875,7 +986,7 @@ function gLampModern(m) {
   m.beam(0, 6.56, 0, 0, 6.94, 0.34, 0.10, 0.10, false);
   m.beam(0, 6.94, 0.34, 0, 6.98, 1.52, 0.09, 0.09, false);
   m.col(P.ALUMINIUM).prism(0, 1.60, [[6.80, 0.30, 0.74], [6.96, 0.34, 0.80]]);
-  m.col(P.LAMP_GLOW).plate(0, 6.795, 1.60, 0.24, 0.64);
+  m.lit(P.LAMP_GLOW, 1, 1.4).plate(0, 6.795, 1.60, 0.24, 0.64);
 }
 
 /** Acorn globe: two rings is enough to read as a globe at any game distance. */
@@ -883,7 +994,17 @@ function globe(m, x, z, y, r, segs = 6) {
   m.tube(x, z, [[y, r * 0.62], [y + r * 0.78, r], [y + r * 2.0, r * 0.40]], segs, { capTop: true });
 }
 
-function gLampDeco(m) {
+/**
+ * @param {boolean} baskets hang a flower basket off each bracket end.
+ *
+ * The baskets are PART OF THE LAMP, not props of their own. As separate
+ * consumables they were 476 objects whose lowest geometry sat four metres in
+ * the air: nothing supported them, the audit called every one of them floating,
+ * and eating the post left its flowers hanging over the pit. Baked in, they
+ * fall with the post they hang from, which is the only behaviour that was ever
+ * believable.
+ */
+function gLampDeco(m, baskets = false) {
   m.col(P.BENCH_METAL);
   m.prism(0, 0, [[0, 0.44, 0.44], [0.44, 0.26, 0.26]]);
   m.tube(0, 0, [[0.44, 0.115], [4.36, 0.085]], 5, { capTop: false });
@@ -891,16 +1012,22 @@ function gLampDeco(m) {
   for (const s of [-1, 1]) {
     m.col(P.BENCH_METAL);
     m.beam(s * 0.60, 4.42, 0, s * 0.60, 4.62, 0, 0.07, 0.07, false);
-    m.col(P.LAMP_GLOW);
+    m.lit(P.LAMP_GLOW, 1, 1.3);
     globe(m, s * 0.60, 0, 4.62, 0.22, 5);
+    if (!baskets) continue;
+    m.col(P.STEEL_DARK).beam(s * 0.60, 4.40, 0, s * 0.60, 4.12, 0, 0.03, 0.03, false);
+    m.col(P.PLANTER_DARK).tube(s * 0.60, 0, [[4.12, 0.30], [4.30, 0.32]], 6, { capTop: false });
+    shrub(m, s * 0.60, 4.24, 0, 0.30, s > 0 ? P.FLOWER_MAGENTA : P.FLOWER_PINK, 5);
   }
 }
+
+function gLampDecoBasket(m) { gLampDeco(m, true); }
 
 function gLampPark(m) {
   m.col(P.BENCH_METAL);
   m.prism(0, 0, [[0, 0.34, 0.34], [0.08, 0.27, 0.27], [0.34, 0.18, 0.18]]);
   m.tube(0, 0, [[0.34, 0.085], [3.34, 0.07]], 6, { capTop: false });
-  m.col(P.LAMP_GLOW);
+  m.lit(P.LAMP_GLOW, 1, 1.3);
   globe(m, 0, 0, 3.30, 0.25, 6);
 }
 
@@ -931,9 +1058,9 @@ function gBusShelter(m) {
   // Advertising panel + timetable, the two things that make a shelter readable.
   m.col(P.SIGN_DARK);
   m.prism(L / 2 - 0.06, 0, [[0.30, 0.09, D - 0.30], [2.36, 0.09, D - 0.30]]);
-  m.col(P.NEON_PINK);
+  m.lit(P.NEON_PINK, 1, 0.9);
   m.prism(L / 2 - 0.115, 0, [[0.80, 0.02, D - 0.62], [1.94, 0.02, D - 0.62]]);
-  m.col(P.SIGN_FACE);
+  m.lit(P.SIGN_FACE, 1, 0.5);
   m.prism(-L / 2 + 0.85, -D / 2 + 0.19, [[1.42, 0.60, 0.02], [1.96, 0.60, 0.02]]);
   m.col(P.SIGN_BLUE);
   m.prism(-L / 2 + 0.85, -D / 2 + 0.185, [[1.96, 0.66, 0.03], [2.10, 0.66, 0.03]]);
@@ -1106,40 +1233,474 @@ function gPortaloo(m) {
   m.col(P.STEEL_DARK).beam(0.28, 1.02, 0.58, 0.34, 1.02, 0.58, 0.05, 0.14);
 }
 
+/* -- restaurant terrace --------------------------------------------------- */
+/* A terrace is a ROOM somebody laid out, not a scatter of tables: it has an
+   edge (rail / hedge), a threshold (menu board, host stand), service (station,
+   pastry case, bar) and light (heaters, festoon). Each of those is a distinct
+   silhouette so a cluster of them reads as one place from the game camera. */
+
+/** Dressed round table: cloth to the floor, a bud vase and two glasses. */
+function gCafeTableCloth(m) {
+  m.col(P.FABRIC_WHITE);
+  m.tube(0, 0, [[0, 0.50], [0.30, 0.53], [0.70, 0.47], [0.75, 0.45]], 6, { capTop: true });
+  // Settings on the cloth. Small and few: from 40 m these are two bright dots
+  // that say "occupied", and any more of them is triangles nobody can resolve.
+  m.col(P.PATINA).tube(0.12, 0.10, [[0.75, 0.05], [0.88, 0.042]], 5, { capTop: true });
+  m.col(P.FLOWER_PINK).tube(0.12, 0.10, [[0.88, 0.075], [0.96, 0.03]], 5, { capTop: true });
+  m.col(P.CHROME);
+  m.tube(-0.16, -0.10, [[0.75, 0.045], [0.87, 0.05]], 5, { capTop: true });
+  m.tube(-0.06, 0.20, [[0.75, 0.045], [0.87, 0.05]], 5, { capTop: true });
+}
+
+/** Square bistro table on four legs — the shape cafeTable is not. */
+function gCafeTableSquare(m) {
+  m.col(P.STEEL_DARK);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    m.beam(sx * 0.32, 0, sz * 0.32, sx * 0.29, 0.70, sz * 0.29, 0.05, 0.05, false);
+  }
+  m.col(P.TEAK).prism(0, 0, [[0.70, 0.78, 0.78], [0.76, 0.74, 0.74]]);
+  m.col(P.SIGN_FACE).prism(0.20, 0.18, [[0.76, 0.14, 0.10], [0.94, 0.13, 0.09]]);
+}
+
+/** Splay-legged bistro chair. Four legs, a round seat, one curved back board. */
+function gBistroChair(m) {
+  m.col(P.CHAIR);
+  m.tube(0, 0, [[0.42, 0.25], [0.46, 0.24]], 6, { capTop: true });
+  m.board(0, 0.44, 0.48, -0.18, 0.88, -0.26, 0.05);
+  m.col(P.WOOD_DARK);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    m.beam(sx * 0.14, 0, sz * 0.14, sx * 0.20, 0.43, sz * 0.20, 0.045, 0.045, false);
+  }
+}
+
+function gBarStool(m) {
+  m.col(P.STEEL_DARK);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * TAU + 0.4;
+    m.beam(Math.cos(a) * 0.26, 0, Math.sin(a) * 0.26,
+      Math.cos(a) * 0.10, 0.70, Math.sin(a) * 0.10, 0.05, 0.05, false);
+  }
+  m.tube(0, 0, [[0.28, 0.22], [0.32, 0.21]], 6, { capTop: false });
+  m.col(P.TEAK).tube(0, 0, [[0.70, 0.23], [0.76, 0.22]], 6, { capTop: true });
+}
+
+/** Free-standing lit menu case — the reason a terrace reads at night. */
+function gMenuBoard(m) {
+  m.col(P.SIGN_DARK);
+  for (const s of [-1, 1]) m.beam(s * 0.26, 0, 0, s * 0.26, 0.98, 0, 0.06, 0.06, false);
+  m.prism(0, 0, [[0.92, 0.64, 0.11], [1.66, 0.64, 0.11]]);
+  m.lit(P.SIGN_FACE, 1, 0.62);
+  m.prism(0, 0.058, [[0.98, 0.54, 0.012], [1.52, 0.54, 0.012]]);
+  m.lit(P.NEON_ORANGE, 1, 0.95);
+  m.prism(0, 0.058, [[1.54, 0.54, 0.012], [1.62, 0.54, 0.012]]);
+}
+
+/** Host / greeter lectern with a little reading lamp. */
+function gHostStand(m) {
+  m.col(P.WOOD_DARK).prism(0, 0, [[0, 0.54, 0.44], [0.07, 0.48, 0.38], [1.00, 0.48, 0.38]]);
+  m.col(P.TEAK).board(0, 0.54, 1.00, -0.20, 1.12, 0.18, 0.05);
+  m.col(P.CHROME).beam(0.18, 1.06, -0.10, 0.18, 1.30, -0.10, 0.03, 0.03, false);
+  m.lit(P.LAMP_GLOW, 1, 1.1).tube(0.18, -0.10, [[1.30, 0.10], [1.38, 0.07]], 5, { capTop: true });
+}
+
+/** Refrigerated pastry case outside a bakery. Lit from inside after dark. */
+function gPastryCase(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 1.10, 0.68], [0.08, 1.04, 0.62], [0.84, 1.04, 0.62]]);
+  m.col(P.GLASS_SKY, 1.05).prism(0, 0, [[0.84, 1.08, 0.66], [1.44, 1.04, 0.62]]);
+  m.lit(P.LAMP_GLOW, 1, 0.7).prism(0, 0, [[1.44, 1.10, 0.68], [1.50, 1.06, 0.64]]);
+  // Two shelves of goods, blocked in as warm slabs — legible at 4 m, invisible
+  // at 40, which is exactly the right amount of detail for it.
+  for (const [y, hex] of [[0.90, P.STUCCO_BUTTER], [1.14, P.TERRACOTTA]]) {
+    m.col(hex).prism(0, 0, [[y, 0.90, 0.44], [y + 0.14, 0.86, 0.40]], { capTop: false });
+  }
+}
+
+/** Waiter's side station: cupboard, tray stack, ice bucket. */
+function gServiceStation(m) {
+  m.col(P.WOOD_DARK).prism(0, 0, [[0, 0.94, 0.54], [0.08, 0.88, 0.48], [0.86, 0.88, 0.48]]);
+  m.col(P.TEAK).prism(0, 0, [[0.86, 0.96, 0.56], [0.92, 0.92, 0.52]]);
+  m.col(P.FABRIC_WHITE).prism(-0.24, 0, [[0.92, 0.34, 0.34], [1.04, 0.32, 0.32]]);
+  m.col(P.CHROME).tube(0.26, 0, [[0.92, 0.16], [1.12, 0.18]], 6, { capTop: false });
+  m.col(P.SEA_FOAM).plate(0.26, 1.11, 0, 0.30, 0.30);
+}
+
+/** Glass windbreak in an aluminium frame — the legal edge of a terrace. */
+function gTerraceRail(m) {
+  m.col(P.CONCRETE_DARK);
+  for (const s of [-1, 1]) m.prism(s * 0.80, 0, [[0, 0.34, 0.40], [0.10, 0.30, 0.36]]);
+  m.col(P.ALUMINIUM);
+  for (const s of [-1, 1]) m.beam(s * 0.80, 0.08, 0, s * 0.80, 1.06, 0, 0.07, 0.07, false);
+  m.beam(-0.86, 1.06, 0, 0.86, 1.06, 0, 0.08, 0.06, false);
+  m.col(P.GLASS_SKY, 1.04).prism(0, 0, [[0.16, 1.56, 0.035], [1.02, 1.56, 0.035]]);
+}
+
+/** Long timber trough with a clipped box hedge — the softer terrace edge. */
+function gTerraceHedge(m) {
+  m.col(P.WOOD_DARK).prism(0, 0, [
+    [0, 2.04, 0.56], [0.07, 1.98, 0.50], [0.52, 2.10, 0.62],
+  ], { cols: [P.BRICK_DARK, P.WOOD_DARK, P.WOOD_DARK], capTop: false });
+  m.col(P.MULCH).plate(0, 0.48, 0, 2.00, 0.52);
+  // One swept block rather than a row of shrub domes: a clipped hedge IS a
+  // block, and three domes cost three times the triangles to say it worse.
+  m.col(P.HEDGE).prism(0, 0, [
+    [0.44, 1.92, 0.46], [0.86, 2.02, 0.54], [1.00, 1.84, 0.38],
+  ], { cols: [P.HEDGE, P.HEDGE_LIGHT] });
+}
+
+/* -- nightlife + hotel ---------------------------------------------------- */
+
+/**
+ * Hotel porte-cochère. Four columns and a slab, and by some way the biggest
+ * thing this module makes: 6.4 m across the frontage. Its contact patch is the
+ * four column feet, so a hole has to take out most of an entrance before it
+ * goes — which is right, and it gives the tower forecourts a landmark that is
+ * neither a building nor litter.
+ */
+function gPorteCochere(m) {
+  const HX = 2.70, HZ = 1.30, H = 4.05;
+  m.col(P.CONCRETE);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.prism(sx * HX, sz * HZ, [
+        [0, 0.52, 0.52], [0.14, 0.42, 0.42], [H, 0.40, 0.40],
+      ], { cols: [P.CONCRETE_DARK, P.CONCRETE], capTop: false });
+    }
+  }
+  /* The soffit is its own thin slab with a bottom face, and it is the lit part.
+     A canopy modelled as one prism has no underside at all — `prism` only caps
+     the top — so at eye level you would look straight up through it, and any
+     "downlight" placed under it would be an upward-facing quad nobody can see. */
+  m.lit(P.LAMP_GLOW, 0.62, 0.9).prism(0, 0, [
+    [H - 0.06, 6.30, 3.20], [H, 6.30, 3.20],
+  ], { capTop: false, capBot: true });
+  m.col(P.CONCRETE_WARM).prism(0, 0, [
+    [H, 6.40, 3.30], [H + 0.16, 6.66, 3.56], [H + 0.40, 6.30, 3.20],
+  ]);
+}
+
+/**
+ * Entrance carpet WITH its rope line, running door-to-kerb along local +z.
+ *
+ * The ropes are part of the object rather than four stanchions standing on it,
+ * because a prop standing on another prop is two things the tooling has to
+ * call wrong: the placer refuses the second one, and where it does not, the
+ * audit counts the pair as interpenetrating. Modelled together it is one
+ * consumable that falls in one piece, which is also what it would do.
+ */
+function gCarpetRunner(m) {
+  m.col(0xb4243c).prism(0, 0, [
+    [0, 1.42, 2.70], [0.045, 1.50, 2.78], [0.07, 1.38, 2.66],
+  ], { cols: [0x8c1a2c, 0xb4243c] });
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.col(P.STEEL_DARK).tube(sx * 1.02, sz * 1.08, [[0, 0.16], [0.05, 0.14]], 5, { capTop: true });
+      m.col(P.ACCENT_SUN, 0.9).tube(sx * 1.02, sz * 1.08, [[0.05, 0.05], [0.90, 0.046]], 5);
+      m.tube(sx * 1.02, sz * 1.08, [[0.90, 0.075], [0.98, 0.05]], 5, { capTop: true });
+    }
+    m.col(0x8c1a2c);
+    const pts = [[-1.08, 0.84], [-0.36, 0.66], [0.36, 0.66], [1.08, 0.84]];
+    for (let k = 0; k < 3; k++) {
+      m.beam(sx * 1.02, pts[k][1], pts[k][0], sx * 1.02, pts[k + 1][1], pts[k + 1][0], 0.05, 0.05, false);
+    }
+  }
+}
+
+/** Two posts and a slack rope — a queue line, not two lonely stanchions. */
+function gVelvetRope(m) {
+  const S = 0.95;
+  for (const s of [-1, 1]) {
+    m.col(P.STEEL_DARK).tube(s * S, 0, [[0, 0.17], [0.05, 0.15]], 5, { capTop: true });
+    m.col(P.CHROME).tube(s * S, 0, [[0.05, 0.05], [0.92, 0.046]], 5);
+    m.tube(s * S, 0, [[0.92, 0.075], [1.00, 0.05]], 5, { capTop: true });
+  }
+  // Three chords of a sag. Authored dark red so it reads as rope, not cable.
+  m.col(0x8c1a2c);
+  const pts = [[-S, 0.86], [-S * 0.33, 0.68], [S * 0.33, 0.68], [S, 0.86]];
+  for (let k = 0; k < 3; k++) {
+    m.beam(pts[k][0], pts[k][1], 0, pts[k + 1][0], pts[k + 1][1], 0, 0.05, 0.05, false);
+  }
+}
+
+function gBouncerPodium(m) {
+  m.col(P.SIGN_DARK).prism(0, 0, [
+    [0, 0.66, 0.50], [0.08, 0.58, 0.42], [1.08, 0.58, 0.42], [1.14, 0.66, 0.50],
+  ]);
+  m.lit(P.NEON_PINK, 1, 0.9).prism(0, 0.256, [[0.74, 0.40, 0.02], [0.92, 0.40, 0.02]]);
+}
+
+/** Valet key board — a lockable cabinet of hooks on two legs. */
+function gKeyBoard(m) {
+  m.col(P.STEEL_DARK);
+  for (const s of [-1, 1]) m.beam(s * 0.30, 0, 0, s * 0.30, 0.94, 0, 0.05, 0.05, false);
+  m.col(P.ALUMINIUM).prism(0, 0, [[0.94, 0.78, 0.16], [1.62, 0.78, 0.16]]);
+  m.col(P.SIGN_DARK).prism(0, 0.085, [[1.00, 0.68, 0.015], [1.56, 0.68, 0.015]]);
+  m.lit(P.NEON_AQUA, 1, 0.8).prism(0, 0.09, [[1.42, 0.60, 0.012], [1.52, 0.60, 0.012]]);
+}
+
+function gCigBin(m) {
+  m.col(P.STEEL_DARK).tube(0, 0, [[0, 0.20], [0.06, 0.17], [0.92, 0.19]], 6, {
+    cols: [P.BOLLARD_DARK, P.STEEL_DARK],
+  });
+  m.col(P.ALUMINIUM).tube(0, 0, [[0.92, 0.21], [1.02, 0.14]], 6, { capTop: true });
+}
+
+/** Illuminated blade sign: the bar's name, on a pole, glowing after dark. */
+function gLightboxSign(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.54, 0.46], [0.10, 0.46, 0.38]]);
+  m.col(P.SIGN_POLE).tube(0, 0, [[0.10, 0.10], [1.62, 0.09]], 6);
+  m.col(P.SIGN_DARK).prism(0, 0, [[1.62, 0.86, 0.24], [3.34, 0.86, 0.24]]);
+  m.lit(P.NEON_PINK, 1, 1.0);
+  m.prism(0, 0.125, [[1.72, 0.72, 0.015], [3.20, 0.72, 0.015]]);
+  m.prism(0, -0.125, [[1.72, 0.72, 0.015], [3.20, 0.72, 0.015]]);
+  m.lit(P.NEON_AQUA, 1, 1.0).prism(0, 0, [[3.34, 0.90, 0.28], [3.44, 0.86, 0.24]]);
+}
+
+/** Outdoor bar counter with a lit toe strip and a back shelf of bottles. */
+function gOutdoorBar(m) {
+  m.col(P.WOOD_DARK).prism(0, 0, [
+    [0.06, 2.60, 0.72], [0.14, 2.66, 0.78], [1.02, 2.66, 0.78],
+  ], { capTop: false });
+  m.col(P.TEAK).prism(0, 0, [[1.02, 2.80, 0.92], [1.10, 2.74, 0.86]]);
+  m.lit(P.NEON_AQUA, 1, 0.85).prism(0, 0, [[0, 2.62, 0.74], [0.06, 2.62, 0.74]]);
+  m.col(P.STEEL_DARK).prism(0, -0.42, [[1.10, 2.20, 0.24], [1.44, 2.16, 0.20]]);
+  for (let k = 0; k < 3; k++) {
+    m.col([P.GLASS_MINT, P.TERRACOTTA, P.STUCCO_BUTTER][k]);
+    m.tube(-0.6 + k * 0.6, -0.42, [[1.44, 0.07], [1.70, 0.05]], 5, { capTop: true });
+  }
+}
+
+/** Rooftop-lounge DJ booth, at street level where the game can reach it. */
+function gDjBooth(m) {
+  m.col(P.SIGN_DARK).prism(0, 0, [[0, 1.86, 0.74], [0.08, 1.78, 0.66], [1.04, 1.78, 0.66]]);
+  m.lit(P.NEON_PURPLE, 1, 1.0).prism(0, 0.345, [[0.16, 1.56, 0.02], [0.92, 1.56, 0.02]]);
+  m.col(P.STEEL_DARK).prism(0, 0, [[1.04, 1.86, 0.74], [1.10, 1.82, 0.70]]);
+  for (const s of [-1, 1]) {
+    m.col(P.ALUMINIUM).prism(s * 0.52, 0, [[1.10, 0.56, 0.42], [1.16, 0.52, 0.38]]);
+  }
+  m.lit(P.NEON_AQUA, 1, 0.9).prism(0, 0, [[1.10, 0.44, 0.30], [1.20, 0.40, 0.26]]);
+}
+
+/** PA stack on a pole. Two boxes, two paper cones, done. */
+function gSpeakerStack(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.62, 0.62], [0.06, 0.50, 0.50]]);
+  m.col(P.SIGN_DARK).prism(0, 0, [[0.06, 0.44, 0.40], [1.34, 0.46, 0.42], [1.42, 0.42, 0.38]]);
+  m.col(0x14161a);
+  m.plate(0, 1.421, 0, 0.34, 0.30);
+  m.prism(0, 0.21, [[0.34, 0.34, 0.012], [0.72, 0.34, 0.012]]);
+  m.prism(0, 0.21, [[0.90, 0.28, 0.012], [1.16, 0.28, 0.012]]);
+}
+
+/* -- storefront dressing -------------------------------------------------- */
+
+/** Rolling clothes rail put out on the pavement. */
+function gClothesRail(m) {
+  m.col(P.STEEL);
+  for (const s of [-1, 1]) {
+    m.beam(s * 0.52, 0.03, -0.28, s * 0.52, 0.03, 0.28, 0.05, 0.06);
+    m.beam(s * 0.52, 0.03, 0, s * 0.52, 1.48, 0, 0.05, 0.05, false);
+  }
+  m.beam(-0.54, 1.48, 0, 0.54, 1.48, 0, 0.045, 0.045, false);
+  const cols = [P.FABRIC_SKY, P.FABRIC_CORAL, P.FABRIC_LIME, P.FABRIC_PINK];
+  for (let k = 0; k < 4; k++) {
+    m.col(cols[k]);
+    m.prism(-0.39 + k * 0.26, 0, [[0.72, 0.23, 0.28], [1.42, 0.20, 0.24]], { capTop: false });
+  }
+}
+
+/** Tiered greengrocer display, canted toward the passer-by. */
+function gProduceStand(m) {
+  m.col(P.WOOD_DARK);
+  for (const s of [-1, 1]) m.board(s * 0.62, 0.08, 0.02, -0.42, 1.02, 0.30, 0.09);
+  m.col(P.WOOD_LIGHT);
+  m.board(0, 1.20, 0.42, -0.34, 0.52, 0.10, 0.05);
+  m.board(0, 1.20, 0.74, -0.10, 1.00, 0.24, 0.05);
+  const goods = [[-0.34, P.FLOWER_ORANGE], [0.02, P.GRASS_LIGHT], [0.36, P.HYDRANT_RED]];
+  for (const [x, hex] of goods) {
+    m.col(hex);
+    m.tube(x, -0.12, [[0.54, 0.17], [0.66, 0.08]], 5, { capTop: true });
+    m.tube(x, 0.14, [[0.86, 0.15], [0.96, 0.07]], 5, { capTop: true });
+  }
+}
+
+/** Florist's bucket rack. The most saturated thing on any pavement. */
+function gFlowerStand(m) {
+  m.col(P.WOOD_DARK);
+  for (const s of [-1, 1]) m.board(s * 0.56, 0.08, 0.02, -0.36, 0.96, 0.26, 0.09);
+  m.col(P.WOOD_LIGHT).board(0, 1.08, 0.52, -0.28, 0.78, 0.06, 0.05);
+  const blooms = [[-0.36, P.FLOWER_MAGENTA], [0, P.FLOWER_YELLOW], [0.36, P.FLOWER_WHITE]];
+  for (const [x, hex] of blooms) {
+    m.col(P.ALUMINIUM).tube(x, 0.02, [[0.62, 0.16], [0.92, 0.18]], 5, { capTop: false });
+    m.col(hex).tube(x, 0.02, [[0.90, 0.20], [1.10, 0.22], [1.26, 0.09]], 5, { capTop: true });
+  }
+}
+
+/** Shrink-wrapped delivery still on its pallet outside the back door. */
+function gDeliveryStack(m) {
+  m.col(P.WOOD_LIGHT).prism(0, 0, [[0.10, 1.10, 0.92], [0.15, 1.10, 0.92]]);
+  m.col(P.WOOD_DARK);
+  for (const s of [-1, 1]) m.prism(s * 0.44, 0, [[0, 0.18, 0.88], [0.10, 0.18, 0.88]]);
+  m.col(0xd9dcd6).prism(0, 0, [[0.15, 1.00, 0.82], [0.94, 0.98, 0.80], [1.00, 0.90, 0.72]]);
+  m.col(P.SIGN_BLUE).prism(0, 0, [[0.54, 1.02, 0.84], [0.62, 1.02, 0.84]]);
+}
+
+/* -- kerbside clutter ----------------------------------------------------- */
+
+/** Commercial skip. Body left pale so the instance hex paints it. */
+function gDumpster(m) {
+  m.col(0xf0f0f0).prism(0, 0, [
+    [0, 2.16, 1.24], [0.16, 2.34, 1.32], [1.14, 2.58, 1.40],
+  ], { capTop: false });
+  m.col(0xdcdcdc).prism(0, 0, [[1.14, 2.52, 1.34], [1.22, 2.52, 1.34]]);
+  m.col(0x5b544a);
+  m.tube(-0.5, 0.1, [[1.10, 0.44, 0.36], [1.34, 0.20, 0.16]], 5, { capTop: true });
+  m.tube(0.62, -0.14, [[1.10, 0.38, 0.32], [1.28, 0.16, 0.14]], 5, { capTop: true });
+}
+
+/** Advertising bench — a seat and a backlit poster in one. */
+function gBusBench(m) {
+  m.col(P.CONCRETE_DARK);
+  for (const s of [-1, 1]) m.prism(s * 0.84, 0, [[0, 0.16, 0.52], [0.44, 0.14, 0.48]]);
+  m.col(P.TEAK).prism(0, 0, [[0.44, 1.86, 0.50], [0.50, 1.82, 0.46]]);
+  m.col(P.SIGN_DARK).prism(0, -0.22, [[0.50, 1.86, 0.09], [1.14, 1.86, 0.09]]);
+  m.lit(P.SIGN_FACE, 1, 0.55).prism(0, -0.275, [[0.56, 1.72, 0.012], [1.08, 1.72, 0.012]]);
+}
+
+/** Solar pay-and-display machine. Taller and squarer than a coin meter. */
+function gPayStation(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.50, 0.44], [0.09, 0.42, 0.36], [0.62, 0.42, 0.36]]);
+  m.col(P.PARKING_METER).prism(0, 0, [[0.62, 0.52, 0.42], [1.58, 0.50, 0.40]]);
+  m.lit(P.NEON_AQUA, 1, 0.9).prism(0, 0.205, [[1.14, 0.34, 0.015], [1.42, 0.34, 0.015]]);
+  m.col(P.SIGN_DARK).board(0, 0.54, 1.58, -0.16, 1.72, 0.18, 0.05);
+}
+
+/** Lit wayfinding pylon. Reads as a city that has been designed. */
+function gWayfindTotem(m) {
+  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 0.62, 0.40], [0.09, 0.54, 0.32]]);
+  m.col(P.SIGN_DARK).prism(0, 0, [[0.09, 0.50, 0.28], [2.70, 0.52, 0.30], [2.82, 0.44, 0.22]]);
+  m.lit(P.SIGN_FACE, 1, 0.58);
+  m.prism(0, 0.152, [[0.60, 0.40, 0.012], [2.40, 0.40, 0.012]]);
+  m.prism(0, -0.152, [[0.60, 0.40, 0.012], [2.40, 0.40, 0.012]]);
+  m.lit(P.NEON_AQUA, 1, 1.0).prism(0, 0, [[2.44, 0.54, 0.32], [2.54, 0.54, 0.32]]);
+}
+
+/** Corner newsstand: a kiosk, an awning and a rack of magazines. */
+function gNewsKiosk(m) {
+  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 2.10, 1.44], [0.10, 2.00, 1.34]]);
+  m.col(P.NEWSSTAND).prism(0, 0, [[0.10, 1.96, 1.30], [2.24, 2.00, 1.34], [2.34, 1.90, 1.24]]);
+  m.col(P.SIGN_DARK).prism(0, 0.655, [[0.92, 1.60, 0.03], [1.86, 1.60, 0.03]]);
+  m.lit(P.LAMP_GLOW, 1, 0.8).prism(0, 0.63, [[0.96, 1.48, 0.02], [1.78, 1.48, 0.02]]);
+  m.col(P.FABRIC_CORAL).prism(0, 0.30, [
+    [2.06, 2.20, 1.90], [2.20, 2.10, 1.80],
+  ]);
+  // Magazine rack against the front, canted up so the covers face the street.
+  m.col(P.WOOD_DARK).board(0, 1.70, 0.10, 0.64, 0.92, 1.02, 0.08);
+  for (let k = 0; k < 3; k++) {
+    m.col([P.FABRIC_SKY, P.FABRIC_SUN, P.FABRIC_PINK][k]);
+    m.board(-0.56 + k * 0.56, 0.48, 0.36, 0.72, 0.90, 1.00, 0.03);
+  }
+}
+
+/** Temporary mesh fence panel on concrete feet. */
+function gMeshFence(m) {
+  m.col(P.CONCRETE_DARK);
+  for (const s of [-1, 1]) m.prism(s * 0.92, 0, [[0, 0.44, 0.36], [0.12, 0.38, 0.30]]);
+  m.col(P.STEEL);
+  for (const s of [-1, 1]) m.beam(s * 0.98, 0.06, 0, s * 0.98, 1.94, 0, 0.06, 0.06, false);
+  m.beam(-1.02, 1.94, 0, 1.02, 1.94, 0, 0.06, 0.06, false);
+  m.beam(-1.02, 0.14, 0, 1.02, 0.14, 0, 0.05, 0.05, false);
+  m.col(P.ALUMINIUM, 0.86).prism(0, 0, [[0.18, 1.92, 0.02], [1.90, 1.92, 0.02]]);
+}
+
+/* -- park ----------------------------------------------------------------- */
+
+/** Teak bench with armrests — the park's second bench, not a copy of the first. */
+function gBenchTeak(m) {
+  m.col(P.TEAK);
+  m.prism(0, 0.02, [[0.42, 1.72, 0.50], [0.48, 1.70, 0.48]]);
+  m.col(P.TEAK, 0.92).board(0, 1.70, 0.50, -0.22, 0.96, -0.30, 0.07);
+  m.col(P.WOOD_DARK);
+  for (const s of [-1, 1]) {
+    m.beam(s * 0.78, 0, 0.20, s * 0.78, 0.44, 0.18, 0.08, 0.08, false);
+    m.beam(s * 0.78, 0, -0.20, s * 0.78, 0.50, -0.20, 0.08, 0.08, false);
+    m.beam(s * 0.78, 0.66, 0.20, s * 0.78, 0.72, -0.24, 0.07, 0.07, false);
+    m.beam(s * 0.78, 0.46, 0.20, s * 0.78, 0.66, 0.20, 0.06, 0.06, false);
+  }
+}
+
+/** Chess table and two stools. The detail that says "people come here". */
+function gChessTable(m) {
+  m.col(P.PRECAST).tube(0, 0, [[0, 0.30], [0.08, 0.22], [0.68, 0.24]], 6);
+  m.tube(0, 0, [[0.68, 0.52], [0.74, 0.50]], 8, { capTop: true });
+  m.col(P.SIGN_DARK).plate(0, 0.745, 0, 0.52, 0.52);
+  m.col(P.CONCRETE);
+  for (const s of [-1, 1]) {
+    m.tube(s * 0.86, 0, [[0, 0.20], [0.06, 0.16], [0.44, 0.17]], 5);
+    m.tube(s * 0.86, 0, [[0.44, 0.26], [0.48, 0.25]], 6, { capTop: true });
+  }
+}
+
+/** Park barbecue on a post. */
+function gBbqGrill(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 0.30, 0.30], [0.06, 0.20, 0.20], [0.72, 0.18, 0.18]]);
+  m.col(P.SIGN_DARK).prism(0, 0, [[0.72, 0.78, 0.52], [0.94, 0.82, 0.56]], { capTop: false });
+  m.col(0x3a332c).plate(0, 0.90, 0, 0.72, 0.46);
+  m.col(P.ALUMINIUM).board(0, 0.80, 0.94, -0.28, 1.28, -0.12, 0.05);
+}
+
+/** Big clipped topiary in a square pot — a vertical for a doorway. */
+function gPottedFicus(m) {
+  m.col(P.PLANTER).prism(0, 0, [
+    [0, 0.76, 0.76], [0.06, 0.70, 0.70], [0.82, 0.82, 0.82],
+  ], { cols: [P.PLANTER_DARK, P.PLANTER], capTop: false });
+  m.col(P.MULCH).plate(0, 0.78, 0, 0.74, 0.74);
+  m.col(P.PALM_TRUNK_DARK).tube(0, 0, [[0.74, 0.09], [1.34, 0.075]], 5);
+  shrub(m, 0, 1.20, 0, 0.52, P.TREE_CANOPY, 6);
+}
+
 /* ========================================================= catalogue ==== */
 
 const T = TIER;
 
 /**
  * key -> definition.
- *   r/h    physical radius + height, used by the eat physics
+ *   r/h    nominal radius + height. worldBuild MEASURES both off the merged
+ *          geometry, so these are a fallback and a sanity note, never the
+ *          physics. Fix a wrong footprint by fixing the mesh.
  *   cap    unused now (counts are exact), kept as documentation of intent
  *   tint   per-instance colour palette; body vertices must be near-white
+ *   sv     per-instance scale variance, +-fraction. See Placer.put — the
+ *          single cheapest cure for a row of identical objects, because it
+ *          breaks the silhouette rhythm as well as the footprint. Left off
+ *          anything that forms a CONTINUOUS LINE (hoarding, portaloo banks,
+ *          newspaper rows, scooter ranks) where a 6% length change opens gaps.
  *   shadow only props tall enough to throw a shadow the map can resolve
  */
 const DEFS = {
   /* litter + kerb ------------------------------------------------------- */
-  cone: { g: gCone, tier: T.TINY, r: 0.30, h: 0.72, label: 'Traffic Cone', debris: P.CONE_ORANGE },
+  cone: { g: gCone, tier: T.TINY, r: 0.30, h: 0.72, label: 'Traffic Cone', sv: 0.07, debris: P.CONE_ORANGE },
   bollard: { g: gBollard, tier: T.TINY, r: 0.16, h: 0.95, label: 'Bollard', debris: P.BOLLARD_DARK },
-  bollardStone: { g: gBollardStone, tier: T.TINY, r: 0.20, h: 0.88, label: 'Stone Bollard', debris: P.PRECAST },
+  bollardStone: { g: gBollardStone, tier: T.TINY, r: 0.20, h: 0.88, label: 'Stone Bollard', sv: 0.07, debris: P.PRECAST },
   hydrant: { g: gHydrant, tier: T.TINY, r: 0.25, h: 0.80, label: 'Fire Hydrant', debris: P.HYDRANT_RED },
   uplighter: { g: gUplighter, tier: T.TINY, r: 0.16, h: 0.22, label: 'Uplighter', debris: P.STEEL_DARK },
   cleat: { g: gMooringCleat, tier: T.TINY, r: 0.22, h: 0.25, label: 'Mooring Cleat', debris: P.STEEL_DARK },
 
   /* bins ----------------------------------------------------------------- */
-  binMuni: { g: gBinMuni, tier: T.SMALL, r: 0.40, h: 1.00, label: 'Litter Bin', debris: P.BIN_GREEN },
+  binMuni: { g: gBinMuni, tier: T.SMALL, r: 0.40, h: 1.00, label: 'Litter Bin', sv: 0.05, debris: P.BIN_GREEN },
   binWheelie: {
     g: gBinWheelie, tier: T.SMALL, r: 0.34, h: 1.06, label: 'Wheelie Bin',
     tint: [P.BIN_GREEN, P.BIN_BLUE, P.BIN_GREY, P.BIN_GREEN, P.BIN_BLUE], debris: P.BIN_GREEN,
   },
-  binMesh: { g: gBinMesh, tier: T.SMALL, r: 0.28, h: 0.88, label: 'Wire Bin', debris: P.BENCH_METAL },
+  binMesh: { g: gBinMesh, tier: T.SMALL, r: 0.28, h: 0.88, label: 'Wire Bin', sv: 0.05, debris: P.BENCH_METAL },
 
   /* seating -------------------------------------------------------------- */
-  benchSlat: { g: gBenchSlat, tier: T.SMALL, r: 1.00, h: 0.90, label: 'Bench', shadow: true, debris: P.BENCH_WOOD },
+  benchSlat: { g: gBenchSlat, tier: T.SMALL, r: 1.00, h: 0.90, label: 'Bench', shadow: true, sv: 0.05, debris: P.BENCH_WOOD },
   benchConcrete: { g: gBenchConcrete, tier: T.SMALL, r: 1.12, h: 0.56, label: 'Stone Bench', shadow: true, crumbles: true, debris: P.PRECAST },
-  benchBackless: { g: gBenchBackless, tier: T.SMALL, r: 0.88, h: 0.46, label: 'Park Bench', debris: P.WOOD_DECK },
-  picnicTable: { g: gPicnicTable, tier: T.MEDIUM, r: 1.10, h: 0.76, label: 'Picnic Table', shadow: true, debris: P.WOOD_DECK },
-  lounger: { g: gLounger, tier: T.MEDIUM, r: 1.00, h: 0.90, label: 'Sun Lounger', shadow: true, debris: 0xf2f2f2 },
+  benchBackless: { g: gBenchBackless, tier: T.SMALL, r: 0.88, h: 0.46, label: 'Park Bench', sv: 0.05, debris: P.WOOD_DECK },
+  picnicTable: { g: gPicnicTable, tier: T.MEDIUM, r: 1.10, h: 0.76, label: 'Picnic Table', shadow: true, sv: 0.05, debris: P.WOOD_DECK },
+  lounger: {
+    g: gLounger, tier: T.MEDIUM, r: 1.00, h: 0.90, label: 'Sun Lounger', shadow: true, sv: 0.04,
+    tint: [0xffffff, 0xffffff, P.STUCCO_SKY, P.FABRIC_AQUA], debris: 0xf2f2f2,
+  },
 
   /* signage -------------------------------------------------------------- */
   signStop: { g: gSignStop, tier: T.SMALL, r: 0.24, h: 2.70, label: 'Stop Sign', debris: P.HYDRANT_RED },
@@ -1147,7 +1708,7 @@ const DEFS = {
   signOneWay: { g: gSignOneWay, tier: T.SMALL, r: 0.28, h: 2.50, label: 'One Way Sign', debris: P.SIGN_DARK },
   signParking: { g: gSignParking, tier: T.SMALL, r: 0.22, h: 2.60, label: 'Parking Sign', debris: P.SIGN_BLUE },
   signStreet: { g: gSignStreet, tier: T.SMALL, r: 0.34, h: 2.90, label: 'Street Sign', debris: P.SIGN_GREEN },
-  sandwichBoard: { g: gSandwichBoard, tier: T.SMALL, r: 0.42, h: 0.95, label: 'Sandwich Board', debris: P.SIGN_DARK },
+  sandwichBoard: { g: gSandwichBoard, tier: T.SMALL, r: 0.42, h: 0.95, label: 'Sandwich Board', sv: 0.06, debris: P.SIGN_DARK },
   valetStand: { g: gValetStand, tier: T.SMALL, r: 0.40, h: 1.46, label: 'Valet Stand', debris: P.SIGN_DARK },
   stanchion: { g: gStanchion, tier: T.SMALL, r: 0.18, h: 1.02, label: 'Rope Post', debris: P.CHROME },
 
@@ -1162,20 +1723,69 @@ const DEFS = {
   dogStation: { g: gDogStation, tier: T.SMALL, r: 0.22, h: 1.56, label: 'Dog Waste Station', debris: P.BIN_GREEN },
 
   /* planting -------------------------------------------------------------- */
-  planterRound: { g: gPlanterRound, tier: T.SMALL, r: 0.62, h: 1.45, label: 'Planter', debris: P.PLANTER },
-  planterSquare: { g: gPlanterSquare, tier: T.SMALL, r: 0.78, h: 1.45, label: 'Planter', debris: P.PLANTER },
-  planterTrough: { g: gPlanterTrough, tier: T.SMALL, r: 1.00, h: 1.10, label: 'Flower Trough', shadow: true, debris: P.PLANTER },
-  pottedPalm: { g: gPottedPalm, tier: T.MEDIUM, r: 0.80, h: 1.90, label: 'Potted Palm', debris: P.PALM_FROND },
-  /* Hangs off a Deco lamp bracket, so its y is derived, not chosen: gLampDeco
-     puts the bracket bar at local 4.44 with an 0.08 section, the post base sits
-     at Y_WALK, and gHangBasket's hanger rod tops out at local 0.28. That gives
-     4.44 - 0.155 - 0.28 = 4.005, and the basket then grips the bar instead of
-     floating the 26 cm below it that the hand-set 3.86 left. */
-  hangBasket: { g: gHangBasket, tier: T.TINY, r: 0.34, h: 0.80, y: 4.005, label: 'Flower Basket', debris: P.FLOWER_MAGENTA },
+  planterRound: { g: gPlanterRound, tier: T.SMALL, r: 0.62, h: 1.45, label: 'Planter', sv: 0.09, debris: P.PLANTER },
+  planterSquare: { g: gPlanterSquare, tier: T.SMALL, r: 0.78, h: 1.45, label: 'Planter', sv: 0.09, debris: P.PLANTER },
+  planterTrough: { g: gPlanterTrough, tier: T.SMALL, r: 1.00, h: 1.10, label: 'Flower Trough', shadow: true, sv: 0.06, debris: P.PLANTER },
+  pottedPalm: { g: gPottedPalm, tier: T.MEDIUM, r: 0.80, h: 1.90, label: 'Potted Palm', sv: 0.10, debris: P.PALM_FROND },
 
   /* café terrace ---------------------------------------------------------- */
-  cafeTable: { g: gCafeTable, tier: T.SMALL, r: 0.46, h: 0.78, label: 'Café Table', debris: P.TABLE_TOP },
-  cafeChair: { g: gCafeChair, tier: T.SMALL, r: 0.30, h: 0.90, label: 'Café Chair', debris: P.CHAIR },
+  cafeTable: { g: gCafeTable, tier: T.SMALL, r: 0.46, h: 0.78, label: 'Café Table', sv: 0.05, debris: P.TABLE_TOP },
+  cafeTableCloth: { g: gCafeTableCloth, tier: T.SMALL, r: 0.71, h: 0.96, label: 'Dressed Table', sv: 0.05, debris: P.FABRIC_WHITE },
+  cafeTableSquare: { g: gCafeTableSquare, tier: T.SMALL, r: 0.52, h: 0.94, label: 'Bistro Table', sv: 0.05, debris: P.TEAK },
+  cafeChair: {
+    g: gCafeChair, tier: T.SMALL, r: 0.30, h: 0.90, label: 'Café Chair', sv: 0.05,
+    // Near-white body, so the instance hex is what makes a terrace of twenty
+    // chairs stop looking like twenty copies of one chair.
+    tint: [0xffffff, 0xffffff, P.FABRIC_AQUA, P.FABRIC_CORAL, P.FABRIC_SUN, P.STUCCO_SKY],
+    debris: P.CHAIR,
+  },
+  bistroChair: {
+    g: gBistroChair, tier: T.SMALL, r: 0.26, h: 0.88, label: 'Bistro Chair', sv: 0.06,
+    tint: [0xffffff, P.FABRIC_PINK, P.FABRIC_LIME, P.STUCCO_BUTTER], debris: P.CHAIR,
+  },
+  barStool: { g: gBarStool, tier: T.SMALL, r: 0.40, h: 0.76, label: 'Bar Stool', sv: 0.05, debris: P.TEAK },
+  menuBoard: { g: gMenuBoard, tier: T.SMALL, r: 0.30, h: 1.66, label: 'Menu Board', sv: 0.05, debris: P.SIGN_DARK },
+  hostStand: { g: gHostStand, tier: T.SMALL, r: 0.35, h: 1.38, label: 'Host Stand', debris: P.WOOD_DARK },
+  pastryCase: { g: gPastryCase, tier: T.MEDIUM, r: 0.65, h: 1.50, label: 'Pastry Case', shadow: true, debris: P.GLASS_SKY },
+  serviceStation: { g: gServiceStation, tier: T.SMALL, r: 0.54, h: 1.12, label: 'Service Station', debris: P.WOOD_DARK },
+  terraceRail: { g: gTerraceRail, tier: T.SMALL, r: 0.99, h: 1.06, label: 'Terrace Screen', debris: P.ALUMINIUM },
+  terraceHedge: { g: gTerraceHedge, tier: T.SMALL, r: 1.06, h: 1.00, label: 'Terrace Hedge', shadow: true, sv: 0.05, debris: P.HEDGE },
+  stringArch: { g: gStringArch, tier: T.MEDIUM, r: 2.20, h: 3.27, label: 'Festoon Lights', shadow: true, sv: 0.04, debris: P.WOOD_DARK },
+
+  /* nightlife + hotel ------------------------------------------------------ */
+  porteCochere: { g: gPorteCochere, tier: T.LARGE, r: 3.35, h: 4.45, label: 'Entrance Canopy', shadow: true, crumbles: true, debris: P.CONCRETE },
+  carpetRunner: { g: gCarpetRunner, tier: T.MEDIUM, r: 1.58, h: 0.98, label: 'Red Carpet', shadow: true, debris: 0xb4243c },
+  velvetRope: { g: gVelvetRope, tier: T.SMALL, r: 1.13, h: 1.00, label: 'Rope Line', debris: P.CHROME },
+  bouncerPodium: { g: gBouncerPodium, tier: T.SMALL, r: 0.42, h: 1.14, label: 'Door Podium', debris: P.SIGN_DARK },
+  keyBoard: { g: gKeyBoard, tier: T.SMALL, r: 0.33, h: 1.62, label: 'Valet Key Board', debris: P.ALUMINIUM },
+  cigBin: { g: gCigBin, tier: T.TINY, r: 0.28, h: 1.02, label: 'Ash Bin', sv: 0.05, debris: P.STEEL_DARK },
+  lightboxSign: { g: gLightboxSign, tier: T.MEDIUM, r: 0.36, h: 3.44, label: 'Neon Sign', shadow: true, sv: 0.07, debris: P.NEON_PINK },
+  outdoorBar: { g: gOutdoorBar, tier: T.MEDIUM, r: 1.35, h: 1.70, label: 'Outdoor Bar', shadow: true, debris: P.TEAK },
+  djBooth: { g: gDjBooth, tier: T.MEDIUM, r: 1.00, h: 1.20, label: 'DJ Booth', shadow: true, debris: P.NEON_PURPLE },
+  speakerStack: { g: gSpeakerStack, tier: T.SMALL, r: 0.44, h: 1.42, label: 'Speaker Stack', debris: P.SIGN_DARK },
+
+  /* storefront dressing ---------------------------------------------------- */
+  clothesRail: { g: gClothesRail, tier: T.SMALL, r: 0.62, h: 1.50, label: 'Clothes Rail', sv: 0.06, debris: P.FABRIC_SKY },
+  produceStand: { g: gProduceStand, tier: T.MEDIUM, r: 0.67, h: 1.26, label: 'Produce Stand', shadow: true, sv: 0.05, debris: P.WOOD_LIGHT },
+  flowerStand: { g: gFlowerStand, tier: T.SMALL, r: 0.61, h: 1.26, label: 'Flower Stand', sv: 0.05, debris: P.FLOWER_MAGENTA },
+  deliveryStack: { g: gDeliveryStack, tier: T.SMALL, r: 0.69, h: 1.00, label: 'Delivery Pallet', sv: 0.06, debris: P.WOOD_LIGHT },
+
+  /* extra kerbside --------------------------------------------------------- */
+  dumpster: {
+    g: gDumpster, tier: T.MEDIUM, r: 1.25, h: 1.34, label: 'Skip', shadow: true, sv: 0.05,
+    tint: [P.BIN_GREEN, P.CAR_YELLOW, P.BIN_BLUE, P.RUST, P.BIN_GREY], debris: P.BIN_GREY,
+  },
+  busBench: { g: gBusBench, tier: T.SMALL, r: 0.96, h: 1.14, label: 'Advertising Bench', shadow: true, sv: 0.04, debris: P.TEAK },
+  payStation: { g: gPayStation, tier: T.SMALL, r: 0.33, h: 1.75, label: 'Pay Station', debris: P.PARKING_METER },
+  wayfindTotem: { g: gWayfindTotem, tier: T.MEDIUM, r: 0.37, h: 2.82, label: 'Wayfinding Pylon', shadow: true, sv: 0.05, debris: P.SIGN_DARK },
+  newsKiosk: { g: gNewsKiosk, tier: T.MEDIUM, r: 1.27, h: 2.34, label: 'Newsstand', shadow: true, debris: P.NEWSSTAND },
+  meshFence: { g: gMeshFence, tier: T.SMALL, r: 1.03, h: 1.97, label: 'Site Fence', debris: P.STEEL },
+  pottedFicus: { g: gPottedFicus, tier: T.MEDIUM, r: 0.54, h: 1.72, label: 'Topiary', shadow: true, sv: 0.07, debris: P.TREE_CANOPY },
+
+  /* park ------------------------------------------------------------------- */
+  benchTeak: { g: gBenchTeak, tier: T.SMALL, r: 0.85, h: 0.96, label: 'Teak Bench', shadow: true, sv: 0.04, debris: P.TEAK },
+  chessTable: { g: gChessTable, tier: T.SMALL, r: 1.10, h: 0.74, label: 'Chess Table', shadow: true, crumbles: true, debris: P.PRECAST },
+  bbqGrill: { g: gBbqGrill, tier: T.SMALL, r: 0.21, h: 1.28, label: 'Park Grill', debris: P.SIGN_DARK },
   umbrella: {
     g: gUmbrella, tier: T.MEDIUM, r: 1.30, h: 2.56, label: 'Patio Umbrella', shadow: true,
     tint: [P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_SUN, P.FABRIC_SKY, P.FABRIC_PINK, P.FABRIC_WHITE],
@@ -1195,7 +1805,10 @@ const DEFS = {
 
   /* lighting -------------------------------------------------------------- */
   lampModern: { g: gLampModern, tier: T.MEDIUM, r: 0.30, h: 7.00, label: 'Street Light', shadow: true, debris: P.LAMP_POST },
-  lampDeco: { g: gLampDeco, tier: T.MEDIUM, r: 0.42, h: 5.80, label: 'Deco Lamp Post', shadow: true, debris: P.BENCH_METAL },
+  lampDeco: { g: gLampDeco, tier: T.MEDIUM, r: 0.42, h: 5.06, label: 'Deco Lamp Post', shadow: true, debris: P.BENCH_METAL },
+  /* Same post with its flower baskets modelled in. See gLampDeco for why they
+     are not props of their own any more. */
+  lampDecoBasket: { g: gLampDecoBasket, tier: T.MEDIUM, r: 0.42, h: 5.06, label: 'Deco Lamp Post', shadow: true, debris: P.BENCH_METAL },
   lampPark: { g: gLampPark, tier: T.MEDIUM, r: 0.26, h: 4.05, label: 'Park Lamp', shadow: true, debris: P.BENCH_METAL },
 
   /* transit + vending ----------------------------------------------------- */
@@ -1209,11 +1822,11 @@ const DEFS = {
   jersey: { g: gJersey, tier: T.MEDIUM, r: 1.05, h: 0.80, label: 'Jersey Barrier', shadow: true, crumbles: true, debris: P.PRECAST },
   waterBarrier: { g: gWaterBarrier, tier: T.SMALL, r: 0.36, h: 1.02, label: 'Water Barrier', tint: [0xffffff, P.BARRIER_ORANGE, 0xffffff], debris: P.BARRIER_ORANGE },
   aframe: { g: gAframe, tier: T.SMALL, r: 0.60, h: 1.05, label: 'Barricade', debris: P.BARRIER_ORANGE },
-  barrel: { g: gTrafficBarrel, tier: T.SMALL, r: 0.36, h: 0.92, label: 'Traffic Barrel', debris: P.BARRIER_ORANGE },
-  crate: { g: gCrate, tier: T.SMALL, r: 0.56, h: 0.68, label: 'Crate', debris: P.WOOD_DECK },
-  pallet: { g: gPallet, tier: T.SMALL, r: 0.75, h: 0.48, label: 'Pallet Stack', debris: P.WOOD_LIGHT },
-  scaffold: { g: gScaffold, tier: T.MEDIUM, r: 0.75, h: 1.96, label: 'Scaffold Tower', shadow: true, debris: P.SCAFFOLD },
-  sandbags: { g: gSandbags, tier: T.SMALL, r: 0.48, h: 0.57, label: 'Sandbags', debris: P.SAND },
+  barrel: { g: gTrafficBarrel, tier: T.SMALL, r: 0.36, h: 0.92, label: 'Traffic Barrel', sv: 0.05, debris: P.BARRIER_ORANGE },
+  crate: { g: gCrate, tier: T.SMALL, r: 0.56, h: 0.68, label: 'Crate', sv: 0.09, debris: P.WOOD_DECK },
+  pallet: { g: gPallet, tier: T.SMALL, r: 0.75, h: 0.48, label: 'Pallet Stack', sv: 0.07, debris: P.WOOD_LIGHT },
+  scaffold: { g: gScaffold, tier: T.MEDIUM, r: 0.75, h: 1.96, label: 'Scaffold Tower', shadow: true, sv: 0.06, debris: P.SCAFFOLD },
+  sandbags: { g: gSandbags, tier: T.SMALL, r: 0.48, h: 0.57, label: 'Sandbags', sv: 0.09, debris: P.SAND },
   portaloo: { g: gPortaloo, tier: T.MEDIUM, r: 0.80, h: 2.26, label: 'Portaloo', shadow: true, debris: 0xffffff },
 };
 
@@ -1222,6 +1835,10 @@ const MAT_OF = {
   bollard: 'metal', stanchion: 'metal', bikeRack: 'metal', scaffold: 'metal',
   cleat: 'metal', busShelter: 'gloss', heater: 'metal',
   umbrella: 'fabric', parasol: 'fabric',
+  velvetRope: 'metal', cigBin: 'metal', meshFence: 'metal', clothesRail: 'metal',
+  dumpster: 'metal', barStool: 'metal', keyBoard: 'metal',
+  terraceRail: 'gloss', pastryCase: 'gloss',
+  cafeTableCloth: 'fabric', carpetRunner: 'fabric',
 };
 
 const _geoCache = new Map();
@@ -1253,9 +1870,9 @@ function factoryFor(key) {
  * that belongs beside it. Reserve what the mesh occupies and both stop.
  */
 const _contactCache = new Map();
-function contactRadius(key) {
-  let r = _contactCache.get(key);
-  if (r !== undefined) return r;
+function contactBox(key) {
+  let m = _contactCache.get(key);
+  if (m !== undefined) return m;
   const geo = geometryFor(key);
   if (!geo.boundingBox) geo.computeBoundingBox();
   const bb = geo.boundingBox;
@@ -1269,10 +1886,15 @@ function contactRadius(key) {
     if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
   }
   if (!(maxX > minX)) { minX = bb.min.x; maxX = bb.max.x; minZ = bb.min.z; maxZ = bb.max.z; }
-  r = Math.hypot(maxX - minX, maxZ - minZ) / 2;
-  _contactCache.set(key, r);
-  return r;
+  m = {
+    hx: (maxX - minX) / 2,
+    hz: (maxZ - minZ) / 2,
+    r: Math.hypot(maxX - minX, maxZ - minZ) / 2,
+  };
+  _contactCache.set(key, m);
+  return m;
 }
+const contactRadius = (key) => contactBox(key).r;
 
 /* ========================================================== placer ====== */
 
@@ -1495,6 +2117,13 @@ class Placer {
     this._near = [];
     this.ground = new Ground(ctx.scene);
     this.rejected = { water: 0, bridge: 0, scenery: 0, occupied: 0, road: 0, void: 0 };
+    /* Named counters for the COMPOSED layouts. A terrace or an entrance is
+       either there or it is not, and when it is not there is nothing in the
+       frame to notice — unlike a missing bin, which is invisible. The first
+       cut of the terrace lost four out of five of its boundary screens to
+       street trees on the kerb line and nobody could have seen that from a
+       screenshot; the counters are how it was found. */
+    this.tally = { terrace: 0, terraceEdge: 0, terraceEdgeLost: 0, entrance: 0, entranceLost: 0 };
   }
 
   /**
@@ -1548,6 +2177,24 @@ class Placer {
   }
 
   /**
+   * Reserve the FEET of a prop that stands on two or four of them.
+   *
+   * A bounding circle is the wrong reservation for a gate, a bar counter or an
+   * entrance canopy: `contactRadius` returns the circle through the corners of
+   * the contact patch, so a 4 m festoon arch would reserve 2.2 m of terrace it
+   * does not touch and refuse every table meant to sit under it. Those props
+   * pass a small `claimR` for their hub and then claim their real feet here —
+   * half a metre of ground each, exactly where the geometry lands.
+   *
+   * @param {number} rot the prop's yaw; feet are offset along its local +x
+   * @param {number[]} offs foot positions along local x
+   */
+  claimFeet(x, z, rot, offs, r) {
+    const ax = Math.cos(rot), az = -Math.sin(rot);
+    for (const o of offs) this.claim(x + ax * o, z + az * o, r);
+  }
+
+  /**
    * @param {number} [claimR] ground footprint to test and reserve. Defaults to
    *   the prop's MEASURED contact footprint; pass 0 for things that legitimately
    *   share a footprint with something already placed (a basket hanging off a
@@ -1561,6 +2208,12 @@ class Placer {
     const d = DEFS[key];
     if (!d) return false;
     this.tried++;
+    /* ANTI-REPETITION, applied HERE rather than at emit time so that the
+       footprint this reserves is the footprint the prop actually has. Nothing
+       in a real street is made to the same tolerance twice; a few percent of
+       size spread is what stops a kerb run of nine planters reading as nine
+       copies of a planter, and it costs no triangles and no draw calls. */
+    if (d.sv) scale *= 1 + (this.rng() - 0.5) * 2 * d.sv;
     // A prop in the bay or halfway up a bridge ramp is wrong however tidily it
     // is spaced, so the site is disqualified before anything else is tested.
     if (this.ctx.layout.isWater(x, z)) { this.rejected.water++; return false; }
@@ -1649,7 +2302,7 @@ class Placer {
       const d = DEFS[it.key];
       const hex = d.tint ? (it.hex ?? d.tint[Math.floor(r() * d.tint.length)]) : null;
       ctx.addInstanced(it.key, factoryFor(it.key), {
-        position: new THREE.Vector3(it.x, it.y + (d.y || 0), it.z),
+        position: new THREE.Vector3(it.x, it.y, it.z),
         rotationY: it.rot,
         scale: it.scale,
         hex,
@@ -1674,6 +2327,7 @@ class Placer {
       if (g) tris += (g.index.count / 3) * n;
     }
     const rj = this.rejected;
+    const ty = this.tally;
     console.info(
       `[props] ${counts.size} pools / ${this.items.length} instances / ` +
       `${(tris / 1000).toFixed(0)}k tris / ` +
@@ -1681,6 +2335,11 @@ class Placer {
       `| refused: ${rj.occupied} occupied, ${rj.scenery} into scenery, ` +
       `${rj.bridge} on a bridge, ${rj.water} in water, ` +
       `${rj.road} on the carriageway or a crossing ramp, ${rj.void} over nothing`
+    );
+    console.info(
+      `[props] composed: ${ty.terrace} terraces ` +
+      `(${ty.terraceEdge} boundary sections, ${ty.terraceEdgeLost} refused), ` +
+      `${ty.entrance} entrances (${ty.entranceLost} refused)`
     );
     return { pools: counts.size, instances: this.items.length, tris };
   }
@@ -1700,6 +2359,32 @@ export function buildProps(ctx) {
   }
   dressMedians(pl, ctx.layout, makeRNG(0x3d1a97));
   pl.emit();
+  wireNight(ctx);
+}
+
+/**
+ * Point the shared glow uniform at the engine's published nightFactor.
+ *
+ * See NIGHT_U for why this rides on onBeforeRender. In short: it is the only
+ * per-frame callback this module can rely on without an agreement from the
+ * file that owns the game loop. It runs immediately before each pool is drawn,
+ * so the value the first prop mesh writes is the value every prop mesh reads
+ * in the same frame — no one-frame lag, no ordering assumption.
+ */
+function wireNight(ctx) {
+  const scene = ctx.scene;
+  const sync = () => {
+    const n = scene.userData.nightFactor;
+    NIGHT_U.value = (typeof n === 'number' ? n : 0) * GLOW_GAIN;
+  };
+  sync();
+  for (const key of Object.keys(DEFS)) {
+    const pool = ctx.props.pools.get(key);
+    if (pool) pool.mesh.onBeforeRender = sync;
+  }
+  // Published for whoever eventually owns a module update list. Idempotent, so
+  // being called as well as (or instead of) the render hook changes nothing.
+  scene.userData.propsUpdate = sync;
 }
 
 /**
@@ -1792,10 +2477,18 @@ function dressBlock(pl, b, r) {
   const sides = ['n', 's', 'w', 'e'].filter((s) => b.edges[s]);
   if (!sides.length) sides.push(b.frontage);
 
-  // Site hoarding goes down BEFORE the ordinary kerb furniture: it is a
-  // continuous line and the first pass, which ran it last, lost most of it to
-  // bins and planters that had already claimed the kerb band.
+  /* DESIGNED PLACES GO DOWN FIRST.
+     Site hoarding, a restaurant terrace and a hotel entrance are all COMPOSED
+     layouts: they need a contiguous piece of pavement and they read as one
+     thing or as nothing. The kerb run is the opposite — a rhythm that is happy
+     to flow round whatever is already there. Running the composed layouts last
+     (which the hoarding did once, and cost most of itself to bins that had
+     already taken the kerb) gets the priority exactly backwards. */
   if (Z === ZONE.CONSTRUCTION) constructionYard(pl, b, r, band);
+  const shoppy = Z === ZONE.RETAIL || Z === ZONE.LOWRISE;
+  if (shoppy && life > 0.32 && band > 3.3) restaurantTerrace(pl, b, r, band);
+  if ((Z === ZONE.TOWER || Z === ZONE.LANDMARK || Z === ZONE.MIDRISE
+      || (shoppy && life > 0.5)) && band > 4.0) hotelEntrance(pl, b, r, band);
 
   for (const s of sides) kerbRun(pl, b, s, r, band, life);
   if (!open && band > 2.3) for (const s of sides) facadeRun(pl, b, s, r, band, life);
@@ -1850,6 +2543,20 @@ const COMPANION = {
   mailbox: ['newsBox'],
   atmKiosk: ['bollard'],
   phoneKiosk: ['binMesh'],
+  busBench: ['binMesh', 'binMuni'],
+  payStation: ['bollard', 'signParking'],
+  wayfindTotem: ['bollard', 'binMesh'],
+  dumpster: ['binWheelie', 'pallet', 'crate'],
+  cigBin: ['binMesh'],
+  newsKiosk: ['binMuni', 'bollard'],
+  clothesRail: ['clothesRail', 'sandwichBoard'],
+  produceStand: ['produceCrate', 'crate'],
+  flowerStand: ['produceCrate', 'planterRound'],
+  deliveryStack: ['deliveryStack', 'binWheelie'],
+  pottedFicus: ['pottedFicus'],
+  benchTeak: ['binMesh', 'planterRound'],
+  lightboxSign: ['cigBin'],
+  barStool: ['barStool'],
 };
 
 /** Weighted kerbside vocabulary for a block. */
@@ -1857,18 +2564,23 @@ function kerbTable(b) {
   const t = [
     ['bollard', 7], ['binMuni', 6], ['binWheelie', 4], ['planterRound', 6],
     ['planterSquare', 4], ['benchSlat', 5], ['signStreet', 3], ['signParking', 3],
-    ['hydrant', 3], ['meter', 5], ['newsBox', 3], ['utilityBox', 2], ['cone', 2],
-    ['signOneWay', 3],
+    ['hydrant', 3], ['meter', 4], ['newsBox', 3], ['utilityBox', 2], ['cone', 2],
+    ['signOneWay', 3], ['benchTeak', 4], ['payStation', 2], ['cigBin', 2],
     ['bikeRack', 3], ['scooter', 3], ['bicycle', 2], ['mailbox', 2],
   ];
   if (b.streetLife > 0.5) {
     t.push(['planterTrough', 5], ['binMesh', 3], ['phoneKiosk', 1], ['atmKiosk', 1],
-      ['pottedPalm', 2], ['stanchion', 2], ['hotdogStand', 1]);
+      ['pottedPalm', 2], ['stanchion', 2], ['hotdogStand', 1], ['pottedFicus', 3],
+      ['wayfindTotem', 2], ['busBench', 3], ['flowerStand', 2]);
   }
-  if (b.streetLife < 0.3) {
-    t.push(['bollardStone', 4], ['crate', 2], ['pallet', 1]);
+  if (b.streetLife < 0.45) {
+    // The quiet side of a block is where the servicing happens. A skip and a
+    // stack of pallets say "back of house" more cheaply than any signage.
+    t.push(['bollardStone', 4], ['crate', 2], ['pallet', 1], ['dumpster', 3],
+      ['deliveryStack', 2], ['meshFence', 1]);
   }
-  if (b.onSpine) t.push(['benchConcrete', 3], ['foodCart', 1], ['displayRack', 1]);
+  if (b.onSpine) t.push(['benchConcrete', 3], ['foodCart', 1], ['displayRack', 1],
+    ['newsKiosk', 2], ['lightboxSign', 2]);
   return t;
 }
 
@@ -1897,19 +2609,13 @@ function kerbRun(pl, b, s, r, band, life) {
   const [ux, uz] = EDGE_DIR[s];
   for (let u0 = 4 + r() * 6; u0 < len - 4; u0 += gap) {
     const p = edgePt(b, s, u0, 1.35);
-    const slid = pl.putAlong(kind, p.x, p.z, ux, uz, rot);
+    // Roughly half the Deco posts on a given frontage carry flower baskets —
+    // it is one pool switch, and it breaks up what is otherwise the most
+    // metronomic run of identical objects in the whole city.
+    const kk = (kind === 'lampDeco' && r.chance(0.45)) ? 'lampDecoBasket' : kind;
+    const slid = pl.putAlong(kk, p.x, p.z, ux, uz, rot);
     if (slid !== null) {
       const u = u0 + slid;
-      // Deco posts carry a basket off EACH bracket end — one alone reads as a
-      // mistake from the game camera. gLampDeco's bracket ends sit at local
-      // +-0.60, which after the placer's rotation is +-0.60 along this edge.
-      // They hang at 4 m, so they reserve no ground (claim 0).
-      if (kind === 'lampDeco' && r.chance(0.45)) {
-        for (const du of [-0.6, 0.6]) {
-          const q = edgePt(b, s, u + du, 1.35);
-          pl.put('hangBasket', q.x, q.z, rot, 1, null, 0);
-        }
-      }
       if (r.chance(0.3)) {
         const q = edgePt(b, s, u + 1.6, 0.8);
         pl.put('uplighter', q.x, q.z, rot);
@@ -2015,11 +2721,18 @@ function facadeRun(pl, b, s, r, band, life) {
   const inset = band - 0.35;
   const step = (9.4 - 4.6 * life) / DENSITY;
   const shoppy = b.zone === ZONE.RETAIL || b.zone === ZONE.LOWRISE;
+  /* A shopfront puts its STOCK on the pavement — rails, crates, buckets of
+     flowers, a pastry case. That is what makes a retail street look open for
+     business rather than merely furnished, and it is the half of "storefront
+     dressing" the module was missing entirely. */
   const table = shoppy
-    ? [['sandwichBoard', 7], ['produceCrate', 6], ['displayRack', 5], ['pottedPalm', 3],
-      ['binWheelie', 4], ['cafeChair', 3], ['crate', 3], ['planterTrough', 3], ['heater', 2]]
+    ? [['sandwichBoard', 6], ['produceCrate', 5], ['displayRack', 4], ['pottedPalm', 3],
+      ['binWheelie', 3], ['cafeChair', 2], ['crate', 3], ['planterTrough', 3], ['heater', 2],
+      ['clothesRail', 5], ['produceStand', 4], ['flowerStand', 3], ['deliveryStack', 3],
+      ['pastryCase', 2], ['menuBoard', 3], ['pottedFicus', 3]]
     : [['pottedPalm', 3], ['planterSquare', 6], ['benchSlat', 5], ['binWheelie', 3],
-      ['bollardStone', 4], ['utilityBox', 2], ['sandwichBoard', 2]];
+      ['bollardStone', 4], ['utilityBox', 2], ['sandwichBoard', 2], ['pottedFicus', 3],
+      ['deliveryStack', 2], ['cigBin', 2], ['benchTeak', 3]];
 
   const [ux, uz] = EDGE_DIR[s];
   // Shop clutter stands AGAINST the glass, so this line is tighter than the
@@ -2077,6 +2790,10 @@ function cornerDressing(pl, b, r) {
  * that frontage — displacing it freely walked tables out into the carriageway
  * and broke the read that these belong to the shop behind them.
  */
+/** The three tables and two chairs a setting can be made of. */
+const TABLE_KINDS = [['cafeTable', 5], ['cafeTableCloth', 4], ['cafeTableSquare', 4]];
+const CHAIR_KINDS = ['cafeChair', 'bistroChair'];
+
 function cafeCluster(pl, x, z, rot, r, n = 1) {
   // Local +x after the placer's Y rotation. Sliding along it keeps the setting
   // on the terrace line instead of wandering off the kerb.
@@ -2084,31 +2801,271 @@ function cafeCluster(pl, x, z, rot, r, n = 1) {
   for (let c = 0; c < n; c++) {
     const t = (r() - 0.5) * 5.0;
     const rot0 = rot + (r() - 0.5) * 0.5;
+    // Model varies per SETTING, not per object: one restaurant does not own
+    // three different tables, but three restaurants in a row do.
+    const tk = r.weighted(TABLE_KINDS);
+    const ck = r.pick(CHAIR_KINDS);
     // Slide the whole setting down the terrace rather than losing it: a table
     // that cannot stand at this exact metre is still wanted two metres on.
-    const slid = pl.putAlong('cafeTable', x + ax * t, z + az * t, ax, az, rot0);
+    const slid = pl.putAlong(tk, x + ax * t, z + az * t, ax, az, rot0);
     if (slid === null) continue;
     const cx = x + ax * (t + slid), cz = z + az * (t + slid);
     /* Seats ring the table on even slots. When the setting gets a parasol it
        takes one of those slots and stands on its own base rather than through
        the tabletop: a co-located pole is invisible from the game camera but it
        is 51 interpenetrating pairs in the audit, and a 1.26 m canopy from
-       1.5 m out still shades the whole setting. */
+       1.5 m out still shades the whole setting.
+
+       The ring radius is DERIVED from the two models chosen above rather than
+       being the flat 1.15 it used to be. A clothed table is 0.71 m across the
+       floor against a bare pedestal's 0.42, so one fixed radius either buries
+       the chairs in the big table or floats them off the small one — and
+       "buries" here means the placer silently refuses them, which is how a
+       terrace ends up as tables with nobody able to sit at them. */
+    const ring = contactRadius(tk) + contactRadius(ck) + 0.26;
     const seats = 3 + r.int(0, 1);
     const shaded = r.chance(0.5);
     const slots = seats + (shaded ? 1 : 0);
     for (let k = 0; k < seats; k++) {
-      // 1.15 m out: table radius + chair radius + the placer's own margins. Any
-      // closer and the collision test silently eats most of the seating.
       const a = rot0 + (k / slots) * TAU + (r() - 0.5) * 0.22;
-      const sx = cx + Math.cos(a) * 1.15, sz = cz + Math.sin(a) * 1.15;
+      const sx = cx + Math.cos(a) * ring, sz = cz + Math.sin(a) * ring;
       // Face the table: local +z maps to (sin rotY, cos rotY).
-      pl.put('cafeChair', sx, sz, Math.atan2(-Math.cos(a), -Math.sin(a)));
+      pl.put(ck, sx, sz, Math.atan2(-Math.cos(a), -Math.sin(a)));
     }
     if (shaded) {
       const a = rot0 + (seats / slots) * TAU;
-      pl.put('umbrella', cx + Math.cos(a) * 1.5, cz + Math.sin(a) * 1.5, r() * TAU);
+      pl.put('umbrella', cx + Math.cos(a) * (ring + 0.35), cz + Math.sin(a) * (ring + 0.35), r() * TAU);
     }
+  }
+}
+
+/* ------------------------------------------------------------- terrace --- */
+
+/** Terrace boundary vocabulary, longest first — see the pitch maths below. */
+const TERRACE_EDGE = [['terraceHedge', 5], ['terraceRail', 5], ['planterSquare', 3],
+  ['planterTrough', 3]];
+
+/**
+ * A RESTAURANT TERRACE, laid out as a room rather than sprinkled as objects.
+ *
+ * The single biggest reason a procedural street reads as procedural is that
+ * everything on it was placed by the same independent dice roll. A terrace in
+ * the real world is four parallel lines and a threshold:
+ *
+ *   kerb  |  boundary (hedge / glass screen / planters, with ONE gap)
+ *         |  the tables, all on one line, all square to the shopfront
+ *         |  service against the glass (station, pastry case, heater)
+ *   glass |  and at the gap: a menu board and a host stand
+ *
+ * Laying it out in that order is also what makes the collision budget work:
+ * the boundary and the threshold are the things that must land, so they claim
+ * their ground first and the tables fill what is left.
+ *
+ * Runs BEFORE the kerb run for the block (see dressBlock), so the bins and
+ * meters flow around the terrace instead of the terrace losing to the bins.
+ */
+function restaurantTerrace(pl, b, r, band) {
+  const s = b.frontage;
+  const len = edgeLen(b, s);
+  if (len < 19) return;
+  const rot = SIDE_ROT[s];
+  const [ux, uz] = EDGE_DIR[s];
+
+  const span = Math.min(len - 11, 9 + r() * 9);
+  if (span < 7) return;
+  const u0 = 5 + r() * Math.max(0.5, len - span - 10);
+  const uMid = u0 + span * 0.5;
+
+  /* THE THREE LINES, in metres of inset from the kerb.
+     They are not fractions of the band, because the things standing on them
+     have fixed sizes: a boundary screen reserves ~0.35 m of depth, a dressed
+     table 0.71, and the placer wants 0.2 m of air between any two claims. So
+     the table line sits a fixed 1.62 m behind the boundary — proportional
+     spacing put it 0.65 m behind on a 4 m pavement, where every single table
+     was silently refused for overlapping the hedge in front of it. Whether
+     there is ALSO room for a service line against the glass is then a
+     question the remaining depth answers, not an assumption. */
+  const dKerb = 1.30;
+  const dFacade = band - 0.65;
+  /* Three widths of terrace, because Miami has three widths of pavement and
+     forcing one layout onto all of them means the narrow two thirds of the
+     city get NO terrace at all — which is what the first cut did: 37 terraces
+     citywide, all on the six-metre spines.
+       fenced  boundary line + table line (+ service where there is depth)
+       narrow  one table line down the middle, planters bracketing the ends */
+  const fenced = dFacade - dKerb >= 2.85;
+  const dTable = fenced ? dKerb + 1.62 : (dKerb + dFacade) * 0.5;
+  const roomy = fenced && dFacade - dTable >= 1.25;
+  pl.tally.terrace++;
+
+  /* Boundary line. The gap is the way in, so it is left at a known place and
+     everything else keys off it — a terrace you cannot walk into reads as a
+     storage yard. */
+  const GAP = 2.5;
+  for (let u = u0; fenced && u < u0 + span; ) {
+    const key = r.weighted(TERRACE_EDGE);
+    /* Pack on the item's LENGTH ALONG THE KERB, and reserve a capsule rather
+       than the circle its footprint bounds. A 2.04 m hedge bounds a 1.06 m
+       circle, so circle-packing it leaves a 0.4 m hole between every pair and
+       the "edge" reads as a dotted line — which is the one thing a terrace
+       boundary must not do. */
+    const cb = contactBox(key);
+    if (Math.abs(u + cb.hx - uMid) > GAP * 0.5 + cb.hx) {
+      const p = edgePt(b, s, u + cb.hx, dKerb + (r() - 0.5) * 0.10);
+      if (pl.put(key, p.x, p.z, rot + (r() - 0.5) * 0.05, 1, null, cb.hz)) {
+        pl.claimFeet(p.x, p.z, rot, [-cb.hx * 0.55, cb.hx * 0.55], cb.hz);
+        pl.tally.terraceEdge++;
+      } else pl.tally.terraceEdgeLost++;
+    }
+    u += cb.hx * 2 + 0.16;
+  }
+
+  // A narrow terrace still needs to say where it starts and stops.
+  if (!fenced) {
+    for (const du of [-0.4, span + 0.4]) {
+      const p = edgePt(b, s, u0 + du, dTable);
+      pl.putAlong('planterSquare', p.x, p.z, ux, uz, rot);
+    }
+  }
+
+  /* Threshold: menu board on the kerb side of the gap, host stand inside it. */
+  const gp = edgePt(b, s, uMid - 1.45, fenced ? dKerb + 0.2 : dTable - 1.3);
+  pl.putAlong('menuBoard', gp.x, gp.z, ux, uz, rot + (r() - 0.5) * 0.2);
+  const hp = edgePt(b, s, uMid + 1.2, roomy ? dFacade - 0.3 : dTable + 0.9);
+  pl.putAlong('hostStand', hp.x, hp.z, ux, uz, rot + (r() - 0.5) * 0.25);
+
+  /* Festoon gates run ACROSS the terrace — one pole on the boundary line, one
+     against the shopfront. Across rather than along because the arch is 4 m
+     wide and the terrace is only ever ~9-18 m long: along the frontage it
+     would eat two table bays, across it uses depth nothing else wants. */
+  if (dFacade - dKerb > 3.6) {
+    const archRot = rot + Math.PI / 2;
+    for (const du of [1.8, span - 1.8]) {
+      const p = edgePt(b, s, u0 + du, (dKerb + dFacade) * 0.5);
+      if (pl.put('stringArch', p.x, p.z, archRot, 1, null, 0.34)) {
+        pl.claimFeet(p.x, p.z, archRot, [-2.0, 2.0], 0.34);
+      }
+    }
+  }
+
+  /* Tables, one line, square to the shopfront, skipping the bay in front of
+     the entrance gap. */
+  const pitch = 2.9 + r() * 0.5;
+  for (let u = u0 + 1.6; u < u0 + span - 1.2; u += pitch) {
+    if (Math.abs(u - uMid) < GAP * 0.5 + 1.0) continue;
+    const p = edgePt(b, s, u, dTable + (r() - 0.5) * 0.2);
+    cafeCluster(pl, p.x, p.z, rot + (r() - 0.5) * 0.12, r, 1);
+  }
+
+  /* Service and warmth against the glass — only where the depth is genuinely
+     there. On a 4 m pavement this line would be standing in the table row. */
+  if (!roomy) return;
+  const srv = [['serviceStation', 4], ['pastryCase', 3], ['heater', 5], ['pottedFicus', 3],
+    ['binMesh', 2]];
+  for (let u = u0 + 1.2; u < u0 + span - 1.0; u += 3.4 + r() * 2.2) {
+    if (Math.abs(u - uMid) < 1.8) continue;
+    const p = edgePt(b, s, u, dFacade + (r() - 0.5) * 0.2);
+    pl.putAlong(r.weighted(srv), p.x, p.z, ux, uz, rot + (r() - 0.5) * 0.2);
+  }
+}
+
+/* ------------------------------------------------- hotel + club entrance -- */
+
+/**
+ * The front door of a hotel or a club: the one piece of street furniture a
+ * player reads as ADDRESS rather than as clutter.
+ *
+ * Two variants, never both, because a porte-cochère and a roped red carpet are
+ * the same idea done at two budgets — and because their bounding circles are
+ * 3.3 m and 1.8 m, so overlapping them is a guaranteed pair in the placement
+ * audit for a composition nobody would build anyway.
+ */
+/**
+ * Slide a big single object along a frontage until it finds ground.
+ *
+ * A canopy reserves 3.45 m and refuses to stand within 2.4 m of a street tree,
+ * and nature.js plants those every 8-12 m along exactly this kerb. Anchored
+ * rigidly at the middle of the frontage the entrance therefore landed 6 times
+ * out of 59 attempts citywide — the composition existed in the code and
+ * essentially not in the city. `SLIDE`'s +-2.4 m is tuned for kerb rhythm and
+ * is far too short to clear a tree, so this walks the whole frontage in tree
+ * spacings and takes the first bay that is genuinely free.
+ *
+ * @returns {?number} the u it landed at
+ */
+function anchorAlong(pl, b, s, u0, inset, key, rot, claimR = -1) {
+  for (const du of [0, 4, -4, 8, -8, 12, -12, 16, -16]) {
+    const u = u0 + du;
+    if (u < 6 || u > edgeLen(b, s) - 6) continue;
+    const p = edgePt(b, s, u, inset);
+    if (pl.put(key, p.x, p.z, rot, 1, null, claimR)) return u;
+  }
+  return null;
+}
+
+function hotelEntrance(pl, b, r, band) {
+  const s = b.frontage;
+  const len = edgeLen(b, s);
+  if (len < 26) return;
+  const rot = SIDE_ROT[s];
+  const [ux, uz] = EDGE_DIR[s];
+  const mid0 = len / 2 + (r() - 0.5) * len * 0.16;
+
+  // A canopy needs 3.3 m of depth for its columns plus standing room; below
+  // that the block gets the carpet-and-rope door instead.
+  const wantGrand = band >= 4.4 && r.chance(0.6);
+
+  // A refused canopy falls through to the club door rather than leaving the
+  // block with no front entrance at all — the canopy is the one prop in the
+  // module big enough that a whole frontage can fail to have room for it.
+  const grandInset = Math.min(Math.max(2.05, band * 0.5), band - 1.95);
+  const grandMid = wantGrand
+    ? anchorAlong(pl, b, s, mid0, grandInset, 'porteCochere', rot)
+    : null;
+
+  if (grandMid !== null) {
+    const inset = grandInset;
+    const mid = grandMid;
+    pl.tally.entrance++;
+    // Everything else stands clear of the canopy's own 3.45 m reservation.
+    for (const sgn of [-1, 1]) {
+      const p = edgePt(b, s, mid + sgn * 4.5, inset);
+      pl.put('pottedFicus', p.x, p.z, rot);
+    }
+    const v = edgePt(b, s, mid + 4.6, 1.5);
+    pl.putAlong('valetStand', v.x, v.z, ux, uz, rot);
+    const k = edgePt(b, s, mid - 4.7, Math.max(1.9, band - 0.8));
+    pl.putAlong('keyBoard', k.x, k.z, ux, uz, rot);
+    const sg = edgePt(b, s, mid - 7.0, 1.4);
+    pl.putAlong('lightboxSign', sg.x, sg.z, ux, uz, rot);
+  } else {
+    const inset = Math.min(Math.max(1.75, band * 0.5), band - 1.65);
+    const mid = anchorAlong(pl, b, s, mid0, inset, 'carpetRunner', rot);
+    if (mid === null) { pl.tally.entranceLost++; return; }
+    pl.tally.entrance++;
+    const pd = edgePt(b, s, mid + 2.9, inset + 0.4);
+    if (pl.putAlong('bouncerPodium', pd.x, pd.z, ux, uz, rot - 0.5)) {
+      const cb = edgePt(b, s, mid + 3.8, inset + 0.2);
+      pl.put('cigBin', cb.x, cb.z, rot);
+    }
+    /* The queue runs ALONG the frontage — a club queue stands against the wall,
+       and running it out toward the kerb would put half of it in the gutter,
+       where the ground sample refuses it anyway.
+
+       Rope lines abut end to end, so they claim a hub and their two posts
+       rather than the 1.13 m circle their footprint bounds: at that radius the
+       second unit of any queue is refused and a queue of one is just a stray
+       stanchion. */
+    for (let k = 0; k < 2 + r.int(0, 2); k++) {
+      const q = edgePt(b, s, mid + 4.6 + k * 2.05, Math.max(1.7, inset - 0.3));
+      if (pl.put('velvetRope', q.x, q.z, rot, 1, null, 0.32)) {
+        pl.claimFeet(q.x, q.z, rot, [-0.95, 0.95], 0.24);
+      }
+    }
+    // The sign is what makes the door read at night. It goes on the side the
+    // queue is not, well clear of the rope line.
+    const sg = edgePt(b, s, mid - 6.6, 1.4);
+    pl.putAlong('lightboxSign', sg.x, sg.z, ux, uz, rot);
   }
 }
 
@@ -2124,11 +3081,20 @@ function retailTerrace(pl, b, r, band) {
     cafeCluster(pl, p.x, p.z, rot, r, 1);
   }
   const [ux, uz] = EDGE_DIR[s];
-  // String-light poles bracket a terrace; that catenary is a lot of the mood.
-  if (life > 0.45 && r.chance(0.55)) {
+  /* Festoon lighting. A gate (two poles and the catenary between them, as one
+     object) instead of the two independent poles this used to place: those
+     could and did land 5.5 m apart with a bin between them and no wire, which
+     is a pair of mystery posts. Where the pavement is too shallow for a 4 m
+     gate to sit square, a single pole is still worth having. */
+  if (life > 0.45 && r.chance(0.6)) {
     const u = 6 + r() * Math.max(1, len - 12);
-    for (const du of [0, 5.5]) {
-      const p = edgePt(b, s, u + du, Math.max(1.7, band * 0.5));
+    const p = edgePt(b, s, u, Math.max(1.7, band * 0.5));
+    if (band > 4.6) {
+      const archRot = rot + Math.PI / 2;
+      if (pl.put('stringArch', p.x, p.z, archRot, 1, null, 0.34)) {
+        pl.claimFeet(p.x, p.z, archRot, [-2.0, 2.0], 0.34);
+      }
+    } else {
       pl.putAlong('stringPole', p.x, p.z, ux, uz, rot);
     }
   }
@@ -2181,6 +3147,11 @@ function towerForecourt(pl, b, r, band) {
     const p = edgePt(b, s, mid - 6.5, 1.5);
     pl.put('atmKiosk', p.x, p.z, rot);
   }
+  // Smokers get put round the side of a tower, never at its front door.
+  if (r.chance(0.5)) {
+    const p = edgePt(b, s, mid + 7.5 + r() * 3, Math.max(1.7, band - 0.9));
+    pl.putAlong('cigBin', p.x, p.z, ux, uz, rot);
+  }
 }
 
 /**
@@ -2192,15 +3163,69 @@ function towerForecourt(pl, b, r, band) {
 const SQUARE = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
 const squared = (r) => r.pick(SQUARE) + (r() - 0.5) * 0.16;
 
+/**
+ * A pop-up bar with a DJ and a PA stack.
+ *
+ * Miami's plazas and its marina apron are where the city's nightlife actually
+ * happens, and this module had nothing for it: after dark those blocks were
+ * benches and planters. This is one composed group per site, on the site's own
+ * axes, sited by hand rather than by dice — a bar facing out, three stools at
+ * the counter, and the booth and speakers set back behind it where the crowd
+ * is not.
+ *
+ * The anchor is searched rather than jittered: `putSoft` would move the bar
+ * and leave the stools and speakers laid out around where it used to be.
+ */
+function eventCorner(pl, b, r) {
+  if (Math.min(b.w, b.d) < 22 || !r.chance(0.85)) return;
+  const face = r.pick(SQUARE);
+  const ax = Math.cos(face), az = -Math.sin(face);   // local +x
+  const nx = Math.sin(face), nz = Math.cos(face);    // local +z, the way it faces
+
+  let cx = 0, cz = 0, ok = false;
+  for (let t = 0; t < 8 && !ok; t++) {
+    cx = b.x + (r() - 0.5) * b.w * 0.52;
+    cz = b.z + (r() - 0.5) * b.d * 0.52;
+    // Room for the whole group, and not on top of a fountain apron or a pond.
+    ok = pl.free(cx, cz, 4.2) && pl.ctx.isFree(cx, cz, 3.0) && pl.sceneryClear(cx, cz, 3.4);
+  }
+  if (!ok) return;
+
+  // The counter is 2.8 m of frontage on a 0.9 m body: its bounding circle says
+  // 1.35 m in every direction, which would refuse the stools that belong at it.
+  if (!pl.put('outdoorBar', cx, cz, face, 1, null, 0.62)) return;
+  pl.claimFeet(cx, cz, face, [-1.1, 1.1], 0.62);
+  for (let k = -1; k <= 1; k++) {
+    pl.put('barStool', cx + ax * k * 0.92 + nx * 1.3, cz + az * k * 0.92 + nz * 1.3,
+      face + Math.PI + (r() - 0.5) * 0.5);
+  }
+  const dx = cx - nx * 3.2, dz = cz - nz * 3.2;
+  if (pl.put('djBooth', dx, dz, face)) {
+    for (const sg of [-1, 1]) {
+      pl.put('speakerStack', dx + ax * sg * 2.0, dz + az * sg * 2.0, face);
+    }
+  }
+  pl.put('cigBin', cx + ax * 2.6 + nx * 1.1, cz + az * 2.6 + nz * 1.1, face);
+  pl.put('lightboxSign', cx - ax * 3.4 + nx * 0.6, cz - az * 3.4 + nz * 0.6, face);
+}
+
 function plazaFurniture(pl, b, r) {
-  const n = Math.round((b.w * b.d) / 115 * DENSITY);
+  // Composed group first — see eventCorner: it needs 4 m of clear ground and
+  // will not find it once 40 benches and planters have been scattered over it.
+  eventCorner(pl, b, r);
+  /* One prop per 82 m2, not per 115. An open block is the one place the game
+     camera sees a large uninterrupted area of paving, so it is where thin
+     dressing reads loudest — measured off the `crowd` frame, where a plaza at
+     the old rate was one object every 10.7 m and looked swept. */
+  const n = Math.round((b.w * b.d) / 82 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.82;
     const z = b.z + (r() - 0.5) * b.d * 0.82;
     const key = r.weighted([
-      ['benchConcrete', 8], ['planterSquare', 7], ['planterRound', 6], ['binMuni', 4],
-      ['bollardStone', 6], ['lampPark', 4], ['pottedPalm', 5], ['fountain', 2],
-      ['cafeTable', 4], ['benchSlat', 5], ['planterTrough', 3],
+      ['benchConcrete', 7], ['planterSquare', 6], ['planterRound', 5], ['binMuni', 4],
+      ['bollardStone', 6], ['lampPark', 4], ['pottedPalm', 4], ['fountain', 2],
+      ['cafeTable', 4], ['benchSlat', 4], ['planterTrough', 3],
+      ['benchTeak', 5], ['pottedFicus', 4], ['wayfindTotem', 2], ['chessTable', 2],
     ]);
     if (key === 'cafeTable') { cafeCluster(pl, x, z, r.pick(SQUARE), r, 1); continue; }
     // Open block: nothing here has a building claim, so an occupied cell means
@@ -2219,21 +3244,23 @@ function plazaFurniture(pl, b, r) {
 }
 
 function parkFurniture(pl, b, r) {
-  const n = Math.round((b.w * b.d) / 150 * DENSITY);
+  eventCorner(pl, b, r);
+  const n = Math.round((b.w * b.d) / 108 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.84;
     const z = b.z + (r() - 0.5) * b.d * 0.84;
     const key = r.weighted([
-      ['benchBackless', 9], ['benchSlat', 7], ['picnicTable', 7], ['binMesh', 5],
+      ['benchBackless', 8], ['benchSlat', 6], ['picnicTable', 6], ['binMesh', 5],
       ['lampPark', 5], ['fountain', 3], ['dogStation', 3], ['planterRound', 3],
       ['bollardStone', 3], ['binMuni', 3],
+      ['benchTeak', 6], ['chessTable', 5], ['bbqGrill', 5],
     ]);
     /* Benches in a park come in facing pairs across a walk, with the bin at one
        end — that trio is what makes a lawn read as a park rather than as an
        object field. A bench is authored facing +z, so a pair set 2.6 m apart on
        the same axis and turned 180 degrees from each other looks across at
        itself. */
-    if (key === 'benchBackless' || key === 'benchSlat') {
+    if (key === 'benchBackless' || key === 'benchSlat' || key === 'benchTeak') {
       const face = r.pick(SQUARE);
       const nx = Math.sin(face), nz = Math.cos(face);   // the direction it faces
       if (!pl.putOpen(key, x - nx * 1.3, z - nz * 1.3, face)) continue;
@@ -2262,14 +3289,16 @@ function parkFurniture(pl, b, r) {
 }
 
 function marinaApron(pl, b, r) {
-  const n = Math.round((b.w * b.d) / 165 * DENSITY);
+  eventCorner(pl, b, r);
+  const n = Math.round((b.w * b.d) / 118 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.86;
     const z = b.z + (r() - 0.5) * b.d * 0.86;
     const key = r.weighted([
-      ['cleat', 8], ['crate', 6], ['bollardStone', 5], ['benchSlat', 5],
+      ['cleat', 8], ['crate', 6], ['bollardStone', 5], ['benchSlat', 4],
       ['binMesh', 4], ['lampPark', 4], ['pallet', 4], ['planterRound', 3],
-      ['lounger', 3], ['parasol', 2],
+      ['lounger', 3], ['parasol', 2], ['benchTeak', 5], ['deliveryStack', 3],
+      ['cigBin', 2],
     ]);
     // A parasol stands on a 12 cm pole, so its measured footprint would let a
     // crate sit under the canopy. It reserves the ground its shade covers.
@@ -2323,6 +3352,7 @@ function lotFurniture(pl, b, r, band) {
     const key = r.weighted([
       ['bollard', 9], ['cone', 6], ['utilityBox', 4], ['barrel', 3],
       ['signParking', 5], ['binWheelie', 3], ['aframe', 2],
+      ['payStation', 4], ['dumpster', 2], ['meshFence', 2],
     ]);
     // One setback for the whole run, and a pitch that just clears the prop.
     const inset = 0.9 + r() * Math.max(0.3, band - 1.2);
@@ -2344,8 +3374,8 @@ function constructionYard(pl, b, r, band) {
   for (const s of sides) {
     const len = edgeLen(b, s);
     const rot = SIDE_ROT[s];
-    const kind = r.chance(0.55) ? 'jersey' : 'waterBarrier';
-    const step = kind === 'jersey' ? 2.15 : 1.05;
+    const kind = r.weighted([['jersey', 5], ['waterBarrier', 4], ['meshFence', 4]]);
+    const step = kind === 'jersey' ? 2.15 : kind === 'meshFence' ? 2.12 : 1.05;
     for (let u = 1.6; u < len - 1.6; u += step) {
       const p = edgePt(b, s, u, 1.25);
       pl.put(kind, p.x, p.z, rot + Math.PI / 2);
@@ -2401,7 +3431,8 @@ function constructionYard(pl, b, r, band) {
     pl.putAlong(r.weighted([
       ['crate', 9], ['pallet', 8], ['sandbags', 6], ['scaffold', 6],
       ['cone', 6], ['barrel', 5], ['aframe', 4], ['portaloo', 3],
-      ['jersey', 3], ['waterBarrier', 3],
+      ['jersey', 3], ['waterBarrier', 3], ['dumpster', 5], ['meshFence', 4],
+      ['deliveryStack', 3],
     ]), x, z, ax, az, yard + (r() - 0.5) * 0.2);
   }
   // Portaloos come in banks of two or three, shoulder to shoulder facing out.

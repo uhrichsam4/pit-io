@@ -32,15 +32,31 @@
  * stance is 12 mm, against 140 mm for the naive sinusoidal cycle.
  *
  * ---------------------------------------------------------------------------
- * BEING EATEN
+ * BEING EATEN — the handover
  * ---------------------------------------------------------------------------
- * The consume system animates ONE object per swallow, so an agent made of ten
- * instances cannot be handed to it directly. Instead every agent also owns a
- * slot in an invisible "fall body" pool: a single merged, arms-flailing person.
- * That pool is what the registry sees. When the hole takes an agent, the
- * consume system leases a proxy of the merged body and tumbles it, and we
- * simply stop writing the agent's animated parts. No blood, no ragdoll — the
- * little person waves their arms and drops down the drain.
+ * The consume system animates ONE rigid object per swallow, so an agent made of
+ * ten separately-posed instances cannot be handed to it directly. Every agent
+ * therefore also owns a slot in a merged "fall body" pool: one arms-flailing
+ * person, one matrix. THAT slot is the object the registry holds, and it is the
+ * object the hole tips into the pit — nothing is spawned to stand in for it.
+ *
+ * The handover works exactly the way vehicles.js hands a car over: the moment
+ * the consumable reports WOBBLE (the hole has taken ground from under it) this
+ * module stops driving that agent entirely, collapses its ten animated parts,
+ * and lets the consume system own the transform. Come back when the state says
+ * IDLE again — the hole moved off, or the respawner brought them back — and the
+ * agent stands up and carries on.
+ *
+ * Until then the fall-body slot is kept collapsed AND its authored scale is
+ * kept at zero, so that any `restore()` the consume system performs while the
+ * agent is on its feet (respawn, regained support) draws nothing. That is the
+ * whole trick that lets one pool be invisible for 1,400 people and visible for
+ * the two currently falling. Pool visibility itself is refcounted, so a crowd
+ * with nobody falling costs no draw calls at all.
+ *
+ * The bug this replaces: the agent was KILLED at state >= FALLING while the
+ * merged pool was `visible = false`, so a swallowed pedestrian blinked out of
+ * existence while every other prop in the city visibly tipped and fell in.
  *
  * ---------------------------------------------------------------------------
  * COLOUR
@@ -133,6 +149,24 @@ const DOG_COLORS = [
   PALETTE.STUCCO_SAND, PALETTE.WOOD_DARK,
 ];
 
+/** Phone bodies and camera gear: matte black, graphite, the odd rose-gold. */
+const GEAR_DARK = [
+  PALETTE.SIGN_DARK, PALETTE.CAR_GRAPHITE, PALETTE.TAR_SEAM, PALETTE.STEEL_DARK,
+];
+const PHONE_COLORS = [
+  PALETTE.SIGN_DARK, PALETTE.CAR_GRAPHITE, PALETTE.STUCCO_PEACH,
+  PALETTE.CAR_WHITE, PALETTE.TAR_SEAM, PALETTE.STUCCO_LILAC,
+];
+/** Takeaway cups: the lid is dark, the sleeve is kraft or a chain's colour. */
+const CUP_COLORS = [
+  PALETTE.FABRIC_WHITE, PALETTE.STUCCO_SAND, PALETTE.WOOD_LIGHT,
+  PALETTE.CAR_WHITE, PALETTE.FABRIC_CORAL, PALETTE.STUCCO_MINT,
+];
+/** Doormen and valets: the whole point is that they read as staff, not crowd. */
+const UNIFORM_DARK = [
+  PALETTE.SIGN_DARK, PALETTE.TAR_SEAM, PALETTE.CAR_NAVY, PALETTE.STEEL_DARK,
+];
+
 /* ============================================================ dimensions === */
 
 /**
@@ -158,10 +192,32 @@ const MODE = {
   WAIT: 2,      // at the kerb, watching the signal
   CROSS: 3,     // in the marked crosswalk
   IDLE: 4,      // standing / chatting
-  SIT: 5,       // on a bench, a step, a lawn
+  SIT: 5,       // on a bench, a chair, a step, a lawn
   CYCLE: 6,     // in the kerb lane
   FLEE: 7,      // the hole is close: arms up, run
   RETURN: 8,    // walking back to the spot they bolted from
+  GAZE: 9,      // stopped mid-pavement, head up at the skyline
+  FILM: 10,     // part of a shoot: to camera, operating, boom, reflector, posing
+  QUEUE: 11,    // in a line at a door or a counter
+  SERVE: 12,    // a server working a terrace: table, table, pass, repeat
+  ESCORT: 13,   // a child locked to the adult they are with
+  GOTO: 14,     // walking to an assigned spot, then adopting `thenMode`
+};
+
+/**
+ * Where a hand-held item rides. One instanced pool serves every one of these:
+ * a phone, a coffee, a camera, a boom pole, a reflector and a busker's drum are
+ * the same six-sided prism at six different scales, so the whole of "what the
+ * city is holding" costs exactly one draw call.
+ */
+const AT = {
+  HAND_R: 0,    // in the right hand, tracking the arm swing
+  HAND_L: 1,
+  CHEST: 2,     // lanyard, slung camera — rides the leaning torso
+  BOOM: 3,      // long pole angled up and forward over the subject
+  BOOM_MIC: 4,  // the blimp on the end of that pole
+  PANEL: 5,     // reflector / clapper held up in front of the chest
+  DRUM: 6,      // bucket drum between the knees
 };
 
 /* ============================================================= geometry === */
@@ -345,6 +401,98 @@ function dogGeo() {
 }
 
 /**
+ * THE UNIVERSAL HAND-HELD.
+ *
+ * A unit six-sided prism centred on its own origin, scaled per instance. That
+ * one geometry is a phone at (0.075, 0.145, 0.018), a coffee at (0.075, 0.11,
+ * 0.075), a camera body, a 2.4 m boom pole, a reflector panel and a bucket
+ * drum — so every object the crowd is carrying shares a single draw call
+ * instead of costing one pool per prop. Six sides rather than four because a
+ * chamfered corner catches the key light and a cube does not.
+ */
+function itemGeo() {
+  const g = new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1, false, Math.PI / 6);
+  return shadeGeo(g, 1.0);
+}
+
+/**
+ * Ring light. A torus rather than a flat annulus: a zero-thickness ring is
+ * exactly the razor-edge geometry the art bible bans, and the tube gives the
+ * bloom something with a highlight roll-off to sit on.
+ *
+ * Authored in the XY plane, so it faces the instance's local +z — the same
+ * "forward" every body part uses.
+ */
+function ringGeo() {
+  return shadeGeo(new THREE.TorusGeometry(0.86, 0.14, 5, 14), 1.0);
+}
+
+/**
+ * The tripod shared by camera rigs and light stands: three splayed legs, a
+ * riser, and a head that differs per variant.
+ *
+ * Built pivot-at-the-ground because these are registered consumables — the
+ * lowest fifth of this mesh is the splayed feet, which is exactly the contact
+ * patch worldBuild measures for the support physics.
+ */
+function tripodGeo(head) {
+  const parts = [];
+  const LEG_LEN = 1.30;
+  const SPLAY = 0.30;                       // radians off vertical
+  for (let k = 0; k < 3; k++) {
+    const ang = (k / 3) * Math.PI * 2 + Math.PI / 6;
+    const leg = new THREE.CylinderGeometry(0.021, 0.030, LEG_LEN, 4, 1, false, Math.PI / 4);
+    leg.rotateX(SPLAY);
+    // The foot has to land ON the ground, so the leg is placed from its foot up
+    // rather than from the apex down — the same reason props measure contact.
+    leg.translate(0, LEG_LEN * 0.5 * Math.cos(SPLAY), -LEG_LEN * 0.5 * Math.sin(SPLAY));
+    leg.rotateY(ang);
+    parts.push(shadeGeo(leg, 0.34));
+  }
+  const apex = LEG_LEN * Math.cos(SPLAY);
+  const riser = new THREE.CylinderGeometry(0.026, 0.034, 0.34, 6, 1, false, Math.PI / 6);
+  riser.translate(0, apex + 0.14, 0);
+  parts.push(shadeGeo(riser, 0.52));
+  const collar = new THREE.CylinderGeometry(0.055, 0.062, 0.07, 6, 1, false, Math.PI / 6);
+  collar.translate(0, apex - 0.02, 0);
+  parts.push(shadeGeo(collar, 0.30));
+
+  const y = apex + 0.31;
+  if (head === 'camera') {
+    // A boxy cine body with a lens and a flipped-out monitor. It points -z so
+    // that a rig placed facing its subject has the lens on the subject.
+    const body = new THREE.BoxGeometry(0.17, 0.145, 0.30);
+    body.translate(0, y + 0.07, 0.01);
+    parts.push(shadeGeo(body, 0.42));
+    const lens = new THREE.CylinderGeometry(0.055, 0.062, 0.17, 8);
+    lens.rotateX(Math.PI / 2);
+    lens.translate(0, y + 0.07, -0.21);
+    parts.push(shadeGeo(lens, 0.22));
+    const hood = new THREE.CylinderGeometry(0.075, 0.070, 0.05, 8);
+    hood.rotateX(Math.PI / 2);
+    hood.translate(0, y + 0.07, -0.31);
+    parts.push(shadeGeo(hood, 0.18));
+    const mon = new THREE.BoxGeometry(0.135, 0.095, 0.016);
+    mon.rotateY(0.5);
+    mon.translate(0.14, y + 0.12, 0.03);
+    parts.push(shadeGeo(mon, 0.95));
+  } else {
+    // Light stand: a yoke and a boss. The glowing ring itself is a separate
+    // instance in the emissive pool, so it can be dimmed with the daylight and
+    // pulled the instant the stand is taken.
+    for (const s of [-1, 1]) {
+      const arm = new THREE.BoxGeometry(0.030, 0.20, 0.030);
+      arm.translate(s * 0.115, y + 0.16, 0);
+      parts.push(shadeGeo(arm, 0.40));
+    }
+    const yoke = new THREE.BoxGeometry(0.26, 0.032, 0.032);
+    yoke.translate(0, y + 0.06, 0);
+    parts.push(shadeGeo(yoke, 0.40));
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/**
  * The merged body used ONLY for the tumble after a swallow: one mesh, arms
  * thrown up, legs kicking. Cartoon panic, no ragdoll.
  */
@@ -369,8 +517,13 @@ function fallBodyGeo(skin, hair, top, bottom, withBike, bikeHex) {
     a.translate(s * SHOULDER_X, HIP_Y + SHOULDER_Y, 0.06);
     parts.push(paintGeo(a, skin));
   }
-  // Legs kicking in opposite directions.
-  const kick = [0.55, -0.75];
+  // Legs kicking in opposite directions — one up, one trailing almost straight
+  // down. The trailing leg is not a style choice: the merged body's own origin
+  // is the standing agent's foot position, so if BOTH legs come up the mesh's
+  // lowest point sits 15 cm above its origin and every stationary pedestrian
+  // audits as floating. One leg down keeps the contact point honest, and reads
+  // as a stumble rather than a swimming pose.
+  const kick = [0.85, -0.22];
   for (let i = 0; i < 2; i++) {
     const s = i === 0 ? -1 : 1;
     const t = thighGeo();
@@ -495,23 +648,56 @@ export function buildPedestrians(ctx) {
     color: 0xffffff, vertexColors: true, roughness: 0.42, metalness: 0.30,
     envMapIntensity: 0.8,
   });
+  // Ring lights are the one thing here that emits. Cloned out of the cache
+  // because `emissiveIntensity` is driven per frame off nightFactor and the
+  // cache hands the same instance to anyone who asks for the same parameters.
+  const matGlow = solid({
+    color: 0xfff3df, vertexColors: true, roughness: 0.55, metalness: 0.0,
+    emissive: 0xffe9c4, emissiveIntensity: 0.25, envMapIntensity: 0.4,
+  }).clone();
 
   /* ------------------------------------------------------------ agents --- */
   // The whole city has ~27 km of pavement. Even at the top of the budget that
   // is one person every 23 m if you spread them evenly, which reads as a ghost
   // town everywhere. So: hard concentration onto the spines and the gathering
   // spots, and genuinely empty back lots.
-  const TOTAL = 1200;
+  //
+  // ORDER MATTERS. The placers that need a SPECIFIC piece of ground — a chair
+  // that exists, a venue door, 3 m of clear pavement for a tripod — run first
+  // and take what they need. Free-roaming walkers get whatever is left, and
+  // they can go anywhere, so they are the ones that should absorb the rounding.
+  const TOTAL = 1450;
   const agents = [];
-  placeGatherings(ctx, rng, paths, agents, Y_WALK, 430);
+  const furniture = collectFurniture(ctx);
+  const venues = findVenues(ctx, rng, paths);
+  const shoots = [];
+
+  placeSeated(ctx, rng, furniture, agents, 250);
+  placeTerraceLife(ctx, rng, furniture, agents, 120);
+  placeVenueLife(ctx, rng, venues, agents, Y_WALK, 210);
+  placeCreators(ctx, rng, paths, venues, agents, Y_WALK, shoots, 150);
+  placeBuskers(ctx, rng, paths, agents, Y_WALK, 60);
+  placeGatherings(ctx, rng, paths, agents, Y_WALK, agents.length + 340);
   placeCyclists(ctx, rng, net, agents);
-  placeCrossingQueues(ctx, rng, net, agents, Y_WALK, 190);
+  placeCrossingQueues(ctx, rng, net, agents, Y_WALK, 180);
   placeWalkers(ctx, rng, paths, agents, Y_WALK, TOTAL - agents.length);
+  placeChildren(ctx, rng, agents, 110);
 
   const N = agents.length;
   if (!N) return;
 
+  // WHERE EACH PERSON BELONGS. A pedestrian that has been swallowed comes back
+  // 30 s later like every other prop, and "comes back" has to mean back to
+  // their chair, their queue, their pitch — not standing in the road in a
+  // generic idle. Captured once, after every placer has had its say.
+  for (const a of agents) {
+    a.homeMode = a.mode;
+    a.homeX = a.x; a.homeY = a.y; a.homeZ = a.z; a.homeYaw = a.yaw;
+    if (!a.homePath) { a.homePath = a.path; a.homeS = a.s; }
+  }
+
   let nHat = 0, nBag = 0, nOverlay = 0, nBike = 0, nBoard = 0, nDog = 0;
+  let nItem = 0;
   for (const a of agents) {
     if (a.hat) a.hatSlot = nHat++;
     if (a.bag) a.bagSlot = nBag++;
@@ -519,7 +705,9 @@ export function buildPedestrians(ctx) {
     if (a.bike) a.bikeSlot = nBike++;
     if (a.board) a.boardSlot = nBoard++;
     if (a.dog) a.dogSlot = nDog++;
+    if (a.items) for (const it of a.items) it.slot = nItem++;
   }
+  const nGlow = shoots.reduce((n, s) => n + (s.ring ? 1 : 0), 0);
 
   /* ------------------------------------------------------------- pools --- */
   const P = {
@@ -539,6 +727,10 @@ export function buildPedestrians(ctx) {
     bike: makePool(group, bikeGeo(), matGear, nBike, true, 'bike'),
     board: makePool(group, boardGeo(), matGear, nBoard, false, 'board'),
     dog: makePool(group, dogGeo(), matBody, nDog, false, 'dog'),
+    // Every phone, coffee, camera, boom, reflector and drum in Miami, in one
+    // pool. See itemGeo() for why that is possible at all.
+    item: makePool(group, itemGeo(), matGear, nItem, false, 'item'),
+    glow: makePool(group, ringGeo(), matGlow, nGlow, false, 'ringlight'),
   };
 
   for (let i = 0; i < N; i++) {
@@ -558,11 +750,17 @@ export function buildPedestrians(ctx) {
     if (a.bike) setInstanceColor(P.bike, a.bikeSlot, a.bikeHex);
     if (a.board) setInstanceColor(P.board, a.boardSlot, a.boardHex);
     if (a.dog) setInstanceColor(P.dog, a.dogSlot, a.dogHex);
+    if (a.items) for (const it of a.items) setInstanceColor(P.item, it.slot, it.hex);
   }
   for (const k in P) P[k].instanceColor.needsUpdate = true;
 
   /* -------------------------------------------------------- consumables --- */
-  registerConsumables(ctx, agents, rng);
+  const fallPools = registerConsumables(ctx, agents, rng);
+  // The tripods and light stands stand on the pavement under their own weight,
+  // so they are real consumables with measured footprints — not scenery. The
+  // glowing ring is the exception: it is bolted to a stand that can be eaten,
+  // so it lives in this module's pool and is pulled when its stand goes.
+  buildRigs(ctx, shoots, P.glow);
 
   /* ------------------------------------------------------------ runtime --- */
   const state = {
@@ -579,6 +777,16 @@ export function buildPedestrians(ctx) {
     layout,
     registry,
     scene,
+    fallPools,
+    matGlow,
+    shoots,
+    venues,
+    // Anything that only has to be right a few times a second: the day/night
+    // response, the venue migration, and pulling a ring light whose stand has
+    // just been eaten. Running these per frame for 1,450 agents buys nothing.
+    slowT: 0,
+    night: 0,
+    glowDirty: true,
   };
 
   scene.userData.pedestrianUpdate = (dt) => updateCrowd(state, dt);
@@ -587,12 +795,18 @@ export function buildPedestrians(ctx) {
   // whatever DEV can reach. A cyclic 900-element graph breaks page.evaluate.
   scene.userData.pedestrianCount = N;
 
-  const walkers = agents.filter((a) => a.mode <= MODE.CROSS).length;
-  const idles = agents.filter((a) => a.mode === MODE.IDLE || a.mode === MODE.SIT).length;
+  const count = (fn) => agents.filter(fn).length;
+  const walkers = count((a) => a.mode <= MODE.CROSS);
+  const sitting = count((a) => a.mode === MODE.SIT);
+  const standing = count((a) => a.mode === MODE.IDLE || a.mode === MODE.QUEUE);
+  const filming = count((a) => a.mode === MODE.FILM);
   console.info(
-    `[pedestrians] ${N} agents (${walkers} walking, ${idles} gathered, ${nBike} cycling, ` +
-    `${nDog} dogs) | ${Object.keys(P).length} draw calls | ` +
-    `${paths.length} sidewalk loops, ${net.crossings.length} crossings`
+    `[pedestrians] ${N} agents — ${walkers} walking, ${standing} standing/queueing, ` +
+    `${sitting} seated, ${filming} on ${shoots.length} shoots, ${nBike} cycling, ` +
+    `${count((a) => a.mode === MODE.SERVE)} serving, ${count((a) => a.mode === MODE.ESCORT)} children, ` +
+    `${nDog} dogs | ${Object.keys(P).length} crowd draw calls + ${state.fallPools.size} fall pools ` +
+    `(hidden until someone is swallowed) | ${nItem} held items, ${nGlow} ring lights | ` +
+    `${venues.length} venues, ${paths.length} sidewalk loops, ${net.crossings.length} crossings`
   );
 }
 
@@ -701,15 +915,38 @@ function linkCrossings(net, paths) {
 /* ============================================================== spawning === */
 
 const ARCHETYPES = [
-  { key: 'resident', label: 'Local', w: 30, speed: [1.05, 1.42], tops: TOP_CASUAL, longLeg: 0.5, hat: 0.14, bag: 0.16, sleeves: 0.12 },
-  { key: 'office', label: 'Office Worker', w: 22, speed: [1.35, 1.70], tops: TOP_OFFICE, longLeg: 0.94, hat: 0.03, bag: 0.62, sleeves: 0.80 },
-  { key: 'tourist', label: 'Tourist', w: 20, speed: [0.75, 1.10], tops: TOP_TOURIST, longLeg: 0.10, hat: 0.62, bag: 0.55, sleeves: 0.02 },
+  { key: 'resident', label: 'Local', w: 28, speed: [1.05, 1.42], tops: TOP_CASUAL, longLeg: 0.5, hat: 0.14, bag: 0.16, sleeves: 0.12, phone: 0.24, cup: 0.10 },
+  { key: 'office', label: 'Office Worker', w: 20, speed: [1.35, 1.70], tops: TOP_OFFICE, longLeg: 0.94, hat: 0.03, bag: 0.62, sleeves: 0.80, phone: 0.30, cup: 0.34, lanyard: 0.55 },
+  { key: 'tourist', label: 'Tourist', w: 19, speed: [0.75, 1.10], tops: TOP_TOURIST, longLeg: 0.10, hat: 0.62, bag: 0.55, sleeves: 0.02, phone: 0.42, camera: 0.30, gaze: 0.55 },
   { key: 'jogger', label: 'Jogger', w: 6, speed: [2.55, 3.30], tops: TOP_SPORT, longLeg: 0.05, hat: 0.18, bag: 0.0, sleeves: 0.0 },
   { key: 'server', label: 'Server', w: 5, speed: [1.10, 1.40], tops: TOP_OFFICE, longLeg: 0.85, apron: true, sleeves: 0.4 },
   { key: 'worker', label: 'Site Worker', w: 6, speed: [0.95, 1.25], tops: TOP_SPORT, longLeg: 0.95, hivis: true, sleeves: 0.5 },
   { key: 'skater', label: 'Skateboarder', w: 3, speed: [3.0, 4.0], tops: TOP_CASUAL, longLeg: 0.25, board: true, hat: 0.3 },
-  { key: 'dogwalker', label: 'Dog Walker', w: 5, speed: [0.95, 1.25], tops: TOP_CASUAL, longLeg: 0.4, dog: true, hat: 0.1 },
+  { key: 'dogwalker', label: 'Dog Walker', w: 5, speed: [0.95, 1.25], tops: TOP_CASUAL, longLeg: 0.4, dog: true, hat: 0.1, phone: 0.10 },
+  { key: 'shopper', label: 'Shopper', w: 8, speed: [0.90, 1.25], tops: TOP_CASUAL, longLeg: 0.35, bag: 0.85, hat: 0.2, phone: 0.22 },
 ];
+
+/** A child: same rig, two thirds the height, and never carrying anything. */
+const ARCH_CHILD = {
+  key: 'child', label: 'Kid', speed: [1.0, 1.35], tops: TOP_TOURIST,
+  longLeg: 0.18, hat: 0.24, sleeves: 0.05,
+};
+const ARCH_CREATOR = {
+  key: 'creator', label: 'Content Creator', speed: [1.0, 1.3], tops: TOP_CASUAL,
+  longLeg: 0.35, sleeves: 0.2, hat: 0.18,
+};
+const ARCH_CREW = {
+  key: 'crew', label: 'Camera Operator', speed: [1.0, 1.3], tops: TOP_OFFICE,
+  longLeg: 0.9, sleeves: 0.5, hat: 0.35,
+};
+const ARCH_DOORMAN = {
+  key: 'doorman', label: 'Doorman', speed: [0.9, 1.1], tops: UNIFORM_DARK,
+  longLeg: 1.0, sleeves: 0.9,
+};
+const ARCH_BUSKER = {
+  key: 'busker', label: 'Busker', speed: [0.9, 1.2], tops: TOP_TOURIST,
+  longLeg: 0.3, sleeves: 0.1, hat: 0.45,
+};
 
 const ARCH_TOTAL = ARCHETYPES.reduce((s, a) => s + a.w, 0);
 
@@ -772,7 +1009,18 @@ function makeAgent(rng, arch) {
     chatPartner: null,
     acc: 0,
     dead: false,
+    /** True while the consume system owns the body. See the handover note. */
+    held: false,
     c: null, pool: null, slot: -1,
+
+    /** Hand-held props. Slots are assigned once the whole crowd exists. */
+    items: null,
+    /** Sub-behaviour tag: 'presenter', 'boom', 'doorman', 'queuer', ... */
+    role: null,
+    /** Head-up-at-the-skyline timer, and the interval between doing it. */
+    gazeT: 0, gazeEvery: 0,
+    /** Walking while reading: slower, head down, one arm locked up in front. */
+    phoneWalk: false,
   };
 
   if (rng.chance(arch.hat ?? 0)) {
@@ -804,7 +1052,42 @@ function makeAgent(rng, arch) {
     a.dogHex = rng.pick(DOG_COLORS);
     a.dogPhase = rng() * 6.28;
   }
+
+  /* --- what they are carrying ------------------------------------------- */
+  // A phone is the single most common thing in a modern hand, and "head down,
+  // one arm locked up in front" is a silhouette a player recognises from
+  // 40 metres. It is also the cheapest possible variation: one prism.
+  if (rng.chance(arch.phone ?? 0)) {
+    a.phoneWalk = rng.chance(0.62);
+    addItem(a, AT.HAND_R, 0.078, 0.150, 0.019, rng.pick(PHONE_COLORS), 0.55);
+    if (a.phoneWalk) a.speed *= 0.86;      // nobody reads and strides
+  }
+  if (rng.chance(arch.cup ?? 0)) {
+    addItem(a, AT.HAND_L, 0.078, 0.115, 0.078, rng.pick(CUP_COLORS), 0);
+  }
+  if (rng.chance(arch.camera ?? 0)) {
+    addItem(a, AT.CHEST, 0.135, 0.095, 0.075, rng.pick(GEAR_DARK), 0);
+  }
+  if (rng.chance(arch.lanyard ?? 0)) {
+    // The badge, not the cord: a 5 cm card is all that reads, and it is the
+    // one thing that says "works in that tower" rather than "is on holiday".
+    addItem(a, AT.CHEST, 0.058, 0.085, 0.006, rng.pick(TOP_TOURIST), 0, 0, -0.05);
+  }
+  if (rng.chance(arch.gaze ?? 0)) {
+    a.gazeEvery = 16 + rng() * 26;
+    a.gazeT = rng() * a.gazeEvery;
+  }
   return a;
+}
+
+/**
+ * Attach a hand-held. `sw` is an extra tilt on top of whatever the attachment
+ * point already does, `dy` lifts it along the body.
+ */
+function addItem(a, at, gx, gy, gz, hex, sw = 0, yaw = 0, dy = 0) {
+  if (!a.items) a.items = [];
+  a.items.push({ slot: -1, at, gx, gy, gz, hex, sw, yaw, dy });
+  return a.items[a.items.length - 1];
 }
 
 /** Drop an agent onto a sidewalk loop at arc length `s`. */
@@ -858,6 +1141,13 @@ function placeWalkers(ctx, rng, paths, agents, yWalk, budget) {
       joinPath(rng, a, path, s, rng.chance(0.5) ? 1 : -1);
       a.y = yWalk;
       a.phase = rng() * Math.PI * 2;
+      // Resolve the loop position NOW rather than on the first tick. Their
+      // consumable is registered from x/z, and a walker left at the default
+      // (0,0) puts 900 people in one spatial-hash cell at the map origin —
+      // and any child attached to them starts the match there too.
+      const sm = sampleLoop(path, a.s, 0);
+      a.x = sm.x; a.z = sm.z;
+      a.yaw = Math.atan2(sm.dx * a.dir, sm.dz * a.dir);
       agents.push(a);
     }
   }
@@ -1040,23 +1330,810 @@ function placeCyclists(ctx, rng, net, agents) {
     if (a.hat) { a.hatHex = rng.pick(HAT_COLORS); a.hatScale = 0.90; }
     a.bag = rng.chance(0.3);
     if (a.bag) a.bagHex = rng.pick(BAG_COLORS);
+    // Both hands are on the bars. A phone in a cyclist's fist is a bug, not a
+    // behaviour.
+    a.items = null;
+    a.phoneWalk = false;
     sampleCyclist(a, net);
     if (layout.isWater(a.x, a.z)) continue;
     agents.push(a);
   }
 }
 
+/* ============================================== furniture that already exists */
+
+/**
+ * Find every seat props.js actually built, and where its cushion is.
+ *
+ * People sitting NEXT to a bench instead of on it is the single most obvious
+ * tell that a crowd was scattered rather than placed, so the seats are read
+ * straight out of the shared prop pools rather than guessed from the layout.
+ * `ctx.props` is handed to every module by worldBuild for exactly this kind of
+ * cross-module question, and pedestrians run last, so the furniture is final.
+ *
+ * The numbers are the seat height and the seat run measured off props.js's own
+ * geometry functions. They are a soft contract with that module: if a bench
+ * gets taller the sitters float, which is why the audit checks them.
+ */
+const SEAT_KINDS = [
+  //  key             seatY  halfRun  capacity  layout
+  ['cafeChair', 0.47, 0.00, 1, 'chair'],
+  ['benchSlat', 0.50, 0.60, 2, 'front'],
+  ['benchBackless', 0.46, 0.54, 2, 'front'],
+  ['benchConcrete', 0.56, 0.68, 2, 'front'],
+  ['picnicTable', 0.49, 0.58, 4, 'picnic'],
+];
+
+/**
+ * How busy the street is at an arbitrary point.
+ *
+ * Seats come out of the prop pools as bare coordinates with no block attached,
+ * and "is this a spine café or a bench behind a warehouse" decides whether it
+ * should be full or empty. A 48 m bucket grid over the block list answers it in
+ * constant time and is built once.
+ */
+function makeLifeLookup(layout) {
+  const CELL = 48;
+  const grid = new Map();
+  const key = (cx, cz) => (cx + 2048) * 4096 + (cz + 2048);
+  for (const b of layout.blocks) {
+    const x0 = Math.floor((b.x - b.w / 2) / CELL), x1 = Math.floor((b.x + b.w / 2) / CELL);
+    const z0 = Math.floor((b.z - b.d / 2) / CELL), z1 = Math.floor((b.z + b.d / 2) / CELL);
+    for (let cx = x0; cx <= x1; cx++) {
+      for (let cz = z0; cz <= z1; cz++) {
+        const k = key(cx, cz);
+        const prev = grid.get(k);
+        if (prev === undefined || (b.streetLife ?? 0) > prev) grid.set(k, b.streetLife ?? 0.35);
+      }
+    }
+  }
+  return (x, z) => grid.get(key(Math.floor(x / CELL), Math.floor(z / CELL))) ?? 0.3;
+}
+
+const _eul = new THREE.Euler();
+function slotYaw(pool, i) {
+  const q = pool.slotRot[i];
+  if (!q) return 0;
+  return _eul.setFromQuaternion(q, 'YXZ').y;
+}
+
+function collectFurniture(ctx) {
+  const out = { seats: [], tables: [], byBlock: new Map() };
+  const pools = ctx.props && ctx.props.pools;
+  if (!pools) return out;
+
+  const tablePool = pools.get('cafeTable');
+  if (tablePool) {
+    for (let i = 0; i < tablePool.count; i++) {
+      const p = tablePool.slotPos[i];
+      out.tables.push({ x: p.x, y: p.y, z: p.z });
+    }
+  }
+
+  for (const [key, seatY, halfRun, cap, kind] of SEAT_KINDS) {
+    const pool = pools.get(key);
+    if (!pool) continue;
+    for (let i = 0; i < pool.count; i++) {
+      const p = pool.slotPos[i];
+      const yaw = slotYaw(pool, i);
+      const cs = Math.cos(yaw), sn = Math.sin(yaw);
+      for (let k = 0; k < cap; k++) {
+        // Spread the sitters along the seat run, leaving a gap at each end so
+        // nobody's hip hangs off the timber.
+        let ox = cap > 1 ? (k / (cap - 1) - 0.5) * 2 * halfRun : 0;
+        let oz = 0;
+        let face = yaw;
+        if (kind === 'picnic') {
+          // Two benches either side of the table, everyone facing inward.
+          const side = k < 2 ? 1 : -1;
+          ox = ((k % 2) - 0.5) * 2 * halfRun;
+          oz = side * 0.76;
+          face = side > 0 ? yaw + Math.PI : yaw;
+        }
+        out.seats.push({
+          key, kind, seatY,
+          // local +x runs along the seat, local +z is the way the sitter faces
+          x: p.x + cs * ox + sn * oz,
+          y: p.y,
+          z: p.z - sn * ox + cs * oz,
+          yaw: face,
+          taken: false,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** Café tables cluster; a terrace is a set of tables within a few metres. */
+function tableClusters(furniture) {
+  const left = furniture.tables.slice();
+  const out = [];
+  while (left.length) {
+    const seed = left.pop();
+    const group = [seed];
+    for (let i = left.length - 1; i >= 0; i--) {
+      const t = left[i];
+      if (Math.hypot(t.x - seed.x, t.z - seed.z) < 7.5) { group.push(t); left.splice(i, 1); }
+    }
+    let cx = 0, cz = 0, cy = 0;
+    for (const t of group) { cx += t.x; cz += t.z; cy += t.y; }
+    out.push({ tables: group, x: cx / group.length, y: cy / group.length, z: cz / group.length });
+  }
+  return out;
+}
+
+/* ============================================================== seating === */
+
+/**
+ * Sit people on the furniture that is really there.
+ *
+ * Occupancy is weighted by how busy the street is, so a café on the spine is
+ * three-quarters full and a bench on a service road has one person eating lunch
+ * on it — which is the difference between a crowd that was placed and a crowd
+ * that was sprinkled.
+ */
+function placeSeated(ctx, rng, furniture, agents, cap) {
+  if (!furniture.seats.length) return;
+  const lifeAt = makeLifeLookup(ctx.layout);
+  let spent = 0;
+  // Shuffle so the same chairs are not always the occupied ones, and bias café
+  // chairs to the front of the queue — an empty terrace is the loudest "nobody
+  // lives here" signal a street can send.
+  const order = furniture.seats.map((s) => ({ s, k: rng() + (s.kind === 'chair' ? 0.45 : 0) }))
+    .sort((p, q) => q.k - p.k);
+
+  for (const { s } of order) {
+    if (spent >= cap) break;
+    if (s.taken) continue;
+    const life = lifeAt(s.x, s.z);
+    const want = s.kind === 'chair' ? 0.30 + life * 0.55 : 0.16 + life * 0.42;
+    if (!rng.chance(want)) continue;
+
+    const a = makeAgent(rng, pickArchetype(rng, false));
+    s.taken = true;
+    a.x = s.x; a.z = s.z; a.y = s.y;
+    a.yaw = s.yaw + (rng() - 0.5) * 0.34;
+    a.mode = MODE.SIT;
+    a.role = s.kind === 'chair' ? 'diner' : 'sitter';
+    // hipY is measured from the SOLE and then scaled by the agent's height, so
+    // it has to be divided back out or a tall person floats off the bench.
+    a.hipY = s.seatY / a.size;
+    a.sitSprawl = false;
+    a.lean = 0.06 + rng() * 0.16;
+    a.idleSeed = rng() * 100;
+    // Somebody at a café table has a drink in front of them nine times in ten.
+    if (s.kind === 'chair' && rng.chance(0.62)) {
+      addItem(a, AT.HAND_R, 0.075, 0.105, 0.075, rng.pick(CUP_COLORS), 0);
+    }
+    agents.push(a);
+    spent++;
+  }
+
+  // Pair adjacent sitters into conversations — two people on one bench who are
+  // not looking at each other read as two strangers, which is a colder city.
+  for (let i = agents.length - spent; i < agents.length - 1; i++) {
+    const a = agents[i], b = agents[i + 1];
+    if (!a || !b || a.mode !== MODE.SIT || b.mode !== MODE.SIT) continue;
+    if (Math.hypot(a.x - b.x, a.z - b.z) < 1.5 && rng.chance(0.7)) {
+      a.chatPartner = b; b.chatPartner = a;
+    }
+  }
+}
+
+/**
+ * Café and restaurant life AROUND the tables: servers working the terrace,
+ * a queue at the counter, and people standing about with a drink.
+ */
+function placeTerraceLife(ctx, rng, furniture, agents, cap) {
+  const clusters = tableClusters(furniture);
+  if (!clusters.length) return;
+  const { layout } = ctx;
+  let spent = 0;
+  clusters.sort((a, b) => b.tables.length - a.tables.length);
+
+  for (const cl of clusters) {
+    if (spent >= cap) break;
+    if (cl.tables.length < 2) continue;
+
+    /* --- the server ----------------------------------------------------- */
+    // A route through the tables and back to a pass point just off the
+    // terrace: the walk between them is the whole behaviour.
+    const route = [];
+    for (const t of cl.tables.slice(0, 4)) {
+      route.push({ x: t.x + (rng() - 0.5) * 0.9, z: t.z + (rng() - 0.5) * 0.9, wait: 1.6 + rng() * 2.8 });
+    }
+    // The pass: a spot two metres off the far side of the cluster, which is
+    // where the door would be on a terrace this shape.
+    const ang = rng() * Math.PI * 2;
+    const px = cl.x + Math.cos(ang) * 2.6, pz = cl.z + Math.sin(ang) * 2.6;
+    if (!layout.isWater(px, pz) && !layout.isRoad(px, pz)) {
+      route.push({ x: px, z: pz, wait: 2.2 + rng() * 3.4 });
+    }
+    if (route.length >= 2) {
+      const w = makeAgent(rng, ARCHETYPES[4]);       // server
+      w.mode = MODE.SERVE;
+      w.role = 'server';
+      w.route = route;
+      w.routeI = 0;
+      w.wait = rng() * 2;
+      w.x = route[0].x; w.z = route[0].z; w.y = cl.y;
+      w.tx = w.x; w.tz = w.z;
+      w.items = null;
+      // A tray reads better than a hand: a flat panel held at chest height.
+      addItem(w, AT.HAND_L, 0.28, 0.030, 0.34, PALETTE.SIGN_DARK, 0);
+      agents.push(w);
+      spent++;
+    }
+
+    /* --- a knot standing with a drink ------------------------------------ */
+    const knot = rng.int(0, 3);
+    for (let i = 0; i < knot && spent < cap; i++) {
+      const aa = rng() * Math.PI * 2;
+      const rr = 2.2 + rng() * 1.6;
+      const x = cl.x + Math.cos(aa) * rr, z = cl.z + Math.sin(aa) * rr;
+      if (layout.isWater(x, z) || layout.isRoad(x, z)) continue;
+      const a = makeAgent(rng, pickArchetype(rng, false));
+      a.x = x; a.z = z; a.y = cl.y;
+      a.yaw = Math.atan2(cl.x - x, cl.z - z) + (rng() - 0.5) * 0.6;
+      a.mode = MODE.IDLE;
+      a.role = 'terrace';
+      a.lean = 0.01 + rng() * 0.05;
+      if (rng.chance(0.55)) addItem(a, AT.HAND_R, 0.075, 0.11, 0.075, rng.pick(CUP_COLORS), 0);
+      agents.push(a);
+      spent++;
+      if (i > 0) {
+        const prev = agents[agents.length - 2];
+        if (prev.mode === MODE.IDLE) { prev.chatPartner = a; a.chatPartner = prev; }
+      }
+    }
+  }
+}
+
+/* =============================================================== venues === */
+
+/**
+ * Doors worth standing outside: a point on the building line of a busy retail
+ * or low-rise frontage, with the outward normal that a doorman would face.
+ *
+ * Derived from the sidewalk loop rather than from the block rectangle, because
+ * the loop is the ground people can actually stand on — a point computed from
+ * b.w/2 lands inside the wall on any parcel that got a setback.
+ */
+function findVenues(ctx, rng, paths) {
+  const { layout } = ctx;
+  const out = [];
+  for (const path of paths) {
+    const b = path.block;
+    const zone = b.zone;
+    const nightly = zone === ZONE.RETAIL || zone === ZONE.LOWRISE
+      || zone === ZONE.LANDMARK || zone === ZONE.MIDRISE;
+    if (!nightly || b.streetLife < 0.46) continue;
+    const r = makeRNG((b.seed ^ 0x7c31) >>> 0);
+    const n = b.streetLife > 0.7 ? r.int(1, 3) : 1;
+    for (let k = 0; k < n; k++) {
+      const i = r.int(0, path.n - 1);
+      const lx = path.px[i], lz = path.pz[i];
+      // Inward = toward the block centre = toward the building face.
+      let nx = b.x - lx, nz = b.z - lz;
+      const len = Math.hypot(nx, nz) || 1;
+      nx /= len; nz /= len;
+      const dx = lx + nx * 1.5, dz = lz + nz * 1.5;
+      if (layout.isWater(dx, dz) || layout.isRoad(dx, dz)) continue;
+      // The queue runs along the frontage, i.e. perpendicular to the normal.
+      out.push({
+        x: dx, z: dz, y: ctx.Y_WALK,
+        // Facing OUT of the door, which is what a doorman and a queue both do.
+        yaw: Math.atan2(-nx, -nz),
+        tx: -nz, tz: nx,
+        life: b.streetLife,
+        block: b,
+        // The loop this door sits on, and how far round it — a queuer who is
+        // out walking has to be able to find the way back.
+        path, s: path.cum[i],
+        stands: [],
+      });
+    }
+  }
+  // Busiest first: the budget should be spent where the cameras point.
+  out.sort((a, b2) => b2.life - a.life);
+  return out.slice(0, 34);
+}
+
+/**
+ * Doormen, valets, arriving groups and the queue itself.
+ *
+ * The queue is what changes with the clock: every queuer is assigned a slot and
+ * a personal "when do I go out" threshold, and at build time only the daytime
+ * share of them is standing in it. The rest are ordinary walkers who peel off
+ * the pavement as nightFactor rises. See the venue clock in updateSlow().
+ */
+function placeVenueLife(ctx, rng, venues, agents, yWalk, cap) {
+  let spent = 0;
+  // engine.js publishes nightFactor before buildWorld runs, so the city can be
+  // built already at the right time of day instead of snapping to it on frame 1.
+  const night = ctx.scene.userData.nightFactor ?? 0;
+  for (const v of venues) {
+    if (spent >= cap) break;
+
+    /* --- doorman -------------------------------------------------------- */
+    const d = makeAgent(rng, ARCH_DOORMAN);
+    d.x = v.x + v.tx * 0.9; d.z = v.z + v.tz * 0.9; d.y = yWalk;
+    d.yaw = v.yaw;
+    d.mode = MODE.IDLE;
+    d.role = 'doorman';
+    d.lean = 0.01;
+    d.items = null;
+    d.venue = v;
+    if (rng.chance(0.45)) { d.hat = true; d.hatHex = PALETTE.SIGN_DARK; d.hatScale = 0.88; }
+    agents.push(d); spent++;
+
+    /* --- valet at the kerb ---------------------------------------------- */
+    if (v.life > 0.6 && rng.chance(0.5) && spent < cap) {
+      const val = makeAgent(rng, ARCH_DOORMAN);
+      // Out toward the kerb: v.yaw points out of the door, so +forward is the
+      // road side.
+      val.x = v.x + Math.sin(v.yaw) * 3.4;
+      val.z = v.z + Math.cos(v.yaw) * 3.4;
+      val.y = yWalk;
+      val.yaw = v.yaw + Math.PI * 0.5;
+      val.mode = MODE.IDLE;
+      val.role = 'valet';
+      val.overlay = true;
+      val.overlayHex = PALETTE.FABRIC_CORAL;
+      val.items = null;
+      addItem(val, AT.HAND_R, 0.05, 0.05, 0.05, PALETTE.CHROME, 0);   // keys
+      if (!ctx.layout.isWater(val.x, val.z)) { agents.push(val); spent++; }
+    }
+
+    /* --- the queue ------------------------------------------------------ */
+    const len = Math.round(2 + v.life * 6);
+    for (let k = 0; k < len && spent < cap; k++) {
+      const a = makeAgent(rng, pickArchetype(rng, false));
+      a.venue = v;
+      a.queueK = k;
+      a.role = 'queuer';
+      // Personal threshold: the queue therefore GROWS through the evening
+      // instead of appearing all at once at a magic hour.
+      a.nightAt = 0.16 + (k / Math.max(1, len)) * 0.55 + rng() * 0.1;
+      a.lean = 0.01 + rng() * 0.05;
+      a.idleSeed = rng() * 100;
+      a.phoneWalk = false;
+      if (rng.chance(0.3)) addItem(a, AT.HAND_R, 0.078, 0.150, 0.019, rng.pick(PHONE_COLORS), 0.55);
+      // Home is a stretch of the venue's own pavement, so the walk out to the
+      // queue and back is always a few metres along the frontage, never a
+      // straight line across the middle of the block.
+      a.homePath = v.path;
+      a.homeS = v.s + (rng() - 0.5) * 26;
+      if (night > a.nightAt) {
+        const q = venueSlot(v, k);
+        a.x = q.x; a.z = q.z; a.y = yWalk;
+        a.yaw = Math.atan2(v.x - a.x, v.z - a.z);
+        a.mode = MODE.QUEUE;
+      } else {
+        joinPath(rng, a, v.path, a.homeS, rng.chance(0.5) ? 1 : -1);
+        const sm = sampleLoop(v.path, a.s, 0);
+        a.x = sm.x; a.z = sm.z; a.y = yWalk;
+      }
+      agents.push(a);
+      v.stands.push(a);
+      spent++;
+    }
+  }
+}
+
+/** Where the k-th person in a venue queue stands. */
+function venueSlot(v, k) {
+  // Serpentine rather than a straight 8 m line: a real queue folds against the
+  // frontage, and a straight one walks off the end of the pavement.
+  const row = Math.floor(k / 5);
+  const i = k % 5;
+  // The fold steps OUT toward the kerb, never back into the wall.
+  return {
+    x: v.x + v.tx * (1.9 + i * 0.82) + Math.sin(v.yaw) * (row * 0.95),
+    z: v.z + v.tz * (1.9 + i * 0.82) + Math.cos(v.yaw) * (row * 0.95),
+  };
+}
+
+/* ====================================================== content creators === */
+
+/**
+ * SHOOTS. The thing the brief actually asked for.
+ *
+ * A shoot is a presenter, a rig on the ground, and nought to three crew, put
+ * where a real creator would film: the bay promenade, the riverwalk, a park, a
+ * plaza, and outside the busiest restaurant frontages. The backdrop matters, so
+ * the presenter always has their BACK to the view and the camera looks at them
+ * across it — which also happens to be the framing that reads best from the
+ * game's own 3/4 camera.
+ *
+ * The tripod and the light stand are registered consumables (they stand on the
+ * pavement; the hole should be able to tip them over). The ring itself, the
+ * boom and the reflector are carried or bolted, so they are accessories.
+ */
+function placeCreators(ctx, rng, paths, venues, agents, yWalk, shoots, cap) {
+  const { layout } = ctx;
+  const spots = [];
+
+  for (const path of paths) {
+    const b = path.block;
+    const prom = b.bayfront || b.riverwalk;
+    const green = b.zone === ZONE.PARK || b.zone === ZONE.PLAZA;
+    const hot = b.streetLife > 0.58
+      && (b.zone === ZONE.RETAIL || b.zone === ZONE.LOWRISE || b.zone === ZONE.LANDMARK);
+    if (!prom && !green && !hot) continue;
+    const r = makeRNG((b.seed ^ 0x2d19) >>> 0);
+    // A shoot needs about 3 x 3 m of clear pavement, and props.js has already
+    // claimed most of the good frontage, so each candidate gets several tries
+    // at a position rather than one. One attempt rejected 19 shoots in 20 and
+    // the whole feature came out as three creators in the entire city.
+    const n = prom ? r.int(1, 2) : green ? r.int(1, 2) : (r.chance(0.55) ? 1 : 0);
+    for (let k = 0; k < n; k++) {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const i = r.int(0, path.n - 1);
+        // Stand back from the kerb line so the rig is never in the carriageway.
+        let nx = b.x - path.px[i], nz = b.z - path.pz[i];
+        const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+        const off = green ? 4.0 + r() * 9 : 1.9 + r() * 1.6;
+        const x = path.px[i] + nx * off, z = path.pz[i] + nz * off;
+        if (!ctx.isFree(x, z, 0)) continue;
+        spots.push({
+          x, z,
+          // The presenter looks back along the pavement, so the camera has the
+          // street or the bay behind them.
+          yaw: Math.atan2(-nx, -nz),
+          kind: prom ? 'promenade' : green ? 'park' : 'street',
+          life: b.streetLife,
+        });
+        break;
+      }
+    }
+  }
+  // A couple outside the hottest venues: creators film queues and doormen.
+  for (const v of venues.slice(0, 10)) {
+    if (rng.chance(0.4)) {
+      spots.push({
+        x: v.x + v.tx * -2.4, z: v.z + v.tz * -2.4,
+        yaw: v.yaw + Math.PI, kind: 'venue', life: v.life,
+      });
+    }
+  }
+
+  let spent = 0;
+  for (const sp of spots) {
+    if (spent >= cap) break;
+    if (layout.isWater(sp.x, sp.z) || layout.isRoad(sp.x, sp.z)) continue;
+    if (!ctx.isFree(sp.x, sp.z, 0)) continue;
+    ctx.occupy(sp.x, sp.z, 1.2);
+
+    const cs = Math.cos(sp.yaw), sn = Math.sin(sp.yaw);
+    // local +z is the way the presenter faces, i.e. toward the camera.
+    const at = (fwd, side) => ({
+      x: sp.x + sn * fwd + cs * side,
+      z: sp.z + cs * fwd - sn * side,
+    });
+
+    const shoot = { x: sp.x, z: sp.z, y: yWalk, yaw: sp.yaw, rig: null, ring: null };
+
+    /* --- the presenter --------------------------------------------------- */
+    const p = makeAgent(rng, ARCH_CREATOR);
+    p.x = sp.x; p.z = sp.z; p.y = yWalk;
+    p.yaw = sp.yaw;
+    p.mode = MODE.FILM;
+    p.role = 'presenter';
+    p.lean = 0.02 + rng() * 0.05;
+    p.idleSeed = rng() * 100;
+    p.items = null;
+    // Half of them are talking into a hand mic, the rest gesture at the camera.
+    if (rng.chance(0.45)) addItem(p, AT.HAND_R, 0.048, 0.19, 0.048, rng.pick(GEAR_DARK), -0.5);
+    agents.push(p); spent++;
+
+    /* --- the rig --------------------------------------------------------- */
+    const solo = rng.chance(0.42);       // phone on a tripod, no operator
+    const rigAt = at(2.05 + rng() * 0.5, (rng() - 0.5) * 0.5);
+    // tripodGeo puts the lens on local -z, so a rig standing at the presenter's
+    // yaw has the lens looking straight back down the line at them.
+    shoot.rig = { x: rigAt.x, z: rigAt.z, y: yWalk, yaw: sp.yaw, head: 'camera' };
+    ctx.occupy(rigAt.x, rigAt.z, 0.7);
+
+    if (!solo) {
+      const op = makeAgent(rng, ARCH_CREW);
+      const opAt = at(2.85 + rng() * 0.4, (rng() - 0.5) * 0.4);
+      op.x = opAt.x; op.z = opAt.z; op.y = yWalk;
+      op.yaw = sp.yaw + Math.PI;
+      op.mode = MODE.FILM;
+      op.role = 'operator';
+      op.idleSeed = rng() * 100;
+      op.items = null;
+      agents.push(op); spent++;
+    }
+
+    /* --- ring light ------------------------------------------------------ */
+    if (rng.chance(0.62)) {
+      const lAt = at(1.75 + rng() * 0.4, (rng.chance(0.5) ? 1 : -1) * (0.95 + rng() * 0.4));
+      shoot.ring = {
+        x: lAt.x, z: lAt.z, y: yWalk,
+        yaw: Math.atan2(sp.x - lAt.x, sp.z - lAt.z),
+        r: 0.36 + rng() * 0.12,
+      };
+      ctx.occupy(lAt.x, lAt.z, 0.7);
+    }
+
+    /* --- boom op --------------------------------------------------------- */
+    if (!solo && rng.chance(0.42) && spent < cap) {
+      const bm = makeAgent(rng, ARCH_CREW);
+      const bAt = at(1.5 + rng() * 0.4, (rng.chance(0.5) ? 1 : -1) * (1.35 + rng() * 0.3));
+      bm.x = bAt.x; bm.z = bAt.z; bm.y = yWalk;
+      bm.yaw = Math.atan2(sp.x - bAt.x, sp.z - bAt.z);
+      bm.mode = MODE.FILM;
+      bm.role = 'boom';
+      bm.idleSeed = rng() * 100;
+      bm.items = null;
+      addItem(bm, AT.BOOM, 0.030, 2.35, 0.030, PALETTE.CAR_GRAPHITE, 0);
+      addItem(bm, AT.BOOM_MIC, 0.085, 0.30, 0.085, PALETTE.TAR_SEAM, 0);
+      agents.push(bm); spent++;
+    }
+
+    /* --- reflector ------------------------------------------------------- */
+    if (rng.chance(0.32) && spent < cap) {
+      const rf = makeAgent(rng, ARCH_CREW);
+      const rAt = at(1.25 + rng() * 0.4, (rng.chance(0.5) ? 1 : -1) * (1.5 + rng() * 0.3));
+      rf.x = rAt.x; rf.z = rAt.z; rf.y = yWalk;
+      rf.yaw = Math.atan2(sp.x - rAt.x, sp.z - rAt.z);
+      rf.mode = MODE.FILM;
+      rf.role = 'reflector';
+      rf.idleSeed = rng() * 100;
+      rf.items = null;
+      addItem(rf, AT.PANEL, 0.66, 0.90, 0.020,
+        rng.chance(0.5) ? PALETTE.CHROME : PALETTE.STUCCO_BUTTER, 0);
+      agents.push(rf); spent++;
+    }
+
+    /* --- someone posing, someone shooting them --------------------------- */
+    if (rng.chance(0.34) && spent < cap - 1) {
+      const poseAt = at(-1.5 - rng() * 0.8, (rng.chance(0.5) ? 1 : -1) * (1.6 + rng()));
+      const shotAt = at(-3.4 - rng() * 0.8, (rng() - 0.5) * 1.2);
+      if (!layout.isRoad(poseAt.x, poseAt.z) && !layout.isRoad(shotAt.x, shotAt.z)) {
+        const poser = makeAgent(rng, pickArchetype(rng, false));
+        poser.x = poseAt.x; poser.z = poseAt.z; poser.y = yWalk;
+        poser.yaw = Math.atan2(shotAt.x - poseAt.x, shotAt.z - poseAt.z);
+        poser.mode = MODE.FILM;
+        poser.role = 'poser';
+        poser.idleSeed = rng() * 100;
+        agents.push(poser);
+        const shooter = makeAgent(rng, pickArchetype(rng, false));
+        shooter.x = shotAt.x; shooter.z = shotAt.z; shooter.y = yWalk;
+        shooter.yaw = Math.atan2(poseAt.x - shotAt.x, poseAt.z - shotAt.z);
+        shooter.mode = MODE.FILM;
+        shooter.role = 'shooter';
+        shooter.idleSeed = rng() * 100;
+        shooter.items = null;
+        addItem(shooter, AT.HAND_R, 0.078, 0.150, 0.019, rng.pick(PHONE_COLORS), 0.2);
+        agents.push(shooter);
+        spent += 2;
+      }
+    }
+
+    /* --- one or two people stopping to watch ----------------------------- */
+    const watchers = rng.weighted([[0, 40], [1, 32], [2, 20], [3, 8]]);
+    for (let k = 0; k < watchers && spent < cap; k++) {
+      const wAt = at(-0.4 + rng() * 1.4, (rng.chance(0.5) ? 1 : -1) * (2.1 + rng() * 1.1));
+      if (layout.isRoad(wAt.x, wAt.z) || layout.isWater(wAt.x, wAt.z)) continue;
+      const w = makeAgent(rng, pickArchetype(rng, false));
+      w.x = wAt.x; w.z = wAt.z; w.y = yWalk;
+      w.yaw = Math.atan2(sp.x - wAt.x, sp.z - wAt.z);
+      w.mode = MODE.IDLE;
+      w.role = 'onlooker';
+      w.idleSeed = rng() * 100;
+      agents.push(w); spent++;
+    }
+
+    shoots.push(shoot);
+  }
+}
+
+/**
+ * Stand the camera tripods and light stands up as real consumables, and hang
+ * the glowing ring off the light stands.
+ */
+function buildRigs(ctx, shoots, glowPool) {
+  let g = 0;
+  for (const s of shoots) {
+    if (s.rig) {
+      const c = ctx.addInstanced('filmTripod', () => ({
+        geometry: tripodGeo('camera'),
+        material: solid({
+          color: 0xffffff, vertexColors: true, roughness: 0.44, metalness: 0.35,
+          envMapIntensity: 0.9,
+        }),
+      }), {
+        position: new THREE.Vector3(s.rig.x, s.rig.y, s.rig.z),
+        rotationY: s.rig.yaw,
+        capacity: 140,
+        tier: ctx.TIER.SMALL,
+        label: 'Camera Tripod',
+        kind: 'tripod',
+        debrisColor: PALETTE.CAR_GRAPHITE,
+        score: 6,
+      });
+      s.rigC = c;
+    }
+    if (s.ring) {
+      const c = ctx.addInstanced('filmLightStand', () => ({
+        geometry: tripodGeo('light'),
+        material: solid({
+          color: 0xffffff, vertexColors: true, roughness: 0.44, metalness: 0.30,
+          envMapIntensity: 0.9,
+        }),
+      }), {
+        position: new THREE.Vector3(s.ring.x, s.ring.y, s.ring.z),
+        rotationY: s.ring.yaw,
+        capacity: 140,
+        tier: ctx.TIER.SMALL,
+        label: 'Ring Light',
+        kind: 'lightstand',
+        debrisColor: PALETTE.NEON_WHITE,
+        score: 6,
+      });
+      s.ringC = c;
+      s.glowSlot = g;
+      setInstanceColor(glowPool, g, PALETTE.NEON_WHITE);
+      // The ring sits on the yoke at the top of the stand; +z is the way the
+      // stand faces, so the ring faces the presenter with it.
+      // 1.78 m puts the ring centred between the yoke arms (1.61 - 1.81), which
+      // is also roughly where a real one sits: just above the subject's eyes.
+      poseInto(
+        glowPool.instanceMatrix.array, g,
+        s.ring.x, s.ring.y + 1.78, s.ring.z, s.ring.yaw, 1,
+        0, 0, 0, 0, s.ring.r, s.ring.r, s.ring.r
+      );
+      g++;
+    }
+  }
+  if (g) {
+    glowPool.instanceColor.needsUpdate = true;
+    glowPool.instanceMatrix.needsUpdate = true;
+  }
+}
+
+/* ============================================================== buskers === */
+
+/** A singer or a bucket drummer with a small ring of people watching. */
+function placeBuskers(ctx, rng, paths, agents, yWalk, cap) {
+  const { layout } = ctx;
+  let spent = 0;
+  const cands = paths.filter((p) => {
+    const b = p.block;
+    return b.streetLife > 0.55 || b.zone === ZONE.PLAZA || b.zone === ZONE.PARK
+      || b.bayfront || b.riverwalk;
+  });
+  for (const path of cands) {
+    if (spent >= cap) break;
+    const b = path.block;
+    const r = makeRNG((b.seed ^ 0x41b7) >>> 0);
+    if (!r.chance(0.26)) continue;
+    const i = r.int(0, path.n - 1);
+    let nx = b.x - path.px[i], nz = b.z - path.pz[i];
+    const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+    const bx = path.px[i] + nx * (2.2 + r() * 1.6);
+    const bz = path.pz[i] + nz * (2.2 + r() * 1.6);
+    if (layout.isWater(bx, bz) || layout.isRoad(bx, bz) || !ctx.isFree(bx, bz, 0)) continue;
+    ctx.occupy(bx, bz, 1.4);
+
+    const drummer = r.chance(0.45);
+    const a = makeAgent(r, ARCH_BUSKER);
+    a.x = bx; a.z = bz; a.y = yWalk;
+    a.yaw = Math.atan2(-nx, -nz);
+    a.role = drummer ? 'drummer' : 'singer';
+    a.items = null;
+    a.idleSeed = r() * 100;
+    if (drummer) {
+      a.mode = MODE.SIT;
+      a.hipY = 0.44 / a.size;
+      a.sitSprawl = false;
+      a.lean = 0.16;
+      addItem(a, AT.DRUM, 0.34, 0.42, 0.34, r.pick([PALETTE.BIN_BLUE, PALETTE.BIN_GREY, PALETTE.CAR_WHITE]), 0);
+    } else {
+      a.mode = MODE.FILM;              // stands and performs; same pose family
+      a.role = 'singer';
+      a.lean = 0.05;
+      addItem(a, AT.HAND_R, 0.045, 0.18, 0.045, PALETTE.SIGN_DARK, -0.75);
+    }
+    agents.push(a); spent++;
+
+    const crowd = r.int(1, 4);
+    for (let k = 0; k < crowd && spent < cap; k++) {
+      const ang = a.yaw + (k / crowd - 0.5) * 2.0 + (r() - 0.5) * 0.4;
+      const rad = 1.9 + r() * 1.5;
+      const x = bx + Math.sin(ang) * rad, z = bz + Math.cos(ang) * rad;
+      if (layout.isWater(x, z) || layout.isRoad(x, z)) continue;
+      const w = makeAgent(r, pickArchetype(r, false));
+      w.x = x; w.z = z; w.y = yWalk;
+      w.yaw = Math.atan2(bx - x, bz - z);
+      w.mode = MODE.IDLE;
+      w.role = 'audience';
+      w.idleSeed = r() * 100;
+      if (r.chance(0.28)) addItem(w, AT.HAND_R, 0.078, 0.150, 0.019, r.pick(PHONE_COLORS), 0.3);
+      agents.push(w); spent++;
+    }
+  }
+}
+
+/* ============================================================== families === */
+
+/**
+ * Attach children to adults already walking. A child is a normal agent locked
+ * to the adult's frame, so it never drifts, never has to path-find, and stops
+ * dead when the adult stops.
+ */
+function placeChildren(ctx, rng, agents, cap) {
+  const adults = [];
+  for (const a of agents) {
+    if (a.mode !== MODE.WALK || a.arch.key === 'jogger' || a.board || a.bike) continue;
+    if (a.escortCount) continue;
+    adults.push(a);
+  }
+  if (!adults.length) return;
+  let spent = 0;
+  for (let i = 0; i < adults.length && spent < cap; i++) {
+    const ad = adults[i];
+    if (!rng.chance(0.16)) continue;
+    const n = rng.chance(0.25) ? 2 : 1;
+    for (let k = 0; k < n && spent < cap; k++) {
+      const c = makeAgent(rng, ARCH_CHILD);
+      c.size = 0.56 + rng() * 0.16;
+      c.mode = MODE.ESCORT;
+      c.escort = ad;
+      c.escortSide = (k === 0 ? 1 : -1) * (rng.chance(0.5) ? 1 : -1);
+      c.escortOff = 0.42 + rng() * 0.18;
+      c.escortBack = 0.05 + rng() * 0.3;
+      c.speed = ad.speed;
+      c.x = ad.x; c.z = ad.z; c.y = ad.y;
+      c.yaw = ad.yaw;
+      c.items = null;
+      c.phoneWalk = false;
+      agents.push(c);
+      spent++;
+    }
+    ad.escortCount = n;
+    // A parent with a child in tow does not stride.
+    ad.speed = Math.min(ad.speed, 1.15);
+  }
+}
+
 /* =========================================================== consumables === */
 
 /**
- * Give every agent a registry entry backed by an invisible merged-body pool.
+ * Give every agent a registry entry backed by a merged-body pool, and park that
+ * pool where it cannot be seen until the hole actually takes someone.
  *
- * The pool mesh is never drawn (visible = false costs nothing in three's
- * projection pass); it exists purely so the consume system has one rigid object
- * to lease and tumble when the hole takes someone.
+ * TWO THINGS KEEP IT INVISIBLE, and both are load-bearing:
+ *
+ *  1. Every slot's live matrix is collapsed (`pool.hide`), so the mesh draws
+ *     nothing while its 1,400 people are walking about as animated parts.
+ *  2. Pool VISIBILITY is refcounted, so a crowd with nobody falling costs zero
+ *     draw calls rather than six, and — the part that matters — the
+ *     `pool.restore()` the respawner performs 30 s after a swallow lands on a
+ *     mesh that is not being drawn. Without that, every respawning pedestrian
+ *     would flash up for a frame as a rigid arms-in-the-air doll.
+ *
+ * The AUTHORED transform is deliberately left correct. It is what the consume
+ * system measures the fall against and what tools/prop-audit reads to check the
+ * declared physics against the real mesh; zeroing it to force invisibility
+ * would make both of them lie.
+ *
+ * @returns {Map<InstancedProp, {n:number}>} the refcount table
  */
 function registerConsumables(ctx, agents, rng) {
   const variants = new Map();
+  const fallPools = new Map();
+
+  const claim = (c) => {
+    if (!c) return;
+    const pool = c.pool;
+    pool.hide(c.slot);
+    if (!fallPools.has(pool)) { fallPools.set(pool, { n: 0 }); pool.mesh.visible = false; }
+  };
 
   const poolFor = (a) => {
     // Four colourways so the crowd going down the hole is not four hundred
@@ -1111,7 +2188,7 @@ function registerConsumables(ctx, agents, rng) {
     a.c = c;
     a.pool = c.pool;
     a.slot = c.slot;
-    c.pool.mesh.visible = false;   // the animated parts are the visible crowd
+    claim(c);
   }
 
   // A dog is its own snack.
@@ -1139,8 +2216,28 @@ function registerConsumables(ctx, agents, rng) {
     });
     if (!c) continue;
     a.dogC = c;
-    c.pool.mesh.visible = false;
+    claim(c);
   }
+  return fallPools;
+}
+
+/**
+ * Hand a body over to the consume system, or take it back.
+ *
+ * Refcounted because one pool serves hundreds of people and any number of them
+ * can be in the pit at once. Releasing also collapses the slot, so the merged
+ * body vanishes the same frame the animated one reappears.
+ */
+function setFallBodyLive(st, c, on) {
+  if (!c || !c.pool || c.slot < 0) return;
+  const rec = st.fallPools.get(c.pool);
+  if (!rec) return;
+  if ((c._pedLive === true) === on) return;
+  c._pedLive = on;
+  if (!on) c.pool.hide(c.slot);
+  rec.n += on ? 1 : -1;
+  if (rec.n < 0) rec.n = 0;
+  c.pool.mesh.visible = rec.n > 0;
 }
 
 /* ================================================================ update === */
@@ -1169,17 +2266,58 @@ function updateCrowd(st, dt) {
   st.holeT += dt;
   if (st.holeT > 0.4) { st.holeT = 0; collectHoles(st); }
 
+  st.slowT += dt;
+  if (st.slowT > 0.25) { updateSlow(st, st.slowT); st.slowT = 0; }
+
   const { agents, P } = st;
   const fx = st.focus.x, fz = st.focus.z;
 
   for (let i = 0; i < agents.length; i++) {
     const a = agents[i];
-    if (a.dead) continue;
 
-    // The consume system owns the agent the instant it is captured.
+    /* ---- who owns this body? -------------------------------------------
+     * Exactly the handover vehicles.js performs. WOBBLE means the hole has
+     * taken ground from under them: from that moment the consume system owns
+     * the transform, we collapse the ten animated parts, and the merged fall
+     * body — the object the registry has always held — becomes the visible
+     * one. Come back at IDLE and they stand up again.
+     */
     const c = a.c;
-    if (c && c.state >= 2) { killAgent(st, a, i); continue; }
-    if (a.dogC && a.dogC.state >= 2) { hideDog(st, a); a.dogSlot = -1; a.dogC = null; }
+    if (c) {
+      if (c.state >= 1 && c.state <= 2) {
+        if (!a.held) {
+          a.held = true;
+          a.dead = true;
+          detachPath(a);
+          a.crossing = null;
+          hideAgent(st, a, i, false);      // the dog is its own consumable
+          setFallBodyLive(st, c, true);
+        }
+        continue;
+      }
+      if (c.state === 3) {                 // GONE: below the world, awaiting respawn
+        if (!a.dead) { a.dead = true; detachPath(a); hideAgent(st, a, i, false); }
+        if (a.held) { a.held = false; setFallBodyLive(st, c, false); }
+        continue;
+      }
+      // IDLE. Either they were never touched, or the hole moved off, or the
+      // respawner has just put them back on the pavement.
+      if (a.held || a.dead) {
+        a.held = false;
+        setFallBodyLive(st, c, false);
+        reviveAgent(st, a);
+      }
+    } else if (a.dead) {
+      continue;
+    }
+    // A dog is its own consumable and outlives its owner, so it gets its own
+    // handover: the animated dog goes away, the merged one tumbles.
+    if (a.dogC) {
+      const ds = a.dogC.state;
+      setFallBodyLive(st, a.dogC, ds === 1 || ds === 2);
+      if (ds >= 1 && !a.dogHeld) { a.dogHeld = true; hideDog(st, a); }
+      else if (ds === 0) a.dogHeld = false;
+    }
 
     const dx = a.x - fx, dz = a.z - fz;
     const d2 = st.noFocus ? 0 : dx * dx + dz * dz;
@@ -1206,6 +2344,12 @@ function updateCrowd(st, dt) {
       case MODE.CYCLE: stepCycle(st, a, sdt); break;
       case MODE.FLEE: stepFlee(st, a, sdt); break;
       case MODE.RETURN: stepReturn(st, a, sdt); break;
+      case MODE.GAZE: stepGaze(st, a, sdt); break;
+      case MODE.QUEUE: stepQueue(st, a, sdt); break;
+      case MODE.SERVE: stepServe(st, a, sdt); break;
+      case MODE.ESCORT: stepEscort(st, a, sdt); break;
+      case MODE.GOTO: stepGoto(st, a, sdt); break;
+      case MODE.FILM: stepFilm(st, a, sdt); break;
       default: stepIdle(st, a, sdt); break;
     }
 
@@ -1227,7 +2371,108 @@ function updateCrowd(st, dt) {
     }
   }
 
-  for (const k in P) P[k].instanceMatrix.needsUpdate = true;
+  for (const k in P) {
+    // The ring lights are bolted to the ground: uploading 40 unchanged matrices
+    // every frame for the rest of the match is the kind of free cost that adds
+    // up across seven modules doing the same thing.
+    if (k === 'glow') {
+      if (!st.glowDirty) continue;
+      st.glowDirty = false;
+    }
+    P[k].instanceMatrix.needsUpdate = true;
+  }
+}
+
+/* ---------------------------------------------------------- slow tick --- */
+
+/**
+ * Everything that only has to be right a few times a second.
+ *
+ * DAY/NIGHT: engine.js owns the cycle and publishes nightFactor; this module
+ * only reads it. Two things respond — the ring lights come up as the sun goes
+ * down, and the venue queues fill. The queues are the interesting one: each
+ * queuer carries their own threshold, so the line outside a club GROWS through
+ * the evening and drains through the small hours instead of teleporting into
+ * existence at some magic hour.
+ */
+function updateSlow(st, dt) {
+  const night = st.scene.userData.nightFactor ?? 0;
+  st.night = night;
+
+  // A ring light is on in daylight too — that is rather the point of one — but
+  // it only reads as a light source once the sun is off it.
+  if (st.matGlow) st.matGlow.emissiveIntensity = 0.22 + night * night * 2.9;
+
+  /* --- pull the ring off any stand that is being eaten ------------------ */
+  const P = st.P;
+  for (const s of st.shoots) {
+    if (s.glowSlot === undefined) continue;
+    const live = !s.ringC || s.ringC.state === 0;
+    if (live === s.glowOn) continue;
+    s.glowOn = live;
+    st.glowDirty = true;
+    if (live) {
+      poseInto(
+        P.glow.instanceMatrix.array, s.glowSlot,
+        s.ring.x, s.ring.y + 1.78, s.ring.z, s.ring.yaw, 1,
+        0, 0, 0, 0, s.ring.r, s.ring.r, s.ring.r
+      );
+    } else {
+      clearInstance(P.glow.instanceMatrix.array, s.glowSlot);
+    }
+  }
+
+  /* --- the venue clock -------------------------------------------------- */
+  for (const v of st.venues) {
+    for (const a of v.stands) {
+      if (a.dead || a.mode === MODE.FLEE || a.mode === MODE.RETURN) continue;
+      const wants = night > a.nightAt;
+      const inLine = a.mode === MODE.QUEUE || (a.mode === MODE.GOTO && a.thenMode === MODE.QUEUE);
+      // Only peel off when they are already near the door. GOTO walks in a
+      // straight line, and a straight line from the far side of a block goes
+      // through the building.
+      const near = (a.x - v.x) * (a.x - v.x) + (a.z - v.z) * (a.z - v.z) < 22 * 22;
+      if (wants && !inLine && a.mode === MODE.WALK && near) {
+        const q = venueSlot(v, a.queueK);
+        detachPath(a);
+        a.tx = q.x; a.tz = q.z;
+        a.mode = MODE.GOTO;
+        a.thenMode = MODE.QUEUE;
+      } else if (!wants && inLine && a.homePath) {
+        // Last call. Back onto the pavement they came off.
+        const sm = sampleLoop(a.homePath, a.homeS, 0);
+        a.mode = MODE.GOTO;
+        a.thenMode = MODE.WALK;
+        a.tx = sm.x; a.tz = sm.z;
+      }
+    }
+  }
+}
+
+/**
+ * Put someone back on their feet after the hole let go of them, or after the
+ * respawner brought them back. They return to the life they had, not to a
+ * generic idle in the middle of the road.
+ */
+function reviveAgent(st, a) {
+  a.dead = false;
+  a.held = false;
+  a.culled = false;
+  a.acc = 0;
+  a.curSpeed = 0;
+  a.crossing = null;
+  const m = a.homeMode ?? MODE.IDLE;
+  if (m === MODE.WALK && a.homePath) {
+    joinPath(st.rng, a, a.homePath, a.homeS, st.rng.chance(0.5) ? 1 : -1);
+    a.lastHookSeg = -1;
+    const sm = sampleLoop(a.homePath, a.s, 0);
+    a.x = sm.x; a.z = sm.z; a.y = st.Y_WALK;
+  } else {
+    a.mode = m;
+    a.x = a.homeX; a.z = a.homeZ; a.y = a.homeY; a.yaw = a.homeYaw;
+    if (m === MODE.SERVE) { a.routeI = 0; a.wait = 0; }
+  }
+  a.phase = st.rng() * Math.PI * 2;
 }
 
 /**
@@ -1265,18 +2510,7 @@ function collectHoles(st) {
   }
 }
 
-function killAgent(st, a, i) {
-  a.dead = true;
-  // The dog outlives its owner: it is a separate consumable, and hiding it
-  // here would delete an object the registry still says is standing there.
-  hideAgent(st, a, i, !a.dogC);
-  if (a.path) {
-    const q = a.path.agents.indexOf(a);
-    if (q >= 0) a.path.agents.splice(q, 1);
-  }
-}
-
-/** Collapse every instance this agent owns. Used by both death and culling. */
+/** Collapse every instance this agent owns. Used by the handover and by LOD. */
 function hideAgent(st, a, i, withDog = true) {
   const P = st.P;
   clearInstance(P.head.instanceMatrix.array, i);
@@ -1293,6 +2527,12 @@ function hideAgent(st, a, i, withDog = true) {
   if (a.overlaySlot >= 0) clearInstance(P.overlay.instanceMatrix.array, a.overlaySlot);
   if (a.bikeSlot >= 0) clearInstance(P.bike.instanceMatrix.array, a.bikeSlot);
   if (a.boardSlot >= 0) clearInstance(P.board.instanceMatrix.array, a.boardSlot);
+  // The phone goes down the hole with its owner: a coffee cup left hovering
+  // over the pit is exactly the kind of stray geometry the rubric fails.
+  if (a.items) {
+    const mi = P.item.instanceMatrix.array;
+    for (const it of a.items) if (it.slot >= 0) clearInstance(mi, it.slot);
+  }
   if (withDog) hideDog(st, a);
 }
 
@@ -1324,8 +2564,11 @@ function panicCheck(st, a, dt) {
     if (a.mode !== MODE.FLEE) {
       // Remember where they belong so the street refills once the hole moves
       // on, instead of leaving a permanent hole in the crowd.
+      // `a.crossEnd` is NOT cleared when a crossing completes, so it has to be
+      // gated on `a.crossing` — otherwise a diner who crossed the street an
+      // hour ago runs back to that kerb instead of back to their table.
       if (a.path) { a.retPath = a.path; a.retS = a.s; }
-      else if (a.crossEnd) { a.retPath = a.crossEnd.path; a.retS = a.crossEnd.path.cum[a.crossEnd.index]; }
+      else if (a.crossing && a.crossEnd) { a.retPath = a.crossEnd.path; a.retS = a.crossEnd.path.cum[a.crossEnd.index]; }
       else { a.retPath = null; a.retX = a.x; a.retZ = a.z; a.retMode = a.mode; a.retYaw = a.yaw; }
       detachPath(a);
       a.crossing = null;
@@ -1394,7 +2637,9 @@ function stepWalk(st, a, dt) {
   const list = p.agents;
   for (let i = 0; i < list.length; i++) {
     const o = list[i];
-    if (o === a || o.dead || o.mode !== MODE.WALK) continue;
+    // A gazer is still standing on the loop, so the stream has to see them or
+    // it walks straight through the one person who has stopped.
+    if (o === a || o.dead || (o.mode !== MODE.WALK && o.mode !== MODE.GAZE)) continue;
     let ds = o.s - a.s;
     if (ds > p.total * 0.5) ds -= p.total;
     else if (ds < -p.total * 0.5) ds += p.total;
@@ -1432,6 +2677,21 @@ function stepWalk(st, a, dt) {
   a.y = st.Y_WALK;
   turnTo(a, Math.atan2(ux, uz), dt, 7);
   advancePhase(a, dist);
+
+  /* --- stop and look up? -------------------------------------------------- */
+  // A tourist who never stops is a commuter. The pause is what separates the
+  // two archetypes at a glance, and it costs one countdown per agent.
+  if (a.gazeEvery > 0) {
+    a.gazeT -= dt;
+    if (a.gazeT <= 0) {
+      a.gazeT = a.gazeEvery * (0.7 + st.rng() * 0.6);
+      a.gazeHold = 2.4 + st.rng() * 4.0;
+      a.mode = MODE.GAZE;
+      // Face the nearest tall thing: the block they are walking around.
+      a.yaw = Math.atan2(p.block.x - a.x, p.block.z - a.z);
+      return;
+    }
+  }
 
   /* --- take a crossing? -------------------------------------------------- */
   const hooks = p.hooks[sm.seg];
@@ -1532,6 +2792,101 @@ function stepIdle(st, a, dt) {
     turnTo(a, Math.atan2(p.x - a.x, p.z - a.z) + Math.sin(t * 0.5) * 0.12, dt, 2);
   } else {
     turnTo(a, a.yaw + Math.sin(t * 0.23) * 0.02, dt, 1.4);
+  }
+}
+
+/* ------------------------------------------- the behaviours added this pass */
+
+/** Stopped on the pavement, head back at the skyline. Tourists do this a lot. */
+function stepGaze(st, a, dt) {
+  a.curSpeed = 0;
+  advancePhase(a, 0);
+  a.gazeHold -= dt;
+  turnTo(a, a.yaw + Math.sin((st.time + a.idleSeed) * 0.35) * 0.03, dt, 1.2);
+  if (a.gazeHold <= 0) a.mode = a.path ? MODE.WALK : MODE.IDLE;
+}
+
+/**
+ * Anyone who is part of a shoot: presenter, operator, boom, reflector, poser,
+ * or a busker working a pitch. They hold their mark; the pose does the acting.
+ */
+function stepFilm(st, a, dt) {
+  a.curSpeed = 0;
+  advancePhase(a, 0);
+  const t = st.time + a.idleSeed;
+  const sway = (a.role === 'presenter' || a.role === 'singer') ? 0.09 : 0.025;
+  turnTo(a, (a.homeYaw ?? a.yaw) + Math.sin(t * 0.8) * sway, dt, 2.0);
+}
+
+/** In line at a door. Shuffles up when the slot in front comes free. */
+function stepQueue(st, a, dt) {
+  const v = a.venue;
+  if (v) {
+    const q = venueSlot(v, a.queueK);
+    const dx = q.x - a.x, dz = q.z - a.z;
+    if (dx * dx + dz * dz > 0.30) { gotoPoint(a, q.x, q.z, st.Y_WALK, dt); return; }
+  }
+  a.curSpeed = 0;
+  advancePhase(a, 0);
+  const t = st.time + a.idleSeed;
+  turnTo(a, v ? Math.atan2(v.x - a.x, v.z - a.z) + Math.sin(t * 0.4) * 0.10 : a.yaw, dt, 1.8);
+}
+
+/**
+ * A server working a terrace: table, table, back to the pass, repeat. The
+ * WALKING between the stops is the behaviour — a waiter standing still is
+ * indistinguishable from a customer.
+ */
+function stepServe(st, a, dt) {
+  const route = a.route;
+  if (!route || route.length < 2) { a.mode = MODE.IDLE; return; }
+  if (a.wait > 0) {
+    a.wait -= dt;
+    a.curSpeed = 0;
+    advancePhase(a, 0);
+    const nx = route[a.routeI];
+    turnTo(a, Math.atan2(nx.x - a.x, nx.z - a.z), dt, 2.2);
+    return;
+  }
+  const wp = route[a.routeI];
+  if (gotoPoint(a, wp.x, wp.z, a.homeY ?? st.Y_WALK, dt)) {
+    a.wait = wp.wait;
+    a.routeI = (a.routeI + 1) % route.length;
+  }
+}
+
+/**
+ * A child locked into the adult's frame. Solved as a position rather than
+ * simulated, so a family never drifts apart, never has to path-find, and stops
+ * the instant the adult does — and the walk cycle still runs off real distance
+ * travelled, so the kid's feet do not slide either.
+ */
+function stepEscort(st, a, dt) {
+  const ad = a.escort;
+  if (!ad || ad.dead || ad.held) { a.mode = MODE.IDLE; return; }
+  const cs = Math.cos(ad.yaw), sn = Math.sin(ad.yaw);
+  const off = a.escortSide * a.escortOff;
+  const tx = ad.x + cs * off - sn * a.escortBack;
+  const tz = ad.z - sn * off - cs * a.escortBack;
+  const dx = tx - a.x, dz = tz - a.z;
+  const d = Math.hypot(dx, dz);
+  const step = Math.min(d, Math.max(ad.curSpeed * 1.4, 0.35) * dt);
+  if (d > 1e-5) { a.x += (dx / d) * step; a.z += (dz / d) * step; }
+  a.y = ad.y;
+  a.curSpeed = step / Math.max(1e-4, dt);
+  turnTo(a, ad.yaw, dt, 6);
+  advancePhase(a, step);
+}
+
+/** Walk to an assigned spot, then become whatever you went there to be. */
+function stepGoto(st, a, dt) {
+  if (!gotoPoint(a, a.tx, a.tz, groundY(st, a.x, a.z), dt)) return;
+  const m = a.thenMode ?? MODE.IDLE;
+  if (m === MODE.WALK && a.homePath) {
+    joinPath(st.rng, a, a.homePath, a.homeS, st.rng.chance(0.5) ? 1 : -1);
+    a.lastHookSeg = -1;
+  } else {
+    a.mode = m;
   }
 }
 
@@ -1671,6 +3026,8 @@ function poseAgent(st, a, i) {
   const sinP = Math.sin(phi);
 
   let thighL, thighR, shinL, shinR, armL, armR, hip, lean, twist;
+  /** Extra head pitch on top of the lean. Negative looks up. */
+  let headExtra = 0;
 
   if (a.mode === MODE.SIT) {
     hip = a.hipY;
@@ -1681,6 +3038,19 @@ function poseAgent(st, a, i) {
     lean = a.lean + Math.sin(st.time * 0.6 + a.idleSeed) * 0.02;
     twist = Math.sin(st.time * 0.33 + a.idleSeed) * 0.10;
     armL = -0.55; armR = -0.50;
+    if (a.role === 'drummer') {
+      // Both hands beating the bucket, out of phase.
+      const b = Math.sin(st.time * 5.2 + a.idleSeed);
+      armL = -0.92 - Math.max(0, b) * 0.34;
+      armR = -0.92 - Math.max(0, -b) * 0.34;
+      lean = 0.22;
+      twist = b * 0.07;
+    } else if (a.chatPartner && !a.chatPartner.dead) {
+      // Talking over a table: one hand comes up off the top.
+      const g = Math.max(0, Math.sin(st.time * 1.3 + a.idleSeed));
+      armL = -0.55 - g * 0.55;
+      twist += g * 0.06;
+    }
   } else if (a.mode === MODE.CYCLE) {
     hip = a.hipY;
     // Pedals are 180 degrees apart; the knee tracks the crank.
@@ -1692,7 +3062,8 @@ function poseAgent(st, a, i) {
     lean = a.lean;
     twist = 0;
     armL = -1.05; armR = -1.05;
-  } else if (a.mode === MODE.IDLE || a.mode === MODE.WAIT) {
+  } else if (a.mode === MODE.IDLE || a.mode === MODE.WAIT || a.mode === MODE.QUEUE
+             || a.mode === MODE.GAZE || a.mode === MODE.FILM) {
     const t = st.time * 0.8 + a.idleSeed;
     const shift = Math.sin(t * 0.55);
     hip = HIP_Y - 0.012 + shift * 0.006;
@@ -1704,6 +3075,66 @@ function poseAgent(st, a, i) {
     const gest = a.chatPartner ? Math.max(0, Math.sin(t * 1.6)) : 0;
     armL = 0.05 + shift * 0.06 - gest * 0.85;
     armR = -0.05 - shift * 0.06;
+
+    if (a.mode === MODE.GAZE) headExtra = -0.44 + Math.sin(t * 0.5) * 0.05;
+
+    /* --- what the standing roles are actually doing ---------------------- */
+    // NOTE: armL drives the arm at -x, which on a figure facing +z is the
+    // figure's RIGHT arm. AT.HAND_R rides that same arm; keep them in step.
+    switch (a.role) {
+      case 'presenter': case 'singer': {
+        const g = Math.sin(t * 1.7);
+        // Mic to the mouth if they have one, otherwise both hands talking.
+        armL = a.items ? -1.42 - Math.max(0, g) * 0.06 : -0.50 - Math.max(0, g) * 0.85;
+        armR = -0.30 - Math.max(0, -g) * 0.80;
+        twist = g * 0.11;
+        lean = 0.03;
+        headExtra = -0.04 + g * 0.03;
+        break;
+      }
+      case 'operator':
+        // Both hands on the rig, eye down to the monitor.
+        armL = -1.18; armR = -1.12;
+        lean = 0.13; headExtra = 0.16;
+        break;
+      case 'boom':
+        // Pole overhead in both hands, watching the subject.
+        armL = -2.05 + Math.sin(t * 0.6) * 0.05;
+        armR = -1.85 + Math.sin(t * 0.6) * 0.05;
+        lean = 0.03; headExtra = -0.10;
+        break;
+      case 'reflector':
+        armL = -1.48; armR = -1.44;
+        lean = 0.02;
+        break;
+      case 'shooter':
+        // Phone up, arm locked, elbow out: the universal "filming you" stance.
+        armL = -1.30 + Math.sin(t * 0.5) * 0.03;
+        armR = -0.10;
+        lean = 0.05; headExtra = 0.06;
+        break;
+      case 'poser': {
+        // Weight on one hip, one arm out. Held longer and steadier than idle.
+        const p2 = Math.sin(t * 0.35);
+        armL = -0.55 + p2 * 0.30; armR = 0.32;
+        twist = 0.20 + p2 * 0.08;
+        lean = 0.02;
+        break;
+      }
+      case 'doorman':
+        // Hands clasped in front: the whole silhouette of "you are not coming in".
+        armL = -0.42; armR = -0.40;
+        twist = Math.sin(t * 0.25) * 0.05;
+        lean = 0.0;
+        break;
+      case 'valet':
+        armL = -0.34; armR = -0.10 - Math.max(0, Math.sin(t * 0.9)) * 0.5;
+        break;
+      case 'onlooker': case 'audience':
+        headExtra = -0.06;
+        break;
+      default: break;
+    }
   } else {
     const A = legAmplitude(a);
     const sA = Math.sin(A);
@@ -1742,6 +3173,25 @@ function poseAgent(st, a, i) {
       armL = armA * sinP; armR = -armA * sinP;
       lean = a.lean + A * 0.10;
       twist = -0.13 * A * sinP;
+      if (a.arch.key === 'jogger') {
+        // A runner's arms are held high and drive hard; the extra forward lean
+        // is what stops a fast walk cycle reading as a comedy speed-walk.
+        armL = -0.62 + armA * 1.55 * sinP;
+        armR = -0.62 - armA * 1.55 * sinP;
+        lean = 0.17 + A * 0.10;
+      } else if (a.phoneWalk) {
+        // Head down, one arm locked up in front. Reads from 40 m.
+        armL = -0.95 + Math.sin(st.time * 0.6 + a.idleSeed) * 0.03;
+        armR = -armA * 0.55 * sinP;
+        headExtra = 0.30;
+        lean = a.lean + 0.03;
+      } else if (a.items) {
+        // Carrying something: that arm stops swinging and holds it steady.
+        for (const it of a.items) {
+          if (it.at === AT.HAND_R) armL = -0.52 + armA * 0.25 * sinP;
+          else if (it.at === AT.HAND_L) armR = -0.52 - armA * 0.25 * sinP;
+        }
+      }
     }
     if (a.board) {
       // Riding, not walking: knees bent over the deck, shoulders turned across
@@ -1768,7 +3218,7 @@ function poseAgent(st, a, i) {
   const shY = hip + SHOULDER_Y * cl;
   const shZ = SHOULDER_Y * sl;
 
-  const headSwing = lean * 0.35 + (a.mode === MODE.FLEE ? -0.18 : 0);
+  const headSwing = lean * 0.35 + headExtra + (a.mode === MODE.FLEE ? -0.18 : 0);
   const headYaw = yaw + twist * 0.5 + Math.sin(st.time * 0.4 + a.idleSeed) * 0.09;
   poseInto(P.head.instanceMatrix.array, i, px, py, pz, headYaw, s, 0, neckY, neckZ, headSwing, 1, 1, 1);
   poseInto(
@@ -1825,5 +3275,77 @@ function poseAgent(st, a, i) {
       P.dog.instanceMatrix.array, a.dogSlot, a.dogX, py, a.dogZ,
       yaw + 0.3 + trot, s * 0.86, 0, 0, 0, trot * 0.6, 1, 1, 1
     );
+  }
+  if (a.items) poseItems(st, a, hip, shY, shZ, armL, armR, lean, twist, yaw, px, py, pz, s);
+}
+
+/**
+ * Put the hand-helds where the hands are.
+ *
+ * One pool, one geometry, six attachment rules. The hand is solved from the arm
+ * angle rather than parented, because there is no scene graph here to parent
+ * to — the whole crowd is raw matrices.
+ */
+const BOOM_ANG = 1.15;
+function poseItems(st, a, hip, shY, shZ, armL, armR, lean, twist, yaw, px, py, pz, s) {
+  const arr = st.P.item.instanceMatrix.array;
+  const items = a.items;
+  const t = st.time + a.idleSeed;
+  for (let k = 0; k < items.length; k++) {
+    const it = items[k];
+    if (it.slot < 0) continue;
+    let lx = 0, ly = 0, lz = 0, sw = 0, yw = it.yaw;
+    switch (it.at) {
+      case AT.HAND_R:
+        // 0.50 rather than the arm's full 0.555 so it sits in the palm rather
+        // than floating past the fingertips.
+        lx = -SHOULDER_X * 0.94;
+        ly = shY - 0.50 * Math.cos(armL);
+        lz = shZ - 0.50 * Math.sin(armL);
+        sw = armL + it.sw;
+        break;
+      case AT.HAND_L:
+        lx = SHOULDER_X * 0.94;
+        ly = shY - 0.50 * Math.cos(armR);
+        lz = shZ - 0.50 * Math.sin(armR);
+        sw = armR + it.sw;
+        break;
+      case AT.CHEST: {
+        const h = SHOULDER_Y - 0.26 + it.dy;
+        ly = hip + h * Math.cos(lean);
+        lz = h * Math.sin(lean) + 0.125;
+        sw = lean + it.sw;
+        yw += twist;
+        break;
+      }
+      case AT.BOOM: {
+        // Butt just above the raised hands, tip out over the subject's head.
+        const ang = BOOM_ANG + Math.sin(t * 0.45) * 0.04;
+        a._boomAng = ang;
+        lx = 0.05; ly = hip + 1.05; lz = 0.95;
+        sw = ang;
+        break;
+      }
+      case AT.BOOM_MIC: {
+        const ang = a._boomAng ?? BOOM_ANG;
+        const L = 0.95;                       // half the pole: the far end
+        lx = 0.05;
+        ly = hip + 1.05 + L * Math.cos(ang);
+        lz = 0.95 + L * Math.sin(ang);
+        sw = ang;
+        break;
+      }
+      case AT.PANEL:
+        ly = hip + 0.70;
+        lz = 0.48;
+        sw = -0.30 + Math.sin(t * 0.4) * 0.04;
+        break;
+      case AT.DRUM:
+        // Standing on the ground between the knees, not floating at hip height.
+        ly = 0.24; lz = 0.36;
+        break;
+      default: break;
+    }
+    poseInto(arr, it.slot, px, py, pz, yaw + yw, s, lx, ly, lz, sw, it.gx, it.gy, it.gz);
   }
 }

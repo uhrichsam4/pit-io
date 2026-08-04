@@ -38,6 +38,25 @@
  *   grass     512 px over an 8 m tile  -> 1.6 cm/texel
  *
  * ---------------------------------------------------------------------------
+ * THE MINIFICATION PROBLEM — read this before "adding more detail"
+ * ---------------------------------------------------------------------------
+ * A road tile is 9 m of world across a 512 px map. From the gameplay camera
+ * that tile lands on ~40 screen pixels, so the renderer is sampling mip 3-4 and
+ * EVERY feature below about 1 m has already been averaged into the base colour.
+ * That is why a texture packed with aggregate, cracks and oil stains still
+ * renders as a flat grey card: all of it is real, none of it survives.
+ *
+ * Two independent fixes, and they are both needed:
+ *
+ *   1. WITHIN the tile, the loudest features must be metres wide, not
+ *      centimetres. Every ground generator now carries a deliberate 1-3 m
+ *      tonal band on top of its fine detail.
+ *   2. ACROSS tiles, `worldDetail()` below multiplies in a WORLD-SPACE field
+ *      sampled at ~60-100 m. It never mips away (it is huge), it is not tied
+ *      to the tile grid, and it is what stops the eye locking onto the repeat.
+ *      This is the single biggest change in this file.
+ *
+ * ---------------------------------------------------------------------------
  * IMPORTANT: any material used for a surface at ground level must be created
  * through `ground()` (or passed through `applyHoleCut`) or holes will not cut
  * through it.
@@ -55,9 +74,26 @@ import { applyHoleCut } from '../render/groundShader.js';
 
 const _cache = new Map();
 
+/**
+ * Boot-time cost of every generator in this file, in ms.
+ * Read it back with `Textures.stats()` — the budget is ~800 ms.
+ */
+const _stats = { ms: 0, count: 0, envMs: 0, byKey: {} };
+
 function cached(key, make) {
   let v = _cache.get(key);
-  if (v === undefined) { v = make(); _cache.set(key, v); }
+  if (v === undefined) {
+    // Only `tex-*` keys are counted: the same cache holds the material
+    // factories, and their cost is shader compilation, not generation.
+    const meter = key.charCodeAt(0) === 116 /* t */ && key.startsWith('tex-');
+    const t0 = meter ? performance.now() : 0;
+    v = make();
+    if (meter) {
+      const dt = performance.now() - t0;
+      _stats.ms += dt; _stats.count++; _stats.byKey[key] = Math.round(dt * 10) / 10;
+    }
+    _cache.set(key, v);
+  }
   return v;
 }
 
@@ -209,6 +245,24 @@ function contrast(f, k) {
   return out;
 }
 
+/**
+ * Stretch a field to fill 0..1 exactly.
+ *
+ * fBm normalised by total amplitude only ever occupies the middle of the range
+ * (the octaves average out), so an un-stretched fBm used as a modulation field
+ * delivers maybe a third of the contrast you asked for. Every band that feeds
+ * the world-space breakup goes through this so the tuning numbers mean what
+ * they say.
+ */
+function normalise(f) {
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < f.length; i++) { if (f[i] < lo) lo = f[i]; if (f[i] > hi) hi = f[i]; }
+  const s = hi > lo ? 1 / (hi - lo) : 1;
+  const out = new Float32Array(f.length);
+  for (let i = 0; i < f.length; i++) out[i] = (f[i] - lo) * s;
+  return out;
+}
+
 /* ------------------------------------------------------- plate paint --- */
 
 /**
@@ -348,8 +402,198 @@ function pack(colourCanvas, heightCanvas, roughCanvas, size, opts = {}) {
   }
   if (roughCanvas) companions.roughnessMap = dataTex(roughCanvas);
   map.userData.companions = companions;
+  // Which tuning row worldDetail() should use. See MACRO below.
+  map.userData.family = opts.family || 'default';
   return map;
 }
+
+/* =============================================== WORLD-SPACE BREAKUP === */
+
+/**
+ * The de-tiling layer.
+ *
+ * Every ground and facade material multiplies in one extra texture fetch of a
+ * shared, three-band noise field indexed by WORLD POSITION at 50-100 m per
+ * tile. Three properties make it the right tool:
+ *
+ *   · it is enormous, so it never mips away — unlike the 2 cm aggregate in the
+ *     asphalt map, it is still fully present at 400 m;
+ *   · its period has nothing to do with the surface's own tile grid, and the
+ *     two beat against each other, so there is no countable repeat;
+ *   · it is world-indexed, so a road, the sidewalk beside it and the plaza
+ *     behind it all darken together — which reads as one weathered city rather
+ *     than three surfaces that each happen to be mottled.
+ *
+ * RGB carry three decorrelated fBm bands at ~1/2, ~1/8 and ~1/25 of the tile,
+ * so a single fetch yields variation at three scales. Cost: one texture read
+ * and about a dozen ALU ops per fragment.
+ *
+ * The projection is planar-by-normal rather than triplanar: horizontal faces
+ * index on XZ, vertical faces on (x+z, y). One `step`, no blend weights, no
+ * second fetch. The field is low-contrast enough that the switchover at 45 deg
+ * is invisible.
+ */
+const MACRO_PARS = /* glsl */ `
+  uniform sampler2D uMacroMap;
+  uniform vec4 uMacroA;      // x 1/metres, y albedo, z roughness, w hue
+  varying vec3 vMacroPos;
+  varying vec3 vMacroNrm;
+`;
+
+const MACRO_VERTEX = /* glsl */ `
+  #ifdef USE_INSTANCING
+    vMacroPos = ( modelMatrix * instanceMatrix * vec4( transformed, 1.0 ) ).xyz;
+    vMacroNrm = normalize( mat3( modelMatrix ) * mat3( instanceMatrix ) * objectNormal );
+  #else
+    vMacroPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;
+    vMacroNrm = normalize( mat3( modelMatrix ) * objectNormal );
+  #endif
+`;
+
+/** Declared at main() scope so the roughness hook further down can reuse it. */
+const MACRO_FRAGMENT = /* glsl */ `
+  vec2 mcUV = mix(
+    vec2( ( vMacroPos.x + vMacroPos.z ) * 0.7071, vMacroPos.y ),
+    vMacroPos.xz,
+    step( 0.55, abs( vMacroNrm.y ) )
+  ) * uMacroA.x;
+  vec3 mcF = texture2D( uMacroMap, mcUV ).rgb - 0.5;
+  float mcT = mcF.r + mcF.g * 0.62 + mcF.b * 0.34;
+  diffuseColor.rgb *= 1.0 + mcT * uMacroA.y;
+  // A pure brightness wobble reads as dirt. Letting the warm/cool axis drift
+  // with it is what makes it read as sun-bleach, damp and age instead.
+  diffuseColor.rgb *= vec3( 1.0 + mcF.r * uMacroA.w, 1.0 - mcF.r * uMacroA.w * 0.2,
+                            1.0 - mcF.r * uMacroA.w );
+`;
+
+/** Optional: mown-lawn banding. Only injected for surfaces that ask for it. */
+const MACRO_STRIPE = /* glsl */ `
+  {
+    // The phase wanders with the broad band, so the bands bend and fade in and
+    // out instead of striping the entire city in one direction.
+    float ph = dot( mcUV, uMacroB.zw ) * uMacroB.x + mcF.r * 9.0;
+    float band = sin( ph ) * ( 0.55 + mcF.g );
+    diffuseColor.rgb *= 1.0 + band * uMacroB.y;
+  }
+`;
+
+/**
+ * Optional: a gradient up the building.
+ *
+ * A real tower is not one colour from podium to crown. Glass high up mirrors
+ * the zenith and reads bright and cool; glass near the street mirrors the city
+ * and reads dark and warm. Masonry just gets grubbier the lower you go. Both
+ * are the same ramp with different constants, and it is the cheapest way to put
+ * depth into a skyline made of extruded prisms.
+ */
+const MACRO_HEIGHT = /* glsl */ `
+  {
+    float hk = clamp( vMacroPos.y * uMacroC.x, 0.0, 1.0 );
+    hk = ( hk * hk * ( 3.0 - 2.0 * hk ) ) - 0.35;   // pivot below mid-height
+    diffuseColor.rgb *= 1.0 + hk * uMacroC.y;
+    diffuseColor.rgb *= vec3( 1.0 - hk * uMacroC.z * 0.7, 1.0, 1.0 + hk * uMacroC.z );
+  }
+`;
+
+const MACRO_ROUGH = /* glsl */ `
+  roughnessFactor = clamp(
+    roughnessFactor * ( 1.0 + ( mcF.g * 0.7 + mcF.b ) * uMacroA.z ), 0.045, 1.0 );
+`;
+
+/**
+ * Per-surface tuning. Keyed on the `family` tag `pack()` stamps onto a colour
+ * map, so a caller that just asks for `Textures.grass()` gets lawn-grade
+ * variation without knowing this exists.
+ *
+ *   metres    world size of one field tile
+ *   albedo    peak brightness swing (the field is normalised to +-0.5)
+ *   rough     roughness swing — this is where wet/dry and polish live
+ *   hue       warm/cool drift
+ *   stripe    [1/metres, strength, angle deg] for mown banding
+ */
+const MACRO = {
+  //                metres albedo rough  hue
+  asphalt:   { m: 88, a: 0.30, r: 0.42, h: 0.055 },
+  paving:    { m: 71, a: 0.24, r: 0.38, h: 0.048 },
+  // Turf is the one surface where big albedo variation is not a defect: a lawn
+  // really is a patchwork, and a flat green plane is the fakest thing in frame.
+  grass:     { m: 57, a: 0.52, r: 0.24, h: 0.105, stripe: [7.5, 0.052, 24] },
+  sand:      { m: 66, a: 0.26, r: 0.30, h: 0.060 },
+  concrete:  { m: 46, a: 0.19, r: 0.30, h: 0.040 },
+  rooftop:   { m: 49, a: 0.30, r: 0.42, h: 0.055 },
+  wood:      { m: 38, a: 0.20, r: 0.32, h: 0.050 },
+  brick:     { m: 44, a: 0.17, r: 0.28, h: 0.040, rise: [125, 0.15, 0.03] },
+  facade:    { m: 52, a: 0.13, r: 0.26, h: 0.032, rise: [125, 0.17, 0.035] },
+  // Glass must NOT get an albedo wobble — a curtain wall is machine-made and
+  // blotchy glass reads as dirt on the lens. It gets a roughness break, which
+  // shows up as some sheets being cleaner than others, plus the height ramp:
+  // the crown mirrors the zenith, the podium mirrors the street.
+  glass:     { m: 60, a: 0.03, r: 0.34, h: 0.008, rise: [175, 0.34, 0.10] },
+  default:   { m: 78, a: 0.18, r: 0.30, h: 0.042 },
+};
+
+const _macroMats = [];
+
+/**
+ * Patch a material with the world-space breakup. Chains onto whatever
+ * onBeforeCompile is already there (the hole cutter, usually).
+ */
+function worldDetail(material, family = 'default', gain = 1) {
+  if (material.userData.__macro) return material;
+  const t = MACRO[family] || MACRO.default;
+  material.userData.__macro = family;
+
+  const uA = { value: new THREE.Vector4(1 / t.m, t.a * gain, t.r * gain, t.h * gain) };
+  const uMap = { value: Textures.macroField() };
+  let uB = null;
+  if (t.stripe) {
+    const rad = (t.stripe[2] * Math.PI) / 180;
+    uB = { value: new THREE.Vector4(t.stripe[0], t.stripe[1] * gain, Math.cos(rad), Math.sin(rad)) };
+  }
+  let uC = null;
+  if (t.rise) {
+    uC = { value: new THREE.Vector4(1 / t.rise[0], t.rise[1] * gain, t.rise[2] * gain, 0) };
+  }
+  material.userData.macroUniforms = { uMacroA: uA, uMacroB: uB, uMacroC: uC };
+
+  const prev = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    if (prev) prev(shader, renderer);
+    shader.uniforms.uMacroMap = uMap;
+    shader.uniforms.uMacroA = uA;
+    if (uB) shader.uniforms.uMacroB = uB;
+    if (uC) shader.uniforms.uMacroC = uC;
+
+    const pars = MACRO_PARS
+      + (uB ? 'uniform vec4 uMacroB;\n' : '')
+      + (uC ? 'uniform vec4 uMacroC;\n' : '');
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\n${pars}`)
+      .replace('#include <project_vertex>', `${MACRO_VERTEX}\n#include <project_vertex>`);
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${pars}`)
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>\n${MACRO_FRAGMENT}`
+        + `${uB ? MACRO_STRIPE : ''}${uC ? MACRO_HEIGHT : ''}`
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `#include <roughnessmap_fragment>\n${MACRO_ROUGH}`
+      );
+  };
+
+  // The hole cutter pins a constant cache key; two materials whose injected
+  // source differs must not share a compiled program.
+  const prevKey = material.customProgramCacheKey;
+  const tag = `macro-${family}-${uB ? 's' : ''}${uC ? 'r' : ''}`;
+  material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + '|' + tag;
+  material.needsUpdate = true;
+  _macroMats.push(material);
+  return material;
+}
+
 
 /* ---------------------------------------------------------- drawing --- */
 
@@ -397,6 +641,59 @@ function meander(g, size, x0, y0, len, segs, spread, rand) {
 /* =========================================================== TEXTURES === */
 
 export const Textures = {
+  /** Boot cost of every generator that has run, for the budget report. */
+  stats() {
+    return {
+      ms: Math.round(_stats.ms),
+      generators: _stats.count,
+      envMs: _stats.envMs || 0,
+      byKey: { ..._stats.byKey },
+    };
+  },
+
+  /**
+   * The world-space breakup field (see `worldDetail`).
+   *
+   * Three decorrelated, seamless fBm bands in RGB so one fetch buys three
+   * scales of variation. Each band is stretched to the full 0..1 range —
+   * un-stretched fBm sits in the middle third and would deliver a third of the
+   * contrast the tuning table asks for.
+   *
+   * 256 px over a ~70 m tile is 27 cm/texel. That is deliberately coarse: this
+   * field exists to survive minification, and anything finer is the surface
+   * map's job.
+   */
+  macroField(size = 256) {
+    return cached(`tex-macro-${size}`, () => {
+      const rand = mulberry32(0x6b1f22d);
+      // cells 2/7/23 over the tile -> features at roughly 1/2, 1/8 and 1/25 of
+      // it. Deliberately non-harmonic so the three bands never line up into a
+      // single visible blob.
+      const broad = normalise(fbm(size, 2, 2, rand));
+      const mid = normalise(fbm(size, 7, 2, rand));
+      const fine = normalise(fbm(size, 23, 2, rand));
+
+      const c = canvas(size);
+      const g = ctx2d(c);
+      const img = g.createImageData(size, size);
+      const d = img.data;
+      for (let i = 0, o = 0; i < size * size; i++, o += 4) {
+        d[o] = broad[i] * 255;
+        d[o + 1] = mid[i] * 255;
+        d[o + 2] = fine[i] * 255;
+        d[o + 3] = 255;
+      }
+      g.putImageData(img, 0, 0);
+
+      const t = new THREE.CanvasTexture(c);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.colorSpace = THREE.NoColorSpace;   // a modulation field, not a colour
+      t.anisotropy = 1;                    // it is never seen at a grazing scale
+      t.needsUpdate = true;
+      return t;
+    });
+  },
+
   /**
    * Road surface: warm aggregate wearing course, crack sealant, utility-cut
    * patches, oil drips and polished tyre paths.
@@ -410,15 +707,29 @@ export const Textures = {
       const rand = mulberry32(0x4a51f0);
       const base = srgb(PALETTE.ASPHALT);
 
-      const macro = fbm(size, 4, 3, rand);          // broad paving-run tone
-      const grit = fbm(size, size >> 2, 2, rand);   // 4 px aggregate
-      const mid = fbm(size, 24, 2, rand);           // chip clusters
+      // A 9 m tile at 512 px. Feature sizes in metres, so the choice of `cells`
+      // is a real decision rather than a knob:
+      //   cells  3 -> 3.0 m paving runs   (survives to 400 m)
+      //   cells  7 -> 1.3 m chip clusters (survives to ~120 m)
+      //   cells 24 -> 37 cm patches       (gone past ~50 m)
+      //   cells/4 -> 7 cm aggregate       (only for the normal map)
+      // Three octaves rather than two on the coarse band: a two-octave field
+      // off a 2x2 lattice is one light blob and one dark blob, and THAT is a
+      // countable repeat on the tile grid. The extra octaves break the shape
+      // without adding another period.
+      const macro = normalise(fbm(size, 3, 3, rand));  // paving runs
+      const band = normalise(fbm(size, 7, 2, rand));   // chip clusters
+      const mid = fbm(size, 24, 2, rand);
+      const grit = fbm(size, size >> 2, 2, rand);
 
       const col = canvas(size);
       const gc = paintBase(col, size, base, [
-        // Only a whisper of hue variation. A road that varies in HUE reads as
-        // mud; a road that varies in VALUE reads as asphalt.
-        { f: macro, amp: 0.085, tint: [1.06, 1.0, 0.90] },
+        // The two coarse bands carry most of the visible tonal life, because
+        // they are the only ones with any chance of surviving the mip chain.
+        // A road that varies in HUE reads as mud; one that varies in VALUE
+        // reads as asphalt, so the tints are barely off neutral.
+        { f: macro, amp: 0.105, tint: [1.10, 1.0, 0.86] },
+        { f: band, amp: 0.100, tint: [1.02, 1.0, 0.96] },
         { f: mid, amp: 0.075 },
         { f: grit, amp: 0.095, tint: [1.0, 0.99, 0.97] },
       ]);
@@ -427,11 +738,13 @@ export const Textures = {
       const gh = paintGrey(hgt, size, 128, [
         { f: grit, amp: 1.0 },
         { f: mid, amp: 0.30 },
+        { f: band, amp: 0.22 },
         { f: macro, amp: 0.18 },
       ]);
 
       const rgh = canvas(size);
       const gr = paintGrey(rgh, size, 236, [
+        { f: band, amp: 0.30 },
         { f: mid, amp: 0.16 },
         { f: grit, amp: 0.10 },
       ]);
@@ -520,7 +833,16 @@ export const Textures = {
         polish(gr, 'rgba(176,176,176,0.6)');
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.35, normalScale: 0.9 });
+      /* NOTE for anyone tempted to add wheel tracks here: UVs on this surface
+         are world XZ, so a stripe at constant u runs north-south on EVERY
+         road. It would read as a wheel path on the avenues and as a transverse
+         resurfacing band, repeating every 9 m, on the cross streets. Wheel
+         polish has to stay isotropic (the soft sweeps above) unless it is
+         drawn per-road in streets.js where the direction is known. */
+
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.35, normalScale: 0.9, family: 'asphalt',
+      });
     });
   },
 
@@ -536,13 +858,13 @@ export const Textures = {
       // Stacking a fourth warm push turns concrete into cardboard.
       const rgb = warmBalance(srgb(base), 0.10, 0.94);
 
-      const macro = fbm(size, 3, 3, rand);
+      const macro = normalise(fbm(size, 3, 3, rand));  // pour-to-pour tone
       const mid = fbm(size, 16, 3, rand);
       const fine = fbm(size, size >> 3, 2, rand);
 
       const col = canvas(size);
       const gc = paintBase(col, size, rgb, [
-        { f: macro, amp: 0.05, tint: [1.1, 1.0, 0.85] },
+        { f: macro, amp: 0.075, tint: [1.1, 1.0, 0.85] },
         { f: mid, amp: 0.035 },
         { f: fine, amp: 0.03 },
       ]);
@@ -552,39 +874,62 @@ export const Textures = {
         { f: mid, amp: 0.35 },
       ]);
       const rgh = canvas(size);
-      const gr = paintGrey(rgh, size, 232, [{ f: mid, amp: 0.16 }, { f: macro, amp: 0.12 }]);
+      const gr = paintGrey(rgh, size, 232, [{ f: mid, amp: 0.16 }, { f: macro, amp: 0.18 }]);
 
-      /* Pour lines: faint horizontal construction joints. */
-      for (let i = 0; i < 3; i++) {
-        const y = (i + 0.5) * (size / 3) + (rand() - 0.5) * 20;
-        gc.fillStyle = 'rgba(120,110,94,0.10)'; gc.fillRect(0, y, size, 1.6);
-        gh.fillStyle = 'rgba(80,80,80,0.55)'; gh.fillRect(0, y, size, 1.6);
+      /* Board-form marks: cast concrete is poured against plywood in courses
+         and keeps the joint for life — a hairline recess with a lip of grout
+         bleed under it. That mark is what says "cast in place" rather than
+         "grey box".
+         Held DELIBERATELY faint. The same generator dresses the seawall and
+         the podiums (vertical, where this reads perfectly) and the bridge
+         decks and park paths (horizontal, world-UV, where the same lines
+         would stripe the ground). Six courses per tile and a whisper of
+         albedo is the setting that helps the walls without hurting the paths. */
+      const courses = 6;
+      for (let i = 0; i <= courses; i++) {
+        const y = i * (size / courses) + (rand() - 0.5) * 3;
+        gc.fillStyle = 'rgba(112,102,86,0.11)'; gc.fillRect(0, y, size, 1.8);
+        gc.fillStyle = 'rgba(255,250,238,0.09)'; gc.fillRect(0, y + 1.8, size, 1.4);
+        gh.fillStyle = 'rgba(70,70,70,0.7)'; gh.fillRect(0, y, size, 1.8);
+        gh.fillStyle = 'rgba(196,196,196,0.5)'; gh.fillRect(0, y + 1.8, size, 1.4);
+        gr.fillStyle = 'rgba(255,255,255,0.10)'; gr.fillRect(0, y, size, 3.2);
       }
 
-      /* Form-tie pockets: little recessed dimples in a loose grid. */
-      for (let i = 0; i < 26; i++) {
-        const x = rand() * size, y = rand() * size, r = 1.6 + rand() * 1.4;
-        gc.fillStyle = 'rgba(120,110,94,0.20)';
+      /* Pour lines: the deeper day-joints between whole lifts. */
+      for (let i = 0; i < 3; i++) {
+        const y = (i + 0.5) * (size / 3) + (rand() - 0.5) * 20;
+        gc.fillStyle = 'rgba(120,110,94,0.16)'; gc.fillRect(0, y, size, 2.4);
+        gh.fillStyle = 'rgba(72,72,72,0.75)'; gh.fillRect(0, y, size, 2.4);
+      }
+
+      /* Form-tie pockets, on the course lines where the ties actually are. */
+      for (let i = 0; i < 30; i++) {
+        const x = rand() * size;
+        const y = Math.round(rand() * courses) * (size / courses) + (size / courses) * 0.5;
+        const r = 1.8 + rand() * 1.4;
+        gc.fillStyle = 'rgba(120,110,94,0.22)';
         gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
-        gh.fillStyle = 'rgba(64,64,64,0.85)';
+        gh.fillStyle = 'rgba(60,60,60,0.9)';
         gh.beginPath(); gh.arc(x, y, r, 0, 7); gh.fill();
       }
 
       /* Rain streaking under the top edge — reads as vertical on facades. */
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 14; i++) {
         const x = rand() * size;
-        const w = 2 + rand() * 9;
-        const h = size * (0.2 + rand() * 0.6);
+        const w = 3 + rand() * 14;
+        const h = size * (0.2 + rand() * 0.7);
         const grad = gc.createLinearGradient(0, 0, 0, h);
-        grad.addColorStop(0, 'rgba(126,116,98,0.16)');
+        grad.addColorStop(0, 'rgba(126,116,98,0.20)');
         grad.addColorStop(1, 'rgba(126,116,98,0)');
         gc.fillStyle = grad;
         gc.save(); gc.translate(x, 0); gc.fillRect(0, 0, w, h); gc.restore();
-        gr.fillStyle = 'rgba(255,255,255,0.10)';
+        gr.fillStyle = 'rgba(255,255,255,0.12)';
         gr.fillRect(x, 0, w, h);
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 0.7, normalScale: 0.6, normalSize: 256 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 0.8, normalScale: 0.65, normalSize: 256, family: 'concrete',
+      });
     });
   },
 
@@ -601,86 +946,143 @@ export const Textures = {
       // key light plus the grade's highlight tint already push it that way.
       const rgb = warmBalance(srgb(base), 0.20, 0.93);
 
-      const macro = fbm(size, 4, 3, rand);
+      const macro = normalise(fbm(size, 3, 3, rand));
       const fine = fbm(size, size >> 3, 2, rand);
       const grain = fbm(size, size >> 2, 1, rand);
 
       const col = canvas(size);
       const gc = paintBase(col, size, rgb, [
-        { f: macro, amp: 0.035, tint: [1.1, 1.0, 0.85] },
+        { f: macro, amp: 0.065, tint: [1.12, 1.0, 0.82] },
         { f: fine, amp: 0.03 },
         { f: grain, amp: 0.035 },
       ]);
       const hgt = canvas(size);
       const gh = paintGrey(hgt, size, 132, [{ f: grain, amp: 0.35 }, { f: fine, amp: 0.25 }]);
       const rgh = canvas(size);
-      const gr = paintGrey(rgh, size, 226, [{ f: macro, amp: 0.14 }, { f: fine, amp: 0.10 }]);
+      const gr = paintGrey(rgh, size, 226, [{ f: macro, amp: 0.20 }, { f: fine, amp: 0.10 }]);
 
       const step = size / cells;
 
-      /* Per-slab tone. Kept quiet: at a 3 m tile this pattern repeats often,
-         and loud slabs are how tiling becomes countable. */
+      /*
+       * SLAB LAYOUT
+       * A perfect NxN grid is the tell that this is a texture: real paving is
+       * laid in courses that break joint, and the eye reads that offset long
+       * before it reads any individual slab. Alternate rows are shifted by half
+       * a slab, and every row gets its own sub-slab jitter, so no two courses
+       * line up and the vertical joints never form a continuous line across
+       * the tile. `shift` still lands on a whole number of half-slabs, which is
+       * what keeps the pattern seamless at the tile edge.
+       */
+      const rowShift = [];
+      for (let j = 0; j < cells; j++) rowShift.push((j % 2) * 0.5);
+
+      /* Per-slab tone. Pushed hard enough to actually read: paving slabs are
+         cast in different batches years apart and the mosaic of tones is most
+         of what stops a sidewalk looking like poured cream.
+         Each slab is painted at x AND x-size. Only the last one in an offset
+         row has its second copy on canvas — but that copy is the other half of
+         the slab that straddles the tile edge, and painting it separately with
+         a fresh random tone is a visible tonal seam every few metres. */
       for (let j = 0; j < cells; j++) {
+        const off = rowShift[j] * step;
         for (let i = 0; i < cells; i++) {
           const v = (rand() - 0.5) * 2;
+          const x = i * step + off;
           gc.fillStyle = v > 0
-            ? `rgba(255,246,224,${v * 0.055})`
-            : `rgba(96,88,72,${-v * 0.055})`;
-          gc.fillRect(i * step, j * step, step, step);
-          gr.fillStyle = v > 0 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
-          gr.fillRect(i * step, j * step, step, step);
+            ? `rgba(255,247,228,${v * 0.115})`
+            : `rgba(92,84,68,${-v * 0.105})`;
+          gc.fillRect(x, j * step, step, step);
+          gc.fillRect(x - size, j * step, step, step);
+          gr.fillStyle = v > 0 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)';
+          gr.fillRect(x, j * step, step, step);
+          gr.fillRect(x - size, j * step, step, step);
         }
       }
 
-      /* Joints. Recessed in height, a touch darker and rougher in colour. */
-      const jointW = Math.max(1.4, step * 0.045);
+      /*
+       * JOINTS. Widened from a hairline to ~5 cm of world.
+       * What you see of a slab joint from 40 m is not the 8 mm sealant gap, it
+       * is the chamfered arris either side of it — a dark band three or four
+       * times the gap. Drawing the true gap width makes a sidewalk that is
+       * technically correct and visually blank, which is what it was.
+       */
+      const jointW = Math.max(2.2, step * 0.085);
       gc.strokeStyle = typeof line === 'string' ? line : css(srgb(PALETTE.SIDEWALK_JOINT), 0.55);
       gc.lineWidth = jointW;
-      gh.strokeStyle = 'rgba(46,46,46,0.95)';
+      gh.strokeStyle = 'rgba(40,40,40,0.95)';
       gh.lineWidth = jointW;
       gr.strokeStyle = 'rgba(252,252,252,0.65)';
       gr.lineWidth = jointW;
-      for (let i = 0; i <= cells; i++) {
+      /* Course joints run right across; cross joints only within their row. */
+      for (let j = 0; j <= cells; j++) {
         for (const g of [gc, gh, gr]) {
-          g.beginPath(); g.moveTo(i * step, 0); g.lineTo(i * step, size); g.stroke();
-          g.beginPath(); g.moveTo(0, i * step); g.lineTo(size, i * step); g.stroke();
+          g.beginPath(); g.moveTo(0, j * step); g.lineTo(size, j * step); g.stroke();
+        }
+      }
+      /* The cross-joint set {off + i*step} is already periodic modulo `size`,
+         so cells of them cover the row exactly once with no seam. */
+      for (let j = 0; j < cells; j++) {
+        const off = rowShift[j] * step;
+        for (let i = 0; i < cells; i++) {
+          const x = i * step + off;
+          for (const g of [gc, gh, gr]) {
+            g.beginPath(); g.moveTo(x, j * step); g.lineTo(x, (j + 1) * step); g.stroke();
+          }
         }
       }
 
       /* Worn arrises: the top edge of each slab is chipped and catches light. */
-      const chamfer = Math.max(1.2, step * 0.035);
-      gh.strokeStyle = 'rgba(190,190,190,0.55)';
+      const chamfer = Math.max(1.4, step * 0.05);
+      gh.strokeStyle = 'rgba(198,198,198,0.6)';
       gh.lineWidth = chamfer;
-      for (let i = 0; i <= cells; i++) {
-        gh.beginPath(); gh.moveTo(i * step - jointW, 0); gh.lineTo(i * step - jointW, size); gh.stroke();
-        gh.beginPath(); gh.moveTo(0, i * step - jointW); gh.lineTo(size, i * step - jointW); gh.stroke();
+      for (let j = 0; j <= cells; j++) {
+        gh.beginPath(); gh.moveTo(0, j * step - jointW); gh.lineTo(size, j * step - jointW); gh.stroke();
       }
-
-      /* Corner wear + a couple of very faint stains. Low contrast on purpose. */
       for (let j = 0; j < cells; j++) {
+        const off = rowShift[j] * step;
         for (let i = 0; i < cells; i++) {
-          if (rand() > 0.35) continue;
-          const cx = (i + (rand() < 0.5 ? 0 : 1)) * step;
-          const cy = (j + (rand() < 0.5 ? 0 : 1)) * step;
-          const r = step * (0.10 + rand() * 0.12);
-          const rg = gc.createRadialGradient(cx, cy, 0, cx, cy, r);
-          rg.addColorStop(0, 'rgba(120,110,92,0.16)');
-          rg.addColorStop(1, 'rgba(120,110,92,0)');
-          gc.fillStyle = rg;
-          gc.beginPath(); gc.arc(cx, cy, r, 0, 7); gc.fill();
+          const x = i * step + off - jointW;
+          gh.beginPath(); gh.moveTo(x, j * step); gh.lineTo(x, (j + 1) * step); gh.stroke();
         }
       }
-      for (let i = 0; i < 4; i++) {
-        const x = rand() * size, y = rand() * size, r = size * (0.06 + rand() * 0.10);
+
+      /* Corner wear + a couple of faint stains. */
+      for (let j = 0; j < cells; j++) {
+        const off = rowShift[j] * step;
+        for (let i = 0; i < cells; i++) {
+          if (rand() > 0.4) continue;
+          const cx = i * step + off;
+          const cy = (j + (rand() < 0.5 ? 0 : 1)) * step;
+          const r = step * (0.12 + rand() * 0.14);
+          wrapped(gc, size, () => {
+            const rg = gc.createRadialGradient(cx, cy, 0, cx, cy, r);
+            rg.addColorStop(0, 'rgba(118,108,90,0.22)');
+            rg.addColorStop(1, 'rgba(118,108,90,0)');
+            gc.fillStyle = rg;
+            gc.beginPath(); gc.arc(cx, cy, r, 0, 7); gc.fill();
+          });
+        }
+      }
+      /* Damp / dirt patches, metres across so they still read from the air. */
+      for (let i = 0; i < 5; i++) {
+        const x = rand() * size, y = rand() * size, r = size * (0.10 + rand() * 0.16);
         wrapped(gc, size, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
-          rg.addColorStop(0, 'rgba(128,116,96,0.11)');
-          rg.addColorStop(1, 'rgba(128,116,96,0)');
+          rg.addColorStop(0, 'rgba(126,114,92,0.17)');
+          rg.addColorStop(1, 'rgba(126,114,92,0)');
           gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
+        });
+        wrapped(gr, size, () => {
+          const rg = gr.createRadialGradient(x, y, 0, x, y, r);
+          rg.addColorStop(0, 'rgba(120,120,120,0.5)');
+          rg.addColorStop(1, 'rgba(120,120,120,0)');
+          gr.fillStyle = rg; gr.beginPath(); gr.arc(x, y, r, 0, 7); gr.fill();
         });
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.1, normalScale: 0.75 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.25, normalScale: 0.85, family: 'paving',
+      });
     });
   },
 
@@ -692,6 +1094,9 @@ export const Textures = {
       const dark = srgb(PALETTE.GRASS_DARK);
       const light = srgb(PALETTE.GRASS_LIGHT);
 
+      // A lawn tile is 6-8 m. `cells: 2` puts the loudest band at 3-4 m, which
+      // is the only scale that still exists once the camera is 150 m up.
+      const patchy = normalise(fbm(size, 3, 3, rand));
       const clump = contrast(fbm(size, 6, 3, rand), 1.5);
       const mid = fbm(size, 22, 2, rand);
       const blade = fbm(size, size >> 2, 2, rand);
@@ -702,23 +1107,41 @@ export const Textures = {
       const spread = [(light[0] - dark[0]) / 150, (light[1] - dark[1]) / 150, (light[2] - dark[2]) / 150];
       const col = canvas(size);
       const gc = paintBase(col, size, base, [
-        { f: clump, amp: 0.42, tint: spread },
-        { f: mid, amp: 0.18, tint: [0.6, 1.0, 0.5] },
+        { f: patchy, amp: 0.40, tint: spread },
+        { f: clump, amp: 0.34, tint: spread },
+        // Turf shifts hue as well as value — thin, hungry grass goes yellow,
+        // thick shaded grass goes blue-green. Driving the two bands in opposite
+        // hue directions is what stops it reading as one green with a dimmer.
+        { f: mid, amp: 0.20, tint: [0.6, 1.0, 0.5] },
+        { f: patchy, amp: 0.16, tint: [1.1, 0.45, -0.4] },
         { f: blade, amp: 0.12, tint: [0.7, 1.0, 0.6] },
       ]);
       const hgt = canvas(size);
       paintGrey(hgt, size, 128, [{ f: blade, amp: 0.9 }, { f: mid, amp: 0.45 }]);
       const rgh = canvas(size);
-      paintGrey(rgh, size, 240, [{ f: clump, amp: 0.10 }]);
+      paintGrey(rgh, size, 240, [{ f: clump, amp: 0.14 }, { f: patchy, amp: 0.16 }]);
 
-      /* Sun-scorched patches — Miami lawns are never uniformly green. */
+      /* Sun-scorched patches — Miami lawns are never uniformly green. Bigger
+         and stronger than before: at 2-4 m across they survive to the horizon,
+         and they are the difference between "lawn" and "green paint". */
       const dry = srgb(PALETTE.GRASS_DRY);
-      for (let i = 0; i < 5; i++) {
-        const x = rand() * size, y = rand() * size, r = size * (0.06 + rand() * 0.13);
+      for (let i = 0; i < 7; i++) {
+        const x = rand() * size, y = rand() * size, r = size * (0.10 + rand() * 0.20);
         wrapped(gc, size, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
-          rg.addColorStop(0, css(dry, 0.30));
+          rg.addColorStop(0, css(dry, 0.40));
+          rg.addColorStop(0.55, css(dry, 0.16));
           rg.addColorStop(1, css(dry, 0));
+          gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
+        });
+      }
+      /* ...and the opposite: lush, over-watered dark patches near the sprinklers. */
+      for (let i = 0; i < 5; i++) {
+        const x = rand() * size, y = rand() * size, r = size * (0.09 + rand() * 0.16);
+        wrapped(gc, size, () => {
+          const rg = gc.createRadialGradient(x, y, 0, x, y, r);
+          rg.addColorStop(0, css(dark, 0.34));
+          rg.addColorStop(1, css(dark, 0));
           gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
         });
       }
@@ -741,7 +1164,9 @@ export const Textures = {
         hg.beginPath(); hg.moveTo(x, y); hg.lineTo(x + lean, y - len); hg.stroke();
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.3, normalScale: 0.9 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.3, normalScale: 0.9, family: 'grass',
+      });
     });
   },
 
@@ -752,7 +1177,7 @@ export const Textures = {
       const base = srgb(PALETTE.SAND);
       const wet = srgb(PALETTE.SAND_WET);
 
-      const dune = fbm(size, 4, 3, rand);
+      const dune = normalise(fbm(size, 3, 3, rand));
       const warp = fbm(size, 8, 2, rand);
       const grain = fbm(size, size >> 1, 1, rand);
 
@@ -767,19 +1192,36 @@ export const Textures = {
       }
 
       const col = canvas(size);
-      paintBase(col, size, base, [
-        { f: dune, amp: 0.10, tint: [(wet[0] - base[0]) / 180, (wet[1] - base[1]) / 180, (wet[2] - base[2]) / 180] },
+      const gc = paintBase(col, size, base, [
+        // Damp sand is a lot darker than dry sand and the boundary between them
+        // wanders in metre-scale lobes. That is the read from any distance.
+        { f: dune, amp: 0.24, tint: [(wet[0] - base[0]) / 180, (wet[1] - base[1]) / 180, (wet[2] - base[2]) / 180] },
         { f: ripple, amp: 0.05 },
         { f: grain, amp: 0.07 },
       ]);
       const hgt = canvas(size);
       paintGrey(hgt, size, 128, [{ f: ripple, amp: 0.75 }, { f: grain, amp: 0.5 }, { f: dune, amp: 0.4 }]);
       const rgh = canvas(size);
-      paintGrey(rgh, size, 244, [{ f: dune, amp: 0.10 }]);
+      // Damp sand is also much glossier than dry sand: the strongest cue there
+      // is, and it costs one extra band.
+      paintGrey(rgh, size, 244, [{ f: dune, amp: 0.34 }]);
+
+      /* Scuffs: footfall churns the ripples flat and lifts drier sand. */
+      for (let i = 0; i < 9; i++) {
+        const x = rand() * size, y = rand() * size, r = size * (0.03 + rand() * 0.07);
+        wrapped(gc, size, () => {
+          const rg = gc.createRadialGradient(x, y, 0, x, y, r);
+          rg.addColorStop(0, 'rgba(255,246,220,0.20)');
+          rg.addColorStop(1, 'rgba(255,246,220,0)');
+          gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
+        });
+      }
 
       // Full-res normal: sand is all grain sparkle, and that is the first thing
       // a half-resolution normal map throws away.
-      return pack(col, hgt, rgh, size, { normalStrength: 1.0, normalScale: 0.8 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.0, normalScale: 0.8, family: 'sand',
+      });
     });
   },
 
@@ -875,41 +1317,56 @@ export const Textures = {
             gr.fillStyle = 'rgba(255,255,255,0.20)';  // salt haze on the glass
             gr.fillRect(x, yTop, bw, visionH);
           }
+
         }
 
-        /* Opaque spandrel band hiding the floor slab. */
+        /* Opaque spandrel band hiding the floor slab. Darkened and given a
+           hard shadow under the transom: at skyline distance the mullion grid
+           is sub-pixel and THIS band is the only thing left carrying the
+           storey rhythm, so it has to be the strongest mark on the facade. */
         const sy = yTop + visionH;
-        gc.fillStyle = css(mix(spandrel, tint, 0.35));
+        gc.fillStyle = css(mix(spandrel, tint, 0.28));
         gc.fillRect(0, sy, size, spandrelH);
         const sg = gc.createLinearGradient(0, sy, 0, sy + spandrelH);
-        sg.addColorStop(0, 'rgba(255,255,255,0.16)');
-        sg.addColorStop(1, 'rgba(0,0,0,0.22)');
+        sg.addColorStop(0.0, 'rgba(10,18,24,0.42)');   // shadow cast by the transom
+        sg.addColorStop(0.22, 'rgba(255,255,255,0.14)');
+        sg.addColorStop(1.0, 'rgba(0,0,0,0.26)');
         gc.fillStyle = sg; gc.fillRect(0, sy, size, spandrelH);
         gh.fillStyle = 'rgb(96,96,96)'; gh.fillRect(0, sy, size, spandrelH);
         gr.fillStyle = 'rgb(228,228,228)'; gr.fillRect(0, sy, size, spandrelH);
       }
 
       /* Mullions: raised aluminium ribs. Horizontal transoms read heavier than
-         the vertical mullions, which is how real curtain wall looks. */
+         the vertical mullions, which is how real curtain wall looks.
+         Each rib gets a lit edge and a shadow edge rather than being one flat
+         stroke — that pair is what makes the grid read as extruded metal
+         instead of as a drawn line, and it survives one more mip level. */
       const mvW = Math.max(1.2, bw * 0.055);
       const mhW = Math.max(1.6, fh * 0.055);
-      gc.strokeStyle = css(mullion, 0.85);
-      gh.strokeStyle = 'rgb(228,228,228)';
-      gr.strokeStyle = 'rgb(206,206,206)';   // brushed alu, much rougher than glass
-      gc.lineWidth = mhW; gh.lineWidth = mhW; gr.lineWidth = mhW;
-      for (let f = 0; f <= floors; f++) {
-        for (const g of [gc, gh, gr]) {
-          g.beginPath(); g.moveTo(0, f * fh); g.lineTo(size, f * fh); g.stroke();
+      const drawRibs = (horiz) => {
+        const n = horiz ? floors : bays;
+        const p = horiz ? fh : bw;
+        const w = horiz ? mhW : mvW;
+        for (let i = 0; i <= n; i++) {
+          const a = i * p;
+          const put = (g, style, o, t) => {
+            g.fillStyle = style;
+            if (horiz) g.fillRect(0, a + o, size, t); else g.fillRect(a + o, 0, t, size);
+          };
+          put(gc, css(mullion, 0.90), -w * 0.5, w);
+          put(gc, 'rgba(255,255,255,0.34)', -w * 0.5, Math.max(0.8, w * 0.32));
+          put(gc, 'rgba(16,26,34,0.40)', w * 0.5, Math.max(0.8, w * 0.34));
+          put(gh, 'rgb(232,232,232)', -w * 0.5, w);
+          put(gh, 'rgb(40,40,40)', w * 0.5, Math.max(0.8, w * 0.34));
+          put(gr, 'rgb(206,206,206)', -w * 0.5, w);   // brushed alu, not glass
         }
-      }
-      gc.lineWidth = mvW; gh.lineWidth = mvW; gr.lineWidth = mvW;
-      for (let i = 0; i <= bays; i++) {
-        for (const g of [gc, gh, gr]) {
-          g.beginPath(); g.moveTo(i * bw, 0); g.lineTo(i * bw, size); g.stroke();
-        }
-      }
+      };
+      drawRibs(true);
+      drawRibs(false);
 
-      return pack(col, hgt, rgh, size, { normalStrength: 0.9, normalScale: 0.7, normalSize: 256 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 0.9, normalScale: 0.7, normalSize: 256, family: 'glass',
+      });
     });
   },
 
@@ -940,7 +1397,7 @@ export const Textures = {
 
       const col = canvas(size);
       const gc = paintBase(col, size, wall, [
-        { f: patch, amp: 0.045, tint: [1.05, 1.0, 0.92] },
+        { f: patch, amp: 0.055, tint: [1.05, 1.0, 0.92] },
         { f: tooth, amp: 0.05 },
       ]);
       const hgt = canvas(size);
@@ -1006,6 +1463,7 @@ export const Textures = {
               gc.beginPath(); gc.moveTo(px, ry); gc.lineTo(px, y + winH + 1); gc.stroke();
             }
           }
+
         }
       }
 
@@ -1019,7 +1477,9 @@ export const Textures = {
         gc.fillStyle = grad; gc.fillRect(x, y, w, h);
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.1, normalScale: 0.8, normalSize: 256 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.1, normalScale: 0.8, normalSize: 256, family: 'facade',
+      });
     });
   },
 
@@ -1058,12 +1518,16 @@ export const Textures = {
       gc.fillRect(0, P(0.055), size, P(0.115));
       gh.fillStyle = 'rgb(190,190,190)'; gh.fillRect(0, P(0.055), size, P(0.115));
       gr.fillStyle = 'rgb(150,150,150)'; gr.fillRect(0, P(0.055), size, P(0.115));
-      /* Illegible "lettering": blocks, not text — text at this size is mush. */
+      /* Illegible "lettering": blocks, not text — text at this size is mush.
+         The neon colour varies per shop: one aqua sign repeated down a whole
+         retail spine is the most countable repeat in the frame. */
+      const neon = srgb([PALETTE.NEON_AQUA, PALETTE.NEON_PINK, PALETTE.NEON_YELLOW,
+        PALETTE.NEON_ORANGE, PALETTE.NEON_GREEN][(hex >> 4 | 0) % 5]);
       const wordN = 3 + Math.floor(rand() * 3);
       let lx = P(0.10);
       for (let w = 0; w < wordN; w++) {
         const ww = P(0.06 + rand() * 0.13);
-        gc.fillStyle = css(srgb(PALETTE.NEON_AQUA), 0.85);
+        gc.fillStyle = css(neon, 0.85);
         roundRect(gc, lx, P(0.088), ww, P(0.048), P(0.012)); gc.fill();
         lx += ww + P(0.035);
         if (lx > P(0.9)) break;
@@ -1138,12 +1602,15 @@ export const Textures = {
       gc.lineWidth = P(0.008);
       gc.beginPath(); gc.moveTo(P(0.045), gy + gH * 0.24); gc.lineTo(size - P(0.045), gy + gH * 0.24); gc.stroke();
 
-      /* Plinth. */
+      /* Plinth. buildings.js pins its trim UVs to a texel inside this band —
+         keep it plain, unlit wall. */
       gc.fillStyle = css(shade(wall, 0.82));
       gc.fillRect(0, P(0.90), size, P(0.10));
       gh.fillStyle = 'rgb(160,160,160)'; gh.fillRect(0, P(0.90), size, P(0.10));
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.0, normalScale: 0.8, normalSize: 256 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.0, normalScale: 0.8, normalSize: 256, family: 'facade',
+      });
     });
   },
 
@@ -1158,13 +1625,13 @@ export const Textures = {
       const base = srgb(PALETTE.ROOF_GRAVEL);
       const tar = srgb(PALETTE.ROOF_TAR);
 
-      const macro = fbm(size, 4, 3, rand);
+      const macro = normalise(fbm(size, 3, 3, rand));
       const gravel = fbm(size, size >> 2, 2, rand);
       const mid = fbm(size, 18, 2, rand);
 
       const col = canvas(size);
       const gc = paintBase(col, size, base, [
-        { f: macro, amp: 0.09, tint: [1.1, 1.0, 0.85] },
+        { f: macro, amp: 0.125, tint: [1.1, 1.0, 0.85] },
         { f: mid, amp: 0.07 },
         { f: gravel, amp: 0.14 },
       ]);
@@ -1205,7 +1672,9 @@ export const Textures = {
         });
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.35, normalScale: 0.9 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.35, normalScale: 0.9, family: 'rooftop',
+      });
     });
   },
 
@@ -1218,18 +1687,18 @@ export const Textures = {
       const rand = mulberry32(0x22c9f1);
       const base = warmBalance(srgb(PALETTE.PRECAST), 0.7, 0.88);
 
-      const macro = fbm(size, 4, 3, rand);
+      const macro = normalise(fbm(size, 3, 3, rand));
       const fine = fbm(size, size >> 3, 2, rand);
 
       const col = canvas(size);
       const gc = paintBase(col, size, base, [
-        { f: macro, amp: 0.06, tint: [1.1, 1.0, 0.86] },
+        { f: macro, amp: 0.090, tint: [1.1, 1.0, 0.86] },
         { f: fine, amp: 0.04 },
       ]);
       const hgt = canvas(size);
       const gh = paintGrey(hgt, size, 130, [{ f: fine, amp: 0.4 }]);
       const rgh = canvas(size);
-      const gr = paintGrey(rgh, size, 214, [{ f: macro, amp: 0.14 }]);
+      const gr = paintGrey(rgh, size, 214, [{ f: macro, amp: 0.20 }]);
 
       /* Sawn expansion joints. */
       gc.strokeStyle = 'rgba(96,88,74,0.42)'; gc.lineWidth = 2.4;
@@ -1259,7 +1728,9 @@ export const Textures = {
         gc.stroke();
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 0.9, normalScale: 0.6, normalSize: 256 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 0.9, normalScale: 0.6, normalSize: 256, family: 'concrete',
+      });
     });
   },
 
@@ -1309,7 +1780,9 @@ export const Textures = {
         }
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.4, normalScale: 1.0 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.4, normalScale: 1.0, family: 'brick',
+      });
     });
   },
 
@@ -1369,7 +1842,9 @@ export const Textures = {
         gh.fillRect(0, y + Math.max(1.4, bh * 0.05), size, 1.5);
       }
 
-      return pack(col, hgt, rgh, size, { normalStrength: 1.2, normalScale: 0.85 });
+      return pack(col, hgt, rgh, size, {
+        normalStrength: 1.2, normalScale: 0.85, family: 'wood',
+      });
     });
   },
 
@@ -1543,6 +2018,13 @@ function withCompanions(params) {
   return out;
 }
 
+/** The family tag `pack()` stamped on a colour map, if there is one. */
+function familyOf(params, fallback) {
+  const m = params.map;
+  return (m && m.userData && m.userData.family) || fallback;
+}
+
+
 function paramKey(p) {
   const o = {};
   for (const k of Object.keys(p).sort()) {
@@ -1563,27 +2045,45 @@ function paramKey(p) {
  */
 export function ground(params) {
   const p = withCompanions(params);
-  const key = `ground-${JSON.stringify(paramKey(p))}`;
-  return cached(key, () => applyHoleCut(new THREE.MeshStandardMaterial({
-    roughness: 0.95,
-    metalness: 0.0,
-    envMapIntensity: 0.30,
-    dithering: true,
-    ...p,
-  })));
+  const fam = familyOf(params, 'default');
+  const key = `ground-${fam}-${JSON.stringify(paramKey(p))}`;
+  return cached(key, () => {
+    const m = applyHoleCut(new THREE.MeshStandardMaterial({
+      roughness: 0.95,
+      metalness: 0.0,
+      envMapIntensity: 0.30,
+      dithering: true,
+      ...p,
+    }));
+    // Ground is where the de-tiling matters most: it is the surface that fills
+    // the frame, and the one whose tile grid the player stares at all game.
+    return worldDetail(m, fam, 1);
+  });
 }
 
-/** Standard opaque material for anything above ground. */
+/**
+ * Standard opaque material for anything above ground.
+ *
+ * Anything with a colour map gets the world breakup too, at half strength — a
+ * mapped `solid()` is a building facade or a big structure, and those suffer
+ * from exactly the same flatness. Unmapped ones (props, hedges, painted metal)
+ * are left alone: they are small, they already vary by instance colour, and a
+ * world-space blotch across a traffic cone is noise.
+ */
 export function solid(params) {
   const p = withCompanions(params);
-  const key = `solid-${JSON.stringify(paramKey(p))}`;
-  return cached(key, () => new THREE.MeshStandardMaterial({
-    roughness: 0.72,
-    metalness: 0.0,
-    envMapIntensity: 0.65,
-    dithering: true,
-    ...p,
-  }));
+  const fam = familyOf(params, null);
+  const key = `solid-${fam || '-'}-${JSON.stringify(paramKey(p))}`;
+  return cached(key, () => {
+    const m = new THREE.MeshStandardMaterial({
+      roughness: 0.72,
+      metalness: 0.0,
+      envMapIntensity: 0.65,
+      dithering: true,
+      ...p,
+    });
+    return fam ? worldDetail(m, fam, 0.85) : m;
+  });
 }
 
 /**
@@ -1596,14 +2096,18 @@ export function solid(params) {
  */
 export function glass(params) {
   const p = withCompanions(params);
-  const key = `glass-${JSON.stringify(paramKey(p))}`;
-  return cached(key, () => new THREE.MeshStandardMaterial({
-    roughness: 0.20,
-    metalness: 0.80,
-    envMapIntensity: 2.4,
-    dithering: true,
-    ...p,
-  }));
+  const fam = familyOf(params, null);
+  const key = `glass-${fam || '-'}-${JSON.stringify(paramKey(p))}`;
+  return cached(key, () => {
+    const m = new THREE.MeshStandardMaterial({
+      roughness: 0.20,
+      metalness: 0.80,
+      envMapIntensity: 2.4,
+      dithering: true,
+      ...p,
+    });
+    return fam ? worldDetail(m, fam, 1) : m;
+  });
 }
 
 /** Painted metal / plastic props: slight sheen, saturated colour. */
@@ -1636,26 +2140,20 @@ export function foliage(map, hex = 0xffffff) {
 /* ======================================================== ENVIRONMENT === */
 
 /**
- * Reflected environment: a proper Miami sky + sun + warm city ground, so glass
- * towers reflect something believable instead of a flat blue wash.
+ * One equirectangular sky, painted for a given point in the cycle.
  *
  * The ground half matters more than it looks: from the game's high 3/4 camera
  * the mirror direction off a vertical facade points at the horizon and below,
  * so it is the WARM half of this map that lands on the towers. Making it warm
  * is what keeps a wall of glass from reading as a wall of navy.
+ *
+ * `s` is one row of ENV_STOPS below.
  */
-export function buildEnvironment(renderer, scene) {
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  pmrem.compileEquirectangularShader();
-
-  const W = 512, H = 256;
-  const c = canvas(W, H);
-  const g = ctx2d(c);
-
-  const top = srgb(PALETTE.SKY_TOP);
-  const mid = srgb(PALETTE.SKY_MID);
-  const hor = srgb(PALETTE.SKY_HORIZON);
-  const haze = srgb(PALETTE.SKY_HAZE);
+function paintEnvironment(g, W, H, s) {
+  const top = srgb(s.top);
+  const mid = srgb(s.mid);
+  const hor = srgb(s.hor);
+  const haze = srgb(s.haze);
 
   /* Upper half: sky. v=0 is the zenith in equirectangular. */
   const sky = g.createLinearGradient(0, 0, 0, H * 0.5);
@@ -1666,27 +2164,26 @@ export function buildEnvironment(renderer, scene) {
   g.fillStyle = sky;
   g.fillRect(0, 0, W, H * 0.5);
 
-  /* Lower half: the city and the bay. Warm concrete/sand with a turquoise
-     wedge where Biscayne Bay sits, fading to a dark ground-bounce at nadir. */
+  /* Lower half: the city and the bay. */
   const gnd = g.createLinearGradient(0, H * 0.5, 0, H);
-  gnd.addColorStop(0.00, css(mix(haze, srgb(PALETTE.CONCRETE), 0.35)));
-  gnd.addColorStop(0.22, css(srgb(PALETTE.SIDEWALK)));
-  gnd.addColorStop(0.60, css(srgb(PALETTE.ASPHALT_LIGHT)));
-  gnd.addColorStop(1.00, css(shade(srgb(PALETTE.ASPHALT), 0.72)));
+  gnd.addColorStop(0.00, css(mix(haze, srgb(s.gndHi), 0.35)));
+  gnd.addColorStop(0.22, css(srgb(s.gndHi)));
+  gnd.addColorStop(0.60, css(srgb(s.gndMid)));
+  gnd.addColorStop(1.00, css(shade(srgb(s.gndMid), 0.72)));
   g.fillStyle = gnd;
   g.fillRect(0, H * 0.5, W, H * 0.5);
 
   /* Bay: a broad turquoise band over roughly a third of the azimuth. */
   const bay = g.createLinearGradient(0, H * 0.5, 0, H * 0.86);
-  bay.addColorStop(0.0, css(srgb(PALETTE.SEA_SHALLOW), 0.85));
-  bay.addColorStop(0.5, css(srgb(PALETTE.SEA_MID), 0.8));
+  bay.addColorStop(0.0, css(shade(srgb(PALETTE.SEA_SHALLOW), s.water), 0.85));
+  bay.addColorStop(0.5, css(shade(srgb(PALETTE.SEA_MID), s.water), 0.8));
   bay.addColorStop(1.0, css(srgb(PALETTE.SEA_DEEP), 0.0));
   g.fillStyle = bay;
   g.fillRect(W * 0.58, H * 0.5, W * 0.34, H * 0.36);
 
   /* Green wedge for the park side, so reflections aren't monochrome. */
   const park = g.createLinearGradient(0, H * 0.5, 0, H * 0.72);
-  park.addColorStop(0, css(srgb(PALETTE.GRASS), 0.5));
+  park.addColorStop(0, css(shade(srgb(PALETTE.GRASS), s.water), 0.5));
   park.addColorStop(1, css(srgb(PALETTE.GRASS_DARK), 0.0));
   g.fillStyle = park;
   g.fillRect(W * 0.06, H * 0.5, W * 0.16, H * 0.22);
@@ -1699,18 +2196,48 @@ export function buildEnvironment(renderer, scene) {
   g.fillStyle = seam;
   g.fillRect(0, H * 0.46, W, H * 0.10);
 
-  /* Sun: elevation ~38 deg matches the engine's sunDir. */
-  const sx = W * 0.70, sy = H * 0.29;
-  const glow = g.createRadialGradient(sx, sy, 0, sx, sy, H * 0.42);
-  glow.addColorStop(0.00, 'rgba(255,255,246,1)');
-  glow.addColorStop(0.06, 'rgba(255,246,222,0.85)');
-  glow.addColorStop(0.30, 'rgba(255,228,182,0.22)');
-  glow.addColorStop(1.00, 'rgba(255,220,170,0)');
-  g.fillStyle = glow;
-  g.fillRect(0, 0, W, H * 0.55);
+  /* Sun / moon, at the elevation this stop is keyed to. */
+  const sx = W * 0.70, sy = H * (0.5 - s.sunEl * 0.5);
+  if (s.sunI > 0.001) {
+    const glow = g.createRadialGradient(sx, sy, 0, sx, sy, H * 0.42);
+    glow.addColorStop(0.00, css(srgb(s.sunCol), s.sunI));
+    glow.addColorStop(0.06, css(srgb(s.sunCol), s.sunI * 0.85));
+    glow.addColorStop(0.30, css(srgb(s.sunCol), s.sunI * 0.22));
+    glow.addColorStop(1.00, css(srgb(s.sunCol), 0));
+    g.fillStyle = glow;
+    g.fillRect(0, 0, W, H * 0.62);
+  }
+
+  /*
+   * After dark, the horizon ring is not the sky — it is the city.
+   * A tower reflects the horizon back at the camera, so this warm sodium band
+   * IS the night look of every glass facade in the game. Without it the towers
+   * mirror an empty navy dome and read as black cardboard.
+   */
+  if (s.cityGlow > 0.001) {
+    const cg = g.createLinearGradient(0, H * 0.40, 0, H * 0.60);
+    cg.addColorStop(0.0, css(srgb(s.cityCol), 0));
+    cg.addColorStop(0.5, css(srgb(s.cityCol), s.cityGlow));
+    cg.addColorStop(1.0, css(srgb(s.cityCol), s.cityGlow * 0.35));
+    g.fillStyle = cg;
+    g.fillRect(0, H * 0.40, W, H * 0.20);
+    /* Uneven: downtown is bright, the bay side is not. */
+    const rnd = mulberry32(0x9e3b1);
+    for (let i = 0; i < 22; i++) {
+      const x = rnd() * W;
+      const r = W * (0.03 + rnd() * 0.09);
+      const rg = g.createRadialGradient(x, H * 0.51, 0, x, H * 0.51, r);
+      rg.addColorStop(0, css(srgb(s.cityCol), s.cityGlow * 0.75));
+      rg.addColorStop(1, css(srgb(s.cityCol), 0));
+      g.fillStyle = rg;
+      g.beginPath(); g.ellipse(x, H * 0.51, r, r * 0.5, 0, 0, 7); g.fill();
+    }
+  }
 
   /* Fair-weather cumulus, flattened toward the horizon like real perspective. */
   const rand = mulberry32(0x51c0d);
+  const cl = srgb(s.cloud);
+  const cs = srgb(s.cloudShade);
   for (let i = 0; i < 44; i++) {
     const t = Math.pow(rand(), 0.6);
     const y = H * (0.06 + t * 0.38);
@@ -1718,24 +2245,157 @@ export function buildEnvironment(renderer, scene) {
     const flat = 0.22 + (1 - t) * 0.7;
     const rx = W * (0.02 + rand() * 0.07);
     const ry = rx * flat;
-    g.fillStyle = `rgba(255,252,246,${0.16 + rand() * 0.42})`;
+    g.fillStyle = css(cl, 0.16 + rand() * 0.42);
     g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, 7); g.fill();
-    g.fillStyle = `rgba(190,204,218,${0.10 + rand() * 0.16})`;
+    g.fillStyle = css(cs, 0.10 + rand() * 0.16);
     g.beginPath(); g.ellipse(x, y + ry * 0.55, rx * 0.85, ry * 0.5, 0, 0, 7); g.fill();
   }
-
-  const tex = new THREE.CanvasTexture(c);
-  tex.mapping = THREE.EquirectangularReflectionMapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-
-  const rt = pmrem.fromEquirectangular(tex);
-  scene.environment = rt.texture;
-  // The light rig owns overall IBL strength; fall back if that export moves.
-  scene.environmentIntensity = (Q.LIGHTING && Q.LIGHTING.ENV_INTENSITY) || 0.5;
-  tex.dispose();
-  pmrem.dispose();
-  return rt.texture;
 }
 
-export const MaterialLib = { Textures, ground, solid, glass, painted, emissive, foliage };
+/**
+ * The cycle, as reflections see it. Four stops, keyed on the same nightFactor
+ * the engine publishes.
+ *
+ *   at    nightFactor this stop is authored for
+ *   sunEl sun height as a fraction of the way from horizon to zenith
+ *   water how much of its daytime brightness the bay keeps
+ *
+ * Four rather than a continuous rebuild because a PMREM costs real time and a
+ * mid-game hitch is worse than a swap the player cannot see: the map is a
+ * blurred irradiance probe, so the step between neighbouring stops is a small
+ * change in a low-frequency term, and the engine is simultaneously ramping
+ * `environmentIntensity` across it.
+ */
+const ENV_STOPS = [
+  {
+    at: 0.0, // full day
+    top: PALETTE.SKY_TOP, mid: PALETTE.SKY_MID, hor: PALETTE.SKY_HORIZON,
+    haze: PALETTE.SKY_HAZE, gndHi: PALETTE.SIDEWALK, gndMid: PALETTE.ASPHALT_LIGHT,
+    cloud: 0xfffcf6, cloudShade: 0xbeccda, water: 1.0,
+    sunEl: 0.42, sunCol: 0xfffff6, sunI: 1.0,
+    cityCol: 0xffb45a, cityGlow: 0.0,
+  },
+  {
+    at: 0.34, // golden hour — the whole dome goes amber and the sun drops
+    top: PALETTE.ENV_GOLD_TOP, mid: PALETTE.ENV_GOLD_MID, hor: PALETTE.ENV_GOLD_HOR,
+    haze: PALETTE.ENV_GOLD_HAZE,
+    gndHi: PALETTE.ENV_GOLD_GND, gndMid: PALETTE.ENV_GOLD_GND_LO,
+    cloud: PALETTE.ENV_GOLD_CLOUD, cloudShade: PALETTE.ENV_GOLD_CLOUD_SHADE, water: 0.86,
+    sunEl: 0.10, sunCol: PALETTE.ENV_GOLD_SUN, sunI: 1.0,
+    cityCol: PALETTE.CITY_GLOW, cityGlow: 0.0,
+  },
+  {
+    at: 0.72, // dusk — sun gone, afterglow on the horizon, city coming on
+    top: PALETTE.ENV_DUSK_TOP, mid: PALETTE.ENV_DUSK_MID, hor: PALETTE.ENV_DUSK_HOR,
+    haze: PALETTE.ENV_DUSK_HAZE,
+    gndHi: PALETTE.ENV_DUSK_GND, gndMid: PALETTE.ENV_DUSK_GND_LO,
+    cloud: PALETTE.ENV_DUSK_CLOUD, cloudShade: PALETTE.ENV_DUSK_CLOUD_SHADE, water: 0.42,
+    sunEl: -0.04, sunCol: PALETTE.ENV_DUSK_SUN, sunI: 0.55,
+    cityCol: PALETTE.CITY_GLOW, cityGlow: 0.30,
+  },
+  {
+    at: 1.0, // night — the horizon is sodium, the dome is deep blue
+    top: PALETTE.ENV_NIGHT_TOP, mid: PALETTE.ENV_NIGHT_MID, hor: PALETTE.ENV_NIGHT_HOR,
+    haze: PALETTE.ENV_NIGHT_HAZE,
+    gndHi: PALETTE.ENV_NIGHT_GND, gndMid: PALETTE.ENV_NIGHT_GND_LO,
+    cloud: PALETTE.ENV_NIGHT_CLOUD, cloudShade: PALETTE.ENV_NIGHT_CLOUD_SHADE, water: 0.22,
+    sunEl: 0.30, sunCol: PALETTE.MOON, sunI: 0.16,   // the moon
+    cityCol: PALETTE.CITY_GLOW, cityGlow: 0.52,
+  },
+];
+
+const _env = {
+  maps: [],
+  scene: null,
+  index: -1,
+};
+
+/**
+ * Pick the environment map for a point in the cycle and hang it on the scene.
+ * Safe to call every frame — it only touches `scene.environment` on a change.
+ * @param {number} nightFactor 0 = full day, 1 = full night
+ */
+export function setEnvironmentPhase(nightFactor) {
+  if (!_env.scene || !_env.maps.length) return;
+  const nf = nightFactor < 0 ? 0 : nightFactor > 1 ? 1 : nightFactor;
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < ENV_STOPS.length; i++) {
+    const d = Math.abs(ENV_STOPS[i].at - nf);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best === _env.index) return;
+  _env.index = best;
+  _env.scene.environment = _env.maps[best];
+}
+
+/**
+ * Reflected environment, plus the driver that keeps it in step with the cycle.
+ *
+ * Signature unchanged: `buildEnvironment(renderer, scene)`, returns the day
+ * PMREM texture — which is also what the scene starts on, so nothing about the
+ * boot frame moves.
+ */
+export function buildEnvironment(renderer, scene) {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+
+  const W = 512, H = 256;
+  const t0 = performance.now();
+  _env.maps.length = 0;
+  for (const s of ENV_STOPS) {
+    const c = canvas(W, H);
+    paintEnvironment(ctx2d(c), W, H, s);
+    const tex = new THREE.CanvasTexture(c);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    _env.maps.push(pmrem.fromEquirectangular(tex).texture);
+    tex.dispose();
+  }
+  pmrem.dispose();
+  _stats.envMs = Math.round((performance.now() - t0) * 10) / 10;
+
+  _env.scene = scene;
+  _env.index = 0;
+  scene.environment = _env.maps[0];
+  // The light rig owns overall IBL strength; fall back if that export moves.
+  scene.environmentIntensity = (Q.LIGHTING && Q.LIGHTING.ENV_INTENSITY) || 0.5;
+
+  installCycleDriver(scene);
+  return _env.maps[0];
+}
+
+let _driverInstalled = false;
+
+/**
+ * Keep `scene.environment` in step with the cycle.
+ *
+ * The game loop only pumps the update hooks that existed before this file did
+ * (traffic, pedestrians), so the swap rides `scene.onBeforeRender`, which
+ * three calls once per `renderer.render`. Chained, never replaced — another
+ * module already owns this slot (buildings.js drives its lit windows from it)
+ * and stomping it would silently switch the whole skyline off.
+ *
+ * `scene.userData.materialsUpdate` is the same thing as a plain hook, for
+ * whoever eventually pumps per-module updates properly.
+ */
+function installCycleDriver(scene) {
+  const update = () => {
+    const nf = scene.userData.nightFactor;
+    if (typeof nf === 'number') setEnvironmentPhase(nf);
+  };
+  scene.userData.materialsUpdate = update;
+  // Boot cost of the procedural texture library, for whoever is checking the
+  // budget. A live function, not a snapshot: most generators run lazily during
+  // buildWorld, which is after this.
+  scene.userData.textureStats = () => Textures.stats();
+  if (_driverInstalled) return;
+  _driverInstalled = true;
+  const prev = scene.onBeforeRender;
+  scene.onBeforeRender = function (...a) { prev.apply(this, a); update(); };
+  update();
+}
+
+export const MaterialLib = {
+  Textures, ground, solid, glass, painted, emissive, foliage, setEnvironmentPhase,
+};

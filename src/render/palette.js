@@ -48,6 +48,63 @@ export const PALETTE = {
   LIGHT_FILL: 0xa8d0ff,     // cool rim/fill from the opposite side
 
   /* ======================================================================
+   * THE CYCLE — reflected environment + after dark
+   *
+   * These are what the IBL is PAINTED with, not what the sky dome renders:
+   * src/core/materials.js bakes one PMREM per stop and swaps between them on
+   * `scene.userData.nightFactor`. The engine owns the dome and the analytic
+   * rig; this set only has to make reflections believable at each hour.
+   *
+   * The horizon rows matter far more than the zenith rows. From the game's
+   * high 3/4 camera the mirror direction off a vertical facade points at the
+   * horizon and below, so a tower reflects THESE colours, not the sky.
+   * ==================================================================== */
+  /* Golden hour — the whole dome goes amber and the sun sits on the deck. */
+  ENV_GOLD_TOP: 0x3f86c0,
+  ENV_GOLD_MID: 0x8fb8d8,
+  ENV_GOLD_HOR: 0xffd0a0,
+  ENV_GOLD_HAZE: 0xffbe86,
+  ENV_GOLD_GND: 0xe6c9a0,
+  ENV_GOLD_GND_LO: 0xa9866a,
+  ENV_GOLD_CLOUD: 0xfff0dc,
+  ENV_GOLD_CLOUD_SHADE: 0xc8a8a4,
+  ENV_GOLD_SUN: 0xffb066,
+
+  /* Dusk — sun gone, afterglow along the horizon, the city switching on. */
+  ENV_DUSK_TOP: 0x22355e,
+  ENV_DUSK_MID: 0x4a5f8c,
+  ENV_DUSK_HOR: 0xb08098,
+  ENV_DUSK_HAZE: 0xd08a72,
+  ENV_DUSK_GND: 0x6a6274,
+  ENV_DUSK_GND_LO: 0x4a465a,
+  ENV_DUSK_CLOUD: 0xc7a8b4,
+  ENV_DUSK_CLOUD_SHADE: 0x6a6a90,
+  ENV_DUSK_SUN: 0xff8a52,
+
+  /* Night — deep blue dome, sodium horizon. Never black: this is an arcade
+     game and the playfield has to stay readable (see quality.js TOD_STOPS). */
+  ENV_NIGHT_TOP: 0x0b1430,
+  ENV_NIGHT_MID: 0x16244a,
+  ENV_NIGHT_HOR: 0x33406a,
+  ENV_NIGHT_HAZE: 0x5a5470,
+  ENV_NIGHT_GND: 0x3a3a4e,
+  ENV_NIGHT_GND_LO: 0x24263a,
+  ENV_NIGHT_CLOUD: 0x6a7098,
+  ENV_NIGHT_CLOUD_SHADE: 0x353a5c,
+  MOON: 0xa8c0ff,
+
+  /* The sodium wash a lit city throws onto its own horizon. This single
+     colour is what every glass facade in the game reflects after dark. */
+  CITY_GLOW: 0xffab5e,
+
+  /* Lit interiors, for the emissive window masks. Offices run cool-white and
+     even; homes run warm and patchy; shopfronts are warmest and brightest. */
+  WINDOW_OFFICE: 0xffecba,
+  WINDOW_HOME: 0xffce8c,
+  WINDOW_SHOP: 0xffecc4,
+  SODIUM: 0xffb46a,         // street lamp pool at night
+
+  /* ======================================================================
    * WATER — Biscayne Bay, not the North Atlantic
    * ==================================================================== */
   SEA_DEEP: 0x0b7fa6,

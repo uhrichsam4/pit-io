@@ -51,7 +51,11 @@ const STOREY = 3.4;
  */
 const GLASS_TINTS = [
   P.GLASS_TEAL, P.GLASS_BLUE, P.GLASS_AQUA, P.GLASS_SKY, P.GLASS_MINT,
-  P.GLASS_TEAL, P.GLASS_SKY, P.GLASS_SMOKE,
+  P.GLASS_TEAL, P.GLASS_SKY, P.GLASS_SMOKE, P.GLASS_BLUE, P.GLASS_AQUA,
+  // One bronze facade in twelve. It is the warm note that stops the glass half
+  // of the skyline reading as a single material, and at one-in-twelve the
+  // olive cast the sill gradient gives it lands as a hero, not as a mistake.
+  P.GLASS_BRONZE, P.GLASS_SMOKE,
 ];
 
 /* ========================================================== colour ====== */
@@ -221,6 +225,67 @@ function bowPlan(w, d, bulge, n = 7) {
   return out;
 }
 
+/*
+ * More convex plans. CONVEX IS A HARD REQUIREMENT, not a stylistic choice:
+ * offsetPlan miters along vertex bisectors and inPlan is a half-plane test, so
+ * a re-entrant corner (a cruciform, an L) would make every setback, parapet and
+ * roof-plant placement in the file wrong. Everything below stays convex; the
+ * variety comes from how many sides there are and how unequal they are.
+ */
+
+/** Regular-ish polygon stretched to the parcel. Hex and octagon shafts. */
+function polyPlan(w, d, n, phase = 0) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = -(i / n) * Math.PI * 2 + phase;
+    out.push([(w / 2) * Math.cos(a), (d / 2) * Math.sin(a)]);
+  }
+  return out;
+}
+
+/** Trapezoid: the -z end is narrower. Reads as a prow from the 3/4 camera. */
+function wedgePlan(w, d, taper, c) {
+  const hw = w / 2, hd = d / 2, nw = hw * (1 - taper);
+  c = Math.min(c, Math.min(nw, hd) * 0.4);
+  return [
+    [hw, hd - c], [nw, -hd + c], [nw - c, -hd], [-nw + c, -hd],
+    [-nw, -hd + c], [-hw, hd - c], [-hw + c, hd], [hw - c, hd],
+  ];
+}
+
+/** Both long faces bowed — a lens. The classic Brickell curved condo slab. */
+function lensPlan(w, d, bulge, n = 6) {
+  const hw = w / 2, hd = d / 2, out = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    out.push([-hw + w * t, hd + Math.sin(t * Math.PI) * bulge]);
+  }
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    out.push([hw - w * t, -hd - Math.sin(t * Math.PI) * bulge]);
+  }
+  return out;
+}
+
+/**
+ * Rectangle with ONE corner sliced off hard. Asymmetry you can read at 400 m.
+ *
+ * The two replacement points must be emitted in the order the perimeter visits
+ * them or the plan self-crosses; on the (+,-) and (-,+) corners the perimeter
+ * arrives along z and leaves along x, so the pair is the other way round.
+ */
+function cornerCutPlan(w, d, cut, sx, sz) {
+  const hw = w / 2, hd = d / 2;
+  const c = Math.min(cut, Math.min(hw, hd) * 0.8);
+  const out = [];
+  for (const q of [[hw, hd], [hw, -hd], [-hw, -hd], [-hw, hd]]) {
+    if (Math.sign(q[0]) !== sx || Math.sign(q[1]) !== sz) { out.push(q); continue; }
+    const ax = [q[0] - sx * c, q[1]], az = [q[0], q[1] - sz * c];
+    if (sx * sz > 0) out.push(ax, az); else out.push(az, ax);
+  }
+  return out;
+}
+
 /* --- lofting ------------------------------------------------------------ */
 
 function capInto(pts, y, up, pos, nor, uv, idx, base, uS) {
@@ -376,9 +441,10 @@ const WHITE3 = [1, 1, 1];
  * pins its UVs to, plus the linear colour actually found there — which is what
  * the per-vertex tint divides against.
  */
-function makeSkin(tex, fu, fv, uScale, vScale, matOpts, awn = false) {
+function makeSkin(tex, fu, fv, uScale, vScale, matOpts, awn = false, night = null) {
   const base = sampleLinear(tex, fu, fv);
-  const mat = solid({ map: tex, vertexColors: true, ...matOpts });
+  const mat = solid({ map: tex, vertexColors: true, emissiveIntensity: 0, ...matOpts });
+  if (night) nightMat(mat, night[0], night[1]);
   const cache = new Map();
   return {
     mat, fu, fv, uScale, vScale, awn,
@@ -406,18 +472,230 @@ function skin(key, make) {
   return s;
 }
 
-/** Painted render with punched windows. 6 bays x 8 floors per tile. */
+/* ==================================================== night lighting ==== */
+
+/**
+ * THE DAY/NIGHT CONTRACT, ARCHITECTURE SIDE.
+ *
+ * src/core/engine.js publishes scene.userData.nightFactor every frame. Nothing
+ * here re-implements the cycle: every emissive this module owns is registered
+ * with the intensity it should read at noon and at midnight, and one update
+ * walks the list. Because materials are shared and cached, that list is ~30
+ * entries for the whole city, not one per building.
+ */
+const _nightMats = [];
+const _nightSeen = new WeakSet();
+function nightMat(mat, day, night) {
+  if (_nightSeen.has(mat)) return mat;
+  _nightSeen.add(mat);
+  mat.emissiveIntensity = day;
+  _nightMats.push({ mat, day, night });
+  return mat;
+}
+
+function installNightCycle(scene) {
+  let last = -1;
+  const update = () => {
+    const n = scene.userData.nightFactor;
+    if (typeof n !== 'number' || Math.abs(n - last) < 0.0015) return;
+    last = n;
+    // Windows do not all switch on the instant the sun clips the horizon.
+    // Smoothstep plus a bias toward the late half of dusk reads as a city
+    // filling up over half an hour instead of a light switch being thrown.
+    const k = n * n * (3 - 2 * n);
+    for (const e of _nightMats) e.mat.emissiveIntensity = e.day + (e.night - e.day) * k;
+  };
+  // The documented hook, for whoever pumps the per-module updates...
+  scene.userData.buildingsUpdate = update;
+  // ...plus the renderer's own per-frame scene callback, so the skyline lights
+  // up whether or not the game loop has been taught about this module yet.
+  // Chained, never replaced: another module may already own this slot.
+  const prev = scene.onBeforeRender;
+  scene.onBeforeRender = function (...a) { prev.apply(this, a); update(); };
+  update();
+}
+
+/* --- emissive window maps ----------------------------------------------- */
+
+function litCanvas(size) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, size, size);
+  return { c, g };
+}
+
+function litTex(c) {
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+const _litTex = new Map();
+function litTexCached(key, make) {
+  let t = _litTex.get(key);
+  if (!t) { t = make(); _litTex.set(key, t); }
+  return t;
+}
+
+/** Deterministic per-texture noise, so a rebuilt city lights up identically. */
+function litRNG(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const OFFICE_LIGHTS = ['#fff0cf', '#ffe3ab', '#e8f0ff', '#fff7e4', '#ffd9a0'];
+
+/**
+ * Lit windows for a curtain wall, on exactly the grid Textures.glass paints —
+ * 10 floors x 10 bays per tile, vision glass above a 26% spandrel band. Used as
+ * an emissiveMap so a lit tower costs no extra draw call and no extra mesh.
+ */
+function glassNightTex(tint) {
+  return litTexCached(`gn${tint}`, () => {
+    const size = 512, floors = 10, bays = 10;
+    const { c, g } = litCanvas(size);
+    const rnd = litRNG(0x51a7 ^ tint);
+    const fh = size / floors, bw = size / bays;
+    const visionH = fh * 0.74;
+    for (let f = 0; f < floors; f++) {
+      // Whole floors go dark — a plant level, an empty tenancy, a fire floor.
+      const floorOff = rnd() < 0.16;
+      for (let i = 0; i < bays; i++) {
+        if (floorOff ? rnd() > 0.12 : rnd() > 0.52) continue;
+        const v = 0.45 + rnd() * 0.55;
+        g.globalAlpha = v;
+        g.fillStyle = OFFICE_LIGHTS[(rnd() * OFFICE_LIGHTS.length) | 0];
+        // Inset by the mullion width so the glow does not paint the frames.
+        g.fillRect(i * bw + 1.5, f * fh + 1.5, bw - 3, visionH - 3);
+      }
+    }
+    g.globalAlpha = 1;
+    return litTex(c);
+  });
+}
+
+/**
+ * Lit windows for painted render, on the grid Textures.stucco punches:
+ * 8 floors x 6 bays, window 54% of the bay wide and 44% of the floor tall,
+ * starting 30% up the floor.
+ */
+function stuccoNightTex(hex) {
+  return litTexCached(`sn${hex}`, () => {
+    const size = 512, floors = 8, bays = 6;
+    const { c, g } = litCanvas(size);
+    const rnd = litRNG(0x3311 ^ hex);
+    const fh = size / floors, bw = size / bays;
+    const winW = bw * 0.54, winH = fh * 0.44;
+    for (let f = 0; f < floors; f++) {
+      for (let i = 0; i < bays; i++) {
+        if (rnd() > 0.46) continue;
+        g.globalAlpha = 0.42 + rnd() * 0.58;
+        // Homes are warmer and more uneven than offices.
+        g.fillStyle = rnd() < 0.75 ? '#ffd79a' : '#ffeed0';
+        g.fillRect(i * bw + (bw - winW) / 2, f * fh + fh * 0.30, winW, winH);
+      }
+    }
+    g.globalAlpha = 1;
+    return litTex(c);
+  });
+}
+
+/**
+ * Shopfront at night: the fascia sign burns, the display window spills warm
+ * light onto the pavement. This is the single biggest reason a night street
+ * reads as a street rather than as a row of dark boxes.
+ *
+ * The plinth is left black, because the plinth is where every trim surface in
+ * the building pins its flat UV — see makeSkin.
+ */
+function shopNightTex(hex) {
+  return litTexCached(`hn${hex}`, () => {
+    const size = 512;
+    const { c, g } = litCanvas(size);
+    const rnd = litRNG(0x7ac1 ^ hex);
+    const P = (t) => size * t;
+    const neon = NEON_SET[(rnd() * NEON_SET.length) | 0];
+    // Fascia sign: the band Textures.storefront paints its lettering into.
+    g.fillStyle = `#${neon.toString(16).padStart(6, '0')}`;
+    g.globalAlpha = 0.30;
+    g.fillRect(0, P(0.055), size, P(0.115));
+    g.globalAlpha = 1;
+    let lx = P(0.10);
+    for (let w = 0; w < 5; w++) {
+      const ww = P(0.06 + rnd() * 0.13);
+      roundRectPath(g, lx, P(0.088), ww, P(0.048), P(0.012));
+      g.fill();
+      lx += ww + P(0.035);
+      if (lx > P(0.9)) break;
+    }
+    // Interior spill behind the display glazing, brightest at the head.
+    const gy = P(0.30), gH = P(0.585);
+    const grad = g.createLinearGradient(0, gy, 0, gy + gH);
+    grad.addColorStop(0.0, 'rgba(255,228,170,0.85)');
+    grad.addColorStop(0.55, 'rgba(255,206,140,0.55)');
+    grad.addColorStop(1.0, 'rgba(220,160,90,0.16)');
+    g.fillStyle = grad;
+    g.fillRect(P(0.045), gy, size - P(0.09), gH);
+    for (let i = 0; i < 6; i++) {
+      const x = P(0.08) + rnd() * size * 0.84;
+      const y = gy + gH * (0.25 + rnd() * 0.5);
+      const rr = P(0.02 + rnd() * 0.05);
+      const rg = g.createRadialGradient(x, y, 0, x, y, rr);
+      rg.addColorStop(0, 'rgba(255,244,214,0.9)');
+      rg.addColorStop(1, 'rgba(255,244,214,0)');
+      g.fillStyle = rg;
+      g.beginPath(); g.arc(x, y, rr, 0, 7); g.fill();
+    }
+    return litTex(c);
+  });
+}
+
+function roundRectPath(g, x, y, w, h, r) {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+const NEON_SET = [
+  P.NEON_PINK, P.NEON_AQUA, P.NEON_YELLOW, P.NEON_PURPLE,
+  P.NEON_GREEN, P.NEON_ORANGE, P.NEON_BLUE, P.NEON_WHITE,
+];
+
+/**
+ * Painted render with punched windows. 6 bays x 8 floors per tile.
+ *
+ * The emissiveMap is black everywhere except inside those punched windows, and
+ * the flat texel the trim pins to (8,8 in texture space) is wall, not window —
+ * so a balcony slab tinted off this same material stays unlit at midnight while
+ * the facade behind it fills with lamplight.
+ */
 function stuccoSkin(hex) {
   return skin(`st${hex}`, () => makeSkin(
     Textures.stucco(hex, 8, 6), 8 / 512, 1 - 8 / 512, 6 * 3.3, 8 * STOREY,
-    { roughness: 0.78 }
+    { roughness: 0.78, emissiveMap: stuccoNightTex(hex), emissive: 0xffffff },
+    false, [0, 1.15]
   ));
 }
 
 /** Shopfront. One tile = one shop unit wide, one storey tall. */
 function shopSkin(hex) {
   return skin(`sh${hex}`, () => makeSkin(
-    Textures.storefront(hex), 0.5, 1 - 492 / 512, 9, 5.0, { roughness: 0.7 }, true
+    Textures.storefront(hex), 0.5, 1 - 492 / 512, 9, 5.0,
+    { roughness: 0.7, emissiveMap: shopNightTex(hex), emissive: 0xffffff },
+    true, [0, 1.5]
   ));
 }
 
@@ -440,7 +718,14 @@ const CURTAIN = new Map();
 function curtainMat(tint) {
   let m = CURTAIN.get(tint);
   if (!m) {
-    m = glass({ map: Textures.glass(tint, 10, 10, 512), roughness: 0.16, metalness: 0.74, color: 0xffffff });
+    m = glass({
+      map: Textures.glass(tint, 10, 10, 512),
+      // Lit offices ride on the same UVs as the curtain wall, so a whole
+      // skyline switches on for the cost of one extra texture per tint.
+      emissiveMap: glassNightTex(tint), emissive: 0xffffff, emissiveIntensity: 0,
+      roughness: 0.16, metalness: 0.74, color: 0xffffff,
+    });
+    nightMat(m, 0, 1.35);
     CURTAIN.set(tint, m);
   }
   return m;
@@ -456,13 +741,21 @@ const CW_U = 15, CW_V = 35;
  * texel and tints; `band` keeps authored UVs (used for the awning stripe band).
  */
 class Build {
-  constructor(sk) {
+  /**
+   * @param {object} sk skin
+   * @param {?number} neon this building's signage colour. One per building, not
+   *   one per sign: every emissive on a building shares a single merged mesh, so
+   *   the emissive uniform is a building-wide decision. Variety comes from
+   *   neighbours picking differently, which is how a real strip looks anyway.
+   */
+  constructor(sk, neon = null) {
     this.sk = sk;
     this.skinGeo = [];
     this.glassGeo = [];
     this.glassMat = null;
     this.litGeo = [];
-    this.litHex = null;
+    this.litHex = neon;
+    this.neon = neon || P.NEON_AQUA;
   }
 
   face(g) { this.skinGeo.push(setColor(g, WHITE3)); return this; }
@@ -478,6 +771,7 @@ class Build {
   gl(g, mat) { this.glassMat = mat; this.glassGeo.push(g); return this; }
 
   lit(g, hex) {
+    hex = hex ?? this.neon;
     if (this.litHex === null) this.litHex = hex;
     setUVFlat(g, this.sk.fu, this.sk.fv);
     this.litGeo.push(setColor(g, this.sk.tint(hex)));
@@ -497,10 +791,13 @@ class Build {
     mk(this.skinGeo, this.sk.mat);
     if (this.glassGeo.length && this.glassMat) mk(this.glassGeo, this.glassMat);
     if (this.litGeo.length) {
-      mk(this.litGeo, solid({
+      // Signage is dim but not off in daylight — a lit crown at noon reads as
+      // painted metal, which is right. At night it is the loudest thing on the
+      // building. toneMapped:false so the neon survives the grade and blooms.
+      mk(this.litGeo, nightMat(solid({
         map: this.sk.mat.map, vertexColors: true, roughness: 0.4,
-        emissive: this.litHex, emissiveIntensity: 1.9, toneMapped: false,
-      }));
+        emissive: this.litHex, emissiveIntensity: 0.34, toneMapped: false,
+      }), 0.34, 3.4));
     }
     return root;
   }
@@ -573,17 +870,164 @@ function helipad(B, x, y, z, r) {
   B.trim(box(r * 0.5, 0.09, r * 0.16, x, y + 0.44, z, 2), P.HELIPAD_MARK);
 }
 
-function rooftopPool(B, x, y, z, w, d, r) {
-  B.trim(box(w + 2.4, 0.22, d + 2.4, x, y, z, 4), P.WOOD_DECK);              // deck
-  B.trim(parapetGeo(movePlan(rectPlan(w, d, 0.6), x, z), y + 0.22, 0.4, 0.32), P.CONCRETE);
-  B.trim(box(w - 0.6, 0.16, d - 0.6, x, y + 0.34, z, 4), P.SEA_MID);
-  for (let i = 0; i < 4; i++) {
-    const lx = x - w / 2 - 1.0, lz = z - d / 2 + (i + 0.5) * (d / 4);
-    B.trim(box(0.7, 0.34, 1.9, lx, y + 0.22, lz, 2), P.FABRIC_WHITE);
+/** Sun lounger: frame, cushion, raked back. 3 boxes, reads instantly. */
+function lounger(B, x, y, z, rot, hex) {
+  const g = BufferGeometryUtils.mergeGeometries([
+    box(0.74, 0.10, 1.90, 0, 0.30, 0, 1.5),
+    box(0.64, 0.14, 1.70, 0, 0.38, 0, 1.5),
+    box(0.10, 0.30, 0.10, -0.28, 0, 0.80, 1),
+    box(0.10, 0.30, 0.10, 0.28, 0, 0.80, 1),
+    box(0.10, 0.30, 0.10, -0.28, 0, -0.80, 1),
+    box(0.10, 0.30, 0.10, 0.28, 0, -0.80, 1),
+  ], false);
+  const bk = box(0.64, 0.12, 0.72, 0, 0, 0, 1.5);
+  bk.rotateX(-0.85);
+  bk.translate(0, 0.60, -0.78);
+  const all = BufferGeometryUtils.mergeGeometries([g, bk], false);
+  all.rotateY(rot);
+  all.translate(x, y, z);
+  B.trim(all, hex);
+}
+
+/** Parasol on a slim mast. The pop of colour that sells a rooftop from above. */
+function parasol(B, x, y, z, hex, s = 1) {
+  B.trim(cyl(0.06, 2.4 * s, 6, x, y, z), P.ALUMINIUM);
+  B.trim(cyl(1.45 * s, 0.42 * s, 8, x, y + 2.2 * s, z, 0.07), hex);
+  B.trim(cyl(0.16, 0.10, 8, x, y, z), P.CONCRETE_DARK);
+}
+
+/** Slatted pergola over a deck: posts, beams and a run of slats. */
+function pergola(B, x, y, z, w, d, hex) {
+  const h = 2.7;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      B.trim(box(0.20, h, 0.20, x + sx * (w / 2 - 0.2), y, z + sz * (d / 2 - 0.2), 2), hex);
+    }
   }
-  if (r() < 0.7) {
-    B.trim(cyl(0.07, 2.3, 6, x + w / 2 + 1.4, y + 0.22, z), P.ALUMINIUM);
-    B.trim(cyl(1.5, 0.5, 8, x + w / 2 + 1.4, y + 2.4, z, 0.08), r.pick(FABRIC_COLORS));
+  B.trim(box(w, 0.22, 0.22, x, y + h, z - d / 2 + 0.2, 3), hex);
+  B.trim(box(w, 0.22, 0.22, x, y + h, z + d / 2 - 0.2, 3), hex);
+  const n = Math.max(3, Math.round(w / 0.9));
+  for (let i = 0; i <= n; i++) {
+    B.trim(box(0.14, 0.16, d, x - w / 2 + (w * i) / n, y + h + 0.22, z, 2), hex);
+  }
+}
+
+/** Rooftop bar: a counter, a back gantry and a row of stools. */
+function roofBar(B, x, y, z, w, rot, hex, r) {
+  const parts = [
+    box(w, 1.12, 0.85, 0, 0, 0, 2.5),
+    box(w + 0.34, 0.14, 1.05, 0, 1.12, 0, 3),
+    box(w * 0.82, 2.1, 0.32, 0, 0, -1.1, 2.5),
+  ];
+  const n = Math.max(2, Math.round(w / 1.1));
+  for (let i = 0; i < n; i++) {
+    const sx = -w / 2 + (w * (i + 0.5)) / n;
+    parts.push(cyl(0.16, 0.78, 6, sx, 0, 0.95));
+  }
+  const g = BufferGeometryUtils.mergeGeometries(parts, false);
+  g.rotateY(rot); g.translate(x, y, z);
+  B.trim(g, hex);
+  // Back-bar glow: the one thing that makes a roof terrace read at night.
+  const l = box(w * 0.78, 0.34, 0.16, 0, 0, 0, 2);
+  l.rotateY(rot); l.translate(x, y + 1.5, z);
+  l.translate(-Math.sin(rot) * 1.1, 0, -Math.cos(rot) * 1.1);
+  B.lit(l);
+}
+
+/**
+ * Rooftop pool terrace. Miami condos sell the roof, so this is where a
+ * residential tower earns the 3/4 camera: real water, a timber deck, loungers
+ * under parasols, a pergola and a bar.
+ */
+function rooftopPool(B, x, y, z, w, d, r) {
+  const deck = movePlan(rectPlan(w + 5.2, d + 5.6, 1.4), x, z);
+  B.trim(loft([{ p: deck, y }, { p: deck, y: y + 0.24 }], { capTop: true, uScale: 2.4 }), P.WOOD_DECK);
+  // Coping ring, then the water dropped inside it so the lip reads as a lip.
+  B.trim(parapetGeo(movePlan(rectPlan(w, d, 0.6), x, z), y + 0.24, 0.34, 0.34), P.CONCRETE);
+  B.trim(box(w - 0.7, 0.14, d - 0.7, x, y + 0.30, z, 4), P.WATER_POOL);
+
+  const nL = Math.max(2, Math.min(5, Math.round(d / 2.4)));
+  for (let i = 0; i < nL; i++) {
+    const lz = z - d / 2 + (i + 0.5) * (d / nL);
+    lounger(B, x - w / 2 - 1.5, y + 0.24, lz, 0, r.chance(0.6) ? P.FABRIC_WHITE : P.TEAK);
+    if (r.chance(0.55)) lounger(B, x + w / 2 + 1.5, y + 0.24, lz, Math.PI, P.FABRIC_WHITE);
+  }
+  for (let i = 0; i < 2; i++) {
+    if (!r.chance(0.7)) continue;
+    parasol(B, x + (i ? 1 : -1) * (w / 2 + 2.4), y + 0.24, z + (r() - 0.5) * d * 0.6,
+      r.pick(FABRIC_COLORS), 0.85 + r() * 0.3);
+  }
+  if (r.chance(0.5) && w > 7) {
+    pergola(B, x, y + 0.24, z + d / 2 + 2.4, Math.min(w, 7), 2.8,
+      r.chance(0.5) ? P.WOOD_DARK : P.STUCCO_WHITE);
+  }
+  if (r.chance(0.45)) {
+    roofBar(B, x, y + 0.24, z - d / 2 - 2.2, Math.min(w * 0.8, 6), 0, P.WOOD_DARK, r);
+  }
+}
+
+/* =========================================================== signage ==== */
+
+/**
+ * Illuminated channel letters on a frame. `w` is the whole sign, letters are
+ * blocks — real glyphs at 200 m are mush, and blocks read as a wordmark.
+ *
+ * The frame is skin, the letters are emissive, so the sign is a dark rack by
+ * day and a burning name at night, off one shared material each.
+ */
+function channelSign(B, x, y, z, w, h, rot, r, hex, legs = true) {
+  const cos = Math.cos(rot), sin = Math.sin(rot);
+  const push = (g, ox, oy, oz) => {
+    g.rotateY(rot);
+    g.translate(x + ox * cos + oz * sin, y + oy, z - ox * sin + oz * cos);
+    return g;
+  };
+  if (legs) {
+    for (const sx of [-1, 1]) {
+      B.trim(push(box(0.16, h * 1.5, 0.16, 0, 0, 0, 2), sx * (w / 2 - 0.3), -h * 1.5, 0), P.STEEL_DARK);
+    }
+    B.trim(push(box(w, 0.14, 0.14, 0, 0, 0, 3), 0, -0.14, 0), P.STEEL_DARK);
+  }
+  // Letters: 3-7 blocks of unequal width, with real gaps between them.
+  const n = 3 + Math.floor(r() * 5);
+  const gap = w * 0.045;
+  const avail = w * 0.9 - gap * (n - 1);
+  let cx = -w * 0.45;
+  for (let i = 0; i < n; i++) {
+    const lw = (avail / n) * (0.62 + r() * 0.72);
+    const lh = h * (0.72 + r() * 0.28);
+    // box() already stands its geometry on y = 0, so the letter sits on the
+    // sign baseline with no vertical offset of its own.
+    B.lit(push(box(lw, lh, 0.22, 0, 0, 0, 1.2), cx + lw / 2, 0, 0), hex);
+    cx += lw + gap;
+    if (cx > w * 0.45) break;
+  }
+}
+
+/** Illuminated band wrapped round a plan — crown lighting, podium fascia. */
+function litBand(B, plan, y, h, proj, hex) {
+  const p = offsetPlan(plan, proj);
+  B.lit(loft([{ p, y }, { p, y: y + h }], {}), hex);
+}
+
+/**
+ * Vertical neon blade running down a building corner. Deco hotels wear these
+ * and they are the cheapest possible way to make a night skyline feel Miami.
+ */
+function neonBlade(B, x, z, y0, y1, rot, hex, w = 0.9) {
+  const g = box(w, y1 - y0, 0.24, 0, y0, 0, 2);
+  g.rotateY(rot); g.translate(x, 0, z);
+  B.lit(g, hex);
+  const f = box(w + 0.4, y1 - y0 + 0.5, 0.16, 0, y0 - 0.25, 0, 2);
+  f.rotateY(rot); f.translate(x - Math.sin(rot) * 0.12, 0, z - Math.cos(rot) * 0.12);
+  B.trim(f, P.STEEL_DARK);
+}
+
+/** Address numerals beside a doorway. Tiny, but it is what the player drives past. */
+function addressPlate(B, x, y, zFace, hex) {
+  B.trim(box(1.5, 0.5, 0.1, x, y, zFace + 0.06, 1), hex);
+  for (let i = 0; i < 3; i++) {
+    B.lit(box(0.16, 0.3, 0.06, x - 0.45 + i * 0.4, y + 0.1, zFace + 0.12, 1), P.NEON_WHITE);
   }
 }
 
@@ -591,26 +1035,87 @@ function rooftopPool(B, x, y, z, w, d, r) {
  * Populate a roof: parapet, deck, plant. This is the single highest-value
  * detail pass in the file — the 3/4 camera shows roofs almost every frame.
  */
+/** Two or three condensers on one shared skid — one object, not three specks. */
+function acPack(B, x, y, z, rot, s, r) {
+  const n = 2 + (r() < 0.45 ? 1 : 0);
+  const w = 1.6 * s, gap = 0.28 * s;
+  const span = n * w + (n - 1) * gap;
+  const parts = [box(span + 0.5 * s, 0.22 * s, 1.5 * s, 0, 0, 0, 3)];
+  const g0 = BufferGeometryUtils.mergeGeometries(parts, false);
+  g0.rotateY(rot); g0.translate(x, y, z);
+  B.trim(g0, P.STEEL_DARK);
+  for (let i = 0; i < n; i++) {
+    const ox = -span / 2 + w / 2 + i * (w + gap);
+    acUnit(B, x + Math.cos(rot) * ox, y + 0.22 * s, z - Math.sin(rot) * ox, s * (0.9 + r() * 0.25), r);
+  }
+}
+
+/** Big packaged chiller: the single largest thing on most commercial roofs. */
+function chiller(B, x, y, z, rot, s, r) {
+  const w = 5.4 * s, d = 2.3 * s, h = 2.0 * s;
+  const parts = [
+    box(w, h, d, 0, 0, 0, 3),
+    box(w + 0.4, 0.22, d + 0.4, 0, h, 0, 3),
+    box(w * 0.3, 0.5, d * 0.8, -w * 0.32, h + 0.22, 0, 2),
+  ];
+  const g = BufferGeometryUtils.mergeGeometries(parts, false);
+  g.rotateY(rot); g.translate(x, y, z);
+  B.trim(g, P.AC_METAL);
+  for (let i = 0; i < 3; i++) {
+    const ox = (i - 1) * w * 0.3;
+    B.trim(cyl(0.62 * s, 0.26 * s, 10, x + Math.cos(rot) * ox, y + h + 0.22, z - Math.sin(rot) * ox), P.STEEL_DARK);
+  }
+}
+
+/** Sedum tray / gravel-ballast patch. Breaks a bald roof into fields. */
+function roofPatch(B, x, y, z, w, d, hex) {
+  B.trim(box(w, 0.12, d, x, y, z, 3), hex);
+  B.trim(box(w + 0.3, 0.2, 0.18, x, y, z - d / 2 - 0.09, 2), P.CONCRETE_DARK);
+  B.trim(box(w + 0.3, 0.2, 0.18, x, y, z + d / 2 + 0.09, 2), P.CONCRETE_DARK);
+}
+
+/** Roof deck surfaces, so not every roof in the city is the same grey gravel. */
+const ROOF_SURFACE = [
+  [P.ROOF_GRAVEL, 34], [P.ROOF_MEMBRANE, 22], [P.ROOF_TAR, 14],
+  [P.CONCRETE_DARK, 12], [P.ROOF, 18],
+];
+
+/**
+ * Populate a roof: parapet, deck, plant. This is the single highest-value
+ * detail pass in the file — the 3/4 camera shows roofs almost every frame.
+ *
+ * WHY THE ITEMS GOT BIGGER AND FEWER.
+ * The first version scattered up to 26 sub-metre objects on a spacing of 3 m.
+ * From the review camera that minifies into speckle — the roof read as noise,
+ * not as machinery, and every roof read as the SAME noise. Plant now comes in
+ * chunks (a chiller, a skid of condensers, a patch of ballast) on a 4.4 m
+ * spacing, which is both how a real roof is laid out and what survives being
+ * 200 m from the lens.
+ */
 function roofScape(B, plan, y, r, o = {}) {
   const bb = planBounds(plan);
   const area = bb.w * bb.d;
   const ph = o.parapetH ?? (0.85 + r() * 0.7);
   B.trim(parapetGeo(plan, y, ph, 0.42), o.parapetHex || P.PARAPET);
-  B.trim(loft([{ p: plan, y: y + 0.03 }], { capTop: true, uScale: 3 }), P.ROOF_GRAVEL);
+  B.trim(loft([{ p: plan, y: y + 0.03 }], { capTop: true, uScale: 3 }),
+    o.surfaceHex || r.weighted(ROOF_SURFACE));
 
-  const inner = offsetPlan(plan, -2.2);
+  const inner = offsetPlan(plan, -2.4);
   const spots = [];
-  const tries = Math.min(26, 6 + Math.round(area / 26));
-  for (let i = 0; i < tries * 3 && spots.length < tries; i++) {
-    const x = bb.cx + (r() - 0.5) * bb.w * 0.86;
-    const z = bb.cz + (r() - 0.5) * bb.d * 0.86;
+  const tries = Math.min(14, 3 + Math.round(area / 70));
+  for (let i = 0; i < tries * 4 && spots.length < tries; i++) {
+    const x = bb.cx + (r() - 0.5) * bb.w * 0.84;
+    const z = bb.cz + (r() - 0.5) * bb.d * 0.84;
     if (!inPlan(inner, x, z)) continue;
     // A podium roof has a tower growing out of it; plant must dodge the shaft.
     if (o.avoid && inPlan(o.avoid, x, z)) continue;
     let ok = true;
-    for (const s of spots) if (Math.hypot(s[0] - x, s[1] - z) < 3.0) { ok = false; break; }
+    for (const s of spots) if (Math.hypot(s[0] - x, s[1] - z) < 4.4) { ok = false; break; }
     if (ok) spots.push([x, z]);
   }
+  // Plant lines up with the building, not with the random number generator:
+  // real roofs run their kit square to the parapet.
+  const rot = r.chance(0.5) ? 0 : Math.PI / 2;
 
   let i = 0;
   // Big-ticket items first, so they get the middle of the roof.
@@ -618,13 +1123,18 @@ function roofScape(B, plan, y, r, o = {}) {
     i = 1;
     helipad(B, bb.cx, y + 0.05, bb.cz, Math.min(7.5, bb.w * 0.22));
   }
-  if (o.pool && area > 500 && spots.length > i) {
-    rooftopPool(B, bb.cx + (r() - 0.5) * 3, y + 0.05, bb.cz, Math.min(11, bb.w * 0.34), Math.min(6, bb.d * 0.26), r);
+  if (o.pool && area > 620 && spots.length > i) {
+    rooftopPool(B, bb.cx + (r() - 0.5) * 3, y + 0.05, bb.cz,
+      Math.min(11, bb.w * 0.32), Math.min(6.5, bb.d * 0.24), r);
     i += 2;
   }
   if (area > 260 && spots.length > i + 1) {
     const s = spots[i++];
-    bulkhead(B, s[0], y + 0.05, s[1], 3.4, 3.0, 2.9 + r() * 1.4, P.CONCRETE_DARK);
+    bulkhead(B, s[0], y + 0.05, s[1], 3.4, 3.0, 2.9 + r() * 1.4,
+      r.chance(0.5) ? P.CONCRETE_DARK : (o.parapetHex || P.PRECAST));
+  }
+  if (area > 700 && spots.length > i && r.chance(0.7)) {
+    const s = spots[i++]; chiller(B, s[0], y + 0.05, s[1], rot, 0.85 + r() * 0.45, r);
   }
   if (o.tank !== false && area > 200 && spots.length > i) {
     const s = spots[i++]; waterTank(B, s[0], y + 0.05, s[1], 0.8 + r() * 0.35);
@@ -632,15 +1142,24 @@ function roofScape(B, plan, y, r, o = {}) {
   for (; i < spots.length; i++) {
     const s = spots[i];
     const roll = r();
-    if (roll < 0.46) acUnit(B, s[0], y + 0.05, s[1], 0.9 + r() * 0.8, r);
-    else if (roll < 0.62) ventStack(B, s[0], y + 0.05, s[1], 0.8 + r() * 0.6);
-    // Spots are only guaranteed 2.2 m inside the parapet, and a duct is drawn
+    if (roll < 0.34) acPack(B, s[0], y + 0.05, s[1], rot, 0.9 + r() * 0.5, r);
+    else if (roll < 0.46) {
+      roofPatch(B, s[0], y + 0.05, s[1], 3.0 + r() * 2.4, 2.4 + r() * 1.8,
+        r.chance(0.45) ? P.HEDGE : P.GRAVEL);
+    } else if (roll < 0.58) ventStack(B, s[0], y + 0.05, s[1], 0.9 + r() * 0.7);
+    // Spots are only guaranteed 2.4 m inside the parapet, and a duct is drawn
     // about its centre — an unclamped 5.5 m run reached past the roof edge and
     // out over the lot line, which on a split block is the neighbour's air.
-    else if (roll < 0.74) ductRun(B, s[0], y + 0.05, s[1], 2.5 + r() * 1.5, r() < 0.5 ? 0 : Math.PI / 2, 1);
-    else if (roll < 0.82) dish(B, s[0], y + 0.05, s[1], 0.7 + r() * 0.5);
-    else if (roll < 0.9) B.trim(box(1.6 + r(), 0.5, 1.2 + r(), s[0], y + 0.05, s[1], 3), P.ROOF_MEMBRANE);
-    else B.trim(cyl(0.5, 0.7, 8, s[0], y + 0.05, s[1]), P.VENT_METAL);
+    else if (roll < 0.70) ductRun(B, s[0], y + 0.05, s[1], 2.5 + r() * 1.5, rot, 1.3);
+    else if (roll < 0.80) dish(B, s[0], y + 0.05, s[1], 0.8 + r() * 0.6);
+    else if (roll < 0.92) B.trim(box(2.0 + r() * 1.4, 0.7, 1.5 + r(), s[0], y + 0.05, s[1], 3), P.ROOF_MEMBRANE);
+    else acUnit(B, s[0], y + 0.05, s[1], 1.1 + r() * 0.6, r);
+  }
+
+  // A name on the roof. Only worth it on something big enough to carry it.
+  if (o.sign && bb.w > 15) {
+    channelSign(B, bb.cx, y + ph + 1.4, bb.cz + bb.d * 0.30,
+      Math.min(bb.w * 0.62, 22), 2.4 + r() * 1.4, 0, r, B.neon);
   }
 }
 
@@ -688,7 +1207,26 @@ function podium(B, plan, h, r, glassMat, opts = {}) {
     }
   }
   B.trim(slabGeo(plan, h - 0.55, 0.62, 0.95), opts.bandHex || P.CONCRETE_WARM);
-  canopy(B, Math.min(bb.w * 0.5, 13), head - 0.6, bb.z1, 3.0, opts.canopyHex || P.CHROME);
+  const cw = Math.min(bb.w * 0.5, 13);
+  canopy(B, cw, head - 0.6, bb.z1, 3.0, opts.canopyHex || P.CHROME);
+
+  /* --- what the player actually drives past ----------------------------- */
+  // Lit fascia over the shopfront: the band that makes a podium read as retail
+  // rather than as a plinth, and the thing that carries the block at night.
+  if (opts.sign !== false) {
+    B.lit(loft([
+      { p: offsetPlan(plan, 0.62), y: head + 0.05 },
+      { p: offsetPlan(plan, 0.62), y: head + 0.62 },
+    ], {}), opts.neon || B.neon);
+  }
+  // Planters flanking the entrance, and the street number beside the door.
+  const px = cw / 2 + 1.6;
+  for (const sx of [-1, 1]) {
+    if (px > bb.w * 0.46) break;
+    B.trim(box(2.2, 0.85, 1.1, sx * px, 0, bb.z1 - 0.6, 2), opts.planterHex || P.PLANTER);
+    B.trim(box(1.9, 0.34, 0.85, sx * px, 0.85, bb.z1 - 0.6, 2), P.HEDGE);
+  }
+  addressPlate(B, -cw / 2 - 0.9, 3.1, bb.z1, P.SIGN_DARK);
   return head;
 }
 
@@ -699,13 +1237,29 @@ function canopy(B, w, y, zFace, proj, hex) {
   B.trim(box(0.16, 1.1, 0.16, w / 2 - 0.5, y - 1.1, zFace + proj - 0.4, 2), P.STEEL);
 }
 
-/** A stack of projecting balcony slabs with a slim balustrade. */
-function balconyStack(B, plan, y0, y1, step, proj, slabHex, railHex) {
-  for (let y = y0; y < y1 - 1; y += step) {
-    B.trim(slabGeo(plan, y, 0.24, proj), slabHex);
-    B.trim(parapetGeo(offsetPlan(plan, proj), y + 0.24, 1.0, 0.09), railHex);
+/**
+ * A stack of projecting balcony slabs with a slim balustrade.
+ *
+ * `mode` is the anti-repetition knob and it costs nothing: the same number of
+ * rings, but the projection varies floor to floor, which is the difference
+ * between a comb and a building. 'wave' is the Brickell undulating condo,
+ * 'zig' the alternating deep/shallow terrace, 'taper' the ziggurat.
+ */
+function balconyStack(B, plan, y0, y1, step, proj, slabHex, railHex, mode = 'flat') {
+  const n = Math.max(1, Math.floor((y1 - 1 - y0) / step));
+  let i = 0;
+  for (let y = y0; y < y1 - 1; y += step, i++) {
+    let p = proj;
+    if (mode === 'wave') p = proj * (0.55 + 0.45 * (1 + Math.sin(i * 0.85)) / 2 + 0.2);
+    else if (mode === 'zig') p = i % 2 ? proj * 0.42 : proj;
+    else if (mode === 'taper') p = proj * (1 - 0.55 * (i / Math.max(1, n)));
+    else if (mode === 'grow') p = proj * (0.45 + 0.55 * (i / Math.max(1, n)));
+    B.trim(slabGeo(plan, y, 0.24, p), slabHex);
+    B.trim(parapetGeo(offsetPlan(plan, p), y + 0.24, 1.0, 0.09), railHex);
   }
 }
+
+const BALCONY_MODES = [['flat', 26], ['wave', 24], ['zig', 22], ['taper', 14], ['grow', 14]];
 
 /** Vertical fins running the height of a shaft — cheap, huge silhouette win. */
 function fins(B, plan, y0, y1, count, depth, hex) {
@@ -725,101 +1279,288 @@ function fins(B, plan, y0, y1, count, depth, hex) {
 
 /* ============================================================ towers ==== */
 
-/** Pick a plan archetype. This is where skyline variety actually comes from. */
-function shaftPlan(r, w, d, kind) {
+/**
+ * Pick a plan archetype. This is where skyline variety actually comes from.
+ *
+ * Every one of these is CONVEX — see the note above polyPlan. The variety is in
+ * side count, chamfer depth, taper and asymmetry, all of which survive being
+ * offset, inset, capped and populated.
+ */
+function shaftPlan(r, w, d, kind, seedPhase = 0) {
+  const m = Math.min(w, d);
   switch (kind) {
     case 'ellipse': return ellipsePlan(w, d, 16);
-    case 'bow': return bowPlan(w, d, Math.min(w, d) * 0.16);
-    case 'chamferHard': return rectPlan(w, d, Math.min(w, d) * 0.28);
-    case 'slab': return rectPlan(w, d, Math.min(w, d) * 0.10);
-    default: return rectPlan(w, d, Math.min(w, d) * 0.16);
+    case 'lens': return lensPlan(w, d, m * 0.14);
+    case 'bow': return bowPlan(w, d, m * 0.16);
+    case 'hex': return polyPlan(w, d, 6, seedPhase);
+    case 'octa': return polyPlan(w, d, 8, Math.PI / 8);
+    case 'wedge': return wedgePlan(w, d, 0.26 + 0.16 * seedPhase, m * 0.12);
+    case 'cut': return cornerCutPlan(w, d, m * 0.42, seedPhase < 0.5 ? 1 : -1, 1);
+    case 'chamferHard': return rectPlan(w, d, m * 0.28);
+    case 'slab': return rectPlan(w, d, m * 0.10);
+    default: return rectPlan(w, d, m * 0.16);
   }
 }
 
+/** Weighted plan menu. Kept here so towers and twins draw from one table. */
+const PLAN_MENU = [
+  ['chamfer', 24], ['slab', 15], ['ellipse', 10], ['bow', 10], ['chamferHard', 10],
+  ['hex', 8], ['octa', 8], ['wedge', 7], ['lens', 8], ['cut', 6],
+];
+
+const CROWN_MENU = [
+  ['step', 15], ['taper', 10], ['plant', 14], ['blade', 8], ['dome', 9],
+  ['spire', 10], ['fins', 9], ['hat', 8], ['lantern', 8], ['ring', 9],
+];
+
 /**
- * Crown the shaft. Every tower gets a top — a stepped cap, a sculpted taper or
- * a mechanical penthouse with a mast — because a flat-topped shaft is the
- * loudest "procedural city" tell there is.
+ * Crown the shaft. Every tower gets a top, because a flat-topped shaft is the
+ * loudest "procedural city" tell there is — but they must not all get the SAME
+ * top, which is the second loudest. Ten shapes, and the mast is now optional:
+ * an aviation mast on every single roof was itself a repeat.
  */
 function crown(B, plan, y, r, opt = {}) {
   const bb = planBounds(plan);
-  const kind = opt.kind || r.weighted([['step', 34], ['taper', 22], ['plant', 28], ['blade', 16]]);
-  const litHex = opt.litHex || P.NEON_AQUA;
+  const cx = bb.cx, cz = bb.cz;
+  const m = Math.min(bb.w, bb.d);
+  const kind = opt.kind || r.weighted(CROWN_MENU);
+  const litHex = opt.litHex || B.neon;
+  const lit = opt.lit;
   let top = y;
 
   if (kind === 'step') {
     let p = plan, yy = y;
-    for (let i = 0; i < 3; i++) {
+    const n = 2 + Math.floor(r() * 3);
+    for (let i = 0; i < n; i++) {
       const h = 3.2 + r() * 3.4;
       B.trim(loft([{ p, y: yy }, { p, y: yy + h }], { capTop: false }), i % 2 ? P.CONCRETE : P.PRECAST);
       B.trim(slabGeo(p, yy + h, 0.42, 0.7), P.CONCRETE_WARM);
       yy += h + 0.42;
-      p = insetPlan(p, Math.min(bb.w, bb.d) * 0.11);
+      p = insetPlan(p, m * 0.11);
       if (Math.hypot(planBounds(p).w, planBounds(p).d) < 6) break;
     }
     B.trim(loft([{ p, y: yy }], { capTop: true }), P.ROOF_GRAVEL);
-    if (opt.lit) B.lit(loft([{ p: offsetPlan(plan, 0.25), y: y + 1.2 }, { p: offsetPlan(plan, 0.25), y: y + 2.0 }], {}), litHex);
+    if (lit) litBand(B, plan, y + 1.2, 0.9, 0.25, litHex);
     top = yy;
   } else if (kind === 'taper') {
-    const p2 = insetPlan(plan, Math.min(bb.w, bb.d) * 0.3);
+    const p2 = insetPlan(plan, m * 0.3);
     const h = 7 + r() * 9;
     B.trim(loft([{ p: plan, y }, { p: p2, y: y + h }], { capTop: true }), P.PRECAST);
+    if (lit) litBand(B, plan, y + 0.4, 0.7, 0.2, litHex);
     top = y + h;
   } else if (kind === 'blade') {
     B.trim(parapetGeo(plan, y, 1.5, 0.5), P.PARAPET);
-    const bw = Math.min(bb.w, bb.d) * 0.34;
+    const bw = m * 0.34;
     const h = 10 + r() * 14;
-    B.trim(loft([{ p: rectPlan(bw, bb.d * 0.5, 0.5), y }, { p: rectPlan(bw * 0.6, bb.d * 0.34, 0.4), y: y + h }], { capTop: true }), P.CONCRETE);
-    if (opt.lit) B.lit(box(bw * 0.35, h * 0.8, 0.5, 0, y + 1, bb.d * 0.25, 3), litHex);
+    B.trim(loft([
+      { p: movePlan(rectPlan(bw, bb.d * 0.5, 0.5), cx, cz), y },
+      { p: movePlan(rectPlan(bw * 0.6, bb.d * 0.34, 0.4), cx, cz), y: y + h },
+    ], { capTop: true }), P.CONCRETE);
+    if (lit) B.lit(box(bw * 0.35, h * 0.8, 0.5, cx, y + 1, cz + bb.d * 0.25, 3), litHex);
     top = y + h;
+  } else if (kind === 'dome') {
+    /* Stepped drum + cap. The Deco/Mediterranean top that breaks up a row of
+       flat-capped glass shafts more than any other single shape. */
+    B.trim(parapetGeo(plan, y, 1.1, 0.45), P.PARAPET);
+    const rr = m * 0.44;
+    B.trim(cyl(rr, 2.4, 14, cx, y + 1.1, cz), P.STUCCO_WHITE);
+    B.trim(cyl(rr * 1.10, 0.5, 14, cx, y + 3.5, cz), P.CONCRETE_WARM);
+    B.trim(cyl(rr * 0.94, 2.6, 14, cx, y + 4.0, cz, rr * 0.52), P.TERRACOTTA);
+    B.trim(cyl(rr * 0.52, 1.2, 12, cx, y + 6.6, cz, rr * 0.12), P.TERRACOTTA);
+    if (lit) B.lit(cyl(rr * 1.03, 0.55, 14, cx, y + 1.5, cz), litHex);
+    top = y + 7.8;
+  } else if (kind === 'spire') {
+    /* Setback drum then a long tapered spire. This is how you get one tower to
+       read as taller than its neighbours without adding a single storey. */
+    B.trim(parapetGeo(plan, y, 1.3, 0.45), P.PARAPET);
+    let p = insetPlan(plan, m * 0.20);
+    const h1 = 5 + r() * 6;
+    B.trim(loft([{ p, y: y + 1.3 }, { p: insetPlan(p, m * 0.12), y: y + 1.3 + h1 }], { capTop: true }), P.PRECAST);
+    const sh = 14 + r() * 22;
+    B.trim(cyl(m * 0.13, sh, 8, cx, y + 1.3 + h1, cz, m * 0.018), P.ALUMINIUM);
+    if (lit) {
+      for (let i = 0; i < 3; i++) {
+        B.lit(cyl(m * 0.11 * (1 - i * 0.28), 0.5, 8, cx, y + 1.3 + h1 + sh * (0.12 + i * 0.28), cz), litHex);
+      }
+    }
+    top = y + 1.3 + h1 + sh;
+  } else if (kind === 'fins') {
+    /* Four raking fins past the parapet — the Brickell "crown of blades". */
+    B.trim(parapetGeo(plan, y, 1.4, 0.45), P.PARAPET);
+    B.trim(loft([{ p: offsetPlan(plan, -0.6), y: y + 0.1 }], { capTop: true, uScale: 3 }), P.ROOF_GRAVEL);
+    const fh = 8 + r() * 12;
+    const n = 4 + Math.floor(r() * 3);
+    for (let i = 0; i < n; i++) {
+      const t = (i / n) * plan.length;
+      const a = plan[Math.floor(t) % plan.length], b = plan[(Math.floor(t) + 1) % plan.length];
+      const f = t - Math.floor(t);
+      const px = a[0] + (b[0] - a[0]) * f, pz = a[1] + (b[1] - a[1]) * f;
+      const nn = edgeN(a, b);
+      const g = box(0.7, fh, 1.4, 0, y, 0, 3);
+      g.rotateY(Math.atan2(nn[0], nn[1]));
+      g.translate(px, 0, pz);
+      B.trim(g, P.CONCRETE);
+      if (lit) {
+        const l = box(0.34, fh * 0.86, 0.3, 0, y + 0.6, 0, 2);
+        l.rotateY(Math.atan2(nn[0], nn[1]));
+        l.translate(px + nn[0] * 0.6, 0, pz + nn[1] * 0.6);
+        B.lit(l, litHex);
+      }
+    }
+    const mech = insetPlan(plan, m * 0.28);
+    B.trim(loft([{ p: mech, y: y + 1.5 }, { p: mech, y: y + 1.5 + fh * 0.55 }], { capTop: true }), P.CONCRETE_DARK);
+    top = y + fh;
+  } else if (kind === 'hat') {
+    /* Pitched cap. Reads as masonry, so it is what breaks a run of glass. */
+    B.trim(slabGeo(plan, y, 0.6, 0.9), P.CONCRETE_WARM);
+    const h = 4 + r() * 5;
+    B.trim(loft([
+      { p: offsetPlan(plan, 0.5), y: y + 0.6 },
+      { p: insetPlan(plan, m * 0.42), y: y + 0.6 + h },
+    ], { capTop: true }), r.chance(0.5) ? P.TERRACOTTA : P.ROOF_DARK);
+    if (lit) litBand(B, plan, y - 0.9, 0.7, 0.3, litHex);
+    top = y + 0.6 + h;
+  } else if (kind === 'lantern') {
+    /* Open steel frame with a glowing box in it — the classic Miami beacon. */
+    B.trim(parapetGeo(plan, y, 1.2, 0.45), P.PARAPET);
+    const p = insetPlan(plan, m * 0.26);
+    const pb = planBounds(p);
+    const h = 8 + r() * 8;
+    for (let i = 0; i < p.length; i += Math.max(1, Math.round(p.length / 4))) {
+      B.trim(box(0.42, h, 0.42, p[i][0], y + 1.2, p[i][1], 2), P.STEEL_DARK);
+    }
+    B.trim(slabGeo(p, y + 1.2 + h, 0.4, 0.6), P.CONCRETE);
+    B.lit(loft([{ p: insetPlan(p, 0.5), y: y + 2.2 }, { p: insetPlan(p, 0.5), y: y + h - 0.4 }],
+      { capTop: true }), litHex);
+    B.trim(cyl(pb.w * 0.16, 3.0, 8, cx, y + 1.6 + h, cz, pb.w * 0.03), P.ALUMINIUM);
+    top = y + 1.6 + h + 3;
   } else {
-    B.trim(parapetGeo(plan, y, 1.6, 0.5), P.PARAPET);
-    roofScape(B, offsetPlan(plan, -0.6), y + 0.1, r, { helipad: opt.helipad, parapetH: 0.9 });
-    const pw = Math.min(bb.w * 0.5, 11), pd = Math.min(bb.d * 0.5, 9);
-    B.trim(loft([{ p: rectPlan(pw, pd, 1.2), y: y + 1.7 }, { p: rectPlan(pw, pd, 1.2), y: y + 6.4 }], { capTop: true }), P.CONCRETE_DARK);
-    top = y + 6.4;
+    /* 'ring' and 'plant' both end in a mechanical penthouse; the ring gets a
+       deep projecting cornice first, which changes the silhouette completely. */
+    if (kind === 'ring') {
+      B.trim(slabGeo(plan, y, 0.9, Math.min(1.8, m * 0.09)), P.CONCRETE_WARM);
+      if (lit) litBand(B, plan, y + 0.9, 0.8, Math.min(1.9, m * 0.095), litHex);
+      B.trim(parapetGeo(insetPlan(plan, 1.4), y + 0.9, 1.2, 0.4), P.PARAPET);
+      roofScape(B, insetPlan(plan, 2.0), y + 1.0, r, {
+        helipad: opt.helipad, parapetH: 0.8, tank: false, sign: lit && r.chance(0.5),
+      });
+      top = y + 1.0;
+    } else {
+      B.trim(parapetGeo(plan, y, 1.6, 0.5), P.PARAPET);
+      roofScape(B, offsetPlan(plan, -0.6), y + 0.1, r, {
+        helipad: opt.helipad, parapetH: 0.9, sign: lit && r.chance(0.5),
+      });
+      top = y + 0.1;
+    }
+    const ph = 4.2 + r() * 4.0;
+    const pw = Math.min(bb.w * (0.34 + r() * 0.26), 13), pd = Math.min(bb.d * (0.34 + r() * 0.24), 11);
+    const pp = movePlan(rectPlan(pw, pd, 1.2), cx + (r() - 0.5) * bb.w * 0.1, cz);
+    B.trim(loft([{ p: pp, y: top + 1.6 }, { p: pp, y: top + 1.6 + ph }], { capTop: true }), P.CONCRETE_DARK);
+    B.trim(slabGeo(pp, top + 1.6 + ph, 0.3, 0.4), P.PARAPET);
+    top = top + 1.9 + ph;
   }
 
-  // Mast + aviation light: reads at 400 m and costs 40 triangles.
-  const mh = 6 + r() * 12;
-  B.trim(cyl(0.5, mh, 6, 0, top, 0, 0.16), P.ALUMINIUM);
-  if (opt.lit) B.lit(cyl(0.45, 0.45, 6, 0, top + mh, 0), P.LIGHT_RED);
-  else B.trim(cyl(0.45, 0.45, 6, 0, top + mh, 0), P.LIGHT_RED);
-  return top + mh;
+  // Mast + aviation light. Optional now: one on every roof in the city was
+  // itself a repeat, and the shapes above already carry the silhouette.
+  if (opt.mast ?? r.chance(0.5)) {
+    const mh = 6 + r() * 12;
+    B.trim(cyl(0.5, mh, 6, cx, top, cz, 0.16), P.ALUMINIUM);
+    if (lit) B.lit(cyl(0.45, 0.45, 6, cx, top + mh, cz), P.LIGHT_RED);
+    else B.trim(cyl(0.45, 0.45, 6, cx, top + mh, cz), P.LIGHT_RED);
+    return top + mh;
+  }
+  return top;
+}
+
+/**
+ * How the shaft of a glass tower is articulated. This is the second variety
+ * axis after the plan: two towers with the same plan and different treatments
+ * do not read as the same asset, and the whole point of this module is that no
+ * two neighbours do.
+ */
+const FACADE_MENU = [
+  ['fin', 22],      // vertical mullion fins, office language
+  ['band', 20],     // horizontal spandrel courses, ribbon-window language
+  ['grid', 14],     // both — a deep punched grid
+  ['sleek', 12],    // corner columns only; the hero towers stay quiet
+  ['brise', 12],    // brise-soleil: deep shading fins on one axis
+  ['resi', 20],     // balcony slabs
+];
+
+/** Deep sun-shading fins over the glass, on a coarse rhythm. Tropical Modern. */
+function briseSoleil(B, plan, y0, y1, step, depth, hex) {
+  for (let y = y0; y < y1 - 1; y += step) {
+    B.trim(slabGeo(plan, y, 0.18, depth), hex);
+  }
+}
+
+/** Expressed corner columns — makes a plain glass box read as built, not extruded. */
+function cornerColumns(B, plan, y0, y1, size, hex) {
+  const n = plan.length;
+  const stride = Math.max(1, Math.round(n / 4));
+  for (let i = 0; i < n; i += stride) {
+    const p = plan[i];
+    const nn = pointNormals(plan)[i];
+    const g = box(size, y1 - y0, size, 0, y0, 0, 3);
+    g.rotateY(Math.atan2(nn[0], nn[1]));
+    g.translate(p[0] + nn[0] * size * 0.18, 0, p[1] + nn[1] * size * 0.18);
+    B.trim(g, hex);
+  }
 }
 
 /**
  * A Brickell tower: retail podium with a canopy, an articulated shaft with
  * setbacks and an expressed service core, and a crown.
+ *
+ * `o.shift` slides the shaft off the parcel centre so a lower wing can sit
+ * beside it (see `shoulder` in towerBlock). The combined bounding box is still
+ * the parcel, which is what the consumption footprint measures, so the physics
+ * circle stays centred on the building the player can see.
  */
 function tower(ctx, B, r, w, d, h, o = {}) {
   const gt = o.glassTint ?? r.pick(GLASS_TINTS);
   const cm = curtainMat(gt);
   const podH = o.podiumH ?? (o.podium ? 8 + r() * 9 : 0);
-  const resi = o.resi ?? r.chance(0.45);
+  const facade = o.facade || (o.resi === true ? 'resi' : r.weighted(FACADE_MENU));
+  const resi = facade === 'resi';
+  const shift = o.shift || 0;
+  const mv = (p) => (shift ? movePlan(p, shift, 0) : p);
 
   /* --- podium ---------------------------------------------------------- */
   let baseTop = 0;
   if (podH > 2) {
-    const pp = rectPlan(w * 1.10, d * 1.10, Math.min(w, d) * 0.09);
-    podium(B, pp, podH, r, cm);
+    // Never wider than the parcel: the podium is the piece that actually meets
+    // the pavement, so it is the piece that ends up on the kerb if it is not
+    // clamped. o.lotW/lotD are the real lot; w/d are the shaft.
+    const pw = Math.min(w * 1.10, o.lotW ?? w * 1.10);
+    const pd = Math.min(d * 1.10, o.lotD ?? d * 1.10);
+    const pp = rectPlan(pw, pd, Math.min(pw, pd) * 0.09);
+    podium(B, pp, podH, r, cm, { sign: o.sign, neon: B.neon });
     roofScape(B, offsetPlan(pp, -1.6), podH + 0.05, r, {
-      tank: false, parapetH: 1.0, avoid: offsetPlan(rectPlan(w, d, 0), 2.5),
+      tank: false, parapetH: 1.0, pool: r.chance(0.30),
+      avoid: offsetPlan(mv(rectPlan(w, d, 0)), 2.5),
     });
     baseTop = podH;
   }
 
   /* --- shaft ----------------------------------------------------------- */
-  const kind = o.planKind || r.weighted([
-    ['chamfer', 34], ['slab', 20], ['ellipse', 14], ['bow', 16], ['chamferHard', 16],
-  ]);
-  const twist = !o.noTwist && r.chance(0.16) ? (r() < 0.5 ? -1 : 1) * (0.10 + r() * 0.14) : 0;
-  const smooth = kind === 'ellipse' || kind === 'bow';
+  const kind = o.planKind || r.weighted(PLAN_MENU);
+  const twist = !o.noTwist && r.chance(0.18) ? (r() < 0.5 ? -1 : 1) * (0.10 + r() * 0.16) : 0;
+  const smooth = kind === 'ellipse' || kind === 'bow' || kind === 'lens';
+  const phase = r();
 
-  const sections = 1 + (h > 70 ? 1 : 0) + (h > 130 ? 1 : 0);
+  // Setback count is a massing decision, not a height lookup: a 60 m tower that
+  // steps twice and a 160 m tower that runs straight are both real buildings,
+  // and drawing the count from the height is exactly what made every tall
+  // tower in the ridge share a silhouette.
+  const maxSect = 1 + (h > 62 ? 1 : 0) + (h > 120 ? 1 : 0);
+  const sections = o.sections ?? Math.max(1, Math.min(maxSect, r.weighted([[1, 30], [2, 40], [3, 30]])));
   let y = baseTop, pw = w, pd = d;
-  let plan = shaftPlan(r, pw, pd, kind);
+  let plan = mv(shaftPlan(r, pw, pd, kind, phase));
   const shaftTop = h;
+  const railHex = r.pick([P.GLASS_SKY, P.ALUMINIUM, P.MULLION, P.GLASS_AQUA]);
+  const balMode = r.weighted(BALCONY_MODES);
+  const finHex = r.chance(0.5) ? P.MULLION : P.CONCRETE;
 
   for (let s = 0; s < sections; s++) {
     const isLast = s === sections - 1;
@@ -834,28 +1575,58 @@ function tower(ctx, B, r, w, d, h, o = {}) {
     B.gl(loft(rings, { uScale: CW_U, vScale: CW_V, smooth, capTop: false, capBottom: false }), cm);
 
     // Expressed service core: a solid slot of masonry riding up one face.
-    if (s === 0 && r.chance(0.55)) {
+    if (s === 0 && r.chance(0.45)) {
       const cw = Math.min(pw, pd) * 0.30;
-      B.trim(loft([{ p: rectPlan(cw, pd * 0.42, 0.5), y: baseTop }, { p: rectPlan(cw, pd * 0.42, 0.5), y: shaftTop + 2 + r() * 6 }], { uScale: 5, vScale: 5, capTop: true }), r.chance(0.5) ? P.CONCRETE : P.CONCRETE_DARK);
+      const cp = movePlan(rectPlan(cw, pd * 0.42, 0.5), shift, 0);
+      B.trim(loft([{ p: cp, y: baseTop }, { p: cp, y: shaftTop + 2 + r() * 6 }],
+        { uScale: 5, vScale: 5, capTop: true }), r.chance(0.5) ? P.CONCRETE : P.CONCRETE_DARK);
     }
-    if (resi) {
-      balconyStack(B, rotPlan(plan, twist * y / 60), y + 3.4, segTop, STOREY * (r.chance(0.5) ? 1 : 2),
-        1.25, P.CONCRETE_WARM, r.chance(0.5) ? P.GLASS_SKY : P.ALUMINIUM);
-    } else {
-      fins(B, plan, y + 1, segTop, 8 + Math.round(r() * 6), 0.55, r.chance(0.5) ? P.MULLION : P.CONCRETE);
-      for (let yy = y + STOREY * 4; yy < segTop - 2; yy += STOREY * 4) {
-        B.trim(slabGeo(plan, yy, 0.34, 0.34), P.CONCRETE_WARM);
-      }
+
+    const fp = rotPlan(plan, twist * y / 60);
+    switch (facade) {
+      case 'resi':
+        balconyStack(B, fp, y + 3.4, segTop, STOREY * (r.chance(0.55) ? 1 : 2),
+          1.25, P.CONCRETE_WARM, railHex, balMode);
+        break;
+      case 'band':
+        for (let yy = y + STOREY; yy < segTop - 2; yy += STOREY) {
+          B.trim(slabGeo(plan, yy, 0.42, 0.42), P.CONCRETE_WARM);
+        }
+        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.09, P.PRECAST);
+        break;
+      case 'grid':
+        fins(B, plan, y + 1, segTop, 10 + Math.round(r() * 8), 0.5, finHex);
+        for (let yy = y + STOREY * 2; yy < segTop - 2; yy += STOREY * 2) {
+          B.trim(slabGeo(plan, yy, 0.3, 0.36), P.CONCRETE_WARM);
+        }
+        break;
+      case 'sleek':
+        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.075, P.MULLION);
+        for (let yy = y + STOREY * 6; yy < segTop - 2; yy += STOREY * 6) {
+          B.trim(slabGeo(plan, yy, 0.5, 0.3), P.CONCRETE_WARM);
+        }
+        break;
+      case 'brise':
+        briseSoleil(B, plan, y + STOREY, segTop, STOREY * 1.5, 0.9, P.MULLION);
+        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.085, P.PRECAST);
+        break;
+      default:
+        fins(B, plan, y + 1, segTop, 8 + Math.round(r() * 6), 0.55, finHex);
+        for (let yy = y + STOREY * 4; yy < segTop - 2; yy += STOREY * 4) {
+          B.trim(slabGeo(plan, yy, 0.34, 0.34), P.CONCRETE_WARM);
+        }
     }
+
     // Setback: the terrace roof it creates is prime 3/4-camera real estate.
     if (!isLast) {
       B.trim(slabGeo(plan, segTop, 0.5, 1.1), P.CONCRETE_WARM);
+      pw *= 0.78 + r() * 0.14; pd *= 0.78 + r() * 0.14;
+      const next = mv(shaftPlan(r, pw, pd, kind, phase));
       roofScape(B, offsetPlan(plan, 0.6), segTop + 0.5, r, {
-        tank: false, parapetH: 1.0, pool: resi && r.chance(0.5),
-        avoid: offsetPlan(shaftPlan(r, pw * 0.82, pd * 0.82, kind), 2.5),
+        tank: false, parapetH: 1.0, pool: resi && r.chance(0.65),
+        avoid: offsetPlan(next, 2.5),
       });
-      pw *= 0.80 + r() * 0.10; pd *= 0.80 + r() * 0.10;
-      plan = shaftPlan(r, pw, pd, kind);
+      plan = next;
     }
     y = segTop;
   }
@@ -863,7 +1634,7 @@ function tower(ctx, B, r, w, d, h, o = {}) {
   const capPlan = rotPlan(plan, twist * y / 60);
   return crown(B, capPlan, y, r, {
     lit: o.lit, litHex: o.litHex, helipad: o.helipad ?? (h > 120 && r.chance(0.5)),
-    kind: o.crownKind,
+    kind: o.crownKind, mast: o.mast,
   });
 }
 
@@ -876,44 +1647,69 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
   const cham = Math.min(w, d) * (r.chance(0.4) ? 0.22 : 0.13);
   const uS = B.sk.uScale, vS = B.sk.vScale;
   const podH = o.podiumH || 0;
+  const shift = o.shift || 0;
+  const mv = (p) => (shift ? movePlan(p, shift, 0) : p);
   let y = 0;
 
   if (podH > 2) {
-    const pp = rectPlan(w * 1.12, d * 1.12, cham);
+    const pw = Math.min(w * 1.12, o.lotW ?? w * 1.12);
+    const pd = Math.min(d * 1.12, o.lotD ?? d * 1.12);
+    const pp = rectPlan(pw, pd, Math.min(pw, pd) * 0.11);
     podium(B, pp, podH, r, null, {
-      wallHex: P.STUCCO_WHITE, canopyHex: r.pick(FABRIC_COLORS), pierHex: P.STUCCO_WHITE,
+      wallHex: o.trimHex || P.STUCCO_WHITE, canopyHex: r.pick(FABRIC_COLORS),
+      pierHex: o.trimHex || P.STUCCO_WHITE, neon: B.neon,
     });
     roofScape(B, offsetPlan(pp, -1.8), podH + 0.05, r, {
-      tank: false, parapetH: 1.0, pool: r.chance(0.3),
-      avoid: offsetPlan(rectPlan(w, d, 0), 2.6),
+      tank: false, parapetH: 1.0, pool: r.chance(0.55),
+      avoid: offsetPlan(mv(rectPlan(w, d, 0)), 2.6),
     });
     y = podH;
   }
 
-  const sections = h > 115 ? 3 : h > 62 ? 2 : 1;
-  let plan = r.chance(0.18) ? ellipsePlan(w, d, 14) : rectPlan(w, d, cham);
-  const rail = r.pick([P.GLASS_SKY, P.ALUMINIUM, P.STUCCO_WHITE, P.GLASS_AQUA]);
+  const maxSect = h > 110 ? 3 : h > 58 ? 2 : 1;
+  const sections = Math.max(1, Math.min(maxSect, r.weighted([[1, 34], [2, 40], [3, 26]])));
+  const kind = o.planKind || r.weighted([
+    ['chamfer', 26], ['slab', 18], ['ellipse', 12], ['lens', 12],
+    ['bow', 10], ['hex', 8], ['wedge', 8], ['cut', 6],
+  ]);
+  const phase = r();
+  let plan = mv(shaftPlan(r, w, d, kind, phase));
+  const trim = o.trimHex || P.STUCCO_WHITE;
+  const rail = r.pick([P.GLASS_SKY, P.ALUMINIUM, P.STUCCO_WHITE, P.GLASS_AQUA, P.MULLION]);
   const step = STOREY * (h > 55 ? 2 : 1);
+  const mode = r.weighted(BALCONY_MODES);
+  let pw = w, pd = d;
   for (let sct = 0; sct < sections; sct++) {
     const last = sct === sections - 1;
     const want = last ? h : y + (h - podH) * (0.30 + r() * 0.14);
     const segTop = Math.min(h - 2, Math.max(y + 14, want));
     B.face(loft([{ p: plan, y }, { p: plan, y: segTop }], { uScale: uS, vScale: vS, capTop: false }));
-    balconyStack(B, plan, y + STOREY, segTop, step, 1.05, P.STUCCO_WHITE, rail);
-    if (r.chance(0.35)) fins(B, plan, y, segTop, 4, 0.85, P.STUCCO_WHITE);
+    balconyStack(B, plan, y + STOREY, segTop, step, 1.05, trim, rail, mode);
+    if (r.chance(0.35)) fins(B, plan, y, segTop, 4, 0.85, trim);
     if (!last) {
-      B.trim(slabGeo(plan, segTop, 0.55, 1.5), P.STUCCO_WHITE);
-      const next = insetPlan(plan, 2.2 + r() * 3.4);
+      B.trim(slabGeo(plan, segTop, 0.55, 1.5), trim);
+      pw *= 0.78 + r() * 0.12; pd *= 0.78 + r() * 0.12;
+      const next = mv(shaftPlan(r, pw, pd, kind, phase));
       roofScape(B, offsetPlan(plan, 0.9), segTop + 0.55, r, {
-        tank: false, parapetH: 1.0, pool: r.chance(0.26), avoid: offsetPlan(next, 2.0),
+        tank: false, parapetH: 1.0, pool: r.chance(0.55), avoid: offsetPlan(next, 2.0),
       });
       plan = next;
     }
     y = segTop;
   }
+  // A neon blade down the corner of a pastel condo is the single most Miami
+  // thing in the file, and it is what makes the residential half of the
+  // skyline visible at midnight instead of a row of black cutouts.
+  if (o.lit && r.chance(0.55)) {
+    const bb = planBounds(plan);
+    neonBlade(B, bb.x1 - 0.4, bb.cz, Math.max(podH, 6), y - 4, Math.PI / 2, B.neon, 1.1);
+  }
   return crown(B, plan, y, r, {
-    lit: o.lit, litHex: P.NEON_AQUA, helipad: o.helipad,
-    kind: r.weighted([['plant', 46], ['step', 34], ['taper', 20]]),
+    lit: o.lit, helipad: o.helipad, mast: o.mast,
+    kind: o.crownKind || r.weighted([
+      ['plant', 16], ['step', 16], ['taper', 10], ['dome', 16],
+      ['hat', 12], ['ring', 12], ['spire', 10], ['lantern', 8],
+    ]),
   });
 }
 
@@ -935,26 +1731,52 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
   const reach = Math.min(deco ? 0.6 : 1.15, Math.min(w, d) * 0.06);
   const pw = Math.max(5, w - 2 * reach), pd = Math.max(5, d - 2 * reach);
   const cham = Math.min(pw, pd) * (deco ? 0.10 : 0.16);
-  let plan = rectPlan(pw, pd, cham);
+  // A midrise does not have to be a rectangle either. Chamfered, octagonal and
+  // corner-cut plans all fit the same lot and none of them read as the box next
+  // to them; the plan is drawn once and every setback inherits it.
+  const mk = r.weighted([['chamfer', 44], ['slab', 18], ['octa', 12], ['cut', 12],
+    ['ellipse', 6], ['bow', 8]]);
+  let plan = deco ? rectPlan(pw, pd, cham) : shaftPlan(r, pw, pd, mk, r());
   const uS = B.sk.uScale, vS = B.sk.vScale;
+  const trim = o.trimHex || (r.chance(0.6) ? P.STUCCO_WHITE : P.CONCRETE_WARM);
 
-  const steps = h > 26 ? (deco ? 3 : 2) : 1;
+  const steps = h > 26 ? (deco ? r.int(2, 3) : r.int(1, 2)) : 1;
   let y = 0;
   const heights = [];
   for (let i = 0; i < steps; i++) heights.push((h / steps) * (i === steps - 1 ? 1 : 0.9 + r() * 0.2));
+  const bandMode = r.weighted(BALCONY_MODES);
+  // Facade language, drawn once for the whole building so the storeys agree.
+  const lang = deco ? 'deco' : r.weighted([['balcony', 40], ['loggia', 20], ['pier', 22], ['ribbon', 18]]);
 
   for (let i = 0; i < steps; i++) {
     const top = i === steps - 1 ? Math.max(y + 6, h) : y + heights[i];
     B.face(loft([{ p: plan, y }, { p: plan, y: top }], { uScale: uS, vScale: vS, capTop: false }));
 
-    // String courses every floor read as the Deco banding from the air.
-    if (deco) {
+    if (lang === 'deco') {
+      // String courses every floor read as the Deco banding from the air.
       for (let yy = y + STOREY; yy < top - 1; yy += STOREY) {
-        B.trim(slabGeo(plan, yy - 0.16, 0.3, Math.min(0.26, reach)), P.STUCCO_WHITE);
+        B.trim(slabGeo(plan, yy - 0.16, 0.3, Math.min(0.26, reach)), trim);
+      }
+    } else if (lang === 'pier') {
+      fins(B, plan, Math.max(y, 4.8), top - 0.5, Math.max(5, Math.round((pw + pd) / 7)),
+        Math.min(0.62, reach / 0.85), trim);
+      for (let yy = y + STOREY * 2; yy < top - 1; yy += STOREY * 2) {
+        B.trim(slabGeo(plan, yy, 0.26, Math.min(0.24, reach)), P.CONCRETE_WARM);
+      }
+    } else if (lang === 'ribbon') {
+      for (let yy = y + STOREY; yy < top - 1; yy += STOREY) {
+        B.trim(slabGeo(plan, yy - 0.2, 0.46, Math.min(0.5, reach)), trim);
+      }
+    } else if (lang === 'loggia') {
+      // Recessed balconies: a dark reveal band instead of a projecting slab.
+      for (let yy = y + STOREY; yy < top - 1; yy += STOREY * 2) {
+        B.trim(loft([{ p: offsetPlan(plan, -0.35), y: yy }, { p: offsetPlan(plan, -0.35), y: yy + 2.2 }],
+          { uScale: 4, vScale: 4 }), P.SPANDREL);
+        B.trim(parapetGeo(plan, yy, 1.0, 0.14), r.chance(0.5) ? P.ALUMINIUM : P.GLASS_SKY);
       }
     } else {
       balconyStack(B, plan, Math.max(y, STOREY), top - 1, STOREY * (r.chance(0.6) ? 1 : 2),
-        reach, P.STUCCO_WHITE, r.chance(0.5) ? P.ALUMINIUM : P.GLASS_SKY);
+        reach, trim, r.chance(0.5) ? P.ALUMINIUM : P.GLASS_SKY, bandMode);
     }
 
     B.trim(slabGeo(plan, top, 0.45, Math.min(0.55, reach)), P.CONCRETE_WARM);   // cornice
@@ -962,6 +1784,7 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
       const nextPlan = insetPlan(plan, 1.8 + r() * 2.6);
       roofScape(B, offsetPlan(plan, 0.2), top + 0.45, r, {
         tank: false, parapetH: 0.9, avoid: offsetPlan(nextPlan, 1.6),
+        pool: r.chance(0.30),
       });
       plan = nextPlan;
       if (planBounds(plan).w < 8 || planBounds(plan).d < 8) { y = top + 0.45; break; }
@@ -970,7 +1793,8 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
   }
 
   roofScape(B, plan, y, r, {
-    pool: !deco && r.chance(0.3), parapetHex: deco ? P.STUCCO_WHITE : P.PARAPET,
+    pool: !deco && r.chance(0.42), parapetHex: deco ? trim : P.PARAPET,
+    sign: o.sign ?? r.chance(0.28),
   });
   const roofTop = y + 2.5;
 
@@ -984,10 +1808,26 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
     // A fin sits proud of the face by 0.85x its depth, so it is the deepest
     // thing on the flank of a low midrise unless it is capped too.
     fins(B, base, 0.45, 4.6, Math.max(6, Math.round((pw + pd) / 6)),
-      Math.min(0.7, reach / 0.85), P.STUCCO_WHITE);
-    B.trim(slabGeo(base, 4.3, 0.55, Math.min(0.5, reach)), P.STUCCO_WHITE);
+      Math.min(0.7, reach / 0.85), trim);
+    B.trim(slabGeo(base, 4.3, 0.55, Math.min(0.5, reach)), trim);
+    // Lit fascia over the shopfront — the band that carries the street at
+    // night. Gated: an emissive band is a second mesh and therefore a second
+    // draw call on a building that would otherwise cost exactly one.
+    if (o.litFascia ?? r.chance(0.45)) {
+      B.lit(loft([{ p: offsetPlan(base, 0.05), y: 4.32 }, { p: offsetPlan(base, 0.05), y: 4.82 }], {}));
+    }
     if (r.chance(0.72)) awning(B, Math.min(pw * 0.62, 14), 4.2, bb2.z1 + 0.05, 1.9, 0.5, r.pick(FABRIC_COLORS));
     else canopy(B, Math.min(pw * 0.6, 14), 4.2, bb2.z1, 2.0, r.pick(FABRIC_COLORS));
+    // Planters at the base: what the player's hole actually drives past.
+    for (const sx of [-1, 1]) {
+      const px = sx * pw * 0.34;
+      B.trim(box(1.7, 0.7, 0.9, px, 0, bb2.z1 - 0.5, 2), P.PLANTER);
+      B.trim(box(1.45, 0.3, 0.7, px, 0.7, bb2.z1 - 0.5, 2), P.HEDGE);
+    }
+    // A vertical neon blade on the corner — Deco hotels wear these.
+    if (r.chance(0.30) && h > 12) {
+      neonBlade(B, bb2.x1 - 0.5, bb2.z1 - 0.9, 5.2, Math.min(h - 1.5, 5.2 + 12), 0, B.neon, 0.85);
+    }
   }
   return roofTop;
 }
@@ -1048,6 +1888,22 @@ function awning(B, w, y, zFace, proj, drop, hex) {
   B.band(g);
 }
 
+/**
+ * Projecting fascia box over a shopfront: a shallow tray whose faces are all
+ * mapped into the signage band, so it reads as a lit sign at night off the
+ * shared skin material.
+ */
+function fasciaBox(B, x, y, zFace, w, h) {
+  const g = box(w, h, 0.34, x, y, zFace + 0.17, 2);
+  const a = g.attributes.uv;
+  for (let i = 0; i < a.count; i++) {
+    a.setXY(i, 0.08 + (a.getX(i) % 1) * 0.84, SIGN_V0 + (SIGN_V1 - SIGN_V0) * 0.5);
+  }
+  a.needsUpdate = true;
+  B.band(g);
+  B.trim(box(w + 0.24, 0.14, 0.44, x, y + h, zFace + 0.22, 2), P.STEEL_DARK);
+}
+
 /** Projecting blade sign, front faces borrowed from the signage band. */
 function bladeSign(B, x, y, zFace, w, h) {
   const g = box(0.22, h, w, x, y, zFace + w / 2 + 0.2, 2);
@@ -1063,7 +1919,7 @@ function bladeSign(B, x, y, zFace, w, h) {
  * width, height, cornice, awning and signage, so the row never combs.
  */
 function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
-  const B = new Build(shopSkin(hex));
+  const B = new Build(shopSkin(hex), r.pick(NEON_SET));
   const floors = Math.max(1, Math.round(h / 5.0));
   const cham = Math.min(lw, ld) * 0.06;
   // One texture tile == exactly the shopfront, so the display window, awning
@@ -1081,7 +1937,8 @@ function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
   }));
 
   /* --- cornice + parapet. Vary the profile per unit. --------------------- */
-  const cor = r.weighted([['flat', 40], ['step', 30], ['curve', 30]]);
+  const cor = r.weighted([['flat', 24], ['step', 22], ['curve', 22], ['gable', 16], ['finial', 16]]);
+  const trimHex = r.pick([P.STUCCO_WHITE, P.STUCCO_CREAM, P.CONCRETE_WARM, P.STUCCO_SAND]);
   // The cornice projects 0.42 m, and on the flanks that is the PARTY WALL. A
   // terrace's cornice returns on its own frontage; it does not grow into the
   // shop next door. Hung off the full plan it made every unit 0.84 m wider
@@ -1091,32 +1948,67 @@ function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
   // neighbour's ground claimed by the wrong building's footprint.
   const COR = 0.42;
   B.trim(slabGeo(rectPlan(Math.max(2, lw - 2 * COR), ld, cham), h, 0.42, COR),
-    P.STUCCO_WHITE);
+    trimHex);
   if (cor === 'step') {
     B.trim(parapetGeo(plan, h + 0.42, 0.7, 0.4), P.CONCRETE_WARM);
     const cw = lw * 0.42;
-    B.trim(box(cw, 1.1, ld * 0.3, 0, h + 0.42, bb.z1 - ld * 0.16, 3), P.STUCCO_WHITE);
+    B.trim(box(cw, 1.1, ld * 0.3, 0, h + 0.42, bb.z1 - ld * 0.16, 3), trimHex);
   } else if (cor === 'curve') {
     B.trim(parapetGeo(plan, h + 0.42, 0.55, 0.4), P.CONCRETE_WARM);
-    B.trim(cyl(lw * 0.24, 0.5, 12, 0, h + 0.97, bb.z1 - ld * 0.14), P.STUCCO_WHITE);
+    B.trim(cyl(lw * 0.24, 0.5, 12, 0, h + 0.97, bb.z1 - ld * 0.14), trimHex);
+  } else if (cor === 'gable') {
+    // Stepped Deco gable over the frontage — three rising blocks, centred.
+    B.trim(parapetGeo(plan, h + 0.42, 0.6, 0.4), P.CONCRETE_WARM);
+    for (let i = 0; i < 3; i++) {
+      const gw = lw * (0.62 - i * 0.17);
+      if (gw < 1.2) break;
+      B.trim(box(gw, 0.75, Math.min(ld * 0.28, 1.6), 0, h + 0.42 + i * 0.75,
+        bb.z1 - Math.min(ld * 0.14, 0.8), 2.5), i % 2 ? trimHex : P.CONCRETE_WARM);
+    }
+  } else if (cor === 'finial') {
+    // Flat parapet with a pair of piers — the cheap Deco frontage, everywhere
+    // on Collins Ave and nowhere in the first version of this file.
+    B.trim(parapetGeo(plan, h + 0.42, 0.8, 0.4), P.CONCRETE_WARM);
+    for (const sx of [-1, 1]) {
+      B.trim(box(0.7, 1.5, 0.7, sx * (lw / 2 - 0.9), h + 0.42, bb.z1 - 0.5, 2), trimHex);
+      B.trim(box(0.9, 0.22, 0.9, sx * (lw / 2 - 0.9), h + 1.92, bb.z1 - 0.5, 2), P.CONCRETE_WARM);
+    }
   } else {
     B.trim(parapetGeo(plan, h + 0.42, 0.9, 0.4), P.CONCRETE_WARM);
   }
-  B.trim(loft([{ p: offsetPlan(plan, -0.4), y: h + 0.45 }], { capTop: true, uScale: 3 }), P.ROOF_GRAVEL);
+  B.trim(loft([{ p: offsetPlan(plan, -0.4), y: h + 0.45 }], { capTop: true, uScale: 3 }),
+    r.weighted(ROOF_SURFACE));
 
   /* --- roof plant. Small, but this is what a mid-game hole looks down on. */
-  const nAc = 1 + Math.floor(r() * 3);
+  const nAc = 1 + Math.floor(r() * 2);
   for (let i = 0; i < nAc; i++) {
-    const x = (r() - 0.5) * lw * 0.6, z = (r() - 0.5) * ld * 0.6;
-    if (r() < 0.6) acUnit(B, x, h + 0.5, z, 0.8 + r() * 0.4, r);
-    else ventStack(B, x, h + 0.5, z, 0.7);
+    const x = (r() - 0.5) * lw * 0.55, z = (r() - 0.5) * ld * 0.55;
+    if (r() < 0.55) acPack(B, x, h + 0.5, z, r.chance(0.5) ? 0 : Math.PI / 2, 0.8 + r() * 0.3, r);
+    else ventStack(B, x, h + 0.5, z, 0.8);
   }
   if (r.chance(0.3)) waterTank(B, (r() - 0.5) * lw * 0.4, h + 0.5, (r() - 0.5) * ld * 0.4, 0.55);
+  // Roof terrace on a taller unit: chairs and parasols read from the 3/4 camera
+  // and are exactly the nightlife the brief asks for.
+  if (h > 9 && lw > 9 && r.chance(0.35)) {
+    parasol(B, (r() - 0.5) * lw * 0.4, h + 0.5, bb.z1 - ld * 0.28,
+      r.pick(FABRIC_COLORS), 0.8);
+    B.trim(box(1.0, 0.72, 1.0, (r() - 0.5) * lw * 0.4, h + 0.5, bb.z1 - ld * 0.28, 2), P.TABLE_TOP);
+  }
 
   /* --- shopfront furniture ---------------------------------------------- */
   const awnY = vS * AWN_V1;
   if (r.chance(0.82)) awning(B, lw * 0.9, awnY, bb.z1, 1.6 + r() * 0.9, 0.55);
-  if (r.chance(0.45)) bladeSign(B, lw * (0.5 - 0.12), awnY + 1.6, bb.z1, 1.5, 0.9);
+  /*
+   * A shop's signage costs ZERO extra draw calls, and that is why it is built
+   * this way. bladeSign and fasciaBox pin their UVs to the signage band of the
+   * shopfront texture, so they merge into the same skin mesh as the wall — and
+   * that material carries shopNightTex as its emissiveMap, which means the
+   * band, the letters and the display window all light at dusk without a second
+   * mesh, a second material or a second draw. 242 storefronts x one lit mesh
+   * each would have been 242 draw calls for the same picture.
+   */
+  if (r.chance(0.62)) bladeSign(B, lw * (0.5 - 0.12), awnY + 1.6, bb.z1, 1.5, 0.9);
+  if (r.chance(0.55)) fasciaBox(B, 0, vS * SIGN_V0 - 0.1, bb.z1, lw * 0.86, vS * 0.13);
   // Roll-down shutter on a closed unit.
   if (r.chance(0.18)) {
     B.trim(box(lw * 0.62, 3.1, 0.22, 0, 0.1, bb.z1 - 0.1, 2), P.ALUMINIUM);
@@ -1153,7 +2045,7 @@ function parkedCar(B, x, y, z, rot, hex) {
 }
 
 function garage(ctx, group, b, r, world, lw, ld, levels) {
-  const B = new Build(deckSkin());
+  const B = new Build(deckSkin(), P.SIGN_BLUE);
   const lh = 3.35;
   const cham = Math.min(lw, ld) * 0.07;
   const plan = rectPlan(lw, ld, cham);
@@ -1214,8 +2106,10 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
   for (let k = 0; k < 3; k++) {
     B.trim(cyl(0.14, 6.5, 6, bb.x0 + 5 + k * (lw - 10) / 2, top + 1.2, bb.cz), P.LAMP_POST);
   }
-  // Big "P" sign on the street corner.
-  B.trim(box(0.4, 3.4, 2.6, bb.x1 - 0.3, 4.5, bb.z1 - 3.0, 3), P.SIGN_BLUE);
+  // Big "P" sign on the street corner. Illuminated, because an unlit parking
+  // sign is the one piece of signage in a city that is never actually unlit.
+  B.trim(box(0.55, 3.6, 2.8, bb.x1 - 0.25, 4.4, bb.z1 - 3.0, 3), P.SIGN_DARK);
+  B.lit(box(0.3, 2.6, 1.9, bb.x1 - 0.05, 4.9, bb.z1 - 3.0, 3), P.SIGN_BLUE);
 
   register(ctx, group, B, world, Math.max(lw, ld) * 0.5, top + 4, TIER.MASSIVE,
     'garage', 'Parking Garage', P.PRECAST, { lw, ld });
@@ -1223,7 +2117,7 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
 
 /** Surface car park: fence, planting kerb, painted bays, parked cars, kiosk. */
 function surfaceLot(ctx, group, b, r, world, lw, ld) {
-  const B = new Build(trimSkin());
+  const B = new Build(trimSkin(), P.SIGN_BLUE);
   const plan = rectPlan(lw, ld, 1.2);
   const bb = planBounds(plan);
   // Perimeter kerb + rail — stops the lot reading as a bald slab.
@@ -1315,7 +2209,7 @@ function scaffold(B, x0, x1, y0, y1, z, hex) {
  * hoarding, portacabins and stacked materials.
  */
 function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
-  const B = new Build(trimSkin());
+  const B = new Build(trimSkin(), P.NEON_ORANGE);
   const floors = Math.max(3, Math.round(h / 3.6));
   const cw = Math.max(6, lw * 0.28), cd = Math.max(6, ld * 0.28);
   const plan = rectPlan(lw, ld, Math.min(lw, ld) * 0.08);
@@ -1448,6 +2342,9 @@ function arena(ctx, B, r, lw, ld, h) {
      drum so it stays a canopy instead of becoming an 8 m slab over the road. */
   const cProj = Math.max(2.4, Math.min(11, ld * 0.16));
   B.trim(box(lw * 0.42, 1.1, cProj, 0, 7.6, bb.z1 + cProj * 0.34, 5), P.CHROME);
+  // Arena marquee over the entrance. The one building in the city that would
+  // be criminal to leave unnamed at night.
+  channelSign(B, 0, 9.2, bb.z1 + cProj * 0.34, lw * 0.34, 2.6, 0, r, B.neon, false);
   for (const sx of [-1, 1]) {
     B.trim(cyl(0.55, 7.6, 10, sx * lw * 0.17, 0, bb.z1 + cProj * 0.62), P.STEEL);
   }
@@ -1515,6 +2412,9 @@ function civicBlock(ctx, B, r, lw, ld, h) {
     B.trim(box(2.0, 0.5, 2.0, x, h - 1.9, bb.z1 + 1.9, 3), P.STUCCO_WHITE);
   }
   B.trim(box(lw + 5.2, 1.9, 4.6, 0, h - 1.4, bb.z1 + 1.6, 5), P.STUCCO_WHITE);  // entablature
+  // Uplighting on the portico. Civic buildings are floodlit at night and the
+  // warm wash is what stops the downtown core going black behind the towers.
+  B.lit(box(lw + 4.4, 0.5, 0.5, 0, h - 2.1, bb.z1 + 3.6, 4), P.NEON_WHITE);
   B.trim(slabGeo(plan, h, 0.8, 1.6), P.STUCCO_WHITE);
   roofScape(B, offsetPlan(plan, -0.4), h + 0.8, r, { parapetHex: P.STUCCO_WHITE, tank: true });
   return h + 3;
@@ -1577,11 +2477,30 @@ function auditFootprint(ctx, kind, root, world, fit) {
   _footprint.set(kind, e);
 }
 
-/** Register a finished Build as a Consumable sitting exactly on the pavement. */
+/**
+ * Register a finished Build as a Consumable sitting exactly on the pavement.
+ *
+ * The `radius`/`height` the callers pass are the size they INTENDED. worldBuild
+ * measures the assembled geometry and overrides them anyway, so the declared
+ * pair only ever surfaces as noise in the prop audit — a tower declaring 105 m
+ * against a real 186 m looks like a bug and is not one. Measure here too, from
+ * the same child bounding boxes auditFootprint is about to read, and declare
+ * what is actually there. Costs nothing: the boxes are already built.
+ */
 function register(ctx, group, B, world, radius, height, tier, kind, label, hex, fit) {
   const root = B.finish();
   root.position.set(world.x, ctx.Y_WALK, world.z);
   root.rotation.y = world.rot;
+  let lo = null, hi = null;
+  for (const m of root.children) {
+    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+    const bb = m.geometry.boundingBox;
+    if (!lo) { lo = bb.min.clone(); hi = bb.max.clone(); } else { lo.min(bb.min); hi.max(bb.max); }
+  }
+  if (lo) {
+    radius = Math.hypot(hi.x - lo.x, hi.z - lo.z) / 2;
+    height = Math.max(0.5, hi.y - lo.y);
+  }
   ctx.addMesh(root, {
     parent: group,
     position: new THREE.Vector3(world.x, 0, world.z),
@@ -1694,23 +2613,33 @@ function place(lot, side) {
   };
 }
 
-/** Tower renders stay light — a saturated 200 m slab dominates the whole frame. */
+/**
+ * Tower renders stay MOSTLY light — a saturated 200 m slab dominates the whole
+ * frame — but "mostly" is the operative word. A uniform-value skyline of cream
+ * and teal is exactly as repetitive as a uniform-shape one, and the first pass
+ * had no chromatic tower in it at all. Weighted, so coral and lilac appear a
+ * few times across Brickell instead of on every third block.
+ */
 const TOWER_PASTELS = [
-  P.STUCCO_WHITE, P.STUCCO_CREAM, P.STUCCO_SAND, P.STUCCO_SKY,
-  P.STUCCO_PEACH, P.STUCCO_MINT, P.STUCCO_AQUA,
+  [P.STUCCO_WHITE, 18], [P.STUCCO_CREAM, 16], [P.STUCCO_SAND, 12],
+  [P.STUCCO_SKY, 12], [P.STUCCO_PEACH, 11], [P.STUCCO_MINT, 10],
+  [P.STUCCO_AQUA, 9], [P.STUCCO_CORAL, 6], [P.STUCCO_PINK, 4], [P.STUCCO_LILAC, 4],
 ];
 const STUCCO_SET = [
   P.STUCCO_PINK, P.STUCCO_CORAL, P.STUCCO_CREAM, P.STUCCO_LILAC,
-  P.STUCCO_AQUA, P.STUCCO_MINT,
+  P.STUCCO_AQUA, P.STUCCO_MINT, P.STUCCO_BUTTER, P.STUCCO_PEACH,
+  P.STUCCO_SAND, P.STUCCO_SKY,
 ];
 const SHOP_SET = [
   P.STUCCO_CREAM, P.STUCCO_PINK, P.STUCCO_AQUA, P.STUCCO_PEACH, P.STUCCO_WHITE,
+  P.STUCCO_MINT, P.STUCCO_BUTTER, P.STUCCO_LILAC, P.STUCCO_CORAL, P.STUCCO_SAND,
 ];
 
 export function buildBuildings(ctx) {
   const { layout } = ctx;
   const group = ctx.group('buildings');
   if (!ctx.fadeableBuildings) ctx.fadeableBuildings = [];
+  installNightCycle(ctx.scene);
 
   // Several hand-placed heroes (the arena, Government Center, the amphitheatre)
   // land on blocks the zoner had already called MIDRISE or PLAZA. Match on the
@@ -1776,9 +2705,46 @@ export function buildBuildings(ctx) {
     + (bad.length ? `FOOTPRINT: ${bad.join('; ')}`
       : 'all on the pavement, none over the carriageway, none over water')
     + ` | reach past the lot line, m: ${reach}`);
+
+  /* Cost report. Buildings cannot be merged with each other — each one has to
+     be separately swallowable — so this module IS the city's draw-call floor
+     and the number needs to be visible every boot, not measured after a
+     regression. Triangles here are the scene's, not the frame's: shadow passes
+     draw the same geometry again. */
+  let tris = 0, meshes = 0;
+  for (const root of ctx.fadeableBuildings) {
+    for (const m of root.children) {
+      meshes++;
+      const g = m.geometry;
+      tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    }
+  }
+  console.info(`[buildings] ${meshes} meshes / ${(tris / 1e6).toFixed(2)}M triangles `
+    + `| ${_nightMats.length} night-driven materials`);
 }
 
 /* ------------------------------------------------------------ towers --- */
+
+/**
+ * PLAN PROPORTION.
+ *
+ * The old code handed the tower `lotW * fill` by `lotD * fill`, so every shaft
+ * inherited the proportion of its parcel — and Brickell's parcels are all
+ * roughly the same shape, which is why the first pass rendered a comb of
+ * identically-proportioned shafts. Drawing the proportion separately is the
+ * single cheapest anti-repetition move available: the same lot now yields a
+ * point tower, a wide slab or a deep bar depending on nothing but the seed.
+ *
+ * Each entry is [name, [xFraction, zFraction], weight].
+ */
+const TOWER_PROPORTION = [
+  ['square', [0.96, 0.96], 22],
+  ['slab', [1.00, 0.54], 20],   // wide frontage, thin: the Brickell condo
+  ['bar', [0.56, 1.00], 14],    // deep and narrow, gable to the street
+  ['point', [0.66, 0.66], 20],  // small footprint, goes up
+  ['stub', [0.92, 0.78], 12],   // squat and broad
+  ['sliver', [0.90, 0.42], 12], // razor slab — only ever a few of these
+];
 
 function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
   let made = 0;
@@ -1810,16 +2776,48 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
   const wanted = h * (isLandmark ? Math.max(0.95, mul) : mul);
   // Taller blocks take more of their lot, so height buys mass, not a needle.
   const fill = 0.78 + 0.16 * Math.min(1, wanted / 180);
-  const slender = Math.min(pl.lw, pl.ld) * fill * 12.0;
-  const hCap = Math.max(32, Math.min(wanted, slender));
-  const masonry = b.style === STYLE.TOWER || (!isLandmark && r.chance(0.24));
+
+  const prop = r.weighted(TOWER_PROPORTION.map((e) => [e, e[2]]));
+  let sw = pl.lw * fill * prop[1][0];
+  let sd = pl.ld * fill * prop[1][1];
+  // A shaft narrower than about 11 m is a needle, not a building, and its roof
+  // cannot carry any of the plant the 3/4 camera expects to find up there.
+  sw = Math.max(Math.min(11, pl.lw * fill), sw);
+  sd = Math.max(Math.min(11, pl.ld * fill), sd);
+  // Slenderness reads off the geometric mean, not the short side: a 40x14 slab
+  // is a perfectly stable 150 m building and clamping it on its 14 m depth was
+  // capping exactly the shapes that make a skyline interesting.
+  const slender = Math.sqrt(sw * sd) * 11.5;
+  const hCap = Math.max(30, Math.min(wanted, slender));
+  const masonry = b.style === STYLE.TOWER || (!isLandmark && r.chance(0.30));
   const podH = b.hasPodium ? Math.max(7, b.podiumH) : (r.chance(0.55) ? 6 + r() * 6 : 0);
+  const neon = r.pick(NEON_SET);
+  const litIt = isLandmark || hCap > 140 || r.chance(0.42);
+
+  /* A lower wing beside the shaft. Combined the two masses still fill the
+     parcel, so the measured footprint stays centred on the parcel — see the
+     note on `o.shift` in tower(). */
+  const canWing = Math.min(sw, sd) > 14 && pl.lw > 34 && prop[0] !== 'sliver';
+  const wing = canWing && r.chance(0.30);
+  let shift = 0, wingW = 0, wingSide = 1;
+  if (wing) {
+    wingSide = r.chance(0.5) ? 1 : -1;
+    wingW = pl.lw * 0.30;
+    sw = Math.min(sw, pl.lw * fill - wingW - 1.5);
+    shift = -wingSide * (pl.lw * fill / 2 - sw / 2);
+  }
 
   if (masonry) {
-    const hex = r.pick(TOWER_PASTELS);
-    const MB = new Build(stuccoSkin(hex));
-    const mt = resiTower(ctx, MB, r, pl.lw * fill, pl.ld * fill, hCap, {
-      podiumH: podH, lit: isLandmark || hCap > 150 || r.chance(0.2),
+    const hex = r.weighted(TOWER_PASTELS);
+    const MB = new Build(stuccoSkin(hex), neon);
+    if (wing) {
+      wingBlock(MB, r, wingSide * (pl.lw * fill / 2 - wingW / 2), wingW, sd * 0.94,
+        hCap * (0.22 + r() * 0.18), P.STUCCO_WHITE);
+    }
+    const mt = resiTower(ctx, MB, r, sw, sd, hCap, {
+      podiumH: wing ? 0 : podH, lit: litIt, shift,
+      lotW: pl.lw, lotD: pl.ld,
+      trimHex: r.chance(0.45) ? P.STUCCO_WHITE : P.CONCRETE_WARM,
       helipad: hCap > 130 && r.chance(0.4),
     });
     register(ctx, group, MB, pl.world, Math.max(pl.lw, pl.ld) * 0.5, mt,
@@ -1830,34 +2828,41 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
     return made;
   }
 
-  const B = new Build(trimSkin());
-  const twin = pl.lw > 46 && r.chance(0.34);
+  const B = new Build(trimSkin(), neon);
+  const twin = pl.lw > 46 && !wing && r.chance(0.34);
   let top;
   if (twin) {
     // Two shafts on one shared podium: one consumable, two silhouettes.
-    const sw = pl.lw * 0.42, sd = Math.min(pl.ld * 0.86, sw * 1.15);
+    const tw = pl.lw * 0.42, td = Math.min(pl.ld * 0.86, tw * 1.15);
     const pp = rectPlan(pl.lw, pl.ld, Math.min(pl.lw, pl.ld) * 0.09);
     const gt = r.pick(GLASS_TINTS);
     B.glassMat = curtainMat(gt);
-    podium(B, pp, podH || 10, r, curtainMat(gt));
+    podium(B, pp, podH || 10, r, curtainMat(gt), { neon });
     roofScape(B, offsetPlan(pp, -1.8), (podH || 10) + 0.05, r, {
       tank: false, parapetH: 1.0, avoid: rectPlan(pl.lw * 0.9, pl.ld * 0.9, 0),
     });
     top = 0;
+    // Deliberately unequal: two shafts the same height is a tuning fork, and
+    // the pair that reads as one building is the one where they differ.
+    const hs = [1, 0.58 + r() * 0.30];
+    let i = 0;
     for (const dx of [-1, 1]) {
-      const sub = new Build(trimSkin());
+      const sub = new Build(trimSkin(), neon);
       sub.skinGeo = B.skinGeo; sub.glassGeo = B.glassGeo; sub.litGeo = B.litGeo;
       sub.glassMat = B.glassMat; sub.litHex = B.litHex;
-      const t = towerShaftAt(ctx, sub, r, dx * pl.lw * 0.24, 0, sw, sd,
-        h * (dx < 0 ? 1 : 0.72 + r() * 0.2), podH || 9, gt, isLandmark);
+      const t = towerShaftAt(ctx, sub, r, dx * pl.lw * 0.24, 0, tw, td,
+        Math.max(36, hCap * hs[i++]), podH || 9, gt, isLandmark);
       B.glassMat = sub.glassMat; B.litHex = sub.litHex;
       top = Math.max(top, t);
     }
   } else {
-    top = tower(ctx, B, r, pl.lw * fill, pl.ld * fill, hCap, {
-      podium: podH > 2, podiumH: podH,
-      lit: isLandmark || hCap > 150 || r.chance(0.22),
-      resi: r.chance(0.35),
+    if (wing) {
+      wingBlock(B, r, wingSide * (pl.lw * fill / 2 - wingW / 2), wingW, sd * 0.94,
+        hCap * (0.20 + r() * 0.16), P.PRECAST);
+    }
+    top = tower(ctx, B, r, sw, sd, hCap, {
+      podium: !wing && podH > 2, podiumH: wing ? 0 : podH,
+      lit: litIt, shift, lotW: pl.lw, lotD: pl.ld,
       helipad: hCap > 130 && r.chance(0.55),
     });
   }
@@ -1871,12 +2876,29 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
   return made;
 }
 
+/**
+ * The lower wing that sits beside a shaft. Same building, same consumable —
+ * this is massing, not a second structure — but it turns a single extruded
+ * prism into something with a shoulder, which is what most real towers have.
+ */
+function wingBlock(B, rng, x, w, d, h, hex) {
+  const plan = movePlan(rectPlan(w, d, Math.min(w, d) * 0.14), x, 0);
+  B.trim(loft([{ p: plan, y: 0 }, { p: plan, y: h }], { uScale: 5, vScale: 5 }), hex);
+  for (let yy = STOREY * 2; yy < h - 1; yy += STOREY * 2) {
+    B.trim(slabGeo(plan, yy, 0.3, 0.34), P.CONCRETE_WARM);
+  }
+  B.trim(slabGeo(plan, h, 0.5, 0.7), P.CONCRETE_WARM);
+  roofScape(B, offsetPlan(plan, 0.2), h + 0.5, rng, {
+    tank: false, parapetH: 1.0, pool: rng.chance(0.4), sign: rng.chance(0.35),
+  });
+}
+
 /** Low pastel block sharing a tower's parcel. Fills the lot, breaks the base. */
 function annex(ctx, group, r, lot, side) {
   const ap = place(lot, side);
   if (ap.lw < 8 || ap.ld < 8) return 0;
   const hex = r.pick(STUCCO_SET);
-  const AB = new Build(stuccoSkin(hex));
+  const AB = new Build(stuccoSkin(hex), r.pick(NEON_SET));
   const ah = 9 + r() * 16;
   const top = midrise(ctx, AB, r, ap.lw, ap.ld, ah, { deco: r.chance(0.45) });
   register(ctx, group, AB, ap.world, Math.max(ap.lw, ap.ld) * 0.5, top,
@@ -1887,16 +2909,21 @@ function annex(ctx, group, r, lot, side) {
 /** Shaft-only variant used by the twin-tower case (shares one Build). */
 function towerShaftAt(ctx, B, r, ox, oz, w, d, h, y0, gt, isLandmark) {
   const cm = curtainMat(gt);
-  const kind = r.weighted([['chamfer', 40], ['slab', 24], ['ellipse', 18], ['bow', 18]]);
-  const plan = movePlan(shaftPlan(r, w, d, kind), ox, oz);
-  const smooth = kind === 'ellipse' || kind === 'bow';
+  const kind = r.weighted(PLAN_MENU);
+  const plan = movePlan(shaftPlan(r, w, d, kind, r()), ox, oz);
+  const smooth = kind === 'ellipse' || kind === 'bow' || kind === 'lens';
   B.gl(loft([{ p: plan, y: y0 }, { p: plan, y: h }], { uScale: CW_U, vScale: CW_V, smooth }), cm);
-  if (r.chance(0.6)) {
-    balconyStack(B, plan, y0 + 3.4, h, STOREY * 2, 1.2, P.CONCRETE_WARM, P.GLASS_SKY);
+  if (r.chance(0.55)) {
+    balconyStack(B, plan, y0 + 3.4, h, STOREY * 2, 1.2, P.CONCRETE_WARM,
+      P.GLASS_SKY, r.weighted(BALCONY_MODES));
+  } else if (r.chance(0.5)) {
+    briseSoleil(B, plan, y0 + STOREY, h, STOREY * 1.5, 0.85, P.MULLION);
   } else {
     fins(B, plan, y0 + 1, h, 8, 0.5, P.MULLION);
   }
-  return crown(B, plan, h, r, { lit: isLandmark || r.chance(0.4), kind: r.chance(0.5) ? 'plant' : 'step' });
+  // The two shafts of a pair must not wear the same hat; that is the whole
+  // reason for building them as one object instead of two.
+  return crown(B, plan, h, r, { lit: isLandmark || r.chance(0.5), kind: r.weighted(CROWN_MENU) });
 }
 
 /* ----------------------------------------------------------- midrise --- */
@@ -1922,7 +2949,7 @@ function midriseBlock(ctx, group, b, r, lot, side) {
     if (part.w < 7.5 || part.d < 7.5) continue;
     const pl = place(part, side);
     const hex = r.pick(STUCCO_SET);
-    const B = new Build(stuccoSkin(hex));
+    const B = new Build(stuccoSkin(hex), r.pick(NEON_SET));
     const h = Math.max(11, (b.floors + r.int(-2, 3)) * STOREY * (0.85 + r() * 0.3));
     // Full strip, no safety fudge: midrise() now draws its structural plan
     // inside the width it is handed, so the 5% haircut that used to absorb the
@@ -2029,7 +3056,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
   const style = b.style;
 
   if (style === STYLE.ARENA) {
-    const B = new Build(trimSkin());
+    const B = new Build(trimSkin(), P.NEON_PINK);
     // 0.96, not 1.02: the drum carries a 0.6 m plinth outside the plan, so
     // drawing it oversize started the building already past the parcel line.
     const top = arena(ctx, B, r, pl.lw * 0.96, pl.ld * 0.96, h);
@@ -2039,7 +3066,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
   }
   if (style === STYLE.CIVIC) {
     const hex = r.pick([P.STUCCO_SAND, P.STUCCO_CREAM, P.STUCCO_WHITE]);
-    const B = new Build(stuccoSkin(hex));
+    const B = new Build(stuccoSkin(hex), P.NEON_WHITE);
     const top = civicBlock(ctx, B, r, pl.lw * 0.96, pl.ld * 0.96, Math.min(h, 34));
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.55, top,
       TIER.LANDMARK, 'landmark', b.landmark || 'Civic Hall', hex, { lw: pl.lw, ld: pl.ld });
@@ -2047,7 +3074,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
   }
   if (style === STYLE.DECO) {
     const hex = r.pick([P.STUCCO_CREAM, P.STUCCO_SAND, P.STUCCO_WHITE]);
-    const B = new Build(stuccoSkin(hex));
+    const B = new Build(stuccoSkin(hex), P.NEON_YELLOW);
     const top = decoTower(ctx, B, r, pl.lw * 0.9, pl.ld * 0.9, h);
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, top,
       TIER.LANDMARK, 'landmark', b.landmark || 'Deco Tower', hex, { lw: pl.lw, ld: pl.ld });
@@ -2056,7 +3083,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
   if (style === STYLE.STUCCO) {
     // Market hall: a vaulted shed, low and wide.
     const hex = r.pick(SHOP_SET);
-    const B = new Build(stuccoSkin(hex));
+    const B = new Build(stuccoSkin(hex), r.pick(NEON_SET));
     const plan = rectPlan(pl.lw * 0.94, pl.ld * 0.94, 1.4);
     const bb = planBounds(plan);
     B.face(loft([{ p: plan, y: 0 }, { p: plan, y: Math.max(6, h * 0.6) }], { uScale: B.sk.uScale, vScale: B.sk.vScale, capTop: false }));
@@ -2066,6 +3093,7 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
     ], { uScale: 6, vScale: 6, capTop: true }), P.TERRACOTTA);
     awning(B, pl.lw * 0.84, 4.0, bb.z1, 2.6, 0.7, P.FABRIC_CORAL);
     B.trim(box(pl.lw * 0.9, 0.3, 3.0, 0, 4.2, bb.z1 + 1.5, 4), P.FABRIC_CORAL);
+    channelSign(B, 0, 5.4, bb.z1 + 0.2, pl.lw * 0.44, 1.8, 0, r, B.neon, false);
     register(ctx, group, B, pl.world, Math.max(pl.lw, pl.ld) * 0.5, hh + 4,
       TIER.MASSIVE, 'landmark', b.landmark || 'Market Hall', hex, { lw: pl.lw, ld: pl.ld });
     return 1;

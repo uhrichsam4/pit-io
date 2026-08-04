@@ -65,14 +65,26 @@ const TIME = (holeUniforms && holeUniforms.uTime) || { value: 0 };
 /*  ATLAS                                                                   */
 /* ======================================================================== */
 
-const ATLAS = 1024;
+/**
+ * 2048, not 1024.
+ *
+ * Every cell rect below is in ABSOLUTE canvas pixels and `uvOf` divides by
+ * ATLAS, so growing the canvas leaves the existing cells at exactly the texel
+ * density they were authored at and simply opens three empty quadrants. The
+ * species list needed six more foliage cells (poinciana, jacaranda, croton,
+ * groundcover, agave, a third frond) and there was not a spare pixel at 1024.
+ * The cost is 16 MB of VRAM; the alternative — a second atlas — is a second
+ * material and therefore a second draw call for every species that uses it.
+ */
+const ATLAS = 2048;
 
 /**
  * Cell rectangles in canvas pixels [x, y, w, h].
  *
- * Layout rule: every OPAQUE cell lives in the bottom two rows, packed against
- * other opaque cells. Mip-chain bleed between neighbours is then brown-into-
- * brown instead of leaf-into-bark, which is the artefact you actually notice.
+ * Layout rule: every OPAQUE cell lives in the bottom two rows of its quadrant,
+ * packed against other opaque cells. Mip-chain bleed between neighbours is then
+ * brown-into-brown instead of leaf-into-bark, which is the artefact you actually
+ * notice.
  */
 const CELL = {
   frondA: [0, 0, 512, 256],          // pinnate palm frond, sunlit
@@ -94,6 +106,18 @@ const CELL = {
   waterDisc: [640, 768, 128, 128],   // still water with concentric ripples
   stoneTex: [768, 768, 128, 128],    // cast stone for basins and plinths
   mulchTex: [896, 768, 128, 128],    // bark mulch
+
+  /* --- second quadrant: everything added for planting variety ----------- */
+  frondC: [1024, 0, 512, 256],       // finer, limier pinnate frond (queen palm)
+  frondD: [1536, 0, 512, 256],       // older frond: olive, drooping, tatty tips
+  canopyRed: [1024, 256, 256, 256],  // royal poinciana in flower
+  canopyPurple: [1280, 256, 256, 256], // jacaranda
+  croton: [1536, 256, 256, 256],     // variegated red/orange/lime shrub
+  groundcov: [1792, 256, 256, 256],  // low flowering mat
+  agave: [1024, 512, 256, 256],      // spiky glaucous rosette
+  canopyOlive: [1280, 512, 256, 256], // dark glossy inland canopy (mahogany)
+  barkQueen: [1024, 768, 128, 128],  // smooth pale grey-green ringed trunk
+  barkMang: [1152, 768, 128, 128],   // dark, wet mangrove bark
 };
 
 /** Flat colour swatches, 64x128 each, along the bottom row. */
@@ -329,6 +353,119 @@ function drawSeagrape(g, rect, seed) {
   }
 }
 
+/**
+ * Croton: the loudest plant in Miami. Leathery paddle leaves splashed lime,
+ * gold, orange and oxblood, all on one bush. It is the cheapest way to put
+ * non-green colour at ankle height, which is exactly where a park reads as
+ * planted rather than mown.
+ */
+function drawCroton(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const tones = [
+    PALETTE.FLOWER_YELLOW, PALETTE.FLOWER_ORANGE, PALETTE.GRASS_LIGHT,
+    PALETTE.RUST, PALETTE.TREE_CANOPY_DARK, PALETTE.CAR_RED,
+  ];
+  for (let i = 0; i < 120; i++) {
+    const u = rand(), v = Math.pow(rand(), 0.62);
+    const dome = Math.sin(Math.PI * (0.07 + u * 0.86));
+    const px = X + W * (0.07 + u * 0.86);
+    const py = Y + H * (1.0 - v * (0.12 + dome * 0.84));
+    const len = H * (0.13 + rand() * 0.16);
+    const wide = len * (0.24 + rand() * 0.12);
+    // Leaves radiate outward from the middle of the mass, so the silhouette
+    // spikes instead of reading as one soft blob.
+    const a = Math.atan2(py - (Y + H), px - (X + W * 0.5)) + (rand() - 0.5) * 0.9;
+    const lit = 1 - (py - Y) / H;
+    const base = tones[(i + Math.floor(rand() * 3)) % tones.length];
+    g.fillStyle = mixHex(base, lit > 0.55 ? PALETTE.FLOWER_WHITE : PALETTE.TREE_CANOPY_DARK,
+      Math.abs(lit - 0.55) * 0.7);
+    g.save();
+    g.translate(px, py);
+    g.rotate(a + Math.PI / 2);
+    g.beginPath();
+    g.moveTo(0, 0);
+    g.quadraticCurveTo(-wide, -len * 0.55, 0, -len);
+    g.quadraticCurveTo(wide, -len * 0.55, 0, 0);
+    g.fill();
+    // Yellow midrib — the giveaway marking on a croton leaf.
+    g.strokeStyle = cssOf(PALETTE.FLOWER_YELLOW, 0.55);
+    g.lineWidth = Math.max(1, wide * 0.22);
+    g.beginPath(); g.moveTo(0, -len * 0.05); g.lineTo(0, -len * 0.9); g.stroke();
+    g.restore();
+  }
+}
+
+/**
+ * Groundcover: a dense low mat of small leaves with flowers scattered through
+ * it. Drawn FULL-BLEED to all four edges — a mat has no silhouette of its own,
+ * it is only ever seen as a texture lying on the soil.
+ */
+function drawGroundcover(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const base = PALETTE.HEDGE, light = PALETTE.GRASS_LIGHT, dark = PALETTE.TREE_CANOPY_DARK;
+  for (let i = 0; i < 700; i++) {
+    const px = X + rand() * W, py = Y + rand() * H;
+    const k = rand();
+    g.fillStyle = k > 0.5 ? mixHex(base, light, (k - 0.5) * 1.7) : mixHex(dark, base, k * 2);
+    const lr = W * (0.014 + rand() * 0.020);
+    g.beginPath();
+    g.ellipse(px, py, lr, lr * (0.7 + rand() * 0.5), rand() * 3.14, 0, 6.29);
+    g.fill();
+  }
+  for (let i = 0; i < 70; i++) {
+    const px = X + rand() * W, py = Y + rand() * H;
+    const t = rand();
+    g.fillStyle = cssOf(t < 0.4 ? PALETTE.FLOWER_WHITE
+      : t < 0.75 ? PALETTE.FLOWER_PINK : PALETTE.FLOWER_YELLOW, 0.92);
+    const r = W * (0.010 + rand() * 0.014);
+    for (let p = 0; p < 5; p++) {
+      const a = (p / 5) * 6.283;
+      g.beginPath();
+      g.ellipse(px + Math.cos(a) * r, py + Math.sin(a) * r, r * 0.72, r * 0.72, 0, 0, 6.29);
+      g.fill();
+    }
+  }
+}
+
+/**
+ * Agave / yucca rosette: stiff glaucous blades radiating from a point at the
+ * bottom edge. A spiky silhouette in a city otherwise made of round crowns —
+ * pure shape contrast, which is what the art bible asks planting to provide.
+ */
+function drawAgave(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const ox = X + W * 0.5, oy = Y + H * 0.98;
+  const glauc = 0x9fc4a8, glaucD = 0x5f8a72, glaucL = 0xc8e0be;
+  const N = 21;
+  for (let i = 0; i < N; i++) {
+    const t = (i + 0.5) / N;
+    const a = -Math.PI / 2 - 1.28 + 2.56 * t + (rand() - 0.5) * 0.14;
+    const len = H * (0.50 + 0.45 * Math.sin(Math.PI * t)) * (0.85 + rand() * 0.3);
+    const wide = len * (0.075 + rand() * 0.03);
+    const sh = Math.abs(t - 0.5) * 1.7 + rand() * 0.3;
+    g.fillStyle = sh < 0.5 ? mixHex(glaucL, glauc, sh / 0.5)
+      : mixHex(glauc, glaucD, Math.min(1, (sh - 0.5) / 0.5));
+    const tx = ox + Math.cos(a) * len, ty = oy + Math.sin(a) * len;
+    const px = -Math.sin(a) * wide, py = Math.cos(a) * wide;
+    g.beginPath();
+    g.moveTo(ox + px, oy + py);
+    g.lineTo(tx, ty);                       // a blade ends in a single spine
+    g.lineTo(ox - px, oy - py);
+    g.closePath();
+    g.fill();
+    // Rust-coloured terminal spine.
+    g.strokeStyle = cssOf(PALETTE.RUST, 0.8);
+    g.lineWidth = Math.max(1, wide * 0.35);
+    g.beginPath();
+    g.moveTo(tx - Math.cos(a) * len * 0.09, ty - Math.sin(a) * len * 0.09);
+    g.lineTo(tx, ty);
+    g.stroke();
+  }
+}
+
 /** Ornamental grass: a fan of thin arcing blades. */
 function drawGrassTuft(g, rect, seed) {
   const [X, Y, W, H] = rect;
@@ -391,6 +528,8 @@ function drawBark(g, rect, kind, seed) {
     coco: { base: PALETTE.PALM_TRUNK_DARK, dark: 0x5c462d, light: PALETTE.PALM_TRUNK },
     fib: { base: 0x8a6e49, dark: 0x5b4629, light: 0xa98a5c },
     oak: { base: 0x8e7d66, dark: 0x574a35, light: 0xa89881 },
+    queen: { base: 0x9c9c86, dark: 0x6b6b58, light: 0xbcbca4 },
+    mang: { base: 0x6f5a45, dark: 0x403325, light: 0x8f7a60 },
   }[kind];
 
   g.fillStyle = cssOf(spec.base);
@@ -406,7 +545,7 @@ function drawBark(g, rect, kind, seed) {
   g.fillStyle = shade;
   g.fillRect(X, Y, W, H);
 
-  if (kind === 'royal') {
+  if (kind === 'royal' || kind === 'queen') {
     for (let i = 0; i < 22; i++) {
       const y = Y + (i + rand() * 0.6) * (H / 22);
       g.strokeStyle = cssOf(spec.dark, 0.16 + rand() * 0.14);
@@ -523,22 +662,32 @@ function drawMulchCell(g, rect, seed) {
  * fringe the moment mipmapping kicks in, because the filter averages the
  * invisible black pixels in. Dilating the colour (while leaving alpha alone)
  * is the standard fix and it is the single largest quality win in this file.
+ *
+ * Scoped to ONE CELL, not the whole canvas. This is O(area x 9 x iterations)
+ * in plain JS on the main thread during world build, and the atlas has since
+ * gone to 2048 — dilating all 4.2 M pixels four times over is ~150 M ops and
+ * a visible boot stall, for a result that is identical, because every opaque
+ * cell (bark, stone, mulch, swatches) has no transparent margin to bleed into.
  */
-function dilateAlpha(gctx, size, iterations) {
-  const img = gctx.getImageData(0, 0, size, size);
+function dilateCell(gctx, rect, iterations) {
+  const pad = iterations + 1;
+  const X = Math.max(0, rect[0] - pad), Y = Math.max(0, rect[1] - pad);
+  const W = Math.min(ATLAS - X, rect[2] + pad * 2);
+  const H = Math.min(ATLAS - Y, rect[3] + pad * 2);
+  const img = gctx.getImageData(X, Y, W, H);
   const d = img.data;
   for (let pass = 0; pass < iterations; pass++) {
     const src = new Uint8ClampedArray(d);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const o = (y * size + x) * 4;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const o = (y * W + x) * 4;
         if (src[o + 3] > 8) continue;
         let r = 0, g2 = 0, b = 0, n = 0;
         for (let dy = -1; dy <= 1; dy++) {
-          const yy = y + dy; if (yy < 0 || yy >= size) continue;
+          const yy = y + dy; if (yy < 0 || yy >= H) continue;
           for (let dx = -1; dx <= 1; dx++) {
-            const xx = x + dx; if (xx < 0 || xx >= size) continue;
-            const p = (yy * size + xx) * 4;
+            const xx = x + dx; if (xx < 0 || xx >= W) continue;
+            const p = (yy * W + xx) * 4;
             if (src[p + 3] <= 8 && !(src[p] | src[p + 1] | src[p + 2])) continue;
             r += src[p]; g2 += src[p + 1]; b += src[p + 2]; n++;
           }
@@ -548,8 +697,28 @@ function dilateAlpha(gctx, size, iterations) {
       }
     }
   }
-  gctx.putImageData(img, 0, 0);
+  gctx.putImageData(img, X, Y);
 }
+
+/**
+ * Which cells are CUTOUT foliage.
+ *
+ * Two jobs, and they must not drift apart: these are the cells that need alpha
+ * dilation, and they are the cells whose vertices carry `aTint = 1` so the
+ * per-instance colour lands on leaves and not on bark, stone or water. One
+ * table, so adding a species cannot half-wire it.
+ */
+const CUTOUT_CELLS = new Set([
+  'frondA', 'frondB', 'frondC', 'frondD', 'fanA', 'shrubA', 'seagrape',
+  'grassTuft', 'coconut', 'canopyA', 'canopyB', 'canopyPink', 'canopyYel',
+  'canopyRed', 'canopyPurple', 'canopyOlive', 'croton', 'groundcov', 'agave',
+]);
+
+/** Cells whose colour the per-instance foliage tint is allowed to touch. */
+const TINTABLE_CELLS = new Set([...CUTOUT_CELLS, 'crownshaft', 'sw_leaf', 'sw_leafDark']);
+// A coconut is brown fruit hanging in a green crown; tinting it with the fronds
+// turns a ripe nut lime.
+TINTABLE_CELLS.delete('coconut');
 
 let _atlasTex = null;
 
@@ -572,11 +741,25 @@ function atlasTexture() {
   drawCanopy(g, CELL.canopyPink, 0x51fa3b, PALETTE.TREE_CANOPY, PALETTE.TREE_CANOPY_DARK, PALETTE.TREE_CANOPY_LIGHT, PALETTE.FLOWER_MAGENTA, 0.62);
   drawCanopy(g, CELL.canopyYel, 0xa0be71, PALETTE.TREE_CANOPY, PALETTE.TREE_CANOPY_DARK, PALETTE.GRASS_LIGHT, PALETTE.FLOWER_YELLOW, 0.68);
 
+  /* The second quadrant: planting variety. Poinciana and jacaranda are the two
+     trees that actually make a Miami street look like Miami in June, and a
+     croton bed does more for ground-level colour than another hedge run. */
+  drawFrond(g, CELL.frondC, 0x2ba9c4, PALETTE.GRASS_LIGHT, PALETTE.PALM_FROND, PALETTE.PALM_FROND_DARK, 0.06);
+  drawFrond(g, CELL.frondD, 0x5e3f11, PALETTE.GRASS_DRY, PALETTE.PALM_FROND_DARK, PALETTE.TREE_CANOPY_DARK, 0.16);
+  drawCanopy(g, CELL.canopyRed, 0x77ee31, PALETTE.TREE_CANOPY, PALETTE.TREE_CANOPY_DARK, PALETTE.GRASS_LIGHT, PALETTE.CAR_RED, 0.72);
+  drawCanopy(g, CELL.canopyPurple, 0x1f5ea8, PALETTE.HEDGE, PALETTE.TREE_CANOPY_DARK, PALETTE.TREE_CANOPY_LIGHT, PALETTE.ACCENT_LILAC, 0.70);
+  drawCanopy(g, CELL.canopyOlive, 0x9c3b7f, PALETTE.TREE_CANOPY_DARK, 0x24512c, PALETTE.TREE_CANOPY, 0, 0);
+  drawCroton(g, CELL.croton, 0x6ad219);
+  drawGroundcover(g, CELL.groundcov, 0x18b3f0);
+  drawAgave(g, CELL.agave, 0x3f77d1);
+
   drawBark(g, CELL.barkRoyal, 'royal', 0x1a2b3c);
   drawBark(g, CELL.barkCoco, 'coco', 0x2b3c4d);
   drawBark(g, CELL.barkFib, 'fib', 0x3c4d5e);
   drawCrownshaft(g, CELL.crownshaft);
   drawBark(g, CELL.barkOak, 'oak', 0x4d5e6f);
+  drawBark(g, CELL.barkQueen, 'queen', 0x5e6f70);
+  drawBark(g, CELL.barkMang, 'mang', 0x6f7081);
   drawWaterCell(g, CELL.waterDisc);
   drawStoneCell(g, CELL.stoneTex, 0x7711aa, PALETTE.CONCRETE_WARM);
   drawMulchCell(g, CELL.mulchTex, 0x22ccdd);
@@ -595,7 +778,7 @@ function atlasTexture() {
     g.fillRect(X, Y, W, H);
   }
 
-  dilateAlpha(g, ATLAS, 4);
+  for (const name of CUTOUT_CELLS) dilateCell(g, CELL[name], 4);
 
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -606,17 +789,30 @@ function atlasTexture() {
   return t;
 }
 
-/** UV rect for a cell, inset so the mip chain cannot pull in a neighbour. */
+/**
+ * UV rect for a cell, inset so the mip chain cannot pull in a neighbour.
+ *
+ * The rect carries its own `name` so `mapUV` can tag the geometry as foliage or
+ * structure without every call site having to repeat it. Cached: this is called
+ * once per frond of every variant of every species, and it allocated a fresh
+ * object each time.
+ */
+const _uvCache = new Map();
 function uvOf(name) {
+  let r = _uvCache.get(name);
+  if (r) return r;
   const [x, y, w, h] = CELL[name];
   const p = 2.5;
-  return {
+  r = {
+    name,
     u0: (x + p) / ATLAS,
     u1: (x + w - p) / ATLAS,
     // Canvas y grows down; CanvasTexture flips, so v is measured from the base.
     v0: 1 - (y + h - p) / ATLAS,
     v1: 1 - (y + p) / ATLAS,
   };
+  _uvCache.set(name, r);
+  return r;
 }
 
 /* ======================================================================== */
@@ -624,15 +820,56 @@ function uvOf(name) {
 /* ======================================================================== */
 
 /**
- * The vertex-shader wind.
+ * Live signals the foliage shader reads. All four are pushed once a frame by
+ * the sentinel in `installClock` — see there for why a mesh callback and not a
+ * game-loop hook.
+ */
+const NAT = {
+  /** 0 = full day, 1 = full night. Straight from scene.userData.nightFactor. */
+  uNatNight: { value: 0 },
+  /** xyz = the player's hole, w = its radius. w < 0 disables the corridor. */
+  uNatHole: { value: new THREE.Vector4(0, 0, 0, -1) },
+  /** Warm ground-uplight bounce; cool light for water and lamp glass. */
+  uNatWarm: { value: new THREE.Color(PALETTE.LAMP_GLOW) },
+  uNatCool: { value: new THREE.Color(PALETTE.SEA_SHALLOW) },
+};
+
+/**
+ * The foliage shader: wind, per-instance leaf tint, night uplighting, and the
+ * camera corridor.
  *
- * `aWind` >= 0 is foliage: lean and flutter in the horizontal plane, weighted
- * by how far the vertex is from the trunk and how high it sits.
+ * WIND. `aWind` >= 0 is foliage: lean and flutter in the horizontal plane,
+ * weighted by how far the vertex is from the trunk and how high it sits.
  * `aWind` < 0 is water: bob vertically with a small ring ripple instead.
  * Phase comes from the instance's own world origin, so no two trees in the
  * city are in step.
+ *
+ * LEAF TINT. Every nature pool carries an instance colour and three multiplies
+ * it into `vColor` for free — but a tree is trunk AND crown in ONE geometry, so
+ * an unguarded instance colour turns bark lime. `aTint` is 1 only on vertices
+ * whose atlas cell is foliage (see CUTOUT_CELLS), so the tint lands on leaves
+ * and the trunk stays the colour the bark texture says it is. That is what buys
+ * per-individual crown colour at zero extra draw calls, which is most of the
+ * answer to "the palms all look the same".
+ *
+ * NIGHT. `aGlow` is authored per vertex: positive means "this surface catches a
+ * warm uplight from the ground" (the lower trunk, the underside of a crown),
+ * negative means "this surface IS a light" (fountain water, a lamp globe).
+ * Magnitude is the strength, and the whole term is scaled by nightFactor, so it
+ * costs nothing at noon. Only a fraction of trees are uplit, picked by hashing
+ * the instance origin — a boulevard where every single palm is floodlit reads
+ * as a stadium, not a street.
+ *
+ * CAMERA CORRIDOR. The occlusion system fades whole registered roots, and a
+ * species here is ONE InstancedMesh for the entire city — registering it would
+ * dissolve every palm in Miami the moment one of them stood in front of the
+ * hole. So foliage does its own: any fragment inside a cone from the camera to
+ * the player's hole dissolves, by the same interleaved-gradient dither
+ * occlusion.js uses (stays in the opaque pass, needs no sorting). Weighted by
+ * height, so a crown opens up and the trunk under it stays solid — you still
+ * see that there is a tree there.
  */
-function installWind(mat, key) {
+function installNatureShader(mat, key) {
   // materials.js caches by (hex, map) — two callers can legitimately land on
   // the same object, and wrapping onBeforeCompile twice would inject the GLSL
   // twice and fail to link.
@@ -642,20 +879,29 @@ function installWind(mat, key) {
   mat.onBeforeCompile = (shader, renderer) => {
     if (prev) prev(shader, renderer);
     shader.uniforms.uNatTime = TIME;
+    shader.uniforms.uNatNight = NAT.uNatNight;
+    shader.uniforms.uNatHole = NAT.uNatHole;
+    shader.uniforms.uNatWarm = NAT.uNatWarm;
+    shader.uniforms.uNatCool = NAT.uNatCool;
+
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', /* glsl */`
         #include <common>
         attribute float aWind;
+        attribute float aTint;
+        attribute float aGlow;
         uniform float uNatTime;
+        varying vec3 vNatWorld;
+        varying float vNatGlow;
       `)
       .replace('#include <begin_vertex>', /* glsl */`
         #include <begin_vertex>
+        #ifdef USE_INSTANCING
+          vec3 nOrigin = instanceMatrix[3].xyz;
+        #else
+          vec3 nOrigin = modelMatrix[3].xyz;
+        #endif
         {
-          #ifdef USE_INSTANCING
-            vec3 nOrigin = instanceMatrix[3].xyz;
-          #else
-            vec3 nOrigin = modelMatrix[3].xyz;
-          #endif
           float nPhase = nOrigin.x * 0.19 + nOrigin.z * 0.147;
           if (aWind >= 0.0) {
             // Gusts travel across the map as a slow low-frequency envelope, so
@@ -672,6 +918,90 @@ function installWind(mat, key) {
             transformed.y += sin(uNatTime * 2.6 - rr * 2.4 + nPhase) * 0.022 * w
                            + sin(uNatTime * 1.7 + rr * 1.1) * 0.014 * w;
           }
+          /* Three kinds of night surface, encoded in one float so no extra
+             attribute is needed:
+                aGlow < 0        a COOL light — fountain water. Always on.
+                0 < aGlow <= 1   warm ground uplight on a tree, and only on the
+                                 individuals the position hash picks. A
+                                 boulevard where every palm is floodlit reads as
+                                 a stadium, not a street.
+                aGlow > 1        a warm FIXTURE — a lamp globe. Always on, and
+                                 its strength is aGlow - 1. */
+          float nPick = fract(sin(nOrigin.x * 12.9898 + nOrigin.z * 78.233) * 43758.5453);
+          vNatGlow = aGlow > 1.0 ? (aGlow - 1.0)
+                   : aGlow > 0.0 ? aGlow * step(nPick, 0.34)
+                   : aGlow;
+        }
+      `)
+      .replace('#include <project_vertex>', /* glsl */`
+        {
+          vec4 nW = vec4(transformed, 1.0);
+          #ifdef USE_INSTANCING
+            nW = instanceMatrix * nW;
+          #endif
+          vNatWorld = (modelMatrix * nW).xyz;
+        }
+        #include <project_vertex>
+      `)
+      // Gate the instance colour to leaf vertices. Two things this must get
+      // right: `#ifdef` because the same material also draws meshes that were
+      // never given an instance colour and vColor does not exist in those
+      // programs; and `.rgb` because three declares vColor as a vec4 whether or
+      // not alpha is in use, so assigning a vec3 to it fails to compile.
+      .replace('#include <color_vertex>', /* glsl */`
+        #include <color_vertex>
+        #ifdef USE_INSTANCING_COLOR
+          vColor.rgb = mix(vec3(1.0), vColor.rgb, aTint);
+        #endif
+      `);
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', /* glsl */`
+        #include <common>
+        uniform float uNatNight;
+        uniform vec4 uNatHole;
+        uniform vec3 uNatWarm;
+        uniform vec3 uNatCool;
+        varying vec3 vNatWorld;
+        varying float vNatGlow;
+        float natDither(vec2 p) {
+          return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
+        }
+      `)
+      .replace('#include <color_fragment>', /* glsl */`
+        #include <color_fragment>
+        if (uNatHole.w > 0.0) {
+          vec3 toHole = uNatHole.xyz - cameraPosition;
+          float L2 = max(dot(toHole, toHole), 1e-4);
+          // Parameter along the camera->hole segment. UNCLAMPED on purpose:
+          // t > 1 is the ground behind the hole, and a park that dissolved on
+          // the far side of the pit would just be a second hole.
+          float t = dot(vNatWorld - cameraPosition, toHole) / L2;
+          if (t > 0.04 && t < 0.985) {
+            float d = distance(vNatWorld, cameraPosition + toHole * t);
+            /* A CONE with its apex at the camera, not a cylinder. Scaling the
+               radius by t is what makes the opening a constant angular size —
+               the same thing occlusion.js gets by working in screen pixels. A
+               constant-radius tube looks correct at the hole and then swallows
+               half the frame near the lens, because 14 m of world at 40 m from
+               the camera is an enormous screen area. Floored, so a hole seen
+               from the menu-hero distance still opens something you can see
+               through. The radius at the hole widens with the hole: a 30 m
+               late-game pit needs far more clear view than a 2 m starting one. */
+            float rIn = (uNatHole.w * 1.15 + 2.6) * max(t, 0.14);
+            float open = 1.0 - smoothstep(rIn, rIn * 2.05, d);
+            // Only what is actually tall enough to hide anything. A hedge does
+            // not occlude, and dissolving it just makes the pavement flicker.
+            open *= smoothstep(1.1, 3.4, vNatWorld.y);
+            if (open > 0.002 && natDither(gl_FragCoord.xy) < open * 0.94) discard;
+          }
+        }
+      `)
+      .replace('#include <emissivemap_fragment>', /* glsl */`
+        #include <emissivemap_fragment>
+        {
+          float gl = abs(vNatGlow) * uNatNight;
+          totalEmissiveRadiance += (vNatGlow >= 0.0 ? uNatWarm : uNatCool) * gl;
         }
       `);
   };
@@ -697,25 +1027,19 @@ function asCutout(m) {
 }
 
 let _atlasMat = null;
-/** The one material every tree, shrub, planter and fountain in Miami uses. */
+/**
+ * The ONE material every tree, shrub, planter and fountain in Miami uses.
+ *
+ * There used to be a second, tinted copy per shrub colour run. Per-instance
+ * colour replaced it: one material means one program, one place to patch, and
+ * a thousand distinct greens instead of three.
+ */
 function atlasMaterial() {
   if (!_atlasMat) {
     _atlasMat = asCutout(foliage(atlasTexture()));
-    installWind(_atlasMat, 'nature-atlas-v1');
+    installNatureShader(_atlasMat, 'nature-atlas-v2');
   }
   return _atlasMat;
-}
-
-const _tintMats = new Map();
-/** A tinted copy of the atlas material — used for shrub/canopy colour runs. */
-function atlasMaterialTint(hex) {
-  let m = _tintMats.get(hex);
-  if (!m) {
-    m = asCutout(foliage(atlasTexture(), hex));
-    installWind(m, 'nature-atlas-v1');
-    _tintMats.set(hex, m);
-  }
-  return m;
 }
 
 let _pondMat = null;
@@ -738,12 +1062,16 @@ function pondMaterial() {
   });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uNatTime = TIME;
+    shader.uniforms.uNatNight = NAT.uNatNight;
+    shader.uniforms.uNatCool = NAT.uNatCool;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vNatW;')
       .replace('#include <begin_vertex>',
         '#include <begin_vertex>\nvNatW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vNatW;\nuniform float uNatTime;')
+      .replace('#include <common>',
+        '#include <common>\nvarying vec3 vNatW;\nuniform float uNatTime;'
+        + '\nuniform float uNatNight;\nuniform vec3 uNatCool;')
       .replace('#include <normal_fragment_maps>', /* glsl */`
         #include <normal_fragment_maps>
         {
@@ -755,14 +1083,68 @@ function pondMaterial() {
                    + cos((p.x - p.y) * 1.25 + t * 0.95) * 0.045;
           normal = normalize(normal + vec3(dx, 0.0, dz));
         }
+      `)
+      // A lit pond at night: submerged fixtures, so the glow is strongest in
+      // rings and dies at the rim where the stone edge shades it.
+      .replace('#include <emissivemap_fragment>', /* glsl */`
+        #include <emissivemap_fragment>
+        {
+          float ring = 0.55 + 0.45 * sin(length(vNatW.xz) * 1.1 + uNatTime * 0.6);
+          totalEmissiveRadiance += uNatCool * (uNatNight * (0.16 + 0.12 * ring));
+        }
       `);
   };
   applyHoleCut(m);
   // applyHoleCut stamps a shared cache key; ours must win or three could hand
   // this material a program compiled without the ripple.
-  m.customProgramCacheKey = () => 'nature-pond-v1';
+  m.customProgramCacheKey = () => 'nature-pond-v2';
   _pondMat = m;
   return m;
+}
+
+/**
+ * Push nightFactor and the player's hole into the foliage uniforms, once a
+ * frame, with no hook in the game loop.
+ *
+ * The loop only calls the two updates it knows about by name (`trafficUpdate`,
+ * `pedestrianUpdate`) — a `natureUpdate` on scene.userData would sit there
+ * unread, and game.js is not this module's to edit. `scene.onBeforeRender` is
+ * one shared slot that six parallel modules would fight over. So: a real mesh
+ * that renders every frame and carries the callback. It is one degenerate
+ * triangle (all three vertices identical, so the rasteriser emits nothing) on
+ * the material it is updating, `frustumCulled = false` so it can never be the
+ * frame that gets skipped, and no shadow so it does not also run in the shadow
+ * pass. One draw call, zero fragments, zero coupling.
+ *
+ * `scene.userData.natureUpdate` is still published, for anyone who later wants
+ * to drive this from the loop instead; calling it twice a frame is harmless.
+ */
+function installClock(ctx) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(6), 2));
+  for (const name of ['aWind', 'aTint', 'aGlow']) {
+    g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(3), 1));
+  }
+  const hole = NAT.uNatHole.value;
+  const tick = () => {
+    NAT.uNatNight.value = ctx.scene.userData.nightFactor || 0;
+    // The player is holes[0] and groundShader republishes every hole's
+    // (x, z, cutRadius, alive) into this array every frame for the ground cut,
+    // so the corridor rides on data that is already being maintained.
+    const h = holeUniforms.uHoles.value[0];
+    if (h && h.w > 0.5) hole.set(h.x, 0, h.y, h.z);
+    else hole.w = -1;
+  };
+  const m = new THREE.Mesh(g, atlasMaterial());
+  m.name = 'nature-clock';
+  m.frustumCulled = false;
+  m.castShadow = false;
+  m.receiveShadow = false;
+  m.onBeforeRender = tick;
+  ctx.addDecor(m, 'nature');
+  ctx.scene.userData.natureUpdate = tick;
 }
 
 /* ======================================================================== */
@@ -772,14 +1154,35 @@ function pondMaterial() {
 const _m4 = new THREE.Matrix4();
 const _v3 = new THREE.Vector3();
 
-/** Remap a geometry's 0..1 UVs into an atlas cell. */
+/**
+ * Every geometry that reaches the atlas material must carry aTint and aGlow, or
+ * BufferGeometryUtils.mergeGeometries refuses to merge a trunk with its crown.
+ *
+ * Tagging happens HERE, from the atlas cell the geometry was given, rather than
+ * at the ~60 call sites. A cell knows whether it is leaves or bark, so "which
+ * vertices may the per-instance colour touch" is answered once, by the same
+ * table that decides which cells need alpha dilation.
+ */
+function cellTag(geo, cellName, glow = 0) {
+  const n = geo.attributes.position.count;
+  const tint = cellName && TINTABLE_CELLS.has(cellName) ? 1 : 0;
+  const t = new Float32Array(n);
+  if (tint) t.fill(1);
+  geo.setAttribute('aTint', new THREE.BufferAttribute(t, 1));
+  const g = new Float32Array(n);
+  if (glow) g.fill(glow);
+  geo.setAttribute('aGlow', new THREE.BufferAttribute(g, 1));
+  return geo;
+}
+
+/** Remap a geometry's 0..1 UVs into an atlas cell, and tag it from that cell. */
 function mapUV(geo, rect) {
   const uv = geo.attributes.uv;
   for (let i = 0; i < uv.count; i++) {
     uv.setXY(i, rect.u0 + uv.getX(i) * (rect.u1 - rect.u0), rect.v0 + uv.getY(i) * (rect.v1 - rect.v0));
   }
   uv.needsUpdate = true;
-  return geo;
+  return cellTag(geo, rect.name);
 }
 
 /**
@@ -791,6 +1194,19 @@ function windAttr(geo, fn) {
   const a = new Float32Array(p.count);
   for (let i = 0; i < p.count; i++) a[i] = fn(p.getX(i), p.getY(i), p.getZ(i));
   geo.setAttribute('aWind', new THREE.BufferAttribute(a, 1));
+  return geo;
+}
+
+/**
+ * Overwrite the night-light response after the fact.
+ * Positive = lit BY a warm ground uplight, negative = IS a cool light source.
+ * @param {(x:number,y:number,z:number)=>number} fn
+ */
+function glowAttr(geo, fn) {
+  const p = geo.attributes.position;
+  const a = new Float32Array(p.count);
+  for (let i = 0; i < p.count; i++) a[i] = fn(p.getX(i), p.getY(i), p.getZ(i));
+  geo.setAttribute('aGlow', new THREE.BufferAttribute(a, 1));
   return geo;
 }
 
@@ -854,7 +1270,7 @@ function trunkGeo(h, rBot, rTop, cellName, {
       idx.push(a, c, b, b, c, d);
     }
   }
-  return finishGeo(pos, nor, uv, idx);
+  return cellTag(finishGeo(pos, nor, uv, idx), cellName);
 }
 
 /**
@@ -891,7 +1307,7 @@ function frondGeo(len, wid, cellName, {
     const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
     idx.push(a, c, b, b, c, d);
   }
-  return finishGeo(pos, nor, uv, idx);
+  return cellTag(finishGeo(pos, nor, uv, idx), cellName);
 }
 
 /** A flat quad in the XY plane, origin at bottom centre, facing +Z. */
@@ -1012,7 +1428,7 @@ function disc(r, sides, x, y, z, cellName) {
   // Reversed for the same reason as `ribbon`: +angle runs clockwise when you
   // look down the +Y axis, so the naive fan faces the ground.
   for (let i = 1; i <= sides; i++) idx.push(0, i + 1, i);
-  return finishGeo(pos, nor, uv, idx);
+  return cellTag(finishGeo(pos, nor, uv, idx), cellName);
 }
 
 /**
@@ -1117,10 +1533,44 @@ function makePalm(spec) {
     const rad = Math.min(1, Math.hypot(x - topX, z - topZ) / Math.max(1, spec.frondLen));
     return Math.pow(up, 1.9) * (0.55 + 0.85 * rad);
   });
+  uplight(geo, crownY);
   return geo;
 }
 
-/** Broadleaf tree: tapered trunk, a couple of limbs, a card-cloud canopy. */
+/**
+ * Where a warm ground uplight lands on a tree at night.
+ *
+ * Two lobes, because that is what a pair of in-ground fixtures at the base of a
+ * palm actually does: a bright wash on the first three metres of trunk, and a
+ * second, softer catch on the underside of the crown where the beam finally
+ * hits something. The dark middle between them is the whole effect — light it
+ * evenly and the tree reads as self-illuminated plastic.
+ */
+function uplight(geo, crownY) {
+  glowAttr(geo, (x, y) => {
+    const shaft = Math.exp(-Math.max(0, y) / 2.6) * 0.62;
+    const crown = Math.exp(-Math.abs(y - crownY * 0.94) / Math.max(1, crownY * 0.22)) * 0.32;
+    // Capped below 1: above 1 the shader reads the value as a light FIXTURE
+    // rather than as a surface catching one, and every uplit palm in the city
+    // would switch from "picked by the hash" to "always on".
+    return Math.min(0.92, shaft + crown);
+  });
+  return geo;
+}
+
+/**
+ * Broadleaf tree: tapered trunk, a couple of limbs, a card-cloud canopy.
+ *
+ * CONTACT BAND. worldBuild measures an object's ground footprint from the
+ * lowest fifth of its geometry, which for a tree must be trunk and nothing
+ * else. A card canopy hangs below its own centre by 0.875 x its radius, so on a
+ * short-trunked, wide-crowned species the crown dropped INTO that band and the
+ * physics measured the whole spread as the footprint: a sea grape was declaring
+ * a 4.7 m contact radius and a 3.4 m pass radius when its trunk is 30 cm thick,
+ * so it needed a hole three times its own width to fall through. The canopy is
+ * therefore lifted until it clears the band by construction — for every
+ * species, at every variant, whatever the numbers below say.
+ */
 function makeTree(spec) {
   const rng = makeRNG(spec.seed);
   const parts = [];
@@ -1144,17 +1594,28 @@ function makeTree(spec) {
     parts.push(l);
   }
 
-  const cy = trunkH * 0.96;
   const c = canopyGeo(spec.canopyR, spec.canopyR * spec.canopyF, spec.cell, rng);
+  c.computeBoundingBox();
+  const cb = c.boundingBox;
+  let cy = trunkH * 0.96;
+  // Fixed point: raising the canopy also raises the total height, which raises
+  // the band it has to clear. Three passes is convergence to well under a mm.
+  for (let i = 0; i < 3; i++) {
+    const top = Math.max(trunkH, cy + cb.max.y);
+    const need = top * 0.235 - cb.min.y;      // 23.5% > the 20% band, with margin
+    if (need > cy) cy = need;
+  }
   c.translate(spec.bend * trunkH, cy, spec.sway * trunkH * 0.9);
   parts.push(c);
 
   const geo = BufferGeometryUtils.mergeGeometries(parts, false);
   liftNormals(geo, 0.18);
+  const top = cy + cb.max.y;
   windAttr(geo, (x, y) => {
-    const up = Math.min(1, Math.max(0, y / H));
+    const up = Math.min(1, Math.max(0, y / top));
     return Math.pow(up, 2.1) * 0.85;
   });
+  uplight(geo, cy);
   return geo;
 }
 
@@ -1212,27 +1673,32 @@ function makeFountain(scale, tiers) {
   const parts = [];
   // Each part is tagged as it is built — deriving "is this water?" from vertex
   // height after the merge is guesswork, and guessing wrong makes the stonework
-  // wobble.
-  const push = (g, w) => { windAttr(g, () => w); parts.push(g); };
+  // wobble. `lit` is the same idea for the night pass: NEGATIVE is a cool light
+  // source (the submerged fixtures), and just OVER 1 is warm stone lit by them,
+  // always on rather than hash-gated — half the fountains in a plaza going dark
+  // at random is not a lighting scheme.
+  const push = (g, w, lit = 0) => { windAttr(g, () => w); glowAttr(g, () => lit); parts.push(g); };
   const R = 3.1 * scale;
   const rimH = 0.62 * scale;
 
-  push(ringWall(R * 0.86, R, rimH, 0, 8, 'stoneTex'), 0);
+  // The stone is washed by the water it holds, so the rim gets a little of the
+  // warm-side glow rather than none at all.
+  push(ringWall(R * 0.86, R, rimH, 0, 8, 'stoneTex'), 0, 1.12);
   // Basin floor, sunk a little so the rim reads as a lip.
-  push(disc(R * 0.87, 8, 0, rimH * 0.55, 0, 'waterDisc'), -1.0);
+  push(disc(R * 0.87, 8, 0, rimH * 0.55, 0, 'waterDisc'), -1.0, -0.85);
 
   const ped = trunkGeo(rimH * 1.9, R * 0.22, R * 0.16, 'stoneTex', { sides: 8, rings: 2 });
   ped.translate(0, rimH * 0.5, 0);
-  push(ped, 0);
+  push(ped, 0, 1.18);
 
   let topY = rimH * 2.4;
   for (let i = 0; i < tiers; i++) {
     const br = R * (0.46 - i * 0.14);
-    push(ringWall(br * 0.78, br, 0.22 * scale, topY, 8, 'stoneTex'), 0);
-    push(disc(br * 0.79, 8, 0, topY + 0.15 * scale, 0, 'waterDisc'), -0.7);
+    push(ringWall(br * 0.78, br, 0.22 * scale, topY, 8, 'stoneTex'), 0, 1.14);
+    push(disc(br * 0.79, 8, 0, topY + 0.15 * scale, 0, 'waterDisc'), -0.7, -0.8);
     const stem = trunkGeo(0.9 * scale, br * 0.24, br * 0.18, 'stoneTex', { sides: 6, rings: 1 });
     stem.translate(0, topY + 0.2 * scale, 0);
-    push(stem, 0);
+    push(stem, 0, 1.16);
     topY += 1.1 * scale;
   }
 
@@ -1241,13 +1707,70 @@ function makeFountain(scale, tiers) {
   const jet = trunkGeo(1.6 * scale, 0.10 * scale, 0.035 * scale, 'sw_white', { sides: 5, rings: 3 });
   jet.translate(0, topY, 0);
   windAttr(jet, (x, y) => Math.max(0, (y - topY) / (1.6 * scale)) * 0.5);
+  // Brightest where it leaves the nozzle and the fixture is pointing at it.
+  glowAttr(jet, (x, y) => -1.15 + Math.min(0.7, Math.max(0, y - topY) * 0.4));
   parts.push(jet);
   // The bead of spray at the top of the jet.
   const bead = disc(0.34 * scale, 8, 0, topY + 1.62 * scale, 0, 'sw_white');
   windAttr(bead, () => 0.55);
+  glowAttr(bead, () => -0.5);
   parts.push(bead);
 
   return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/**
+ * Park path lamp: a stepped cast base, a tapered column and a frosted lantern.
+ *
+ * props.js owns the street lighting (`lampPark`, `lampModern`, `lampDeco`) and
+ * runs it along kerbs; this one exists because a park's path network is inside
+ * the parcel, where street furniture never goes, and an unlit path loop is a
+ * black stripe through the middle of every park after sunset. Different kind
+ * name on purpose — the audit groups by kind and two modules sharing one makes
+ * it lie.
+ */
+function makeParkLamp() {
+  const parts = [];
+  const H = 4.3;
+  parts.push(mapUV(box(0.52, 0.16, 0.52, 0, 0.08, 0, 1), uvOf('stoneTex')));
+  parts.push(mapUV(box(0.40, 0.26, 0.40, 0, 0.29, 0, 1), uvOf('stoneTex')));
+  parts.push(trunkGeo(H - 0.42, 0.10, 0.065, 'sw_steel', { sides: 6, rings: 3 })
+    .translate(0, 0.42, 0));
+  // Lantern: a short tapered glass drum under a cap. Six sides is enough at the
+  // distance a 4 m lamp is ever seen from, and it keeps the pool cheap.
+  const glass = trunkGeo(0.62, 0.20, 0.26, 'sw_white', { sides: 6, rings: 1 });
+  glass.translate(0, H - 0.62, 0);
+  parts.push(glass);
+  parts.push(mapUV(box(0.62, 0.10, 0.62, 0, H - 0.01, 0, 1), uvOf('sw_steel')));
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  windAttr(geo, () => 0);
+  // >1 means "a fixture, always lit". A lamp that only comes on for a third of
+  // the posts on the path is worse than no lamps at all — which is exactly what
+  // the hash-gated branch would do to it. The column just under the lantern
+  // catches a little of its own light.
+  glowAttr(geo, (x, y) => (y > H - 0.75 ? 2.45 : y > H - 1.6 ? 1.22 : 0));
+  return geo;
+}
+
+/**
+ * A stemless rosette — agave, yucca, bird of paradise. Crossed cards hinged at
+ * the ground, so its whole footprint is the 30 cm the leaves actually rise
+ * from, not the metre they spread over.
+ */
+function makeRosette(cell, w, h, cards = 3) {
+  const parts = [];
+  for (let i = 0; i < cards; i++) {
+    const g = cardGeo(w, h, cell);
+    g.rotateY((i / cards) * Math.PI + i * 0.17);
+    parts.push(g);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  radialNormals(geo, 0, h * 0.35, 0, 0.55);
+  liftNormals(geo, 0.3);
+  // Stiff, succulent leaves. They barely move — that stillness against a
+  // swaying palm is half of why the silhouette contrast reads.
+  windAttr(geo, (x, y) => Math.pow(Math.min(1, y / h), 2.2) * 0.10);
+  return geo;
 }
 
 /** Raised plaza planter: a stone box with a shrub mass sitting in it. */
@@ -1397,171 +1920,378 @@ function makeFlagpole(cell) {
 /* ======================================================================== */
 
 /**
- * One entry per instanced pool. `h` is the nominal height in metres at scale 1
- * — every scale multiplier below is relative to that, so the metric sanity in
- * the art bible (palm ~10 m) holds.
+ * A SPECIES IS A RANGE, NOT A SPECIMEN.
+ *
+ * This is the fix for the loudest defect in the module. Every palm in Miami
+ * used to be one of six geometries; a boulevard planted with `royalA` was
+ * literally the same mesh 40 times over, differing only by y-rotation and a
+ * +-15% scale, and from the game camera a uniform scale on a rotationally
+ * symmetric crown is not a difference you can see. A row of identical assets
+ * is a stated defect and that is exactly what it was.
+ *
+ * So each entry carries a `base` and a variant COUNT, and `make` re-rolls the
+ * whole specimen from a per-variant seed: overall height, trunk thickness and
+ * taper, the direction AND amount of lean, crown diameter, frond count, frond
+ * width, how steeply the crown is pitched and how far it droops, and which
+ * atlas cells its blades are cut from. Four to five variants per species, each
+ * a genuinely different tree.
+ *
+ * Stacked on top of that, per instance and costing no draw calls at all:
+ *   - `tints` picks a foliage colour from a set, applied ONLY to leaf vertices
+ *     (see installNatureShader) so crowns vary in hue and value while the bark
+ *     stays bark;
+ *   - a continuous scale, a free rotation, and for trees a small planted-crooked
+ *     tilt with the base sunk to match.
+ *
+ * ---------------------------------------------------------------------------
+ * The rest of the fields
+ * ---------------------------------------------------------------------------
+ * `h` is the nominal height in metres at scale 1 — every scale multiplier in
+ * this file is relative to that, so the metric sanity in the art bible holds.
  *
  * `clear` is read against the SHARED occupancy grid and is about other modules.
  * `sep` is nature's own personal space, enforced even on forced placements, and
  * it is deliberately much smaller than the crown: a hedge run wants its units
- * to interlock at 3.2 m centres, so hedge sep is 1.35, not the 2.3 m its cards
+ * to interlock at 3.2 m centres, so hedge sep is 1.05, not the 2.3 m its cards
  * actually span. Two seps must sum to less than the spacing a run asks for or
  * the run silently thins out.
  *
- * `cap` is the instanced pool's ceiling. Spare capacity costs 76 bytes and no
- * draw calls (finalize() sets mesh.count), a full pool costs silent missing
- * planting — so every one of these is sized well above what the city uses.
+ * `cap` is the pool ceiling for the species, split across its variants. Spare
+ * capacity costs 76 bytes and no draw calls (finalize() sets mesh.count), a
+ * full pool costs silent missing planting — so every one is sized well above
+ * what the city uses.
+ *
+ * `rBase` is the trunk radius at ground level, used to sink a tilted instance
+ * far enough that its base does not lift off the pavement.
+ *
+ * `contactMax` is the largest ground footprint this species may legitimately
+ * have. worldBuild measures the real one off the lowest fifth of the geometry;
+ * if a crown ever sags into that band again the boot log says so by name.
  */
+
+/**
+ * PROPORTION NOTE. A botanically correct royal palm is a 15 m pole with a 6 m
+ * tuft, and at game distance that renders as a telegraph pole. The art bible
+ * calls for chunky, confident, readable shapes, so every palm below is stockier
+ * and much more crowned than the real thing: crown spread runs 70-90% of total
+ * height. `crownF` ties frond length to the trunk height the variant rolled, so
+ * a short palm gets a short crown instead of a bus shelter on a stick.
+ */
+function palmVariant(b, r) {
+  const h = b.h * (0.80 + r() * 0.44);
+  // One lean, in one random compass direction. Rolling bend and sway
+  // independently gives a population whose average lean is diagonal.
+  const la = r() * 6.283;
+  const lk = b.lean * (0.2 + r() * 1.7);
+  const cells = b.cells.slice();
+  if (r() < 0.5) cells.reverse();
+  // A third of palms swap one of their two blade cells for another, which is
+  // what stops two variants that rolled similar proportions reading as twins.
+  if (b.swap && r() < 0.34) cells[0] = b.swap;
+  return makePalm({
+    seed: b.seed * 31 + Math.floor(r() * 8192),
+    h,
+    rBot: b.rBot * (0.86 + r() * 0.30),
+    rTop: b.rTop * (0.84 + r() * 0.34),
+    bark: b.bark,
+    crownshaft: b.crownshaft,
+    bend: Math.cos(la) * lk,
+    sway: Math.sin(la) * lk,
+    bulge: (b.bulge || 0) * (0.5 + r() * 1.0),
+    sides: b.sides,
+    fronds: Math.max(7, b.fronds + Math.round((r() - 0.5) * (b.frondVar || 4))),
+    frondLen: h * b.crownF * (0.86 + r() * 0.30),
+    frondW: b.frondW * (0.84 + r() * 0.34),
+    pitch: b.pitch + (r() - 0.5) * 0.52,
+    rise: b.rise * (0.80 + r() * 0.46),
+    droop: b.droop * (0.82 + r() * 0.40),
+    coconuts: !!b.coconuts && r() < 0.72,
+    cells,
+  });
+}
+
+function treeVariant(b, r) {
+  const h = b.h * (0.80 + r() * 0.44);
+  const la = r() * 6.283;
+  const lk = (b.lean || 0.04) * (0.2 + r() * 1.7);
+  return makeTree({
+    seed: b.seed * 31 + Math.floor(r() * 8192),
+    h,
+    trunkF: b.trunkF * (0.88 + r() * 0.26),
+    rBot: b.rBot * (0.85 + r() * 0.32),
+    rTop: b.rTop * (0.85 + r() * 0.32),
+    bark: b.bark,
+    bend: Math.cos(la) * lk,
+    sway: Math.sin(la) * lk,
+    limbs: Math.max(1, b.limbs + (r() < 0.4 ? 1 : 0)),
+    canopyR: h * b.crownF * (0.86 + r() * 0.30),
+    canopyF: b.canopyF * (0.84 + r() * 0.34),
+    cell: b.cells && r() < 0.3 ? b.cells[Math.floor(r() * b.cells.length)] : b.cell,
+  });
+}
+
+function bushVariant(b, r) {
+  return makeBush({
+    seed: b.seed * 31 + Math.floor(r() * 8192),
+    w: b.w * (0.86 + r() * 0.30),
+    h: b.h * (0.82 + r() * 0.38),
+    cell: b.cell,
+    cards: b.cards,
+    depth: b.depth ? b.depth * (0.85 + r() * 0.3) : 0,
+    top: b.top,
+  });
+}
+
+/**
+ * Per-instance foliage tint sets.
+ *
+ * NOT new colours — these are MULTIPLIERS against the atlas, which is already
+ * painted from PALETTE. Every one sits between 0xd0 and 0xff per channel: far
+ * enough apart that two neighbouring crowns read as two plants, near enough to
+ * white that nothing leaves the Miami grade or goes muddy. The shader applies
+ * them to leaf vertices only, so bark and stone are untouched.
+ */
+const TINT_SETS = {
+  palm: [0xffffff, 0xf4fbe4, 0xe0f1ea, 0xfff5dc, 0xe8f7cc, 0xdaeadd, 0xfaf0da, 0xecf8d4],
+  canopy: [0xffffff, 0xeff8de, 0xdcedE2, 0xfdf3d6, 0xe4f4c9, 0xd3e5d4, 0xf6efd6, 0xe2f2dd],
+  shrub: [0xffffff, 0xedf8d5, 0xd5ebd0, 0xfaf4d3, 0xe0f2c3, 0xcce2cb, 0xf2ecce, 0xd9efd6],
+  bloom: [0xffffff, 0xffe7f0, 0xffd7c6, 0xfff0d2, 0xf4e0ff, 0xffe0e0, 0xfff8e6, 0xffd6e8],
+  none: [0xffffff],
+};
+
 const SPECIES = {
-  /*
-   * PROPORTION NOTE. A botanically correct royal palm is a 15 m pole with a
-   * 6 m tuft, and at game distance that renders as a telegraph pole. The art
-   * bible calls for chunky, confident, readable shapes and puts a palm at
-   * ~10 m, so every species below is stockier and much more crowned than the
-   * real thing: crown spread runs 70-90% of total height.
-   */
   royalA: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 1000, clear: 2.8, sep: 1.5,
-    debris: PALETTE.PALM_FROND,
-    geo: () => makePalm({
-      seed: 11, h: 13.5, rBot: 0.55, rTop: 0.42, bark: 'barkRoyal', crownshaft: true,
-      bend: 0.014, sway: -0.010, bulge: 0.12, fronds: 13, frondLen: 5.3, frondW: 0.50,
-      pitch: 0.34, rise: 0.44, droop: 0.98, cells: ['frondA', 'frondB'],
-    }),
+    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 1100, clear: 2.8, sep: 1.5,
+    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.55, contactMax: 1.9,
+    make: palmVariant,
+    base: {
+      seed: 11, h: 13.0, rBot: 0.55, rTop: 0.42, bark: 'barkRoyal', crownshaft: true,
+      lean: 0.028, bulge: 0.12, fronds: 13, frondVar: 5, crownF: 0.40, frondW: 0.50,
+      pitch: 0.34, rise: 0.44, droop: 0.98, cells: ['frondA', 'frondB'], swap: 'frondC',
+    },
   },
   royalB: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 10.4, rad: 1.6, cap: 900, clear: 2.6, sep: 1.45,
-    debris: PALETTE.PALM_FROND,
-    geo: () => makePalm({
+    label: 'Royal Palm', tier: TIER.LARGE, h: 10.4, rad: 1.6, cap: 950, clear: 2.6, sep: 1.45,
+    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.50, contactMax: 1.8,
+    make: palmVariant,
+    base: {
       seed: 23, h: 10.4, rBot: 0.50, rTop: 0.40, bark: 'barkRoyal', crownshaft: true,
-      bend: -0.026, sway: 0.018, bulge: 0.16, fronds: 12, frondLen: 4.5, frondW: 0.54,
-      pitch: 0.42, rise: 0.48, droop: 1.02, cells: ['frondB', 'frondA'],
-    }),
+      lean: 0.040, bulge: 0.16, fronds: 12, frondVar: 5, crownF: 0.44, frondW: 0.54,
+      pitch: 0.42, rise: 0.48, droop: 1.02, cells: ['frondB', 'frondA'], swap: 'frondD',
+    },
+  },
+  queenPalm: {
+    label: 'Queen Palm', tier: TIER.LARGE, h: 11.2, rad: 1.6, cap: 800, clear: 2.6, sep: 1.4,
+    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.40, contactMax: 1.7,
+    make: palmVariant,
+    base: {
+      seed: 29, h: 11.2, rBot: 0.40, rTop: 0.33, bark: 'barkQueen', crownshaft: false,
+      lean: 0.060, bulge: 0.06, fronds: 14, frondVar: 4, crownF: 0.42, frondW: 0.42,
+      // The queen palm's signature: long, fine, plumose fronds hanging almost
+      // vertically off a slender grey trunk.
+      pitch: 0.06, rise: 0.34, droop: 1.28, cells: ['frondC', 'frondA'], swap: 'frondD',
+    },
   },
   coconutA: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 10.6, rad: 1.7, cap: 900, clear: 2.7, sep: 1.5,
-    debris: PALETTE.PALM_FROND,
-    geo: () => makePalm({
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 10.6, rad: 1.7, cap: 950, clear: 2.7, sep: 1.5,
+    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.48, contactMax: 1.8,
+    make: palmVariant,
+    base: {
       seed: 37, h: 10.6, rBot: 0.48, rTop: 0.34, bark: 'barkCoco', crownshaft: false,
-      bend: 0.10, sway: 0.036, fronds: 11, frondLen: 4.9, frondW: 0.50,
-      pitch: 0.10, rise: 0.40, droop: 1.10, coconuts: true, cells: ['frondB', 'frondA'],
-    }),
+      lean: 0.115, bulge: 0, fronds: 11, frondVar: 4, crownF: 0.46, frondW: 0.50,
+      pitch: 0.10, rise: 0.40, droop: 1.10, coconuts: true,
+      cells: ['frondB', 'frondA'], swap: 'frondD',
+    },
   },
   coconutB: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 8.0, rad: 1.6, cap: 700, clear: 2.5, sep: 1.4,
-    debris: PALETTE.PALM_FROND,
-    geo: () => makePalm({
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 8.0, rad: 1.6, cap: 750, clear: 2.5, sep: 1.4,
+    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.46, contactMax: 1.7,
+    make: palmVariant,
+    base: {
       seed: 41, h: 8.0, rBot: 0.46, rTop: 0.32, bark: 'barkCoco', crownshaft: false,
-      bend: -0.135, sway: -0.052, fronds: 10, frondLen: 4.2, frondW: 0.56,
-      pitch: -0.05, rise: 0.36, droop: 1.16, coconuts: true, cells: ['frondA', 'frondB'],
-    }),
+      lean: 0.165, bulge: 0, fronds: 10, frondVar: 4, crownF: 0.53, frondW: 0.56,
+      pitch: -0.05, rise: 0.36, droop: 1.16, coconuts: true,
+      cells: ['frondA', 'frondB'], swap: 'frondC',
+    },
   },
   sabal: {
-    label: 'Sabal Palm', tier: TIER.LARGE, h: 8.4, rad: 1.5, cap: 900, clear: 2.4, sep: 1.35,
-    debris: PALETTE.PALM_FROND,
-    geo: () => makePalm({
+    label: 'Sabal Palm', tier: TIER.LARGE, h: 8.4, rad: 1.5, cap: 950, clear: 2.4, sep: 1.35,
+    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.40, contactMax: 1.6,
+    make: palmVariant,
+    base: {
       seed: 53, h: 8.4, rBot: 0.40, rTop: 0.35, bark: 'barkFib', crownshaft: false,
-      bend: 0.022, sway: 0.012, fronds: 14, frondLen: 3.1, frondW: 1.25,
+      lean: 0.030, bulge: 0, fronds: 14, frondVar: 5, crownF: 0.37, frondW: 1.25,
       pitch: 0.34, rise: 0.58, droop: 0.80, cells: ['fanA'],
-    }),
+    },
   },
   fanShort: {
-    label: 'Fan Palm', tier: TIER.MEDIUM, h: 3.6, rad: 1.7, cap: 800, clear: 2.0, sep: 0.9,
-    debris: PALETTE.PALM_FROND,
-    geo: () => makePalm({
+    label: 'Fan Palm', tier: TIER.MEDIUM, h: 3.6, rad: 1.7, cap: 900, clear: 2.0, sep: 0.9,
+    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.48, contactMax: 1.5,
+    make: palmVariant,
+    base: {
       seed: 67, h: 3.6, rBot: 0.48, rTop: 0.44, bark: 'barkFib', crownshaft: false,
-      bend: 0, sway: 0, fronds: 15, frondLen: 2.9, frondW: 1.30,
+      lean: 0.010, bulge: 0, fronds: 15, frondVar: 5, crownF: 0.80, frondW: 1.30,
       pitch: 0.18, rise: 0.52, droop: 0.84, cells: ['fanA'],
-    }),
+    },
   },
+
   banyan: {
-    label: 'Banyan Tree', tier: TIER.LARGE, h: 13.0, rad: 2.6, cap: 600, clear: 4.2, sep: 2.4,
-    debris: PALETTE.TREE_CANOPY,
-    geo: () => makeTree({
+    label: 'Banyan Tree', tier: TIER.LARGE, h: 13.0, rad: 2.6, cap: 650, clear: 4.2, sep: 2.4,
+    debris: PALETTE.TREE_CANOPY, variants: 3, tints: 'canopy', rBase: 0.95, contactMax: 2.6,
+    make: treeVariant,
+    base: {
       seed: 71, h: 13.0, trunkF: 0.42, rBot: 0.95, rTop: 0.55, bark: 'barkOak',
-      bend: 0.02, sway: -0.02, limbs: 3, canopyR: 6.4, canopyF: 0.92, cell: 'canopyA',
-    }),
+      lean: 0.03, limbs: 3, crownF: 0.49, canopyF: 0.92,
+      cell: 'canopyA', cells: ['canopyA', 'canopyOlive'],
+    },
   },
   liveOak: {
-    label: 'Live Oak', tier: TIER.LARGE, h: 10.5, rad: 2.1, cap: 700, clear: 3.6, sep: 1.9,
-    debris: PALETTE.TREE_CANOPY,
-    geo: () => makeTree({
+    label: 'Live Oak', tier: TIER.LARGE, h: 10.5, rad: 2.1, cap: 800, clear: 3.6, sep: 1.9,
+    debris: PALETTE.TREE_CANOPY, variants: 3, tints: 'canopy', rBase: 0.60, contactMax: 2.2,
+    make: treeVariant,
+    base: {
       seed: 83, h: 10.5, trunkF: 0.46, rBot: 0.60, rTop: 0.36, bark: 'barkOak',
-      bend: -0.03, sway: 0.02, limbs: 2, canopyR: 4.7, canopyF: 1.0, cell: 'canopyB',
-    }),
+      lean: 0.045, limbs: 2, crownF: 0.45, canopyF: 1.0,
+      cell: 'canopyB', cells: ['canopyB', 'canopyA', 'canopyOlive'],
+    },
+  },
+  mahogany: {
+    label: 'Mahogany', tier: TIER.LARGE, h: 12.0, rad: 2.2, cap: 600, clear: 3.6, sep: 2.0,
+    debris: PALETTE.TREE_CANOPY_DARK, variants: 3, tints: 'canopy', rBase: 0.62, contactMax: 2.2,
+    make: treeVariant,
+    base: {
+      seed: 89, h: 12.0, trunkF: 0.55, rBot: 0.62, rTop: 0.34, bark: 'barkOak',
+      lean: 0.035, limbs: 3, crownF: 0.38, canopyF: 0.80,
+      cell: 'canopyOlive', cells: ['canopyOlive', 'canopyB'],
+    },
   },
   tabebuia: {
-    label: 'Tabebuia', tier: TIER.LARGE, h: 8.2, rad: 1.7, cap: 600, clear: 3.0, sep: 1.5,
-    debris: PALETTE.FLOWER_YELLOW,
-    geo: () => makeTree({
+    label: 'Tabebuia', tier: TIER.LARGE, h: 8.2, rad: 1.7, cap: 650, clear: 3.0, sep: 1.5,
+    debris: PALETTE.FLOWER_YELLOW, variants: 3, tints: 'bloom', rBase: 0.36, contactMax: 1.6,
+    make: treeVariant,
+    base: {
       seed: 97, h: 8.2, trunkF: 0.52, rBot: 0.36, rTop: 0.22, bark: 'barkOak',
-      bend: 0.05, sway: 0.03, limbs: 2, canopyR: 3.5, canopyF: 0.86, cell: 'canopyYel',
-    }),
+      lean: 0.06, limbs: 2, crownF: 0.43, canopyF: 0.86, cell: 'canopyYel',
+    },
+  },
+  poinciana: {
+    label: 'Royal Poinciana', tier: TIER.LARGE, h: 9.4, rad: 2.4, cap: 550, clear: 3.6, sep: 2.0,
+    debris: PALETTE.CAR_RED, variants: 3, tints: 'bloom', rBase: 0.55, contactMax: 2.0,
+    make: treeVariant,
+    base: {
+      // The flame tree: a wide, flat, umbrella crown on a short fluted trunk.
+      // canopyF well under 1 is what makes it spread rather than mound.
+      seed: 103, h: 9.4, trunkF: 0.44, rBot: 0.55, rTop: 0.34, bark: 'barkOak',
+      lean: 0.05, limbs: 3, crownF: 0.55, canopyF: 0.62, cell: 'canopyRed',
+    },
+  },
+  jacaranda: {
+    label: 'Jacaranda', tier: TIER.LARGE, h: 8.8, rad: 2.0, cap: 500, clear: 3.2, sep: 1.8,
+    debris: PALETTE.ACCENT_LILAC, variants: 3, tints: 'bloom', rBase: 0.40, contactMax: 1.8,
+    make: treeVariant,
+    base: {
+      seed: 107, h: 8.8, trunkF: 0.50, rBot: 0.40, rTop: 0.24, bark: 'barkOak',
+      lean: 0.055, limbs: 2, crownF: 0.46, canopyF: 0.74, cell: 'canopyPurple',
+    },
   },
   bougain: {
-    label: 'Bougainvillea', tier: TIER.MEDIUM, h: 4.6, rad: 1.5, cap: 700, clear: 2.4, sep: 1.1,
-    debris: PALETTE.FLOWER_MAGENTA,
-    geo: () => makeTree({
+    label: 'Bougainvillea', tier: TIER.MEDIUM, h: 4.6, rad: 1.5, cap: 750, clear: 2.4, sep: 1.1,
+    debris: PALETTE.FLOWER_MAGENTA, variants: 3, tints: 'bloom', rBase: 0.22, contactMax: 1.2,
+    make: treeVariant,
+    base: {
       seed: 101, h: 4.6, trunkF: 0.38, rBot: 0.22, rTop: 0.13, bark: 'barkOak',
-      bend: -0.06, sway: 0.05, limbs: 2, canopyR: 2.4, canopyF: 0.94, cell: 'canopyPink',
-    }),
+      lean: 0.08, limbs: 2, crownF: 0.52, canopyF: 0.94, cell: 'canopyPink',
+    },
   },
   seagrapeT: {
-    label: 'Sea Grape', tier: TIER.MEDIUM, h: 5.0, rad: 1.9, cap: 600, clear: 2.8, sep: 1.4,
-    debris: PALETTE.TREE_CANOPY,
-    geo: () => makeTree({
-      seed: 113, h: 5.0, trunkF: 0.34, rBot: 0.30, rTop: 0.19, bark: 'barkOak',
-      bend: 0.09, sway: -0.07, limbs: 3, canopyR: 3.1, canopyF: 0.74, cell: 'seagrape',
-    }),
+    label: 'Sea Grape', tier: TIER.MEDIUM, h: 5.0, rad: 1.9, cap: 650, clear: 2.8, sep: 1.4,
+    debris: PALETTE.TREE_CANOPY, variants: 3, tints: 'canopy', rBase: 0.30, contactMax: 1.4,
+    make: treeVariant,
+    base: {
+      // trunkF was 0.34 and the crown hung into the contact band; makeTree now
+      // lifts it regardless, but a coastal shrub-tree with a visible fork also
+      // just looks more like a sea grape.
+      seed: 113, h: 5.0, trunkF: 0.44, rBot: 0.30, rTop: 0.19, bark: 'barkOak',
+      lean: 0.11, limbs: 3, crownF: 0.62, canopyF: 0.74, cell: 'seagrape',
+    },
   },
   mangrove: {
-    label: 'Mangrove', tier: TIER.MEDIUM, h: 4.2, rad: 1.8, cap: 500, clear: 2.6, sep: 1.1,
-    debris: PALETTE.TREE_CANOPY_DARK,
-    geo: () => makeTree({
-      seed: 127, h: 4.2, trunkF: 0.44, rBot: 0.40, rTop: 0.16, bark: 'barkFib',
-      bend: 0.12, sway: 0.10, limbs: 4, canopyR: 2.6, canopyF: 0.70, cell: 'canopyB',
-    }),
+    label: 'Mangrove', tier: TIER.MEDIUM, h: 4.2, rad: 1.8, cap: 550, clear: 2.6, sep: 1.1,
+    debris: PALETTE.TREE_CANOPY_DARK, variants: 3, tints: 'canopy', rBase: 0.40, contactMax: 1.5,
+    make: treeVariant,
+    base: {
+      seed: 127, h: 4.2, trunkF: 0.50, rBot: 0.40, rTop: 0.16, bark: 'barkMang',
+      lean: 0.14, limbs: 4, crownF: 0.60, canopyF: 0.70, cell: 'canopyB',
+    },
   },
 
   hedge: {
-    label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 3600, clear: 0.0, sep: 1.05,
-    debris: PALETTE.HEDGE, noShadow: false,
+    label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 3800, clear: 0.0, sep: 1.05,
+    debris: PALETTE.HEDGE, variants: 2, tints: 'shrub', contactMax: 2.1,
     // 1.1 m deep: a clipped municipal hedge, not a topiary cube. See makeBush.
-    geo: () => makeBush({ seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2, depth: 1.1 }),
+    make: bushVariant,
+    base: { seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2, depth: 1.1 },
   },
   shrub: {
-    label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2600, clear: 0.7, sep: 0.6,
-    debris: PALETTE.HEDGE,
-    geo: () => makeBush({ seed: 137, w: 1.9, h: 1.5, cell: 'shrubA', cards: 3 }),
+    label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2800, clear: 0.7, sep: 0.6,
+    debris: PALETTE.HEDGE, variants: 3, tints: 'shrub', contactMax: 1.6,
+    make: bushVariant,
+    base: { seed: 137, w: 1.9, h: 1.5, cell: 'shrubA', cards: 3 },
+  },
+  croton: {
+    label: 'Croton', tier: TIER.SMALL, h: 1.35, rad: 0.9, cap: 2000, clear: 0.6, sep: 0.58,
+    debris: PALETTE.FLOWER_ORANGE, variants: 3, tints: 'none', contactMax: 1.5,
+    // No tint set: the whole point of a croton is that the atlas cell is
+    // already five colours, and multiplying a variegated leaf just greys it.
+    make: bushVariant,
+    base: { seed: 139, w: 1.8, h: 1.35, cell: 'croton', cards: 3 },
   },
   // sep 0.8, not 0.45: a bloom clump is a 2.2 m card, so anything closer than
   // ~1.6 m is one clump standing inside another. That was the map's single
   // biggest cluster of overlapping props before the bed grid was widened, and
   // the spacing set is what keeps it fixed when a new planting pattern lands.
   flowerPink: {
-    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.8,
-    debris: PALETTE.FLOWER_PINK,
-    geo: () => makeBush({ seed: 149, w: 2.2, h: 0.95, cell: 'canopyPink', cards: 2 }),
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2200, clear: 0.6, sep: 0.8,
+    debris: PALETTE.FLOWER_PINK, variants: 2, tints: 'bloom', contactMax: 1.95,
+    make: bushVariant,
+    base: { seed: 149, w: 2.2, h: 0.95, cell: 'canopyPink', cards: 2 },
   },
   flowerYellow: {
-    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2000, clear: 0.6, sep: 0.8,
-    debris: PALETTE.FLOWER_YELLOW,
-    geo: () => makeBush({ seed: 151, w: 2.2, h: 0.95, cell: 'canopyYel', cards: 2 }),
+    label: 'Flower Bed', tier: TIER.SMALL, h: 0.95, rad: 1.1, cap: 2200, clear: 0.6, sep: 0.8,
+    debris: PALETTE.FLOWER_YELLOW, variants: 2, tints: 'bloom', contactMax: 1.95,
+    make: bushVariant,
+    base: { seed: 151, w: 2.2, h: 0.95, cell: 'canopyYel', cards: 2 },
   },
   ornGrass: {
-    label: 'Ornamental Grass', tier: TIER.TINY, h: 1.15, rad: 0.6, cap: 2800, clear: 0.5, sep: 0.36,
-    debris: PALETTE.GRASS_DRY,
-    geo: () => makeBush({ seed: 157, w: 1.5, h: 1.15, cell: 'grassTuft', cards: 3, top: false }),
+    label: 'Ornamental Grass', tier: TIER.TINY, h: 1.15, rad: 0.6, cap: 3000, clear: 0.5, sep: 0.36,
+    debris: PALETTE.GRASS_DRY, variants: 3, tints: 'shrub', contactMax: 1.3,
+    make: bushVariant,
+    base: { seed: 157, w: 1.5, h: 1.15, cell: 'grassTuft', cards: 3, top: false },
+  },
+  groundcover: {
+    label: 'Groundcover', tier: TIER.TINY, h: 0.42, rad: 1.2, cap: 2600, clear: 0.0, sep: 0.85,
+    debris: PALETTE.HEDGE, variants: 2, tints: 'shrub', contactMax: 2.4,
+    // A mat, so it is built as a slab (depth) rather than crossed cards, and it
+    // keeps its top card — from the game camera the top card IS the plant.
+    make: bushVariant,
+    base: { seed: 163, w: 2.6, h: 0.42, cell: 'groundcov', cards: 2, depth: 2.0 },
+  },
+  agave: {
+    label: 'Agave', tier: TIER.SMALL, h: 1.25, rad: 0.7, cap: 900, clear: 0.6, sep: 0.62,
+    debris: PALETTE.GRASS_DRY, variants: 3, tints: 'none', contactMax: 1.4,
+    make: (b, r) => makeRosette(b.cell, b.w * (0.82 + r() * 0.4), b.h * (0.8 + r() * 0.45),
+      2 + Math.floor(r() * 2.9)),
+    base: { seed: 167, w: 1.7, h: 1.25, cell: 'agave' },
   },
 
   planterS: {
     label: 'Planter', tier: TIER.MEDIUM, h: 2.0, rad: 1.0, cap: 900, clear: 1.3, sep: 1.0,
-    debris: PALETTE.PLANTER,
+    debris: PALETTE.PLANTER, tints: 'shrub',
     geo: () => makePlanter(2.0, 2.0, 0.85),
   },
   planterL: {
     label: 'Raised Planter', tier: TIER.MEDIUM, h: 2.6, rad: 2.4, cap: 700, clear: 2.6, sep: 1.4,
-    debris: PALETTE.PLANTER,
+    debris: PALETTE.PLANTER, tints: 'shrub',
     geo: () => makePlanter(5.0, 2.2, 1.05),
   },
   pergola: {
@@ -1594,6 +2324,11 @@ const SPECIES = {
     debris: PALETTE.STEEL,
     geo: () => makeHoop(),
   },
+  parkLamp: {
+    label: 'Park Lamp', tier: TIER.MEDIUM, h: 4.3, rad: 0.4, cap: 1400, clear: 0.9, sep: 0.45,
+    debris: PALETTE.LAMP_POST,
+    geo: () => makeParkLamp(),
+  },
   flagUS: {
     label: 'Flag Pole', tier: TIER.MEDIUM, h: 9.5, rad: 0.5, cap: 100, clear: 1.2, sep: 0.5,
     debris: PALETTE.STEEL,
@@ -1606,14 +2341,10 @@ const SPECIES = {
   },
 };
 
-/** Shrub-type pools get a colour run so a hedge line is not one flat green. */
-const TINTS = {
-  hedge: [0xffffff, 0xe6f0da, 0xd8ead2],
-  shrub: [0xffffff, 0xeaf6dc, 0xd6e8cc],
-};
-
-const PALMS = ['royalA', 'royalB', 'coconutA', 'coconutB', 'sabal', 'fanShort'];
-const SHADE = ['banyan', 'liveOak', 'tabebuia', 'bougain'];
+const PALMS = ['royalA', 'royalB', 'queenPalm', 'coconutA', 'coconutB', 'sabal', 'fanShort'];
+const SHADE = ['banyan', 'liveOak', 'mahogany', 'tabebuia', 'poinciana', 'jacaranda', 'bougain'];
+/** Everything that reads as a tree from 40 m — used for stats only. */
+const CANOPY = [...SHADE, 'seagrapeT', 'mangrove'];
 
 /* ======================================================================== */
 /*  MERGE BUCKETS                                                           */
@@ -1685,6 +2416,14 @@ class Buckets {
   }
 
   add(key, geo) {
+    // Strip the atlas-only attributes. A bucket mixes primitives — `tile` and
+    // `box` carry none, `disc` and `ringWall` are tagged for the foliage
+    // shader — and mergeGeometries returns NULL when the inputs disagree on
+    // their attribute set, which silently deletes the whole bucket. That is how
+    // every kerb in the city vanished the first time this was wired up.
+    for (const a of ['aWind', 'aTint', 'aGlow']) {
+      if (geo.attributes[a]) geo.deleteAttribute(a);
+    }
     let a = this.map.get(key);
     if (!a) { a = []; this.map.set(key, a); }
     a.push(geo);
@@ -1784,6 +2523,25 @@ function inBuilding(x, z) {
 }
 
 /**
+ * Is there a genuinely open circle of radius `r` here, clear of every building
+ * and of the carriageway?
+ *
+ * `inBuilding` alone answers "is this point in a lobby", which is not the same
+ * question as "is there a yard here": a point 40 cm from a curtain wall passes
+ * it, and a live oak planted there grows through the third floor. Sampling the
+ * circle instead of the point is what makes a forced placement in the middle of
+ * a parcel defensible.
+ */
+function openYard(x, z, r) {
+  if (inBuilding(x, z)) return false;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * 6.283;
+    if (inBuilding(x + Math.cos(a) * r, z + Math.sin(a) * r)) return false;
+  }
+  return true;
+}
+
+/**
  * How much open pavement there actually is between the kerb and the wall.
  *
  * The parcel says one thing and the building says another: buildings.js caps
@@ -1852,14 +2610,75 @@ function claimBox(ctx, x, z, w, d, r = 1.4) {
 /*  PLACEMENT                                                               */
 /* ======================================================================== */
 
+/**
+ * Mix a key and a variant index into a seed.
+ *
+ * The variant seed MUST NOT be `index` — several species share base seeds and a
+ * plain index would make royalA-v2 and royalB-v2 roll the identical sequence of
+ * jitters, which is the repetition problem one level up.
+ */
+function variantSeed(key, v) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193);
+  return (Math.imul(h ^ (v + 1), 0x9e3779b1) >>> 0) || 1;
+}
+
+/**
+ * A well-mixed hash of a world position, 0..2^31.
+ *
+ * Used to pick a variant and a tint per instance. It must MIX, not just add:
+ * the first version was `round(x*7.3 + z*13.1) % n`, and a median runs down a
+ * constant x at a constant 9.5 m step, so the term changed by the same amount
+ * every tree and every palm on Brickell Avenue drew the same variant.
+ */
+function posHash(x, z) {
+  let h = Math.imul(Math.round(x * 16) + 0x9e3779b9, 0x85ebca6b);
+  h ^= Math.imul(Math.round(z * 16) + 0x165667b1, 0xc2b2ae35);
+  h ^= h >>> 15;
+  return (Math.imul(h, 0x27d4eb2f) >>> 1);
+}
+
+/**
+ * Check that what a species puts on the ground really is its trunk.
+ *
+ * worldBuild measures the lowest fifth of the geometry and hands the result
+ * straight to the consumption physics, so a crown that sags into that band
+ * silently gives a 30 cm sea grape a 3.4 m pass radius. Measuring the same way
+ * it does, at build time, turns that from a bug someone has to notice into a
+ * line in the boot log naming the species.
+ */
+function auditContact(key, geo) {
+  const def = SPECIES[key];
+  if (!def.contactMax) return;
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  const hi = bb.min.y + (bb.max.y - bb.min.y) * 0.20;
+  const p = geo.attributes.position;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < p.count; i++) {
+    if (p.getY(i) > hi) continue;
+    const x = p.getX(i), z = p.getZ(i);
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  if (!(x1 > x0)) return;
+  const r = Math.hypot(x1 - x0, z1 - z0) / 2;
+  if (r > def.contactMax) badContact.push(`${key} ${r.toFixed(2)}m > ${def.contactMax}m`);
+}
+const badContact = [];
+
 const _factories = {};
-function factoryFor(key, tintHex) {
-  const fk = tintHex === undefined ? key : `${key}|${tintHex}`;
+function factoryFor(key, variant) {
+  const fk = `${key}|${variant}`;
   if (!_factories[fk]) {
-    _factories[fk] = () => ({
-      geometry: SPECIES[key].geo(),
-      material: tintHex === undefined ? atlasMaterial() : atlasMaterialTint(tintHex),
-    });
+    _factories[fk] = () => {
+      const def = SPECIES[key];
+      const geometry = def.make
+        ? def.make(def.base, makeRNG(variantSeed(key, variant)))
+        : def.geo();
+      auditContact(key, geometry);
+      return { geometry, material: atlasMaterial() };
+    };
   }
   return _factories[fk];
 }
@@ -1900,20 +2719,50 @@ function plant(ctx, key, x, z, rot, scale, opts = {}) {
     ctx.occupy(x, z, opts.force ? Math.min(clear, 1.7) : clear);
   }
   if (sep > 0) sepTake(x, z, sep);
-  const tints = TINTS[key];
-  const tint = tints ? tints[opts.tintIndex !== undefined
-    ? opts.tintIndex % tints.length : 0] : undefined;
-  const poolKey = tint === undefined ? `nat-${key}` : `nat-${key}-${tint.toString(16)}`;
-  const c = ctx.addInstanced(poolKey, factoryFor(key, tint), {
-    position: _v3.set(x, ctx.Y_WALK + (opts.y || 0), z),
+
+  /* Which of this species' shapes, and what colour crown.
+     Both come from the POSITION, not from a counter: a run of street trees
+     calls plant() in a loop and any counter-driven choice cycles v0, v1, v2,
+     v0, v1, v2 down the whole avenue, which is a pattern the eye locks onto
+     faster than it notices the repetition it was meant to hide. `tintIndex`
+     stays honoured where a caller genuinely wants a run to step through the
+     set, but it now seeds the hash instead of indexing it directly. */
+  const h = posHash(x + (opts.tintIndex || 0) * 0.37, z);
+  const vN = def.variants || 1;
+  const vi = vN > 1 ? h % vN : 0;
+  const set = TINT_SETS[def.tints || 'none'];
+  const tint = set[(h >>> 7) % set.length];
+
+  /* Planted crooked. A tilt rotates the instance about its base CENTRE, so half
+     the base disc goes under the pavement and half lifts off it; sinking by
+     rBase*sin(tilt) puts the high edge back on the ground and buries the low
+     one, which is what a real tree in a real tree pit looks like. Kept to 2.3
+     deg — beyond that a 13 m palm's crown translates several metres sideways
+     and starts to overhang things it does not stand over. */
+  let tiltX = 0, tiltZ = 0, sink = 0;
+  if (def.rBase && !opts.noTilt) {
+    const ta = ((h >>> 13) % 1024) / 1024 * 6.283;
+    const tk = (((h >>> 3) % 512) / 512) * 0.040;
+    tiltX = Math.cos(ta) * tk;
+    tiltZ = Math.sin(ta) * tk;
+    sink = def.rBase * scale * tk * 1.05;
+  }
+
+  const c = ctx.addInstanced(`nat-${key}-v${vi}`, factoryFor(key, vi), {
+    position: _v3.set(x, ctx.Y_WALK + (opts.y || 0) - sink, z),
     rotationY: rot,
+    tiltX,
+    tiltZ,
     scale,
+    hex: tint,
     tier: opts.tier || def.tier,
     radius: def.rad * scale,
     height: def.h * scale,
     label: def.label,
     kind: key,
-    capacity: def.cap,
+    // Split across the variants, with slack: the position hash is even but not
+    // perfectly even, and a pool that fills drops planting silently.
+    capacity: Math.ceil((def.cap / vN) * 1.7) + 24,
     castShadow: true,
     receiveShadow: false,
     debrisColor: def.debris,
@@ -1924,7 +2773,7 @@ function plant(ctx, key, x, z, rot, scale, opts = {}) {
   if (!c && !opts.decor) { stats.capped++; return null; }
   stats.instances++;
   if (PALMS.includes(key)) stats.palms++;
-  else if (SHADE.includes(key) || key === 'seagrapeT' || key === 'mangrove') stats.trees++;
+  else if (CANOPY.includes(key)) stats.trees++;
   else stats.bushes++;
   return c;
 }
@@ -2039,9 +2888,17 @@ function buildMedians(ctx) {
 
     /* One species for the whole avenue. Rolling the dice per palm gives a
        median that is 40% royal, 30% sabal and 30% coconut in no order at all,
-       which reads as a nursery clearance rather than a planting scheme. */
-    const key = rng.weighted([['royalA', 46], ['royalB', 26], ['sabal', 16], ['coconutA', 12]]);
+       which reads as a nursery clearance rather than a planting scheme.
+       The species is one choice; the SPECIMEN is not — five geometry variants
+       and eight crown tints ride underneath, so the avenue is a scheme made of
+       individuals rather than a stamp repeated 40 times. */
+    const key = rng.weighted([['royalA', 40], ['royalB', 24], ['queenPalm', 14],
+      ['sabal', 12], ['coconutA', 10]]);
+    // A second, subordinate species threaded through at every seventh position
+    // — the way a real avenue gets replanted a few trees at a time.
+    const infill = rng.weighted([['royalB', 30], ['queenPalm', 26], ['sabal', 24], ['coconutA', 20]]);
     const STEP = 9.5;
+    let step = 0;
 
     for (const run of runs) {
       if (run.z1 - run.z0 < MEDIAN_MIN_RUN) continue;   // streets.js built no island here
@@ -2063,21 +2920,20 @@ function buildMedians(ctx) {
          spacing) are all still enforced inside plant(); `force` only ever
          overrules the over-claim. */
       for (let z = Math.ceil(z0 / STEP) * STEP; z <= z1; z += STEP) {
-        plant(ctx, key, road.pos + (rng() - 0.5) * 0.4, z, rng() * 6.283,
+        plant(ctx, step++ % 7 === 3 ? infill : key,
+          road.pos + (rng() - 0.5) * 0.4, z, rng() * 6.283,
           0.92 + rng() * 0.26, { y: -0.012, clear: 2.0, island: true, force: true });
         // Colour at their feet, on the half-step, so the underplanting reads as
         // a continuous ribbon rather than a ring around each trunk.
         const mid = z + STEP * 0.5;
         if (mid > z1) continue;
         for (const s of [-1, 1]) {
-          if (rng.chance(0.72)) {
-            plant(ctx, rng.chance(0.5) ? 'flowerPink' : 'flowerYellow',
-              lane(s), mid, rng() * 6.283, 0.8 + rng() * 0.35,
-              { y: -0.012, clear: 0.5, island: true, force: true });
-          } else {
-            plant(ctx, 'ornGrass', lane(s), mid, rng() * 6.283, 0.75 + rng() * 0.45,
-              { y: -0.012, clear: 0.4, island: true, force: true });
-          }
+          const roll = rng();
+          const under = roll < 0.50 ? (rng.chance(0.5) ? 'flowerPink' : 'flowerYellow')
+            : roll < 0.68 ? 'croton'
+            : roll < 0.84 ? 'ornGrass' : 'groundcover';
+          plant(ctx, under, lane(s), mid, rng() * 6.283, 0.75 + rng() * 0.45,
+            { y: -0.012, clear: 0.4, island: true, force: true, tintIndex: step });
         }
       }
     }
@@ -2117,11 +2973,23 @@ function buildStreetTrees(ctx, B, b, rng) {
     const n = Math.max(1, Math.floor((len - 5) / spacing));
     const gap = (len - 5) / n;
 
-    // Give the whole run one species so the line reads as a planting scheme.
+    /* Give the whole run one species so the line reads as a planting scheme —
+       but a real street gets replanted in patches, so about one tree in six is
+       a second species. Without that, "one species per run" and "one geometry
+       per species" multiplied out to a literal repeating stamp; the accent is
+       what breaks the rhythm at a scale the eye reads as a street rather than
+       as noise. */
     const palmy = grand ? rng.chance(0.82) : rng.chance(0.42);
     const key = palmy
-      ? rng.weighted([['royalA', 30], ['royalB', 24], ['coconutA', 18], ['sabal', 18], ['coconutB', 10]])
-      : rng.weighted([['liveOak', 34], ['banyan', 18], ['tabebuia', 26], ['bougain', 22]]);
+      ? rng.weighted([['royalA', 26], ['royalB', 20], ['queenPalm', 16],
+        ['coconutA', 16], ['sabal', 14], ['coconutB', 8]])
+      : rng.weighted([['liveOak', 24], ['banyan', 12], ['tabebuia', 18],
+        ['poinciana', 16], ['jacaranda', 12], ['mahogany', 10], ['bougain', 8]]);
+    const accent = palmy
+      ? rng.weighted([['sabal', 30], ['queenPalm', 26], ['coconutA', 24], ['fanShort', 20]])
+      : rng.weighted([['tabebuia', 26], ['poinciana', 24], ['jacaranda', 22],
+        ['bougain', 16], ['liveOak', 12]]);
+    const accentAt = 2 + rng.int(0, 3);
 
     for (let i = 0; i <= n; i++) {
       const t = -len / 2 + 2.5 + gap * i;
@@ -2138,17 +3006,19 @@ function buildStreetTrees(ctx, B, b, rng) {
       // `force` stops occupancy arbitrating; the spacing set does it instead,
       // and unlike a blanket corner skip it only drops the tree when there
       // really is another one there.
-      const c = plantOut(ctx, key, x, z, nx, nz,
-        rng() * 6.283, 0.86 + rng() * 0.3, { force: true }, 2, 0.45);
+      const c = plantOut(ctx, i % 6 === accentAt % 6 ? accent : key, x, z, nx, nz,
+        rng() * 6.283, 0.84 + rng() * 0.34, { force: true, tintIndex: i }, 2, 0.45);
       if (!c) continue;
       const px = c.position.x, pz = c.position.z;
       treePit(B, px, pz, 1.05, ctx.Y_WALK + 0.02);
       // Under-planting beside the pit, ALONG the kerb line rather than behind
       // it: a metre inland is exactly where the foundation hedge runs, and a
       // collar of grass there quietly deletes one hedge unit per street tree.
-      if (rng.chance(0.55)) {
+      if (rng.chance(0.6)) {
         const s = rng.sign();
-        plant(ctx, rng.chance(0.6) ? 'ornGrass' : 'shrub',
+        const u = rng();
+        plant(ctx, u < 0.42 ? 'ornGrass' : u < 0.70 ? 'shrub'
+          : u < 0.88 ? 'croton' : 'agave',
           px + ax * s * 1.5, pz + az * s * 1.5,
           rng() * 6.283, 0.7 + rng() * 0.4, { clear: 0.35, force: true, tintIndex: i });
       }
@@ -2230,6 +3100,8 @@ function parkBlock(ctx, B, b, rng) {
   const py = y + 0.03;
   const pw = b.streetLife > 0.55 ? 2.8 : 2.2;
   const hasLoop = Math.min(b.w, b.d) > 20;
+  /** Lamp stations along the walk, filled in after the hero feature. */
+  const lampSites = [];
   if (hasLoop) {
     const px0 = x0 + pin, px1 = x1 - pin, pz0 = z0 + pin, pz1 = z1 - pin;
     // A slightly bowed loop reads as a designed park, an exact rectangle reads
@@ -2251,8 +3123,30 @@ function parkBlock(ctx, B, b, rng) {
         : s === 'w' ? { x: x0, z: b.z } : { x: x1, z: b.z };
       B.add('path', ribbon([a, c], pw, py, 3));
     }
+    /* Lamps stand OUTSIDE the walking surface — on the grass, half a metre
+       clear of the path edge. On it, a 4 m post is an obstacle in the middle of
+       the only route through the park, and the pedestrian crowd walks through
+       it. Stepping round the loop in ~14 m stations is what a municipal park
+       actually does, and it is what stops the path being a black stripe once
+       nightFactor comes up. */
+    const off = pw * 0.5 + 0.75;
+    const legs = [
+      [px0, pz0 - off, px1, pz0 - off], [px1 + off, pz0, px1 + off, pz1],
+      [px1, pz1 + off, px0, pz1 + off], [px0 - off, pz1, px0 - off, pz0],
+    ];
+    for (const [ax, az, bx, bz] of legs) {
+      const L = Math.hypot(bx - ax, bz - az);
+      const n = Math.max(1, Math.round(L / 14));
+      for (let i = 0; i <= n; i++) {
+        lampSites.push([ax + (bx - ax) * (i / n), az + (bz - az) * (i / n)]);
+      }
+    }
   } else {
     B.add('path', ribbon([{ x: x0, z: b.z }, { x: x1, z: b.z }], pw, py, 3));
+    const n = Math.max(1, Math.round((hw * 2) / 14));
+    for (let i = 0; i <= n; i++) {
+      lampSites.push([x0 + (hw * 2) * (i / n), b.z + pw * 0.5 + 0.75]);
+    }
   }
 
   /* --- hedge frontage + low wall --------------------------------------- */
@@ -2295,6 +3189,17 @@ function parkBlock(ctx, B, b, rng) {
   // how every bandshell, court and pond in the city ended up rejected.
   parkFeature(ctx, B, b, rng, y);
 
+  /* --- path lighting ---------------------------------------------------- */
+  // After the hero feature, so a bandshell or a pond has already claimed the
+  // ground it needs and a lamp cannot land inside the basin.
+  for (let i = 0; i < lampSites.length; i++) {
+    const [lx, lz] = lampSites[i];
+    if (plant(ctx, 'parkLamp', lx, lz, rng() * 6.283, 0.94 + rng() * 0.16,
+      { clear: 0.8, noTilt: true })) {
+      B.add('plazaInlay', disc(0.55, 8, lx, y + 0.028, lz, null));
+    }
+  }
+
   /* --- shade along the walk --------------------------------------------- */
   /* One species, one spacing, one offset: a path you can follow by its trees is
      the cheapest possible signal that somebody DESIGNED this park rather than
@@ -2302,8 +3207,8 @@ function parkBlock(ctx, B, b, rng) {
      ground it needs. */
   if (Math.min(b.w, b.d) > 26) {
     const alongX = b.w >= b.d;
-    const key = rng.weighted([['royalA', 26], ['liveOak', 24], ['sabal', 18],
-      ['tabebuia', 18], ['coconutA', 14]]);
+    const key = rng.weighted([['royalA', 22], ['liveOak', 20], ['sabal', 14],
+      ['tabebuia', 14], ['coconutA', 12], ['queenPalm', 10], ['jacaranda', 8]]);
     const runLen = (alongX ? hw : hd) * 2 - pin * 2;
     const n = Math.max(2, Math.round(runLen / 9));
     for (const s of [-1, 1]) {
@@ -2312,7 +3217,8 @@ function parkBlock(ctx, B, b, rng) {
         const t = -runLen / 2 + (runLen / n) * i;
         const px = alongX ? b.x + t : b.x + s * off;
         const pz = alongX ? b.z + s * off : b.z + t;
-        if (plant(ctx, key, px, pz, rng() * 6.283, 0.88 + rng() * 0.24, { clear: 1.8 })) {
+        if (plant(ctx, key, px, pz, rng() * 6.283, 0.86 + rng() * 0.30,
+          { clear: 1.8, tintIndex: i })) {
           treePit(B, px, pz, 1.0, y + 0.02);
         }
       }
@@ -2400,7 +3306,11 @@ function parkBlock(ctx, B, b, rng) {
    */
   const driftN = Math.max(2, Math.round(b.area / 620));
   for (let i = 0; i < driftN; i++) {
-    const key = rng.chance(0.5) ? 'flowerPink' : 'flowerYellow';
+    // A drift is ONE plant repeated — mixing species inside it turns a designed
+    // sweep of colour into a jumble. Crotons drift too: they read as a mass of
+    // orange at a distance where individual leaves have long since minified out.
+    const key = rng.weighted([['flowerPink', 34], ['flowerYellow', 34],
+      ['croton', 18], ['groundcover', 14]]);
     const dx = b.x + (rng() - 0.5) * b.w * 0.80;
     const dz = b.z + (rng() - 0.5) * b.d * 0.80;
     const a = rng() * 3.14, ra = 2.8 + rng() * 2.6, rb = 1.9 + rng() * 1.0;
@@ -2412,7 +3322,8 @@ function parkBlock(ctx, B, b, rng) {
       const px = dx + u * Math.cos(a) - v * Math.sin(a);
       const pz = dz + u * Math.sin(a) + v * Math.cos(a);
       if (!ctx.isFree(px, pz, 0)) continue;
-      plant(ctx, key, px, pz, rng() * 6.283, 0.72 + rng() * 0.3, { clear: 0 });
+      plant(ctx, key, px, pz, rng() * 6.283, 0.72 + rng() * 0.3,
+        { clear: 0, tintIndex: i });
     }
   }
 
@@ -2425,14 +3336,15 @@ function parkBlock(ctx, B, b, rng) {
    * own species, and cluster around them with a sqrt falloff (uniform in area,
    * so the grove is dense at the middle and frays at the edge).
    */
-  const coastal = () => rng.weighted([['royalA', 22], ['coconutA', 22], ['seagrapeT', 26],
-    ['sabal', 16], ['banyan', 14]]);
-  const inland = () => rng.weighted([['banyan', 20], ['liveOak', 22], ['royalA', 16],
-    ['royalB', 12], ['tabebuia', 14], ['bougain', 10], ['sabal', 6]]);
+  const coastal = () => rng.weighted([['royalA', 18], ['coconutA', 18], ['seagrapeT', 22],
+    ['sabal', 13], ['banyan', 11], ['queenPalm', 10], ['poinciana', 8]]);
+  const inland = () => rng.weighted([['banyan', 15], ['liveOak', 17], ['royalA', 12],
+    ['royalB', 9], ['tabebuia', 11], ['poinciana', 11], ['jacaranda', 9],
+    ['mahogany', 8], ['bougain', 5], ['sabal', 3]]);
   const speciesFor = b.bayfront ? coastal : inland;
 
-  const treeN = Math.max(6, Math.round(b.area / 46));
-  const groveN = Math.max(2, Math.min(5, Math.round(b.area / 900)));
+  const treeN = Math.max(7, Math.round(b.area / 40));
+  const groveN = Math.max(2, Math.min(6, Math.round(b.area / 780)));
   let planted = 0;
   for (let gi = 0; gi < groveN && planted < treeN; gi++) {
     const gx = b.x + (rng() - 0.5) * b.w * 0.72;
@@ -2457,10 +3369,14 @@ function parkBlock(ctx, B, b, rng) {
   }
 
   /* Understorey follows the groves rather than the parcel: shrub masses belong
-     under the canopy edge, not marooned in the middle of the mown lawn. */
-  const shrubN = Math.max(4, Math.round(b.area / 105));
+     under the canopy edge, not marooned in the middle of the mown lawn.
+     Five things in the mix rather than two — a park whose entire ground layer
+     is one shrub and one grass is a green carpet with trees standing on it. */
+  const shrubN = Math.max(4, Math.round(b.area / 96));
   for (let i = 0; i < shrubN; i++) {
-    plant(ctx, rng.chance(0.62) ? 'shrub' : 'ornGrass',
+    const u = rng();
+    plant(ctx, u < 0.38 ? 'shrub' : u < 0.62 ? 'ornGrass' : u < 0.78 ? 'croton'
+      : u < 0.92 ? 'groundcover' : 'agave',
       b.x + (rng() - 0.5) * b.w * 0.88, b.z + (rng() - 0.5) * b.d * 0.88,
       rng() * 6.283, 0.8 + rng() * 0.45, { tintIndex: i });
   }
@@ -2718,12 +3634,15 @@ function plazaBlock(ctx, B, b, rng) {
       B.add('kerb', box(gw + 0.34, 0.30, 0.3, gx, y + 0.145, gz + gd / 2, 1));
       B.add('kerb', box(0.3, 0.30, gd, gx - gw / 2, y + 0.145, gz, 1));
       B.add('kerb', box(0.3, 0.30, gd, gx + gw / 2, y + 0.145, gz, 1));
-      plant(ctx, rng.chance(0.55) ? 'liveOak' : 'bougain', gx, gz,
-        rng() * 6.283, 0.8 + rng() * 0.3, { clear: 1.6, y: 0.06 });
-      for (let k = 0; k < 3; k++) {
-        plant(ctx, rng.chance(0.5) ? 'shrub' : 'ornGrass',
-          gx + (rng() - 0.5) * gw * 0.7, gz + (rng() - 0.5) * gd * 0.7,
-          rng() * 6.283, 0.75 + rng() * 0.4, { clear: 0.7, y: 0.06, tintIndex: k });
+      plant(ctx, rng.weighted([['liveOak', 30], ['jacaranda', 22], ['poinciana', 20],
+        ['bougain', 16], ['tabebuia', 12]]), gx, gz,
+      rng() * 6.283, 0.8 + rng() * 0.3, { clear: 1.6, y: 0.06 });
+      for (let k = 0; k < 4; k++) {
+        const u = rng();
+        plant(ctx, u < 0.34 ? 'shrub' : u < 0.58 ? 'ornGrass'
+          : u < 0.78 ? 'croton' : u < 0.9 ? 'agave' : 'groundcover',
+        gx + (rng() - 0.5) * gw * 0.7, gz + (rng() - 0.5) * gd * 0.7,
+        rng() * 6.283, 0.75 + rng() * 0.4, { clear: 0.7, y: 0.06, tintIndex: k });
       }
     }
   }
@@ -2734,15 +3653,28 @@ function plazaBlock(ctx, B, b, rng) {
   const off = (alongX ? hd : hw) * 0.62;
   if (runLen > 12) {
     const n = Math.max(2, Math.round(runLen / 8.5));
-    const key = rng.chance(0.6) ? 'royalA' : 'sabal';
+    const key = rng.weighted([['royalA', 40], ['queenPalm', 26], ['sabal', 22], ['royalB', 12]]);
     for (let s = -1; s <= 1; s += 2) {
       for (let i = 0; i <= n; i++) {
         const t = -runLen / 2 + (runLen / n) * i;
         const px = alongX ? b.x + t : b.x + s * off;
         const pz = alongX ? b.z + s * off : b.z + t;
-        if (plant(ctx, key, px, pz, rng() * 6.283, 0.92 + rng() * 0.2, { clear: 2.2 })) {
+        if (plant(ctx, key, px, pz, rng() * 6.283, 0.88 + rng() * 0.28,
+          { clear: 2.2, tintIndex: i })) {
           B.add('plazaInlay', disc(1.15, 8, px, y + 0.045, pz, null));
         }
+      }
+    }
+    /* Lamps on the allée, between every second pair of palms. A plaza is the
+       one public space that is genuinely used after dark, and an unlit one is
+       a grey slab in every night frame. */
+    const ln = Math.max(1, Math.round(runLen / 15));
+    for (let s = -1; s <= 1; s += 2) {
+      for (let i = 0; i <= ln; i++) {
+        const t = -runLen / 2 + (runLen / ln) * i;
+        const px = alongX ? b.x + t : b.x + s * off * 0.60;
+        const pz = alongX ? b.z + s * off * 0.60 : b.z + t;
+        plant(ctx, 'parkLamp', px, pz, rng() * 6.283, 1, { clear: 0.9, noTilt: true });
       }
     }
   }
@@ -2759,12 +3691,17 @@ function plazaBlock(ctx, B, b, rng) {
       Math.abs(Math.cos(a)) > 0.5 ? Math.PI / 2 : 0, 1, { clear: 1.0, force: true });
   }
 
-  /* A run of short fan palms in the border band — chunky ground-level mass. */
-  const fn = Math.max(2, Math.round((b.w + b.d) / 20));
+  /* A run of chunky ground-level mass in the border band. Fan palms mostly,
+     with agave and croton threaded in: three completely different silhouettes
+     at knee-to-waist height is what keeps a big paved square from reading as
+     one texture with dots on it. */
+  const fn = Math.max(2, Math.round((b.w + b.d) / 18));
   for (let i = 0; i < fn; i++) {
     const a = (i / fn) * 6.283 + 0.5;
-    plant(ctx, 'fanShort', b.x + Math.cos(a) * hw * 0.55, b.z + Math.sin(a) * hd * 0.55,
-      rng() * 6.283, 0.9 + rng() * 0.3, { clear: 1.5, force: true });
+    const u = rng();
+    plant(ctx, u < 0.52 ? 'fanShort' : u < 0.76 ? 'agave' : 'croton',
+      b.x + Math.cos(a) * hw * 0.55, b.z + Math.sin(a) * hd * 0.55,
+      rng() * 6.283, 0.9 + rng() * 0.3, { clear: 1.5, force: true, tintIndex: i });
   }
 
   if (rng.chance(0.5) && small > 20) {
@@ -2912,9 +3849,17 @@ function waterfrontBlock(ctx, B, b, rng) {
   const n = Math.max(1, Math.round((hd * 2) / 8));
   for (let i = 0; i <= n; i++) {
     const pz = b.z - hd + (hd * 2 / n) * i;
-    const key = rng.weighted([['royalA', 34], ['coconutA', 30], ['royalB', 20], ['sabal', 16]]);
-    if (plant(ctx, key, walkX, pz, rng() * 6.283, 0.92 + rng() * 0.28, { force: true })) {
+    const key = rng.weighted([['royalA', 28], ['coconutA', 24], ['royalB', 16],
+      ['queenPalm', 16], ['sabal', 16]]);
+    if (plant(ctx, key, walkX, pz, rng() * 6.283, 0.88 + rng() * 0.34,
+      { force: true, tintIndex: i })) {
       B.add('plazaInlay', disc(1.2, 8, walkX, y + 0.045, pz, null));
+    }
+    // A lamp between every second pair of palms, offset onto the paving side so
+    // the two lines read as one lit promenade rather than as two rows.
+    if (i % 2 === 1) {
+      plant(ctx, 'parkLamp', walkX + 3.1, pz - (hd / Math.max(1, n)),
+        rng() * 6.283, 1, { clear: 0.9, force: true, noTilt: true });
     }
   }
 
@@ -2932,9 +3877,10 @@ function waterfrontBlock(ctx, B, b, rng) {
   const en = Math.max(2, Math.round((hd * 2) / 4.4));
   for (let i = 0; i < en; i++) {
     const pz = b.z - hd + (hd * 2 / en) * (i + 0.5);
-    plant(ctx, rng.weighted([['seagrapeT', 40], ['mangrove', 28], ['shrub', 20], ['ornGrass', 12]]),
-      edgeX + (rng() - 0.5) * 2.0, pz, rng() * 6.283, 0.85 + rng() * 0.4,
-      { tintIndex: i, force: true });
+    plant(ctx, rng.weighted([['seagrapeT', 32], ['mangrove', 22], ['shrub', 16],
+      ['ornGrass', 12], ['croton', 10], ['agave', 8]]),
+    edgeX + (rng() - 0.5) * 2.0, pz, rng() * 6.283, 0.85 + rng() * 0.4,
+    { tintIndex: i, force: true });
   }
 
   // Mangroves in the shallows off the seaward (+x) edge. A dock apron gets none
@@ -2999,14 +3945,49 @@ function builtBlock(ctx, B, b, rng) {
       else { kx = b.x + b.w / 2; kz = b.z + t; nx = -1; rot = Math.PI / 2; }
       const d = Math.max(1.5, Math.min(inset, wallDepth(kx, kz, nx, nz, inset + 3.5) - 1.0));
       const px = kx + nx * d, pz = kz + nz * d;
-      if (rng.chance(0.62)) {
+      if (rng.chance(0.58)) {
         plantOut(ctx, 'hedge', px, pz, -nx, -nz, rot, 0.85 + rng() * 0.2,
           { clear: 1.2, tintIndex: i, force: true }, 2, 0.5);
       } else {
-        plantOut(ctx, rng.chance(0.5) ? 'shrub' : 'ornGrass', px, pz, -nx, -nz,
-          rng() * 6.283, 0.8 + rng() * 0.4,
-          { clear: 1.0, tintIndex: i, force: true }, 2, 0.5);
+        const u = rng();
+        plantOut(ctx, u < 0.36 ? 'shrub' : u < 0.62 ? 'ornGrass'
+          : u < 0.84 ? 'croton' : 'agave', px, pz, -nx, -nz,
+        rng() * 6.283, 0.8 + rng() * 0.4,
+        { clear: 1.0, tintIndex: i, force: true }, 2, 0.5);
       }
+    }
+  }
+
+  /* SIDE AND REAR YARDS.
+     The frontage line above only plants the strip the street sees. Buildings
+     fill 70-82% of a parcel, so the remaining 18-30% is service yards, light
+     wells and car-park edges — real ground, in shot from the high 3/4 camera,
+     and until now bare.
+
+     These are FORCED, and they have to be: buildings claim occupancy as a
+     square sized to their circumradius, which blankets the whole parcel, so
+     reading that grid places nothing at all (measured: 12 trees across all 216
+     blocks). What replaces the read is a stronger test than the read was —
+     `openYard` demands a genuinely clear 5 m circle against the buildings'
+     MEASURED bounding boxes, so a tree only lands where there is a yard, not
+     merely where the grid happens not to have been claimed. props.js runs after
+     us and works around what we then claim. */
+  const yardN = Math.round(b.area / 620);
+  for (let i = 0; i < yardN; i++) {
+    const yx = b.x + (rng() - 0.5) * b.w * 0.92;
+    const yz = b.z + (rng() - 0.5) * b.d * 0.92;
+    if (!openYard(yx, yz, 2.6)) continue;
+    const key = rng.weighted([['liveOak', 16], ['mahogany', 14], ['sabal', 14],
+      ['queenPalm', 13], ['royalB', 12], ['poinciana', 10], ['jacaranda', 8],
+      ['coconutB', 7], ['banyan', 6]]);
+    if (plant(ctx, key, yx, yz, rng() * 6.283, 0.82 + rng() * 0.34,
+      { force: true, clear: 2.4, tintIndex: i })) {
+      treePit(B, yx, yz, 1.0, ctx.Y_WALK + 0.02);
+    } else {
+      // No room for a canopy is not a reason for bare tarmac — a shrub mass
+      // fits in a metre and still breaks the slab up.
+      plant(ctx, rng.chance(0.5) ? 'shrub' : 'croton', yx, yz,
+        rng() * 6.283, 0.8 + rng() * 0.4, { force: true, clear: 1.0, tintIndex: i });
     }
   }
 
@@ -3031,8 +4012,8 @@ function builtBlock(ctx, B, b, rng) {
     const off = (along ? b.d : b.w) / 2 - 2.0;
     const ex = along ? b.x + t : b.x + (seaward === 'e' ? off : -off);
     const ez = along ? b.z + (seaward === 's' ? off : -off) : b.z + t;
-    const key = rng.weighted([['seagrapeT', 30], ['coconutA', 22], ['royalB', 18],
-      ['shrub', 18], ['ornGrass', 12]]);
+    const key = rng.weighted([['seagrapeT', 26], ['coconutA', 18], ['royalB', 14],
+      ['queenPalm', 10], ['shrub', 14], ['ornGrass', 10], ['croton', 8]]);
     plant(ctx, key, ex, ez, rng() * 6.283, 0.85 + rng() * 0.35,
       { clear: 1.2, force: true, tintIndex: i });
   }
@@ -3049,6 +4030,11 @@ export function buildNature(ctx) {
   stats.trees = 0; stats.palms = 0; stats.bushes = 0;
   stats.features = 0; stats.beds = 0; stats.instances = 0; stats.capped = 0;
   rej.water = 0; rej.road = 0; rej.building = 0; rej.spacing = 0; rej.occupied = 0;
+  badContact.length = 0;
+
+  // Before any planting: the shader reads nightFactor and the hole from these
+  // uniforms on its very first frame.
+  installClock(ctx);
 
   // Buildings run before us, so their assembled geometry is on the scene and
   // can be measured. Nothing else can tell us where a wall actually is.
@@ -3096,4 +4082,10 @@ export function buildNature(ctx) {
     + `${rej.water} in water, ${rej.road} on road`
     + (stats.capped ? ` | WARNING ${stats.capped} plantings dropped, a pool is FULL` : '')
   );
+  // Silence here is the point: it means every species still puts nothing but
+  // trunk on the ground, so the consumption physics is measuring the right
+  // thing. A line means a crown has sagged into the contact band again.
+  if (badContact.length) {
+    console.warn(`[nature] CONTACT BAND is not trunk on: ${badContact.join(', ')}`);
+  }
 }
