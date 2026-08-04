@@ -834,7 +834,7 @@ function dogGeo(breed = 'short') {
   parts.push(hue(shadeGeo(snout, 1.0), PALETTE.SIGN_DARK));
   for (const s of [-1, 1]) {
     parts.push(box(0.017 * B.hs, 0.019 * B.hs, 0.014 * B.hs,
-      s * 0.040 * B.hs, hy + 0.020 * B.hs, hx + 0.066 * B.hs, 0.13));
+      s * 0.042 * B.hs, hy + 0.022 * B.hs, hx + 0.048 * B.hs, 0.13));
   }
 
   for (const s of [-1, 1]) {
@@ -1581,10 +1581,10 @@ function trolleyGeo() {
   bagB.scale(0.88, 0.88, 0.88);
   bagB.translate(-0.03, RY + 0.17, 0.12);
   parts.push(hue(shadeGeo(bagB, 1.0), PALETTE.BIN_BLUE));
-  const blanket = new THREE.CylinderGeometry(0.072, 0.072, 0.24, 7, 1, false, Math.PI / 7);
+  const blanket = new THREE.CylinderGeometry(0.068, 0.068, 0.20, 7, 1, false, Math.PI / 7);
   blanket.rotateZ(Math.PI / 2);
-  blanket.rotateY(0.35);
-  blanket.translate(0.02, RY + 0.11, 0.26);
+  blanket.rotateY(0.30);
+  blanket.translate(-0.01, RY + 0.10, 0.20);
   parts.push(hue(shadeGeo(blanket, 1.0), PALETTE.FABRIC_CORAL));
   parts.push(hue(bevBox(0.22, 0.17, 0.17, -0.09, RY + 0.26, -0.04, 1.0, 0.010),
     PALETTE.WOOD_DECK));
@@ -1757,11 +1757,11 @@ function pigeonGeo(pose = 'stand') {
     w.rotateX(tilt + 0.10);
     w.translate(s * 0.052, 0.104, -0.014);
     parts.push(hue(w, PIGEON_BODY, 0.78));
-    const bandBar = box(0.023, 0.011, 0.060, 0, 0, 0, 1.0);
+    const bandBar = box(0.024, 0.014, 0.072, 0, 0, 0, 1.0);
     bandBar.rotateZ(s * 0.16);
     bandBar.rotateX(tilt + 0.10);
-    bandBar.translate(s * 0.054, 0.088, -0.036);
-    parts.push(hue(bandBar, PIGEON_BAR));
+    bandBar.translate(s * 0.055, 0.086, -0.032);
+    parts.push(hue(bandBar, PIGEON_BAR, 1.25));
   }
 
   /* --- neck and head, lifted clear of the shoulders ----------------------- */

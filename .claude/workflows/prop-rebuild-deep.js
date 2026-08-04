@@ -255,6 +255,12 @@ CONSTRAINTS THAT WILL BITE YOU
 
 VERIFY BEFORE YOU FINISH — this is not optional:
   1. node --check ${OWNERS[owner]}
+  1b. node tools/boot-check.mjs      <-- THE ONE THAT MATTERS
+      node --check only proves the file PARSES. A registry entry that names a
+      geometry function you renamed or never wrote is a ReferenceError, not a
+      syntax error, so --check passes and the game does not boot at all. That
+      exact bug (gLoungeSofa) killed the whole game for an unknown length of
+      time behind a wall of green --check results. Boot it.
   2. node tools/prop-catalogue.mjs --match ${items.map((g) => g.kind).join(',')} --out shots/rb-${round}-${owner}-${idx}
   3. OPEN every image you just produced and look at it. If it still looks cheap,
      do it again. You are the last reviewer before it ships.

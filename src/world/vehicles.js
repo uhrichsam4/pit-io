@@ -1315,12 +1315,15 @@ function police(sh) {
   }
   for (const s of [-1, 1]) faceX(sh, s * 0.60, 2.07, 0.20, 0.24, 0.09, ROLE.BEACON, s);
   for (const s of [-1, 1]) {
-    // Two-part door livery: a swept band, a shield, and a lettering block.
+    /* Two-part door livery: a swept band with a gold underline, a shield, and
+     * a lettering block. Every element is keyed to the BAND rather than to the
+     * paint, so it reads identically on the white car and the black one — a
+     * white lettering block on a white patrol car is no lettering at all. */
     faceX(sh, s * 0.99, 1.10, -0.30, 2.10, 0.34, ROLE.BLUE, s);
     faceX(sh, s * 0.99, 0.84, -0.30, 2.10, 0.16, ROLE.SIGN, s);
-    faceX(sh, s * 1.00, 1.22, 0.42, 0.44, 0.44, ROLE.WHITE, s);
+    faceX(sh, s * 1.00, 1.22, 0.42, 0.44, 0.44, ROLE.SIGN, s);
     faceX(sh, s * 1.01, 1.22, 0.42, 0.22, 0.22, ROLE.BLUE, s);
-    faceX(sh, s * 0.99, 1.20, -1.34, 1.20, 0.18, ROLE.WHITE, s);
+    faceX(sh, s * 1.00, 1.10, -0.94, 1.00, 0.16, ROLE.SIGN, s);
   }
   // Push bar, pillar spotlight, whip antenna.
   box(sh, 0, 0.86, 2.50, 1.66, 0.10, 0.09, ROLE.CHROME);
@@ -2433,7 +2436,9 @@ function machCab(sh, o) {
 function excavator(sh) {
   for (const s of [-1, 1]) {
     chamfer(sh, s * 1.10, 0.44, 0, 0.72, 0.88, 4.30, 0.22, ROLE.GRIME);
-    for (let i = 0; i < 7; i++) box(sh, s * 1.10, 0.10, -1.8 + i * 0.6, 0.80, 0.10, 0.22, ROLE.STEEL);
+    // DUSTY, not STEEL: polished metal down at the grousers picks up the sky
+    // and sparkles cyan along the bottom of the tracks.
+    for (let i = 0; i < 7; i++) box(sh, s * 1.10, 0.10, -1.8 + i * 0.6, 0.80, 0.10, 0.22, ROLE.DUSTY);
     // Drive sprocket, idler and three track rollers per side.
     for (const z of [-2.00, 2.00]) cyl(sh, s * 1.10, 0.46, z, 0.42, 0.42, 0.50, 6, 'x', ROLE.MACH_LO);
     for (const z of [-1.00, 0, 1.00]) cyl(sh, s * 1.10, 0.22, z, 0.17, 0.17, 0.44, 5, 'x', ROLE.DARK);
@@ -2650,7 +2655,9 @@ function scissorLift(sh) {
   // Hydraulic ram between the lowest two arms.
   ram(sh, [0, 0.42, -0.80], [0, 1.10, 0.60], 0.11);
   // Platform deck, guard rails with a kick plate and mesh infill, control box.
-  chamfer(sh, 0, 2.72, 0, 1.60, 0.16, 2.80, 0.06, ROLE.STEEL);
+  // DUSTY for the deck: a matte grey chequer plate, not a mirror that turns
+  // the platform floor turquoise.
+  chamfer(sh, 0, 2.72, 0, 1.60, 0.16, 2.80, 0.06, ROLE.DUSTY);
   for (const s of [-1, 1]) {
     box(sh, s * 0.78, 3.32, 0, 0.07, 1.10, 2.72, ROLE.MACH);
     box(sh, 0, 3.32, s * 1.36, 1.60, 1.10, 0.07, ROLE.MACH);

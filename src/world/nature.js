@@ -3595,18 +3595,22 @@ function makeTree(spec) {
      the outline. */
   for (let i = 0; i < (spec.blossom || 0); i++) {
     const a = i * 2.39996 + rng() * 0.7;
-    const w = spec.canopyR * (0.34 + rng() * 0.20);
+    const w = spec.canopyR * (0.26 + rng() * 0.16);
     const g = cardGeo(w, w * 0.86, spec.blossomCell || spec.cell);
     g.translate(0, -w * 0.43, 0);
     _m4.makeRotationX(-0.5 - rng() * 0.8);
     g.applyMatrix4(_m4);
     _m4.makeRotationY(a);
     g.applyMatrix4(_m4);
-    const rr = spec.canopyR * (0.90 + rng() * 0.24);
+    // ON the crown edge, not beyond it: at 0.90-1.14 of the radius they floated
+    // clear of the foliage and read as cotton balls hung round a green tree.
+    const rr = spec.canopyR * (0.62 + rng() * 0.24);
     g.translate(tipX + Math.cos(a) * rr,
-      cy + spec.canopyR * spec.canopyF * (0.10 + rng() * 0.55),
+      cy + spec.canopyR * spec.canopyF * (0.10 + rng() * 0.45),
       tipZ + Math.sin(a) * rr);
-    liftNormals(g, 0.42);
+    // Lifted hard: a blossom cluster seen from its far side is shaded with a
+    // negated normal, and at a low lift that is a black blob on a purple tree.
+    liftNormals(g, 0.64);
     parts.push(g);
   }
 
@@ -3863,8 +3867,8 @@ function makeCrotonClump(spec) {
   // POT with the clump standing in it rather than as the plant's own oxblood
   // lower crown.
   parts.push(domeGeo('crotonCore', [
-    [0, R * 0.60], [H * 0.10, R * 0.66], [H * 0.22, R * 0.30],
-  ], 6, { lobes: 3, amp: 0.30, rng, jitter: 0.26 }));
+    [0, R * 0.46], [H * 0.10, R * 0.50], [H * 0.24, R * 0.24],
+  ], 6, { lobes: 3, amp: 0.34, rng, jitter: 0.30 }));
   parts.push(trunkGeo(H * 0.36, 0.055, 0.038, 'sw_wood', { sides: 3, rings: 1 }));
   const cells = ['croton', 'crotonB', 'crotonC'];
   const lead = Math.floor(rng() * 3);
@@ -5570,7 +5574,12 @@ const SPECIES = {
       // Eight blossom clusters standing proud of the crown edge, so the purple
       // breaks the outline instead of only ever being painted inside it.
       limbPitch: 0.80, limbLen: 0.32, limbAt: 0.78, flute: 0.10, flare: 1.25,
-      canopyCards: 9, canopyCaps: 4, blossom: 8, blossomCell: 'canopyPurple',
+      // The core takes the bloom too. Left as the default dark leaf skin, a
+      // jacaranda's mass reads GREEN with lilac stuck round the outside — and
+      // the whole point of the species on a Miami street in June is that the
+      // tree is purple from 200 m.
+      cellCore: 'canopyPurple',
+      canopyCards: 9, canopyCaps: 4, blossom: 6, blossomCell: 'canopyPurple',
     },
   },
   bougain: {

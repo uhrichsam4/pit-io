@@ -3313,7 +3313,7 @@ function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
 const _sheetMats = new Map();
 const hexCss = (h) => `#${(h >>> 0).toString(16).padStart(6, '0')}`;
 
-function sheetMaterial(key, paint) {
+function sheetMaterial(key, paint, o = {}) {
   let m = _sheetMats.get(key);
   if (m) return m;
   const size = 128;
@@ -3325,64 +3325,77 @@ function sheetMaterial(key, paint) {
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
+  tex.anisotropy = 8;
   tex.needsUpdate = true;
   m = new THREE.MeshStandardMaterial({
-    map: tex, alphaTest: 0.42, side: THREE.DoubleSide,
-    roughness: 0.9, metalness: 0.0, envMapIntensity: 0.55, dithering: true,
+    map: tex, side: THREE.DoubleSide, roughness: o.roughness ?? 0.9,
+    metalness: o.metalness ?? 0.0, envMapIntensity: 0.55, dithering: true,
+    ...(o.alphaTest ? { alphaTest: o.alphaTest } : {}),
   });
   _sheetMats.set(key, m);
   return m;
 }
 
 /**
- * Woven debris net.
+ * Woven debris sheeting.
  *
- * TWO THINGS THIS GETS RIGHT THAT THE OBVIOUS VERSION DOES NOT.
+ * WHY THIS IS OPAQUE AND THE WEAVE IS TONAL.
  *
- * RGB is painted flat across the whole tile and only the ALPHA carries the
- * weave. Punching holes by clearing pixels leaves black in the gaps, and mip
- * generation averages that black into the strands — so the sheet would get
- * darker and muddier the further away it is, which is the opposite of what
- * netting does.
+ * The obvious build — punch the weave out of the alpha channel and alpha-test
+ * it — was measured and it is worse than what it replaced. At the distance a
+ * site is actually seen a 0.5 m weave cell is three pixels, so the holes alias;
+ * and because both elevations are wrapped, you see the FAR sheet through the
+ * near one's holes at a slightly different scale, which is a moiré field. The
+ * reviewer's word for the old dithered netting was "speckle", and a fine
+ * alpha-cut mesh is a more expensive way to produce exactly that.
  *
- * The gaps bottom out at alpha 0.22 rather than 0, and the strands cover ~70%.
- * At mip 0 the gaps fail the 0.42 alphaTest so you see a real mesh; two mips up
- * the average is 0.7*1 + 0.3*0.22 = 0.77 and the sheet goes solid. That is the
- * transition you want — an open weave close to, a flat green wrap at 300 m —
- * and it happens over one mip instead of thrashing across five, which is what a
- * fine 50%-coverage weave does and why the first attempt shimmered.
+ * Real scaffold sheeting is not see-through from outside anyway — it is a solid
+ * wrap that you read the frame's shadow through. So the weave lives in the RGB
+ * only: warp and weft in two casts of one saturated green, which mips down to a
+ * clean flat green at 300 m and shows as cloth at 5 m. No alpha, no sorting,
+ * no aliasing, and the shadow it casts is a shadow rather than a stipple.
  */
 function netMaterial(hex) {
   return sheetMaterial(`net${hex}`, (g, size) => {
     g.fillStyle = hexCss(hex);
     g.fillRect(0, 0, size, size);
-    const n = 4, pitch = size / n, gap = pitch * 0.30;
-    g.globalCompositeOperation = 'destination-out';
-    g.globalAlpha = 0.78;
-    g.fillStyle = '#fff';
-    for (let i = 0; i < n; i++) {
-      g.fillRect(i * pitch, 0, gap, size);
-      g.fillRect(0, i * pitch, size, gap);
+    const n = 8, pitch = size / n;
+    // Weft: a darker cast of the SAME hue. A black wash greys the colour out,
+    // and a grey net in a city of pastels is the muddy mid the bible bans.
+    g.fillStyle = hexCss(jitterHex(hex, 0.86, 0.012));
+    for (let i = 0; i < n; i++) g.fillRect(0, i * pitch, size, pitch * 0.5);
+    // Warp: a lighter cast, laid over half of each weft band so the crossings
+    // read. This is the whole weave — two rectangles' worth of code.
+    g.fillStyle = hexCss(jitterHex(hex, 1.08, -0.012));
+    for (let i = 0; i < n; i++) g.fillRect(i * pitch, 0, pitch * 0.42, size);
+    // Panel seams every fourth strand, where two rolls of sheeting are laced.
+    g.fillStyle = hexCss(jitterHex(hex, 0.70, 0.02));
+    for (let i = 0; i < n; i += 4) {
+      g.fillRect(i * pitch, 0, pitch * 0.14, size);
+      g.fillRect(0, i * pitch, size, pitch * 0.14);
     }
-    g.globalCompositeOperation = 'source-over';
-    // Weave tone: the weft reads a shade heavier than the warp, which is what
-    // makes a flat sheet look like cloth rather than like paint.
-    g.globalAlpha = 0.22;
-    g.fillStyle = '#000';
-    for (let i = 0; i < n; i++) g.fillRect(0, i * pitch + gap, size, pitch - gap);
-    g.globalAlpha = 1;
-  });
+  }, { roughness: 0.95 });
 }
 
-/** Perforated metal: solid sheet, staggered round punch. */
+/**
+ * Perforated metal cladding: solid sheet, staggered round punch.
+ *
+ * The punch IS alpha-cut — that is the point of the material and the reason it
+ * is worth a mesh — but the sheet is deliberately 74% solid, so mip 1 already
+ * averages well clear of the alphaTest and it settles to flat anodised metal
+ * at distance instead of thrashing. Anything more open than this reads as a
+ * dark noisy rectangle over the deck void rather than as a screen ON it.
+ */
 function perfMaterial(hex) {
   return sheetMaterial(`perf${hex}`, (g, size) => {
     g.fillStyle = hexCss(hex);
     g.fillRect(0, 0, size, size);
+    // A shaded band per panel so a 20 m screen is not one flat value.
+    g.fillStyle = hexCss(jitterHex(hex, 0.92, 0.005));
+    g.fillRect(0, 0, size, size * 0.5);
     g.globalCompositeOperation = 'destination-out';
     g.fillStyle = '#fff';
-    const n = 6, p = size / n, rr = p * 0.31;
+    const n = 5, p = size / n, rr = p * 0.28;
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
         g.beginPath();
@@ -3391,7 +3404,7 @@ function perfMaterial(hex) {
       }
     }
     g.globalCompositeOperation = 'source-over';
-  });
+  }, { alphaTest: 0.45, roughness: 0.42, metalness: 0.35 });
 }
 
 /**
@@ -3739,14 +3752,13 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
 
   /* PERFORATED SCREEN over two or three bays. The one piece of architecture on
      the building, and it costs two triangles a bay — see sheetMaterial. */
-  const scN = 2 + (r() < 0.5 ? 1 : 0);
-  const scW = lw * 0.20;
-  const scX = bb.x0 + lw * 0.52;
+  const scX0 = entryX + entryW / 2 + 2.2;              // first bay clear of the portal
+  const avail = (bb.x1 - 1.2) - scX0;
+  const scW = Math.min(lw * 0.19, 6.5);
+  const scN = Math.max(0, Math.min(3, Math.floor(avail / (scW + 0.4))));
   for (let k = 0; k < scN; k++) {
-    const x = scX + (k - (scN - 1) / 2) * (scW + 0.35);
-    if (x - scW / 2 < entryX + entryW / 2 + 0.5 && x + scW / 2 > bb.x0) continue;
-    const s = sheetGeo(scW, top - 0.4, 1.1);
-    s.rotateY(0);
+    const x = scX0 + scW / 2 + k * (scW + 0.4);
+    const s = sheetGeo(scW, top - 0.4, 1.6);
     s.translate(x, 0.4, bb.z1 + 0.42);
     B.gl(s, perfMaterial(P.ALUMINIUM));
     // The screen hangs on a frame; without it the sheet is a floating decal.
@@ -3931,48 +3943,51 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
       const x = bb.x0 + 1.5 + k * step;
       B.trim(box(0.13, 0.065, 5.0, x, 0.04, z, 2), P.ROAD_LINE);
     }
-    // Wheel stop at the head of every bay: a 1.7 m precast block on two feet.
+    const bayX = (k) => bb.x0 + 1.5 + step * (k + 0.5);
     for (let k = 0; k < bays; k++) {
-      const x = bb.x0 + 1.5 + step * (k + 0.5);
+      const x = bayX(k);
+      const island = k === 0;                          // hatched no-parking end
+      const access = rr === 0 && k >= bays - 2;        // the two accessible bays
+      if (island) {
+        // Chevron island. Inside the first bay, not off the end of the run,
+        // so it can never poke through the kerb.
+        B.trim(box(step - 0.24, 0.06, 4.9, x, 0.045, z, 3), P.ASPHALT_DARK);
+        B.trim(box(0.14, 0.075, 5.0, x + step * 0.42, 0.045, z, 2), P.ROAD_LINE);
+        for (let j = 0; j < 5; j++) {
+          const g = box(step * 0.95, 0.075, 0.20, 0, 0, 0, 1.5);
+          g.rotateY(0.72);
+          g.translate(x, 0.05, z - 1.9 + j * 0.95);
+          B.trim(g, P.ROAD_LINE);
+        }
+        continue;
+      }
+      // Wheel stop at the head of every bay: a 1.7 m precast block, worn on top.
       B.trim(box(1.7, 0.15, 0.22, x, 0.04, headZ - dir * 0.35, 1.5), P.CONCRETE_DARK);
       B.trim(box(1.7, 0.05, 0.30, x, 0.04, headZ - dir * 0.35, 1.5), P.ROAD_LINE_WORN);
-    }
-    // Two accessible bays at the head of the row nearest the booth: a blue
-    // field with a white mark on it, and the hatched transfer aisle beside it.
-    if (rr === 0) {
-      for (let k = 0; k < 2; k++) {
-        const x = bb.x1 - 2.0 - step * (k + 0.5);
+      if (access) {
+        // Blue field with a white mark on it. Left empty so the paint reads.
         B.trim(box(step - 0.3, 0.06, 4.9, x, 0.045, z, 3), P.SIGN_BLUE);
-        B.trim(cyl(0.42, 0.07, 8, x, 0.05, z + dir * 0.6), P.ROAD_LINE);
-        B.trim(box(0.9, 0.075, 0.22, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
-        B.trim(box(0.22, 0.075, 0.9, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
+        B.trim(cyl(0.40, 0.075, 8, x, 0.05, z + dir * 0.5), P.ROAD_LINE);
+        B.trim(box(0.9, 0.08, 0.22, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
+        B.trim(box(0.22, 0.08, 0.9, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
+        continue;
       }
-    }
-    // Hatched chevron island closing the end of the row.
-    const ix = bb.x0 + 1.5 - 0.2;
-    B.trim(box(0.14, 0.07, 5.0, ix - 1.8, 0.04, z, 2), P.ROAD_LINE);
-    for (let k = 0; k < 5; k++) {
-      const g = box(2.3, 0.07, 0.20, 0, 0, 0, 1.5);
-      g.rotateY(0.72);
-      g.translate(ix - 0.9, 0.045, z - 1.9 + k * 0.95);
-      B.trim(g, P.ROAD_LINE);
-    }
-
-    for (let k = 0; k < bays; k++) {
-      const x = bb.x0 + 1.5 + step * (k + 0.5);
       if (Math.abs(x - gateX) < gateW * 0.55 && rows === 1) continue;
-      if (r() < 0.36) continue;
-      // Cars nose in to the wheel stop, so they sit forward in the bay.
+      if (r() < 0.34) continue;
+      // Cars nose in to the wheel stop, so they sit forward in the bay with the
+      // bumper overhanging it — which is what makes a rank of cars look parked
+      // rather than placed.
       parkedCar(B, x, 0.055, z + dir * 0.55, dir > 0 ? -Math.PI / 2 : Math.PI / 2,
         r.pick(CAR_HEX), 2, carN + rr);
       carN++;
     }
   }
 
-  /* THE BOOTH, the barrier and the sign — the corner of the lot a player
-     actually looks at. */
-  const kx = bb.x1 - 3.0, kz = bb.z1 - 3.0;
-  kiosk(B, kx, kz, Math.PI, r, r.pick([P.STUCCO_CREAM, P.STUCCO_WHITE, P.STUCCO_MINT, P.STUCCO_PEACH]));
+  /* THE BOOTH, the barrier and the sign, all together at the entrance — which
+     is the corner of the lot a player actually drives past. The booth used to
+     sit at the far end from the gate, attending nothing. */
+  kiosk(B, gateX + gateW / 2 + 2.7, bb.z1 - 2.6, Math.PI, r,
+    r.pick([P.STUCCO_CREAM, P.STUCCO_WHITE, P.STUCCO_MINT, P.STUCCO_PEACH]));
   barrier(B, gateX + gateW / 2 + 0.5, 0.04, bb.z1 - 3.2, Math.PI, gateW * 0.78,
     r.chance(0.5) ? 1.2 : 0.05);
   // Illuminated P totem beside the entrance.
@@ -3984,10 +3999,13 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
   B.trim(box(0.46, 0.34, 0.06, px + 0.02, 4.11, bb.z1 - 1.66, 1), P.SIGN_LIGHT);
   B.trim(box(1.3, 0.5, 0.2, px, 2.42, bb.z1 - 1.9, 1.5), P.SIGN_LIGHT);   // tariff plate
 
-  // Column lighting, on the head props.js hangs on the streets outside.
+  /* Column lighting, on the head props.js hangs on the streets outside. Stood
+     on the aisle when there are two rows and on the back kerb when there is
+     one — a 7 m column planted in the middle of the only rank of bays would be
+     standing inside three of the cars. */
+  const lampZ = rows === 2 ? db.cz : bb.z0 + 2.2;
   for (let k = 0; k < 3; k++) {
-    lampHead(B, bb.x0 + lw * (0.18 + k * 0.32), 0.04, db.cz, 7.2,
-      k % 2 ? 0 : Math.PI, r);
+    lampHead(B, bb.x0 + lw * (0.18 + k * 0.32), 0.04, lampZ, 7.2, k % 2 ? 0 : Math.PI, r);
   }
   register(ctx, group, B, world, Math.max(lw, ld) * 0.5, 3, TIER.HUGE,
     'lot', 'Car Park', P.CONCRETE_DARK, { lw, ld });
@@ -4044,14 +4062,17 @@ function debrisChute(B, x, z, y0, y1, r) {
     B.trim(cyl(0.66, sh * 0.96, 8, x, y, z, 0.50), i % 2 ? P.CONE_ORANGE : P.NEON_ORANGE);
     if (i % 2 === 0) B.trim(cyl(0.72, 0.10, 8, x, y + sh * 0.9, z), P.STEEL_DARK);
   }
-  // Hopper at the top, and the skip it discharges into.
+  // Hopper at the top, and the skip it discharges into. The skip is offset back
+  // INTO the site rather than centred under the chute: it is the widest thing
+  // in the assembly and it has to stay inside the hoarding, which is also the
+  // measured ground-contact footprint.
   B.trim(cyl(0.62, 1.1, 8, x, y1, z, 1.35), P.CONE_ORANGE);
-  B.trim(box(3.4, 1.25, 2.0, x, 0, z + 0.3, 2.5), P.RUST);
-  B.trim(box(3.5, 0.12, 2.1, x, 1.25, z + 0.3, 2.5), P.STEEL_DARK);
+  B.trim(box(3.0, 1.25, 2.0, x + 0.7, 0, z + 0.3, 2.5), P.RUST);
+  B.trim(box(3.1, 0.12, 2.1, x + 0.7, 1.25, z + 0.3, 2.5), P.STEEL_DARK);
   for (const sx of [-1, 1]) {
-    B.trim(box(0.16, 1.35, 0.16, x + sx * 1.6, 0, z - 0.6, 1), P.STEEL_DARK);
+    B.trim(box(0.16, 1.35, 0.16, x + 0.7 + sx * 1.4, 0, z - 0.6, 1), P.STEEL_DARK);
   }
-  if (r.chance(0.6)) B.trim(box(2.4, 0.4, 1.3, x, 1.25, z + 0.3, 2), P.CONCRETE_DARK);
+  if (r.chance(0.6)) B.trim(box(2.4, 0.4, 1.3, x + 0.7, 1.25, z + 0.3, 2), P.CONCRETE_DARK);
 }
 
 /**
@@ -4299,13 +4320,18 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
    * with a horizontal line at every floor. Four triangles for both faces, and
    * it costs no draw call the site was not already paying for.
    */
-  const netHex = r.weighted([[P.STUCCO_MINT, 10], [P.STUCCO_SKY, 10], [P.FABRIC_AQUA, 7], [P.CONE_ORANGE, 5]]);
+  // Debris netting is a saturated green or aqua on every real site, and that
+  // one saturated note is the whole reason a construction site reads as a
+  // construction site from 300 m. Pale sky-blue washed out to grey.
+  const netHex = r.weighted([[P.FABRIC_AQUA, 12], [P.HEDGE_LIGHT, 9], [P.STUCCO_MINT, 6],
+    [P.PALM_FROND, 6], [P.STUCCO_SKY, 4], [P.CONE_ORANGE, 4]]);
   const netMat = netMaterial(netHex);
   const netW = lw - 2.4;
   for (const [zf, hh] of [[bb.z1 + 1.25, sh], [bb.z0 - 1.25, sh * 0.86]]) {
-    // 1.6 m tile: a 25 m sheet is then 16 weave repeats rather than 40, which
-    // is the difference between a mesh you can read and a field of aliasing.
-    const s = sheetGeo(netW, hh, 1.6);
+    // 2.2 m tile: a 25 m sheet is then 11 weave repeats with 0.55 m cells,
+    // rather than 40 with 0.16 m cells. That cell size is what decides whether
+    // the sheet reads as a mesh or as a field of aliasing at street distance.
+    const s = sheetGeo(netW, hh, 2.2);
     s.translate(bb.cx, 0.1, zf);
     B.gl(s, netMat);
     // Tie lines: a scaffold tube along the sheet at every floor, plus the tie
@@ -4318,7 +4344,7 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
     }
   }
   /* Debris chute down the west flank, into a skip on the hardstanding. */
-  debrisChute(B, bb.x0 - 1.0, bb.cz + ld * 0.18, 1.3, Math.max(9, sh * 0.82), r);
+  debrisChute(B, bb.x0 - 0.3, bb.cz + ld * 0.18, 1.3, Math.max(9, sh * 0.82), r);
   // Man-hoist up the flank: a lattice mast with a cage on it. The one piece of
   // kit that says "site" at any distance where the crane is off frame.
   const hx = bb.x1 - 1.4;
