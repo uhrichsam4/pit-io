@@ -3568,15 +3568,48 @@ function placeMoving(ctx, state, traf, rng) {
     const spacing = lane.busLane ? 210 : base * (0.86 + 0.55 * outward);
     const mix = lane.busLane ? BUS_LANE_MIX
       : lane.kerbLane ? KERB_LANE_MIX : INNER_LANE_MIX;
+    const stopOff = lane.axis === 'x' ? 'stopX' : 'stopZ';
+    /**
+     * Is this stretch of lane inside a junction box?
+     *
+     * The initial fleet used to be laid down by arc length alone, which meant
+     * a car on the north-south carriageway and a car on the east-west one
+     * could both be dealt into the middle of the SAME crossing — 16 pairs of
+     * vehicles standing inside each other at t = 0, every one of them at a
+     * junction, and the `intersection` preset frames a junction. The running
+     * sim never does this (the signals and the turn claims see to it); only
+     * the deal did, and a screenshot is always taken on the deal.
+     *
+     * The margin is half the vehicle plus 2 m, so a car deals up to the stop
+     * line and no further.
+     */
+    const clearOfJunction = (s, len) => {
+      const J = lane.junctions;
+      if (!J) return s;
+      const pad = len * 0.5 + 1.0;
+      for (let i = 0; i < J.length; i++) {
+        const box = J[i].ix[stopOff];
+        const lo = J[i].s - box - pad, hi = J[i].s + box + pad;
+        // Backed up to the stop line rather than deleted: simply refusing the
+        // slot cost 790 of the city's 1,392 moving vehicles, because a
+        // boulevard box plus its crosswalks is 40 m of a 70 m block. Nudging
+        // it to the line keeps the density AND puts the car where a car
+        // waiting at a red light belongs.
+        if (s > lo && s < hi) return (s - lo) < (hi - s) ? lo : hi;
+      }
+      return s;
+    };
     for (let si = 0; si < info.segs.length; si++) {
       const seg = info.segs[si];
       const n = Math.floor((seg.hi - seg.lo) / spacing);
       for (let i = 0; i < n; i++) {
-        const s = seg.lo + 12 + ((i + rng() * 0.7) / n) * (seg.hi - seg.lo - 24);
+        let s = seg.lo + 12 + ((i + rng() * 0.7) / n) * (seg.hi - seg.lo - 24);
         let type = rng.weighted(mix);
         // Heavy vehicles keep to the kerb lane, like they are supposed to.
         if (!lane.kerbLane && BIG.has(type)) type = 'sedan';
         const def = FLEET[type];
+        s = clearOfJunction(s, def.len);
+        if (s < seg.lo + 6 || s > seg.hi - 6) continue;
         if (!traf.hasRoom(info, s, def.len)) continue;
         const p = traf.net.sampleLane(lane, s, {});
         const vi = pickVariant(rng, type);

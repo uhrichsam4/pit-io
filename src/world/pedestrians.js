@@ -1122,14 +1122,21 @@ function census(st) {
    * are excluded: a person on a bench is inside that bench on purpose.
    */
   let inProps = 0;
+  const inPropsBy = {};
   for (const a of st.agents) {
     if (a.held) { held++; continue; }
     const m = MODE_NAME[a.mode] || 'UNKNOWN';
     modes[m] = (modes[m] || 0) + 1;
     if (a.role) roles[a.role] = (roles[a.role] || 0) + 1;
     if (a.dog) dogs++;
-    if (a.mode !== MODE.SIT && a.mode !== MODE.CYCLE && st.obstacles
-        && !spotIsClear(st.obstacles, a.x, a.z, WALK_R * 0.82)) inProps++;
+    // SIT and CYCLE are exempt for the obvious reason. So is SERVE: a waiter
+    // whose whole job is weaving between the tables is inside the terrace
+    // furniture by design, and counting them made the metric lie by a third.
+    if (a.mode !== MODE.SIT && a.mode !== MODE.CYCLE && a.mode !== MODE.SERVE
+        && st.obstacles && !spotIsClear(st.obstacles, a.x, a.z, WALK_R * 0.82)) {
+      inProps++;
+      inPropsBy[m] = (inPropsBy[m] || 0) + 1;
+    }
   }
   return {
     agents: st.agents.length,
@@ -1139,6 +1146,7 @@ function census(st) {
     venues: st.venues.length,
     dogs,
     inProps,
+    inPropsBy,
     modes,
     roles,
   };
@@ -3137,11 +3145,15 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
       const p = pitch(path, r, 1, 3.6, 5.4, 1.1);
       if (p) {
         const a = person(r, ARCH_RESTING, p.x, p.z, p.yaw + Math.PI, MODE.SIT, 'streetRest');
-        // Sitting on the ground with their back to the wall, knees drawn up.
-        a.hipY = 0.30 + r() * 0.02;
+        // Sitting on the ground with their back to the wall. Uses the SAME
+        // sprawl geometry the park sitters use — 0.288 is the solved hip height
+        // that puts the heel on the pavement at every body scale — rather than
+        // an invented pose, because an invented one puts the shoes through the
+        // paving for exactly the people it would be worst to get wrong.
+        a.hipY = 0.288 + r() * 0.020;
         a.seatYaw = a.yaw;
-        a.sitSprawl = false;
-        a.lean = -0.06;
+        a.sitSprawl = true;
+        a.lean = 0.05 + r() * 0.06;
         const bx = p.x + Math.sin(a.yaw + 1.5) * 0.85;
         const bz = p.z + Math.cos(a.yaw + 1.5) * 0.85;
         if (clear(bx, bz, 0.4)) {
@@ -3169,17 +3181,25 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
   }
 
   /* --- asleep on a bench in the sun ------------------------------------- */
-  // A real bench, taken whole: nobody else is sitting on it.
   const benches = furniture.seats.filter((s) => s.kind !== 'chair' && s.kind !== 'picnic');
   for (const s of benches) {
     if (spent >= cap) break;
     if (s.taken) continue;
     if (!rng.chance(0.012)) continue;
-    s.taken = true;
-    const a = person(rng, pickArchetype(rng, false), s.x, s.z, s.yaw, MODE.SIT, 'asleep');
+    // The WHOLE bench, not one slot of it. A bench is authored as three or
+    // four sitting positions along its run; claiming one and leaving the rest
+    // open puts the next sitter inside the person already lying there.
+    for (const o of benches) {
+      if (Math.abs(o.x - s.x) < 1.3 && Math.abs(o.z - s.z) < 1.3) o.taken = true;
+    }
+    // Turned a quarter so their length runs ALONG the timber. `s.yaw` is the
+    // direction a SITTER faces, which is across the bench; lying down that way
+    // would put most of them in mid-air beside it.
+    const along = s.yaw + (rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2);
+    const a = person(rng, pickArchetype(rng, false), s.x, s.z, along, MODE.SIT, 'asleep');
     a.lying = true;
     a.hipY = s.seatY / a.size;
-    a.seatYaw = a.yaw;
+    a.seatYaw = along;
     a.lean = 1.34;                 // torso down along the seat
     if (rng.chance(0.5)) { a.hat = true; a.hatHex = rng.pick(HAT_COLORS); a.hatScale = 1.15; }
   }
@@ -4278,9 +4298,29 @@ function stepEscort(st, a, dt) {
     return;
   }
   const cs = Math.cos(ad.yaw), sn = Math.sin(ad.yaw);
-  const off = a.escortSide * a.escortOff;
-  const tx = ad.x + cs * off - sn * a.escortBack;
-  const tz = ad.z - sn * off - cs * a.escortBack;
+  let off = a.escortSide * a.escortOff;
+  let tx = ad.x + cs * off - sn * a.escortBack;
+  let tz = ad.z - sn * off - cs * a.escortBack;
+  /* --- swap sides rather than walk the child through a planter ---------
+   * The adult is steered by the measured pavement corridor; the child is
+   * simply pinned half a metre to one side of them, so on the kerb side of a
+   * row of bins the parent goes round and the toddler goes through. Measured:
+   * 28 of the 116 people standing inside furniture after twenty seconds were
+   * escorted children. Trying the other hand first, and falling in directly
+   * behind if neither hand is clear, is what a parent actually does. */
+  if (st.obstacles && !spotIsClear(st.obstacles, tx, tz, WALK_R * 0.7)) {
+    off = -off;
+    const ax = ad.x + cs * off - sn * a.escortBack;
+    const az = ad.z - sn * off - cs * a.escortBack;
+    if (spotIsClear(st.obstacles, ax, az, WALK_R * 0.7)) {
+      a.escortSide = -a.escortSide;
+      tx = ax; tz = az;
+    } else {
+      // Single file, in the adult's own footsteps.
+      tx = ad.x - sn * (a.escortBack + 0.34);
+      tz = ad.z - cs * (a.escortBack + 0.34);
+    }
+  }
   const dx = tx - a.x, dz = tz - a.z;
   const d = Math.hypot(dx, dz);
   const step = Math.min(d, Math.max(ad.curSpeed * 1.4, 0.35) * dt);
@@ -4301,6 +4341,10 @@ function stepGoto(st, a, dt) {
   } else {
     a.mode = m;
   }
+  // A promoter arriving on their mark starts working; the same person walking
+  // home at dawn stops being one. Carried on the errand rather than set at
+  // departure so the role changes when they get there, not while they walk.
+  if (a.thenRole !== undefined) { a.role = a.thenRole; a.thenRole = undefined; }
 }
 
 function stepFlee(st, a, dt) {
@@ -4508,17 +4552,17 @@ function poseAgent(st, a, i) {
       lean = 0.16; headExtra = 0.22;
     } else if (a.role === 'streetRest') {
       /* --- sitting on the ground with their back against the wall ------
-       * Knees drawn up, forearms across them. Modelled with the same care as
-       * anyone else in this city, and posed to look comfortable rather than
-       * collapsed: the difference between a person resting and a caricature is
-       * entirely in this pose. */
-      thighL = -2.05; thighR = -1.98;
-      shinL = 1.62; shinR = 1.55;
-      armL = -1.28 + Math.sin(st.time * 0.28 + a.idleSeed) * 0.03;
-      armR = -1.20;
-      lean = 0.10 + Math.sin(st.time * 0.4 + a.idleSeed) * 0.02;
+       * The LEGS are left exactly as the sprawl pose put them, so the heels
+       * land on the paving like every other ground sitter's. Only the arms and
+       * the head change: forearms resting on the knees, back settled against
+       * the wall. Posed to look comfortable rather than collapsed — the
+       * difference between a person resting and a caricature is entirely in
+       * this pose, and the brief is explicit that it must be the former. */
+      armL = -1.02 + Math.sin(st.time * 0.28 + a.idleSeed) * 0.03;
+      armR = -0.96;
+      lean = a.lean + Math.sin(st.time * 0.4 + a.idleSeed) * 0.02;
       twist = Math.sin(st.time * 0.22 + a.idleSeed) * 0.05;
-      headExtra = 0.06;
+      headExtra = 0.04;
     } else if (a.chatPartner && !a.chatPartner.dead) {
       // Talking over a table: one hand comes up off the top.
       const g = Math.max(0, Math.sin(st.time * 1.3 + a.idleSeed));
