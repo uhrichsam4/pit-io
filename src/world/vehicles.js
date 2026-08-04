@@ -3520,18 +3520,28 @@ function boxesClash(ax, az, aYaw, aw, ad, bx, bz, bYaw, bw, bd) {
  * them, which is why a test for a 1.8 m bicycle was really a test of a 9 m
  * square and failed on every furnished sidewalk in the city.
  *
- * `vehiclesOnly` is the difference between the two callers. Plant belongs among
- * the barriers and spoil heaps of a construction site, so machinery only has to
- * miss other vehicles; a bicycle has to miss the bench as well. Nothing bigger
- * than a delivery van is considered either way — a tower's circumradius covers
- * half its own parcel, and keeping off buildings is the grid's job.
+ * `skip` is the difference between the callers. A bicycle has to miss the bench
+ * as well as the parked cars, so it passes nothing. Plant belongs among the
+ * barriers and spoil heaps of its own site, so machinery passes SITE_CLUTTER —
+ * but only that. It used to pass "everything that is not a vehicle", which is
+ * not the same thing at all: the excavators went in on top of the potted ficus,
+ * the clipped hedge, the bench, the bell bollard and the fire hydrant that
+ * nature.js and props.js had already put on the frontage, up to 2.6 m into
+ * them. Nothing bigger than a delivery van is considered either way — a tower's
+ * circumradius covers half its own parcel, and keeping off buildings is the
+ * grid's job.
  */
-function clearOfPlaced(ctx, x, z, yaw, w, d, out, vehiclesOnly) {
+function clearOfPlaced(ctx, x, z, yaw, w, d, out, skip) {
   const list = ctx.registry.query(x, z, Math.hypot(w, d) * 0.5 + 7, out);
   for (let i = 0; i < list.length; i++) {
     const o = list[i];
     const om = FLEET[o.kind] ? shapeMetrics(o.kind) : null;
-    if (!om && vehiclesOnly) continue;
+    if (skip && skip.has(o.kind)) continue;
+    // Flat ground detail is not an obstruction. A manhole cover, a drain grate,
+    // a utility plate or a road patch is part of the surface, and a machine
+    // standing over one is right, not wrong. Named exemptions alone were too
+    // brittle for this — measuring is not.
+    if (skip && o.height < 0.35) continue;
     if (o.radius > 6.5) continue;
     // A prop that is not one of ours has no authored contact box; its measured
     // radius is honest for something compact, so stand a square in its place.
@@ -3989,6 +3999,23 @@ function placeBoats(ctx, state, rng) {
 /** How far inside the parcel line a machine's contact patch has to finish. */
 const SITE_MARGIN = 0.4;
 
+/**
+ * The site's OWN clutter — the only things plant is allowed to stand among.
+ *
+ * Mirrors constructionYard() in props.js: hoarding, cones, barrels, material
+ * stacks, welfare units. Everything else on a construction frontage — the
+ * street trees, hedges, planters, benches, hydrants and bollards that nature.js
+ * and props.js place along the kerb — is somebody else's, and an excavator
+ * parked in it is a defect, not site character. Flat ground detail is listed
+ * too: a machine may sit over a manhole or a drain grate.
+ */
+const SITE_CLUTTER = new Set([
+  'jersey', 'waterBarrier', 'meshFence', 'cone', 'barrel', 'cableDrum', 'aframe',
+  'crate', 'pallet', 'sandbags', 'scaffold', 'portaloo', 'dumpster',
+  'deliveryStack', 'stockTrolley', 'trashBags', 'spoilHeap', 'rebar', 'siteHut',
+  'manholeCover', 'drainGrate', 'utilityPlate', 'roadPatch',
+]);
+
 const MACHINE_MIX = [['excavator', 26], ['wheelLoader', 20], ['siteDumper', 18],
   ['cementMixer', 12], ['scissorLift', 14], ['roadRoller', 10]];
 
@@ -4018,19 +4045,27 @@ function placeMachinery(ctx, state, rng) {
       const type = r.weighted(MACHINE_MIX);
       const m = shapeMetrics(type);
       let x = 0, z = 0, rot = 0, ok = false;
-      for (let a = 0; a < 8 && !ok; a++) {
+      for (let a = 0; a < 14 && !ok; a++) {
         const edge = r.int(0, 3);
         const u = (r() - 0.5) * 0.78;
+        // How far out toward the parcel line. Pinned hard to the line, every
+        // machine landed in the frontage strip — which is exactly where the
+        // street trees, hedges, planters and hydrants are, so honouring them
+        // starved the sites (41 machines down to 16). Standing off the line by
+        // a varying amount keeps the "plant works the edges, the middle is the
+        // works" reading, gives the clearance test somewhere to go, and stops
+        // the machines forming a rectangle.
+        const inset = 0.42 + r() * 0.58;
         rot = (edge === 0 ? 0 : edge === 1 ? Math.PI : edge === 2 ? Math.PI / 2 : -Math.PI / 2)
           + (r() - 0.5) * 0.5;
         const ca = Math.abs(Math.cos(rot)), sa = Math.abs(Math.sin(rot));
         const spanX = b.w * 0.5 - (m.contactW * ca + m.contactD * sa) * 0.5 - SITE_MARGIN;
         const spanZ = b.d * 0.5 - (m.contactW * sa + m.contactD * ca) * 0.5 - SITE_MARGIN;
         if (spanX <= 0 || spanZ <= 0) break;   // parcel too small for this machine
-        if (edge === 0) { x = b.x + u * b.w; z = b.z - spanZ; }
-        else if (edge === 1) { x = b.x + u * b.w; z = b.z + spanZ; }
-        else if (edge === 2) { x = b.x - spanX; z = b.z + u * b.d; }
-        else { x = b.x + spanX; z = b.z + u * b.d; }
+        if (edge === 0) { x = b.x + u * b.w; z = b.z - spanZ * inset; }
+        else if (edge === 1) { x = b.x + u * b.w; z = b.z + spanZ * inset; }
+        else if (edge === 2) { x = b.x - spanX * inset; z = b.z + u * b.d; }
+        else { x = b.x + spanX * inset; z = b.z + u * b.d; }
         // The along-edge coordinate has to stay on the parcel too, or a machine
         // backed onto the north edge juts out of the west one.
         x = Math.min(b.x + spanX, Math.max(b.x - spanX, x));
@@ -4041,11 +4076,12 @@ function placeMachinery(ctx, state, rng) {
             q[0], q[1], q[2], q[3], q[4])) { ok = false; break; }
         }
         // Even inside the line a machine on a narrow parcel can reach a car
-        // parked at the kerb, so ask the registry — placeParked ran first.
-        // Vehicles only, deliberately: making plant dodge the site's own
-        // barriers, spoil and portaloos too starves the sites, 41 machines
-        // down to 9, and plant standing among site clutter is the point.
-        if (ok && !clearOfPlaced(ctx, x, z, rot, m.contactW + 0.6, m.contactD + 0.6, near, true)) {
+        // parked at the kerb or the street trees on the frontage, so ask the
+        // registry — placeParked, props and nature all ran first. Only the
+        // site's own clutter is skipped: making plant dodge its own barriers,
+        // spoil and portaloos starves the sites, and plant standing among site
+        // clutter is the point.
+        if (ok && !clearOfPlaced(ctx, x, z, rot, m.contactW + 0.6, m.contactD + 0.6, near, SITE_CLUTTER)) {
           ok = false;
         }
       }
@@ -4060,13 +4096,24 @@ function placeMachinery(ctx, state, rng) {
     }
     if (cranes < 7 && r.chance(0.6) && Math.min(b.w, b.d) > 34) {
       const cm = shapeMetrics('craneBase');
-      const rot = r() * 1.5;
-      const x = b.x + (r() - 0.5) * b.w * 0.5;
-      const z = b.z + (r() - 0.5) * b.d * 0.5;
-      let clear = true;
-      for (const q of placed) {
-        if (boxesClash(x, z, rot, cm.contactW + 1.0, cm.contactD + 1.0,
-          q[0], q[1], q[2], q[3], q[4])) { clear = false; break; }
+      let rot = 0, x = 0, z = 0, clear = false;
+      // The crane base checked only against the machines this loop had placed,
+      // so it happily landed on anything props.js or nature.js had already put
+      // on the parcel. It is the largest single object on the site — 4.2 m of
+      // ballast — and the one most obviously wrong standing in a planter. One
+      // shot at a single random spot then lost most of the cranes, so it gets
+      // the same handful of tries the machines do.
+      for (let a = 0; a < 10 && !clear; a++) {
+        rot = r() * 1.5;
+        x = b.x + (r() - 0.5) * b.w * 0.5;
+        z = b.z + (r() - 0.5) * b.d * 0.5;
+        clear = true;
+        for (const q of placed) {
+          if (boxesClash(x, z, rot, cm.contactW + 1.0, cm.contactD + 1.0,
+            q[0], q[1], q[2], q[3], q[4])) { clear = false; break; }
+        }
+        if (clear && !clearOfPlaced(ctx, x, z, rot, cm.contactW + 1.0, cm.contactD + 1.0,
+          near, SITE_CLUTTER)) clear = false;
       }
       if (!clear) continue;
       const c = spawn(ctx, state, 'craneBase', 0, x, ctx.Y_WALK, z, rot, false);
