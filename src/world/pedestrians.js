@@ -1349,14 +1349,20 @@ function coolerGeo() {
   // Moulded lip: overhangs the body, and it is the overhang that reads as
   // "these are two parts" even before the colour does.
   parts.push(bevBox(W + 0.030, 0.030, D + 0.030, 0, BH + 0.028, 0, 1.30, 0.008));
-  parts.push(box(W + 0.032, 0.008, D + 0.032, 0, BH + 0.046, 0, 0.16));        // parting line
+  // Parting line as a RIM, not a slab: a full plate across the opening reads
+  // as a dark tray sitting on the ice it is supposed to be beside.
+  for (const sz of [-1, 1]) {
+    parts.push(box(W + 0.034, 0.009, 0.026, 0, BH + 0.046, sz * (D / 2 + 0.004), 0.16));
+  }
+  for (const sx of [-1, 1]) {
+    parts.push(box(0.026, 0.009, D + 0.034, sx * (W / 2 + 0.004), BH + 0.046, 0, 0.16));
+  }
 
   /* --- what is inside, visible because the lid is up --------------------- */
   // Ice: lumpy and bleached, not a flat slab in shadow.
   for (let i = 0; i < 5; i++) {
-    const w = 0.16 + (i % 3) * 0.05;
-    parts.push(hue(bevBox(w, 0.085 + (i % 2) * 0.02, 0.13 + (i % 2) * 0.05,
-      -0.20 + i * 0.10, BH + 0.010 + (i % 2) * 0.012, -0.05 + (i % 3) * 0.05, 1.0, 0.012),
+    parts.push(hue(bevBox(0.15 + (i % 3) * 0.04, 0.090 + (i % 2) * 0.02, 0.16 + (i % 2) * 0.06,
+      -0.20 + i * 0.10, BH + 0.016 + (i % 2) * 0.014, -0.06 + (i % 3) * 0.06, 1.0, 0.012),
     PALETTE.STUCCO_WHITE, 2.1));
   }
   for (let i = 0; i < 4; i++) {
@@ -1648,10 +1654,15 @@ function crateGeo() {
   parts.push(bevBox(W - 0.02, 0.020, D - 0.02, 0, H - 0.006, 0, 0.94, 0.006));   // top slat deck
   // A faded stencil block on one face — deliberately abstract, no lettering.
   // Flush with the boards, not standing off them: a stencil is ink, not a sign.
-  parts.push(hue(box(0.20, 0.10, 0.004, 0.02, 0.215, D / 2 + 0.0015, 1.0),
+  // Inside ONE board, and 1.5 mm proud of it. Spanning two boards made it
+  // bridge the gap between them and read as a card taped to the crate.
+  const sy = 0.030 + bh / 2 + 3 * (bh + gap);
+  parts.push(hue(box(0.21, bh * 0.78, 0.004, 0.02, sy, D / 2 + 0.0015, 1.0),
     PALETTE.STUCCO_SAND, 1.15));
-  parts.push(hue(box(0.13, 0.020, 0.004, -0.01, 0.240, D / 2 + 0.0035, 1.0), PALETTE.SIGN_DARK));
-  parts.push(hue(box(0.09, 0.016, 0.004, -0.03, 0.196, D / 2 + 0.0035, 1.0), PALETTE.SIGN_DARK, 0.9));
+  parts.push(hue(box(0.14, bh * 0.20, 0.004, -0.005, sy + bh * 0.16, D / 2 + 0.0035, 1.0),
+    PALETTE.SIGN_DARK));
+  parts.push(hue(box(0.09, bh * 0.16, 0.004, -0.03, sy - bh * 0.16, D / 2 + 0.0035, 1.0),
+    PALETTE.SIGN_DARK, 0.9));
   return ground(BufferGeometryUtils.mergeGeometries(parts, false));
 }
 
@@ -1733,7 +1744,7 @@ function signCardGeo() {
 function pigeonGeo(pose = 'stand') {
   const peck = pose === 'peck';
   const parts = [];
-  const tilt = peck ? 0.34 : 0.05;
+  const tilt = peck ? 0.26 : 0.05;
 
   /* --- legs: thin, and the only orange on the bird ------------------------ */
   for (const s of [-1, 1]) {
@@ -1752,15 +1763,15 @@ function pigeonGeo(pose = 'stand') {
 
   /* --- folded wings, swept along the flanks and only 2 cm thick ----------- */
   for (const s of [-1, 1]) {
-    const w = box(0.020, 0.046, 0.135, 0, 0, 0, 1.0);
-    w.rotateZ(s * 0.16);
-    w.rotateX(tilt + 0.10);
-    w.translate(s * 0.052, 0.104, -0.014);
+    const w = box(0.017, 0.044, 0.128, 0, 0, 0, 1.0);
+    w.rotateZ(s * 0.06);
+    w.rotateX(tilt + 0.08);
+    w.translate(s * 0.046, 0.102, -0.014);
     parts.push(hue(w, PIGEON_BODY, 0.78));
-    const bandBar = box(0.024, 0.014, 0.072, 0, 0, 0, 1.0);
-    bandBar.rotateZ(s * 0.16);
-    bandBar.rotateX(tilt + 0.10);
-    bandBar.translate(s * 0.055, 0.086, -0.032);
+    const bandBar = box(0.021, 0.013, 0.068, 0, 0, 0, 1.0);
+    bandBar.rotateZ(s * 0.06);
+    bandBar.rotateX(tilt + 0.08);
+    bandBar.translate(s * 0.049, 0.085, -0.030);
     parts.push(hue(bandBar, PIGEON_BAR, 1.25));
   }
 
@@ -1787,12 +1798,14 @@ function pigeonGeo(pose = 'stand') {
   /* --- tail: a flat fan that WIDENS to the tip, raked down --------------- */
   // A tapered prism laid flat is a fan for 24 triangles; a box is a plank, and
   // a plank sticking out of a sphere is what made these read as litter.
-  const tail = barZ(0.058, 0.026, 0.150, 0, 0, 0, 1.0, 6, 1.35, 0.22);
-  tail.rotateX(peck ? 0.42 : -0.16);
+  // rFront is the end nearest the body, so the SMALL radius goes there and the
+  // fan opens toward the tip. The other way round is a spike.
+  const tail = barZ(0.028, 0.062, 0.150, 0, 0, 0, 1.0, 6, 1.30, 0.22);
+  tail.rotateX(peck ? 0.32 : -0.16);
   tail.translate(0, peck ? 0.116 : 0.078, -0.152);
   parts.push(hue(tail, PIGEON_BODY, 0.88));
   const band = box(0.086, 0.012, 0.026, 0, 0, 0, 1.0);
-  band.rotateX(peck ? 0.42 : -0.16);
+  band.rotateX(peck ? 0.32 : -0.16);
   band.translate(0, peck ? 0.142 : 0.066, -0.222);
   parts.push(hue(band, PIGEON_BAR, 0.90));
   return ground(BufferGeometryUtils.mergeGeometries(parts, false));

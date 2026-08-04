@@ -664,11 +664,15 @@ function band(m, x, z, y, r, h, segs = 8, taper = 0) {
  * that separates foliage from crystal at this triangle count.
  */
 function bush(m, x, y, z, r, hexA, hexB, segs = 5, lobes = 2, spread = 1) {
+  /* The lobes have to sit far enough OUT to break the outline. At 0.5r offset
+     and 0.68 scale the second dome was entirely inside the first, which is why
+     five separate reviewers still called the planting a low-poly gem after the
+     first attempt at this. */
   const set = [
-    [0, 0, 0, 1.00, hexA],
-    [r * 0.52 * spread, r * 0.26, -r * 0.36 * spread, 0.68, hexB],
-    [-r * 0.46 * spread, r * 0.10, r * 0.38 * spread, 0.60, hexB],
-    [r * 0.10, r * 0.52, r * 0.16, 0.52, hexA],
+    [0, 0, 0, 0.92, hexA],
+    [r * 0.74 * spread, r * 0.16, -r * 0.50 * spread, 0.76, hexB],
+    [-r * 0.66 * spread, -r * 0.04, r * 0.58 * spread, 0.70, hexB],
+    [r * 0.16, r * 0.52, r * 0.22, 0.58, hexA],
   ];
   for (let i = 0; i < lobes; i++) {
     const [dx, dy, dz, k, hex] = set[i];
@@ -751,7 +755,15 @@ function borderBoth(m, cx, cy, z, w, h, t) {
   }
 }
 
-/** Flat decal lying on a leaf raked in the YZ plane. Chalk, posters, menus. */
+/**
+ * Flat decal lying on a leaf raked in the YZ plane. Chalk, posters, menus.
+ *
+ * `off` is signed along (dz, -dy): for a leaf that RISES (y1 > y0) that vector
+ * points down-and-back, so a decal meant for the front face of an upright board
+ * takes a NEGATIVE offset. Getting this backwards is why every chalk mark and
+ * every poster block in the first pass was drawn on the inside of its own
+ * board and the frames came out blank.
+ */
 function rake(m, cx, w, y0, z0, y1, z1, off) {
   const dy = y1 - y0, dz = z1 - z0;
   const L = Math.hypot(dy, dz) || 1;
@@ -824,7 +836,10 @@ function gBollard(m) {
     [0, 0.212], [0.052, 0.150], [0.70, 0.093], [0.78, 0.091], [0.96, 0.040],
   ], 8, {
     capTop: true,
-    cols: [0x9aa09e, 0xd8dcda, 0xffffff, 0xd0d4d2],
+    // Body authored at roughly half the band's value. A multiplicative instance
+    // hex cannot create contrast, only preserve a ratio — so the ratio has to
+    // be in the geometry, or the reflective band vanishes under every tint.
+    cols: [0x6a706e, 0x8e9492, 0xffffff, 0x848a88],
   });
 }
 
@@ -1436,11 +1451,11 @@ function gSandwichBoard(m) {
     }
     // Chalk: irregular bars plus an underline, set at a slight angle.
     m.col(0xe8e4d6);
-    rake(m, -0.02, 0.42, 0.74, zBot * 0.86, 0.80, zTop * 1.06, s * 0.006);
-    rake(m, 0.06, 0.30, 0.62, zBot * 0.92, 0.66, zBot * 0.80, s * 0.006);
-    rake(m, -0.05, 0.36, 0.46, zBot * 0.98, 0.50, zBot * 0.90, s * 0.006);
+    rake(m, -0.02, 0.42, 0.74, zBot * 0.86, 0.80, zTop * 1.06, -s * 0.008);
+    rake(m, 0.06, 0.30, 0.62, zBot * 0.92, 0.66, zBot * 0.80, -s * 0.008);
+    rake(m, -0.05, 0.36, 0.46, zBot * 0.98, 0.50, zBot * 0.90, -s * 0.008);
     m.col(s > 0 ? P.NEON_AQUA : P.FABRIC_SUN);
-    rake(m, 0.02, 0.24, 0.33, zBot, 0.355, zBot * 0.96, s * 0.006);
+    rake(m, 0.02, 0.24, 0.33, zBot, 0.355, zBot * 0.96, -s * 0.008);
   }
   m.col(P.STEEL_DARK);
   m.tubeBetween(-0.36, 0.935, 0, 0.36, 0.935, 0, 0.028, 5);
@@ -1984,7 +1999,7 @@ function valance(m, y0, drop, rA, rB, segs = 8) {
 function gUmbrella(m) {
   m.col(P.STEEL_DARK);
   m.tube(0, 0, [[0, 0.34], [0.05, 0.30], [0.07, 0.05], [2.14, 0.045]], 6);
-  canopyFabric(m, 2.14, 2.27, 2.50, 1.26, 1.17, 8, 0xffffff, 0xe8e8e8);
+  canopyFabric(m, 2.14, 2.27, 2.50, 1.26, 1.17, 8, 0xffffff, 0xc2c2c2);
   m.col(0xf0f0f0);
   valance(m, 2.14, 0.16, 1.26, 1.17, 8);
   m.col(P.STEEL_DARK);
@@ -2010,7 +2025,7 @@ function gBeachParasol(m) {
   m.tube(0, 0, [[0.07, 0.058], [1.16, 0.055]], 6);
   m.col(P.CHROME).tube(0, 0, [[1.16, 0.072], [1.22, 0.068]], 6);
   m.col(P.WOOD_DARK).tube(0, 0, [[1.22, 0.055], [2.02, 0.050]], 6);
-  canopyFabric(m, 2.02, 2.16, 2.46, 1.42, 1.31, 8, 0xffffff, 0xdcdcdc);
+  canopyFabric(m, 2.02, 2.16, 2.46, 1.42, 1.31, 8, 0xffffff, 0xbcbcbc);
   m.col(0xe4e4e4);
   valance(m, 2.02, 0.10, 1.42, 1.31, 8);
   m.col(P.WOOD_DARK);
@@ -2037,14 +2052,25 @@ function gParasolSquare(m) {
   m.tube(0, 0, [[0, 0.32], [0.05, 0.28], [0.07, 0.058], [1.30, 0.055]], 6);
   m.col(P.CHROME).tube(0, 0, [[1.30, 0.075], [1.38, 0.070]], 6);
   m.col(P.WOOD_DARK).tube(0, 0, [[1.38, 0.055], [2.16, 0.05]], 6);
-  m.col(0xffffff);
-  m.prism(0, 0, [[2.16, 2.24, 2.24], [2.28, 2.06, 2.06], [2.58, 0.16, 0.16]],
-    { capTop: true, capBot: true });
-  // Hip seams: four thin darker strips from the peak down to each corner.
-  m.col(0xdedede);
+  /* Four hipped panels drawn one at a time in alternating tone. A single
+     prism sweep renders as one flat slab from the game's overhead camera —
+     which is the only view that matters for a canopy — and the seam strips
+     laid on top of it were lost inside the surface. */
+  const H = [[-1.12, -1.12], [1.12, -1.12], [1.12, 1.12], [-1.12, 1.12]];
+  const M = [[-1.03, -1.03], [1.03, -1.03], [1.03, 1.03], [-1.03, 1.03]];
+  for (let k = 0; k < 4; k++) {
+    const j = (k + 1) % 4;
+    m.col(k % 2 ? 0xffffff : 0xd2d2d2);
+    m.quad([H[k][0], 2.16, H[k][1]], [M[k][0], 2.28, M[k][1]],
+      [M[j][0], 2.28, M[j][1]], [H[j][0], 2.16, H[j][1]]);
+    m.tri([0, 2.58, 0], [M[j][0], 2.28, M[j][1]], [M[k][0], 2.28, M[k][1]]);
+  }
+  m.col(0xe8e8e8);
+  m.disc(0, 2.155, 0, 1.12, 4, Math.PI / 4, false);
+  m.col(0xc4c4c4);
   for (let k = 0; k < 4; k++) {
     m.xform((k / 4) * TAU + Math.PI / 4, 0, 0, 0);
-    m.beam(0, 2.575, 0.10, 0, 2.19, 1.50, 0.035, 0.012, false);
+    m.beam(0, 2.575, 0.08, 0, 2.185, 1.56, 0.045, 0.014, false);
     m.reset();
   }
   // Scalloped valance: six lappets per side, alternating depth, on a trim band.
@@ -2547,7 +2573,7 @@ function gFoodCart(m) {
   m.col(P.FABRIC_SUN).tube(0.78, 0.18, [[1.14, 0.06], [1.30, 0.05]], 5, { capTop: true });
   m.col(P.SIGN_FACE).tube(0.50, 0.20, [[1.14, 0.075], [1.42, 0.085]], 6, { capTop: true });
   m.col(P.CAR_SILVER).tube(-0.40, 0, [[0.36, 0.16], [0.62, 0.155], [0.66, 0.10]], 6, { capTop: true });
-  canopyFabric(m, 2.20, 2.34, 2.52, 1.42, 1.30, 6, P.FABRIC_SUN, 0xfdf3dc);
+  canopyFabric(m, 2.20, 2.34, 2.52, 1.42, 1.30, 6, P.FABRIC_SUN, 0xfff6e4);
   m.col(P.FABRIC_WHITE);
   valance(m, 2.20, 0.16, 1.42, 1.30, 6);
   m.col(P.STEEL_DARK).tube(0, 0, [[2.52, 0.05], [2.58, 0.055], [2.62, 0.02]], 5, { capTop: true });
@@ -2594,7 +2620,7 @@ function gHotdogStand(m) {
   m.col(P.FABRIC_SUN); decal(m, 0.72 - 0.62, 1.14, 0.417, 0.10, 0.16);
   m.col(P.STEEL_DARK);
   m.tube(0, 0, [[0.94, 0.045], [2.02, 0.04]], 5);
-  canopyFabric(m, 2.00, 2.14, 2.40, 1.02, 0.92, 8, P.FABRIC_CORAL, 0xff9a90);
+  canopyFabric(m, 2.00, 2.14, 2.40, 1.02, 0.92, 8, P.FABRIC_CORAL, 0xffb0a6);
   m.col(P.FABRIC_CORAL);
   valance(m, 2.00, 0.13, 1.02, 0.92, 8);
   m.col(P.STEEL_DARK).tube(0, 0, [[2.40, 0.045], [2.46, 0.05], [2.50, 0.02]], 5, { capTop: true });
@@ -2906,9 +2932,9 @@ function gCableDrum(m) {
   const R = 0.78;
   for (const s of [-1, 1]) {
     m.xform(0, 0, R, s * 0.30);
-    for (let k = 0; k < 8; k++) {
-      m.col(k % 2 ? P.WOOD_DECK : 0xb98d5f);
-      const a0 = (k / 8) * TAU, a1 = ((k + 1) / 8) * TAU;
+    for (let k = 0; k < 12; k++) {
+      m.col(k % 2 ? P.WOOD_DECK : 0x9a6f42);
+      const a0 = (k / 12) * TAU, a1 = ((k + 1) / 12) * TAU;
       m.tri([0, 0, s * 0.045], [Math.cos(a0) * R, Math.sin(a0) * R, s * 0.045],
         [Math.cos(a1) * R, Math.sin(a1) * R, s * 0.045]);
       m.tri([0, 0, -s * 0.045], [Math.cos(a1) * R, Math.sin(a1) * R, -s * 0.045],
@@ -2934,9 +2960,10 @@ function gCableDrum(m) {
     m.reset();
   }
   m.col(0x1a1e22);
-  m.tubeBetween(0.06, R + 0.46, 0.28, 0.30, R * 0.9, 0.42, 0.035, 4);
-  m.tubeBetween(0.30, R * 0.9, 0.42, 0.52, 0.10, 0.50, 0.035, 4);
-  m.tubeBetween(0.52, 0.10, 0.50, 0.78, 0.04, 0.30, 0.035, 4);
+  m.tubeBetween(0.02, R + 0.44, 0.10, 0.10, R + 0.30, 0.34, 0.035, 4);
+  m.tubeBetween(0.10, R + 0.30, 0.34, 0.24, R * 0.55, 0.44, 0.035, 4);
+  m.tubeBetween(0.24, R * 0.55, 0.44, 0.40, 0.06, 0.46, 0.035, 4);
+  m.tubeBetween(0.40, 0.06, 0.46, 0.72, 0.04, 0.34, 0.035, 4);
   m.col(P.WOOD_DARK);
   for (const s of [-1, 1]) {
     m.prism(s * 0.52, 0, [[0, 0.30, 0.76], [0.15, 0.24, 0.72]]);
@@ -3157,15 +3184,15 @@ function gMenuBoard(m) {
   m.col(P.TEAK).board(0, 0.68, 0.90, 0.10, 1.68, -0.02, 0.07);
   m.col(0x24282c).board(0, 0.56, 0.96, 0.082, 1.62, -0.005, 0.045);
   m.col(P.SIGN_FACE);
-  rake(m, 0, 0.40, 1.46, 0.028, 1.50, 0.022, 0.026);
+  rake(m, 0, 0.40, 1.46, 0.028, 1.50, 0.022, -0.026);
   for (let k = 0; k < 5; k++) {
     const y = 1.34 - k * 0.115;
-    rake(m, -0.05 + (k % 2) * 0.04, k % 2 ? 0.30 : 0.42, y, 0.03, y + 0.035, 0.028, 0.026);
+    rake(m, -0.05 + (k % 2) * 0.04, k % 2 ? 0.30 : 0.42, y, 0.03, y + 0.035, 0.028, -0.026);
   }
   m.col(P.NEON_ORANGE);
-  rake(m, 0.14, 0.12, 0.68, 0.055, 0.80, 0.045, 0.026);
+  rake(m, 0.14, 0.12, 0.68, 0.055, 0.80, 0.045, -0.026);
   m.lit(P.SIGN_FACE, 1, 0.5);
-  rake(m, 0, 0.44, 1.52, 0.021, 1.58, 0.014, 0.026);
+  rake(m, 0, 0.44, 1.52, 0.021, 1.58, 0.014, -0.026);
 }
 
 /**
@@ -3219,17 +3246,21 @@ function gPastryCase(m) {
       m.prism(-0.36 + k * 0.18, 0, [[y + 0.03, 0.14, 0.30], [y + 0.11, 0.12, 0.26]]);
     }
   }
-  // Curved front glass: two rings leaning forward at the top.
-  m.col(P.GLASS_SKY, 1.30);
-  m.board(0, 1.06, 0.86, 0.31, 1.30, 0.33, 0.035);
-  m.board(0, 1.06, 1.30, 0.33, 1.44, 0.24, 0.035);
-  m.col(0xf4fbff, 1.35);
-  m.board(0, 1.06, 1.30, 0.352, 1.40, 0.288, 0.012);
-  m.col(P.GLASS_SKY, 1.24);
-  for (const s of [-1, 1]) m.prism(s * 0.53, 0, [[0.86, 0.03, 0.60], [1.44, 0.03, 0.52]]);
+  /* The glass is a FRAME, not a pane. The material has no transparency — an
+     instanced pool cannot sort one — so a filled front simply hides the two
+     shelves of goods that are the whole reason the object exists. A chrome
+     bezel top and bottom, a mullion at each end and one bright highlight
+     streak read as glass, and you can see what is behind them. */
   m.col(P.CHROME);
-  for (const s of [-1, 1]) m.prism(s * 0.53, 0, [[0.86, 0.05, 0.62], [0.90, 0.05, 0.62]]);
-  for (const s of [-1, 1]) m.prism(s * 0.53, 0.30, [[0.86, 0.05, 0.06], [1.44, 0.05, 0.06]]);
+  m.prism(0, 0.315, [[0.86, 1.10, 0.06], [0.92, 1.10, 0.06]]);
+  m.board(0, 1.10, 1.28, 0.335, 1.34, 0.315, 0.05);
+  m.board(0, 1.10, 1.34, 0.315, 1.44, 0.245, 0.05);
+  for (const s of [-1, 1]) {
+    m.board(s * 0.52, 0.055, 0.90, 0.315, 1.30, 0.335, 0.05);
+    m.board(s * 0.52, 0.055, 1.30, 0.335, 1.44, 0.245, 0.05);
+  }
+  m.col(0xf4fbff, 1.35);
+  m.board(0, 0.96, 1.24, 0.336, 1.30, 0.330, 0.014);
   m.lit(P.LAMP_GLOW, 1, 0.7).prism(0, 0, [[1.44, 1.10, 0.60], [1.50, 1.06, 0.56]]);
 }
 
@@ -3694,7 +3725,7 @@ function gDjBooth(m) {
   m.col(0x1b1f26).prism(0, 0, [[1.12, 0.42, 0.30], [1.17, 0.40, 0.28]]);
   m.lit(P.NEON_AQUA, 1, 0.9); decal(m, 0, 1.172, 0.02, 0.34, 0.05);
   m.col(0x30363a).board(0, 0.36, 1.14, -0.20, 1.40, -0.30, 0.02);
-  m.lit(P.SIGN_FACE, 1, 0.7); rake(m, 0, 0.32, 1.16, -0.21, 1.38, -0.295, 0.014);
+  m.lit(P.SIGN_FACE, 1, 0.7); rake(m, 0, 0.32, 1.16, -0.21, 1.38, -0.295, -0.014);
   m.col(0x15181b);
   m.tubeBetween(0.70, 1.06, -0.36, 0.78, 0.60, -0.44, 0.020, 3);
   m.tubeBetween(0.78, 0.60, -0.44, 0.70, 0.04, -0.52, 0.020, 3);
@@ -3846,8 +3877,8 @@ function gFlowerStand(m) {
   }
   m.col(P.SIGN_DARK).board(0, 0.30, 0.34, 0.30, 0.56, 0.24, 0.03);
   m.col(P.SIGN_FACE);
-  rake(m, 0, 0.24, 0.40, 0.288, 0.44, 0.283, 0.02);
-  rake(m, -0.03, 0.16, 0.48, 0.283, 0.51, 0.279, 0.02);
+  rake(m, 0, 0.24, 0.40, 0.288, 0.44, 0.283, -0.02);
+  rake(m, -0.03, 0.16, 0.48, 0.283, 0.51, 0.279, -0.02);
   for (let k = 0; k < 6; k++) {
     m.col(k % 2 ? P.FABRIC_CORAL : P.FABRIC_WHITE);
     m.prism(-0.50 + k * 0.20, 0.28, [[1.02, 0.18, 0.04], [1.20, 0.18, 0.04]]);
@@ -4062,7 +4093,7 @@ function gNewsKiosk(m) {
     m.col(covers[(k + row) % 5]);
     m.board(x, 0.26, y0, z0, y1, z1, 0.025);
     m.col(P.SIGN_DARK);
-    rake(m, x, 0.24, y1 - 0.05, z1 + 0.01, y1, z1, 0.016);
+    rake(m, x, 0.24, y1 - 0.05, z1 + 0.01, y1, z1, -0.016);
   }
   m.col(0xd9d2c2).prism(0.80, 0.98, [[0, 0.36, 0.28], [0.14, 0.34, 0.26]]);
 }
@@ -4948,7 +4979,7 @@ function gAboardPoster(m) {
     m.board(0, 0.86, 1.00, sz * 0.062, 1.04, sz * 0.056, 0.035);
     m.lit(P.SIGN_FACE, 1, 0.50).board(0, 0.82, 0.19, sz * 0.20, 1.00, sz * 0.058, 0.02);
     // Poster content: header bar, two image blocks, a headline block.
-    const off = sz * 0.014;
+    const off = -sz * 0.016;
     m.col(P.NEON_PINK);
     rake(m, 0, 0.78, 0.90, sz * 0.075, 0.99, sz * 0.060, off);
     m.col(P.FABRIC_AQUA);
@@ -5181,8 +5212,10 @@ const DEFS = {
   stringArch: { g: gStringArch, tier: T.MEDIUM, r: 2.20, h: 3.27, label: 'Festoon Lights', shadow: true, sv: 0.04, debris: P.WOOD_DARK },
   terraceAwning: {
     g: gTerraceAwning, tier: T.MEDIUM, r: 2.34, h: 2.65, label: 'Terrace Awning', shadow: true, sv: 0.04,
+    /* No FABRIC_LIME here: over a 3.8 m canopy it reads as acid green from
+       the overhead camera, which is the only angle this object is seen from. */
     tint: [P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_SUN, P.FABRIC_WHITE, P.FABRIC_PINK,
-      P.FABRIC_SKY, P.FABRIC_LIME],
+      P.FABRIC_SKY, P.STUCCO_PEACH],
     debris: P.FABRIC_CORAL,
   },
   iceBucket: { g: gIceBucket, tier: T.TINY, r: 0.38, h: 1.14, label: 'Ice Bucket', sv: 0.06, debris: P.CHROME },

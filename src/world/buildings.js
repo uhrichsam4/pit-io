@@ -3517,6 +3517,9 @@ const CAR_HEX = [
  *   sh     top of the body, i.e. bonnet and boot deck
  *   cabL   glasshouse length, cabX where it sits along the car
  */
+/** Car glazing seen from outside: CAR_GLASS at half value. See parkedCar. */
+const CAR_GLASS_DARK = jitterHex(P.CAR_GLASS, 0.50, 0.0);
+
 const CAR_BODIES = [
   { L: 4.42, W: 1.86, under: 0.20, waist: 0.60, sh: 0.88, cabL: 2.30, cabX: -0.22, roof: 1.45, wr: 0.33 },
   { L: 4.72, W: 1.96, under: 0.28, waist: 0.76, sh: 1.08, cabL: 2.86, cabX: -0.02, roof: 1.78, wr: 0.38 },
@@ -3564,7 +3567,14 @@ function parkedCar(B, x, y, z, rot, hex, lod = 2, v = 0) {
 
   const put = (g) => { g.rotateY(rot); g.translate(x, y, z); return g; };
   B.trim(put(body), hex);
-  B.trim(put(band), P.SIGN_DARK);
+  /*
+   * Glass, not a hole. CAR_GLASS carried at half value: from outside, car
+   * glazing is dark but it is a dark BLUE and it has a sky in it. Painted at
+   * SIGN_DARK the glasshouse read as a void, and because a car parked behind a
+   * garage spandrel shows you almost nothing except its glasshouse, every car
+   * on every deck read as a black lump.
+   */
+  B.trim(put(band), CAR_GLASS_DARK);
   B.trim(put(roof), hex);
 
   /* Wheels. Round at street level; a block deeper in a structure, where the
@@ -3786,7 +3796,14 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
      Miami garage from a Midwestern one. Glazed slot up the face so it reads as
      a stair and not as a chimney. */
   const cx = bb.x0 + 3.4, cz = bb.z0 + 3.2;
-  bulkhead(B, cx, 0, cz, 5.2, 5.2, top + 3.2, accent);
+  const corePlan = movePlan(rectPlan(5.2, 5.2, 0.5), cx, cz);
+  B.trim(loft([{ p: corePlan, y: 0 }, { p: corePlan, y: top + 3.2 }],
+    { uScale: 5, vScale: 5, capTop: true }), accent);
+  // Coping in the accent too. It used to take the default cream cap, and from
+  // the roof preset — which looks almost straight down — the cap is the ONLY
+  // part of the core you can see, so a painted core rendered as a cream box.
+  B.trim(slabGeo(corePlan, top + 3.2, 0.3, 0.28), accent);
+  B.trim(slabGeo(corePlan, top + 3.5, 0.12, 0.42), P.PARAPET);
   B.trim(box(1.5, top + 2.4, 0.18, cx, 0.6, cz + 2.68, 2), P.GLASS_SKY);
   for (let i = 0; i <= levels; i++) {
     B.trim(box(1.9, 0.24, 0.22, cx, i * lh + 0.4, cz + 2.72, 2), P.CONCRETE_DARK);
@@ -3797,11 +3814,37 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
   B.trim(parapetGeo(plan, top, 1.2, 0.45), P.PRECAST);
   B.trim(slabGeo(plan, top + 1.2, 0.16, 0.5), accent);   // coping stripe
   B.face(loft([{ p: inner, y: top + 0.02 }], { capTop: true, uScale: 10 }));
-  const rows = Math.max(2, Math.floor(lw / 3.2));
-  for (let k = 0; k < rows; k++) {
-    if (r() < 0.45) continue;
-    const x = -lw / 2 + 2.4 + k * ((lw - 5) / Math.max(1, rows - 1));
-    parkedCar(B, x, top + 0.1, bb.z1 - 3.0, Math.PI / 2, r.pick(CAR_HEX), 1, k);
+  /*
+   * THE ROOF DECK IS THE BIGGEST SINGLE SURFACE THIS BUILDING OWNS.
+   *
+   * The 3/4 camera looks almost straight down at it, and it was 24 x 34 m of
+   * one pale value with a texture's worth of faint lines on it. It gets the
+   * same treatment as the surface lot: bay paint standing proud so it catches
+   * the key light, wheel stops, a lane arrow, and two ranks of cars.
+   */
+  const ib = planBounds(inner);
+  const rBays = Math.max(4, Math.floor((ib.w - 3) / 2.75));
+  const rStep = (ib.w - 3) / rBays;
+  for (const [rz, dir] of [[bb.z1 - 3.4, 1], [bb.z0 + 3.4, -1]]) {
+    for (let k = 0; k <= rBays; k++) {
+      B.trim(box(0.13, 0.07, 5.0, ib.x0 + 1.5 + k * rStep, top + 0.05, rz, 2), P.ROAD_LINE);
+    }
+    for (let k = 0; k < rBays; k++) {
+      const x = ib.x0 + 1.5 + rStep * (k + 0.5);
+      B.trim(box(1.7, 0.16, 0.22, x, top + 0.05, rz + dir * 2.15, 1.5), P.CONCRETE_DARK);
+      if (r() < 0.42) continue;
+      parkedCar(B, x, top + 0.12, rz + dir * 0.55, dir > 0 ? -Math.PI / 2 : Math.PI / 2,
+        r.pick(CAR_HEX), 1, k + (dir > 0 ? 0 : 1));
+    }
+  }
+  // Aisle arrow and the hatched no-parking square by the core door.
+  B.trim(box(0.34, 0.07, 2.4, bb.cx + lw * 0.18, top + 0.05, bb.cz, 2), P.ROAD_LINE);
+  B.trim(box(1.1, 0.07, 0.34, bb.cx + lw * 0.18, top + 0.05, bb.cz + 1.0, 2), P.ROAD_LINE);
+  for (let k = 0; k < 4; k++) {
+    const g = box(3.0, 0.07, 0.20, 0, 0, 0, 1.5);
+    g.rotateY(0.72);
+    g.translate(cx + 4.6, top + 0.05, cz - 1.4 + k * 0.95);
+    B.trim(g, P.ROAD_LINE);
   }
   for (let k = 0; k < 3; k++) {
     lampHead(B, bb.x0 + 5 + k * (lw - 10) / 2, top + 1.2, bb.cz, 5.4, k % 2 ? 0 : Math.PI, r);
@@ -3929,15 +3972,28 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
 
   /* THE BAY LAYOUT. Paint stands 1 cm proud of the tarmac so it catches the key
      light and casts a hairline shadow; flush paint at this scale disappears. */
+  /*
+   * ROW PLANNING. A single rank down the middle of the lot with seven metres of
+   * bare tarmac on each side of it is not how anyone lays out a car park, and
+   * measured on the plan view it left the lot two thirds empty. Bays go against
+   * the kerbs with the aisle between them, and a deep lot gets a back-to-back
+   * pair down the middle as well — 5 m of bay plus 6.5 m of aisle is the module
+   * every real surface lot is set out on.
+   */
   const pitch = 2.72;
   const bays = Math.max(3, Math.floor((lw - 3) / pitch));
   const step = (lw - 3) / bays;
-  const rows = ld > 26 ? 2 : 1;
+  const rowZ = ld >= 19
+    ? [[bb.z0 + 4.2, -1], [bb.z1 - 4.2, 1]]
+    : [[bb.cz, -1]];
+  if (ld >= 34) rowZ.push([bb.cz - 2.7, -1], [bb.cz + 2.7, 1]);
+  // A hatched island only earns a whole bay on a lot with bays to spare, and
+  // one accessible bay is the right number below about nine.
+  const wantIsland = bays >= 8;
+  const nAccess = bays >= 9 ? 2 : 1;
   let carN = 0;
-  for (let rr = 0; rr < rows; rr++) {
-    const z = rows === 1 ? bb.cz : bb.z0 + 6.6 + rr * (ld - 13.2);
-    // Which way the cars nose. Two rows face away from the central aisle.
-    const dir = rows === 1 ? -1 : (rr === 0 ? -1 : 1);
+  for (let rr = 0; rr < rowZ.length; rr++) {
+    const [z, dir] = rowZ[rr];
     const headZ = z + dir * 2.5;
     for (let k = 0; k <= bays; k++) {
       const x = bb.x0 + 1.5 + k * step;
@@ -3946,8 +4002,8 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
     const bayX = (k) => bb.x0 + 1.5 + step * (k + 0.5);
     for (let k = 0; k < bays; k++) {
       const x = bayX(k);
-      const island = k === 0;                          // hatched no-parking end
-      const access = rr === 0 && k >= bays - 2;        // the two accessible bays
+      const island = wantIsland && rr === 0 && k === 0;      // hatched dead end
+      const access = rr === 0 && k >= bays - nAccess;        // accessible bays
       if (island) {
         // Chevron island. Inside the first bay, not off the end of the run,
         // so it can never poke through the kerb.
@@ -3965,15 +4021,22 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
       B.trim(box(1.7, 0.15, 0.22, x, 0.04, headZ - dir * 0.35, 1.5), P.CONCRETE_DARK);
       B.trim(box(1.7, 0.05, 0.30, x, 0.04, headZ - dir * 0.35, 1.5), P.ROAD_LINE_WORN);
       if (access) {
-        // Blue field with a white mark on it. Left empty so the paint reads.
+        // Blue field with a white mark on it, and a hatched transfer strip on
+        // the aisle side. Left empty so the paint actually reads.
         B.trim(box(step - 0.3, 0.06, 4.9, x, 0.045, z, 3), P.SIGN_BLUE);
         B.trim(cyl(0.40, 0.075, 8, x, 0.05, z + dir * 0.5), P.ROAD_LINE);
         B.trim(box(0.9, 0.08, 0.22, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
         B.trim(box(0.22, 0.08, 0.9, x, 0.05, z - dir * 0.9, 1.5), P.ROAD_LINE);
+        for (let j = 0; j < 4; j++) {
+          const g = box(1.1, 0.075, 0.16, 0, 0, 0, 1.2);
+          g.rotateY(0.72);
+          g.translate(x - step * 0.42, 0.05, z - 1.5 + j * 1.0);
+          B.trim(g, P.ROAD_LINE);
+        }
         continue;
       }
-      if (Math.abs(x - gateX) < gateW * 0.55 && rows === 1) continue;
-      if (r() < 0.34) continue;
+      if (Math.abs(x - gateX) < gateW * 0.55 && rowZ.length === 1) continue;
+      if (r() < 0.22) continue;
       // Cars nose in to the wheel stop, so they sit forward in the bay with the
       // bumper overhanging it — which is what makes a rank of cars look parked
       // rather than placed.
@@ -4003,7 +4066,9 @@ function surfaceLot(ctx, group, b, r, world, lw, ld) {
      on the aisle when there are two rows and on the back kerb when there is
      one — a 7 m column planted in the middle of the only rank of bays would be
      standing inside three of the cars. */
-  const lampZ = rows === 2 ? db.cz : bb.z0 + 2.2;
+  const lampZ = rowZ.length === 1 ? bb.z0 + 2.2
+    : rowZ.length === 2 ? db.cz
+      : (bb.z0 + 6.7 + bb.cz - 5.2) / 2;
   for (let k = 0; k < 3; k++) {
     lampHead(B, bb.x0 + lw * (0.18 + k * 0.32), 0.04, lampZ, 7.2, k % 2 ? 0 : Math.PI, r);
   }
@@ -4602,7 +4667,7 @@ function arena(ctx, B, r, lw, ld, h) {
   B.trim(slabGeo(scalePlan(plan, 0.72), glassTop + 8.6, 0.18, 0.28), P.CONCRETE_WARM);
   /* The barrel's crown is a 47 x 35 m plate on the real arena parcel. Dressed
      rather than capped: the same rule the market hall roof follows. */
-  dressedCap(B, capPlan, glassTop + 10.5, r, {
+  dressedCap(B, capPlan, glassTop + 10.58, r, {
     parapetHex: P.CONCRETE_WARM, surfaceHex: P.ROOF_GRAVEL,
     bulkheadHex: P.PRECAST, parapetH: 0.85, laneOff: 0.26,
   });
@@ -5594,7 +5659,9 @@ function landmarkBlock(ctx, group, b, r, lot, side) {
     // that reads as a market from the 3/4 camera rather than as a warehouse.
     const rb = planBounds(pPrev);
     const lp = movePlan(rectPlan(Math.max(3, rb.w * 0.58), Math.max(2.2, rb.d * 0.22), 0.5), rb.cx, rb.cz);
-    clerestory(B, lp, yPrev + 0.55, 2.4, P.GLASS_SKY, P.TERRACOTTA);
+    // Stood ON the membrane, not 0.5 m above it — dressedCap lays its field at
+    // +0.03 and the rolls reach +0.09, so anything higher than that floats.
+    clerestory(B, lp, yPrev + 0.10, 2.6, P.GLASS_SKY, P.TERRACOTTA);
     awning(B, pl.lw * 0.84, 4.0, bb.z1, 2.6, 0.7, P.FABRIC_CORAL);
     B.trim(box(pl.lw * 0.9, 0.3, 3.0, 0, 4.2, bb.z1 + 1.5, 4), P.FABRIC_CORAL);
     channelSign(B, 0, 5.4, bb.z1 + 0.2, pl.lw * 0.44, 1.8, 0, r, B.neon, false);

@@ -2724,6 +2724,10 @@ function gullFactory() {
 
 /** Local height of the water surface through the buoy. Placement subtracts it. */
 const BUOY_WL = 0.40;
+/** Top of each hull, i.e. the foot of the lattice. Shared with buoyLensY(). */
+const BUOY_DECK = { red: 1.49, green: 1.21 };
+/** Height of the lattice mast above the hull. */
+const BUOY_MAST = 0.60;
 
 function buoyFactory(kind) {
   const red = kind === 'red';
@@ -2760,16 +2764,14 @@ function buoyFactory(kind) {
   tube(0.575, 0.575, 0.52, 0.62, BOOT, 1.00);      // boot-top band
 
   /* ---- hull: the shape that tells you which side of the channel you are on */
-  let deckTop;
+  const deckTop = BUOY_DECK[kind];
   if (red) {
     tube(0.50, 0.55, 0.62, 1.06, HULL, 1.00);      // barrel
     tube(0.215, 0.50, 1.06, 1.42, HULL, 0.94);     // nun shoulder
-    drum(0.215, 0.215, 1.42, 1.49, HULL, 0.86);
-    deckTop = 1.49;
+    drum(0.215, 0.215, 1.42, deckTop, HULL, 0.86);
   } else {
     tube(0.55, 0.55, 0.62, 1.14, HULL, 1.00);      // can
-    drum(0.55, 0.55, 1.14, 1.21, HULL, 0.86);
-    deckTop = 1.21;
+    drum(0.55, 0.55, 1.14, deckTop, HULL, 0.86);
   }
 
   /* ---- number board on two sides ---- */
@@ -2783,7 +2785,7 @@ function buoyFactory(kind) {
   }
 
   /* ---- lattice mast ---- */
-  const m0 = deckTop, m1 = deckTop + 0.60;
+  const m0 = deckTop, m1 = deckTop + BUOY_MAST;
   const legBase = 0.19, legTop = 0.085;
   /* 6.5 cm bars, not 4: the art bible bans needle-thin geometry and this
      lattice has to survive being 40 m from a camera that is 100 m up. */
@@ -2843,9 +2845,13 @@ function buoyFactory(kind) {
   };
 }
 
-/** Where the lantern lens sits above the buoy's own origin. */
+/**
+ * Where the lantern lens sits above the buoy's own origin — hull, plus the
+ * mast, plus the gap between the housing's floor and the cap over the lens.
+ * Derived rather than typed, so moving the mast cannot leave the light behind.
+ */
 function buoyLensY(kind) {
-  return (kind === 'red' ? 1.49 : 1.21) + 0.60 + 0.21;
+  return BUOY_DECK[kind] + BUOY_MAST + 0.21;
 }
 
 /**
