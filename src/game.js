@@ -12,7 +12,7 @@ import { updateHoleUniforms } from './render/groundShader.js';
 import { OcclusionSystem } from './render/occlusion.js';
 import { audio } from './core/audio.js';
 import { TIER_LIST } from './config.js';
-import { EntityRegistry } from './gameplay/entities.js';
+import { EntityRegistry, STATE } from './gameplay/entities.js';
 import { Hole } from './gameplay/hole.js';
 import { ConsumeSystem } from './gameplay/consume.js';
 import { Input } from './gameplay/input.js';
@@ -81,6 +81,12 @@ export class Game {
 
     const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer, worldSeed);
     this.layout = layout;
+    // Hand the authoritative geometry to the two systems that place holes on
+    // the map. Both of them reconstruct the bay edge and the river bend from
+    // constants when they are not given a layout, and that reconstruction does
+    // not know about the marina basins, the Brickell Key cuts or the exact
+    // bridge decks — which is how a bot ends up steering into the water.
+    this.match.layout = layout;
     this.worldCtx = ctx;
     this.allConsumables = (ctx && ctx.allConsumables) || [];
     this.trafficUpdate = eng.scene.userData.trafficUpdate || null;
@@ -96,8 +102,17 @@ export class Game {
     // camera aid — and with thousands of small props on screen it would make
     // the whole city shimmer. Anything below this footprint stays solid and
     // the player reads the hole's position from the ground cut instead.
-    const FADE_MIN_RADIUS = 6;
-    const FADE_MIN_HEIGHT = 8;
+    //
+    // MEASURED, and lowered from 6 m x 8 m. That height gate was excluding 48
+    // of the city's 352 buildings — every single-storey retail block, some of
+    // them 37 m across and 7.7 m tall. At a 54-degree camera a 7.7 m parapet
+    // hides ~5.6 m of ground behind it, which is more than enough to swallow a
+    // small hole whole; "the player's hole hidden behind geometry with no fade"
+    // is an automatic review failure. Nothing prop-scale can slip in at 5 m x
+    // 5 m either: this list only ever contains buildings, and the smallest one
+    // in the city is a 12 m-wide storefront.
+    const FADE_MIN_RADIUS = 5;
+    const FADE_MIN_HEIGHT = 5;
     const _fb = new THREE.Box3();
     const bigEnough = (o) => {
       _fb.setFromObject(o);
@@ -116,10 +131,21 @@ export class Game {
           .flatMap((g) => g.children);
 
     let skipped = 0;
+    /** Every root that is allowed to fade, kept so a restart can re-arm them. */
+    this.fadeRoots = [];
     for (const o of candidates) {
-      if (bigEnough(o)) this.occlusion.register(o);
+      if (bigEnough(o)) { this.occlusion.register(o); this.fadeRoots.push(o); }
       else skipped++;
     }
+    /**
+     * Buildings that were swallowed and so dropped from the fade set. They come
+     * back — props respawn after 30 s and a restart restores the whole city —
+     * and a building that is standing again but is no longer a fade candidate
+     * is a hole you cannot see behind a tower. Polled rather than hooked
+     * because consume.js exposes no restore callback.
+     * @type {import('./gameplay/entities.js').Consumable[]}
+     */
+    this._occSuspended = [];
     console.info(
       `[game] occlusion candidates: ${this.occlusion.candidates.length} ` +
       `(${skipped} too small to fade)`
@@ -139,8 +165,12 @@ export class Game {
         );
       }
       // A swallowed building must stop being a fade candidate, or the system
-      // keeps raycasting against geometry that is halfway down the pit.
-      if (c.object) this.occlusion.unregister(c.object);
+      // keeps raycasting against geometry that is halfway down the pit. Queue
+      // it for re-arming: it is coming back.
+      if (c.object && c.object.userData.__occRegistered) {
+        this.occlusion.unregister(c.object);
+        this._occSuspended.push(c);
+      }
       if (hole.isPlayer && !remote) {
         const st = this.match.stats;
         if (st) {
@@ -187,8 +217,11 @@ export class Game {
       if (this.hud) this.hud.pushFeed('<b>FRENZY</b> — everything is edible!', '#ffc93c');
     };
     this.match.onRespawn = (h) => {
+      // Match re-applies HOLE.RESPAWN_KEEP (and the field-median floor) right
+      // after this returns, so the two must not disagree — a hard-coded number
+      // here just made the hole snap to a different size for one frame.
       const p = this._spawnPoint();
-      h.reset(p.x, p.z, Math.round(h.score * 0.45));
+      h.reset(p.x, p.z, Math.round(h.score * HOLE.RESPAWN_KEEP));
     };
 
     this.screens.onPlay = () => this.startMatch();
@@ -341,7 +374,12 @@ export class Game {
     this.effects.shake = 0;
     this.engine.flash(0);
     if (this.occlusion) {
-      for (const root of this.occlusion.candidates) root.userData.occFade = 1;
+      // Re-arm every building the last match ate. Without this the fade set
+      // shrinks by one for every tower swallowed and never grows back, so by
+      // the third round most of Brickell no longer x-rays.
+      for (const root of this.fadeRoots) this.occlusion.register(root);
+      this._occSuspended.length = 0;
+      this.occlusion.resetAll();
     }
     this._tierReached = 0;
 
@@ -380,7 +418,9 @@ export class Game {
       // desync instantly, so a room of humans is exactly what everyone sees.
       this._syncPeerHoles();
     } else {
-      this.bots = spawnBots(MATCH.BOT_COUNT, this.registry, this.rng, () => this._spawnPoint());
+      this.bots = spawnBots(
+        MATCH.BOT_COUNT, this.registry, this.rng, () => this._spawnPoint(), this.layout
+      );
       for (const b of this.bots) {
         this.engine.scene.add(b.hole.group);
         this.holes.push(b.hole);
@@ -446,6 +486,7 @@ export class Game {
       for (const h of this.holes) h.update(dt, t);
       this.consume.update(dt, this.holes, t);
     }
+    this._reviveFadeCandidates();
     // Push our state up and advance the interpolated remote holes. Done after
     // the local sim so peers receive the position they will actually see us at.
     if (this.net && this.player) {
@@ -459,6 +500,21 @@ export class Game {
     if (this.worldCtx && this.worldCtx.props) this.worldCtx.props.flushAll();
 
     this.effects.update(dt);
+  }
+
+  /**
+   * Put swallowed buildings back into the fade set once they have respawned.
+   * O(number currently eaten), and that list is empty for most of a match.
+   */
+  _reviveFadeCandidates() {
+    const q = this._occSuspended;
+    if (!q || q.length === 0) return;
+    for (let i = q.length - 1; i >= 0; i--) {
+      const c = q[i];
+      if (c.state !== STATE.IDLE) continue;
+      q.splice(i, 1);
+      if (c.object) this.occlusion.register(c.object);
+    }
   }
 
   loop() {

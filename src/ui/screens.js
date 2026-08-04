@@ -207,44 +207,59 @@ export class Screens {
   showResults(summary, me) {
     const { rankings = [], winner, rank = 1, total = 1, score = 0,
             diameter = 0, won = false, stats = {} } = summary || {};
-    const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
+    const suffix = ordinal(rank);
 
     const stat = (label, value) =>
       `<div class="stat"><span class="sv">${value}</span><span class="sl">${label}</span></div>`;
 
+    // The card carries the whole screen, so it needs the same veil + centring
+    // treatment the menu gets. It previously shipped as a bare `.screen` div
+    // (a class that does not exist) whose two inner blocks were tagged
+    // `.panel` — which is `position:absolute` — so the stats row and the
+    // standings list were pulled out of flow and drew on top of each other in
+    // the top-left corner over an undimmed city.
     this.el.innerHTML = `
-      <div class="screen results-screen">
-        <div class="rs-head">
-          <div class="rs-kicker">Match Complete</div>
-          <h1 class="rs-place">${rank}${suffix}<span class="rs-of"> of ${total}</span></h1>
-          <div class="rs-verdict ${won ? 'win' : ''}">
-            ${won ? 'You were the biggest hole in Miami'
-                  : `<b>${escapeHtml(winner ? winner.name : '—')}</b> took the city`}
+      <div class="scr veil results-screen">
+        <div class="aurora"></div>
+        <div class="res-card">
+          <div class="rs-head">
+            <div class="rs-kicker">Match complete</div>
+            <div class="rs-place ${rank === 1 ? 'first' : ''}">
+              <span class="n">${rank}<sup>${suffix}</sup></span>
+              <span class="rs-of">of ${total}</span>
+            </div>
+            <div class="rs-verdict ${won ? 'win' : ''}">
+              ${won ? 'You were the biggest hole in Miami'
+                    : `<b>${escapeHtml(winner ? winner.name : '—')}</b> took the city`}
+            </div>
           </div>
-        </div>
 
-        <div class="rs-stats panel">
-          ${stat('Final score', Math.round(score).toLocaleString())}
-          ${stat('Hole size', `${diameter.toFixed(1)} m`)}
-          ${stat('Devoured', (stats.devoured || 0).toLocaleString())}
-          ${stat('Rivals eaten', stats.rivalsEaten || 0)}
-          ${stats.biggestMeal ? stat('Best meal', escapeHtml(stats.biggestMeal)) : ''}
-        </div>
+          <div class="rs-stats">
+            ${stat('Final score', Math.round(score).toLocaleString())}
+            ${stat('Hole size', `${diameter.toFixed(1)}<span class="u">m</span>`)}
+            ${stat('Devoured', (stats.devoured || 0).toLocaleString())}
+            ${stat('Rivals eaten', stats.rivalsEaten || 0)}
+            ${bestMealStat(stats, stat)}
+          </div>
 
-        <div class="rs-board panel">
-          <h3>Final standings</h3>
-          ${rankings.slice(0, 8).map((h, i) => `
-            <div class="row ${h === me ? 'me' : ''}">
-              <span class="rank">${i + 1}</span>
-              <span class="dot" style="background:#${h.color.getHexString()}"></span>
-              <span class="nm">${escapeHtml(h.name)}${i === 0 ? ' 👑' : ''}</span>
-              <span class="sc">${Math.round(h.score).toLocaleString()}</span>
-            </div>`).join('')}
-        </div>
+          <div class="rs-board">
+            <h3>Final standings</h3>
+            <div class="rs-rows">
+              ${rankings.slice(0, 8).map((h, i) => `
+                <div class="row ${h === me ? 'me' : ''} ${i < 3 ? `p${i + 1}` : ''}"
+                     style="animation-delay:${(i * 0.045).toFixed(3)}s">
+                  <span class="rk">${i + 1}</span>
+                  <span class="dot" style="background:#${h.color.getHexString()};color:#${h.color.getHexString()}"></span>
+                  <span class="nm">${escapeHtml(h.name)}${i === 0 ? ' <span class="crown">&#9819;</span>' : ''}</span>
+                  <span class="sc">${Math.round(h.score).toLocaleString()}</span>
+                </div>`).join('')}
+            </div>
+          </div>
 
-        <div class="rs-actions">
-          <button class="btn" id="again-btn">Play Again</button>
-          <button class="btn btn-ghost" id="lobby-btn">Return to Lobby</button>
+          <div class="rs-actions">
+            <button class="btn" id="again-btn">Play Again</button>
+            <button class="btn btn-ghost" id="lobby-btn">Return to Lobby</button>
+          </div>
         </div>
       </div>`;
     this.el.style.pointerEvents = 'auto';

@@ -110,6 +110,7 @@ import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js'
 import { WORLD, PALETTE } from '../config.js';
 import { LIGHTING } from '../core/quality.js';
 import { Textures, solid, ground } from '../core/materials.js';
+import { applyHoleCut } from '../render/groundShader.js';
 import { makeRNG } from '../core/rng.js';
 
 /* ========================================================== constants === */
@@ -684,9 +685,18 @@ const WATER_PARS = /* glsl */ `
     q += dot(q, q.yzx + 33.33);
     return fract((q.x + q.y) * q.z);
   }
+  /* QUINTIC, not the usual smoothstep cubic, and this is the fix for a
+     measured defect rather than a refinement. Cubic interpolation of a value
+     lattice is only C1 at the cell boundary: its second derivative jumps, and
+     on a large smooth surface the eye reads that discontinuity as a grid of
+     creases. The waterfront frame showed exactly that — a diagonal checkerboard
+     of ~20 m diamonds across the near bay, which is the base octave of the
+     swell field made visible by its own interpolant, and it is the art bible's
+     "tiling so obvious you can count the repeats". The quintic is C2, so the
+     lattice has nothing left to show. Four extra multiplies per sample. */
   float wNoise(vec2 p){
     vec2 i = floor(p), f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     return mix(mix(wHash(i), wHash(i + vec2(1.0, 0.0)), u.x),
                mix(wHash(i + vec2(0.0, 1.0)), wHash(i + vec2(1.0, 1.0)), u.x), u.y);
   }
@@ -758,6 +768,21 @@ const WATER_PARS = /* glsl */ `
     #undef WAV
     return g;
   }
+
+  /**
+   * Height of the two LONGEST waves only, normalised to about +-1.
+   *
+   * Swell shading — the slow tonal drift that says a sea has volume under it —
+   * used to be driven off the value-noise swell field, and that put the noise
+   * lattice straight into the body colour of the largest flat surface in the
+   * game. A swell is not noise; it is the long wave, and taking the shading
+   * from the same two sines the surface is already rippling with costs two
+   * sin() and cannot show a grid because there is no grid in it.
+   */
+  float waveLong(vec2 p, float t) {
+    return 0.62 * sin((p.x * 0.94 + p.y * 0.34) * 0.071 + t * 0.90)
+         + 0.38 * sin((p.x * 0.58 - p.y * 0.81) * 0.129 + t * 1.28);
+  }
 `;
 
 const WATER_BODY = /* glsl */ `
@@ -786,6 +811,21 @@ const WATER_BODY = /* glsl */ `
   float wFoot = max(fwidth(wP.x), fwidth(wP.y));
   float wNear = 1.0 - smoothstep(0.10, 0.52, wFoot);
 
+  /* ---- THE CHANNEL, resolved before anything else uses it -------------
+     Centreline AND half-width are the same functions cityLayout cut the land
+     with, so the water agrees with its own banks. Normalising the offset by the
+     LOCAL half-width is what the old code was missing: it faded the river tint
+     over a fixed 34-96 m band on a channel that is 45 m across at the west end
+     and 73 m at the mouth, so the tint could not follow the flare and nothing
+     downstream of it could know where the thalweg was. */
+  float wRC = uRiverZ - 9.0 * sin((wP.x + 470.0) / 300.0) + 5.5 * sin((wP.x - 60.0) / 118.0);
+  float wRT = clamp((wP.x + 200.0) / 480.0, 0.0, 1.0);
+  float wRH = 26.0 * (0.86 + 0.55 * wRT * wRT);
+  /* 0 on the thalweg, 1 at the bulkhead, >1 out in the bay. */
+  float wRN = abs(wP.y - wRC) / max(1.0, wRH);
+  float wRiv = (1.0 - smoothstep(0.85, 2.60, wRN))
+             * (1.0 - smoothstep(${BAY.toFixed(1)} - 40.0, ${BAY.toFixed(1)} + 70.0, wP.x));
+
   /* The two noise fields the whole surface runs on: one lacy and fast for the
      texture of foam, one broad and slow for where things gather. Evaluated up
      here rather than down in the foam block because the slow one also decides
@@ -798,12 +838,16 @@ const WATER_BODY = /* glsl */ `
   /* Chop is damped in the shallows: the last few metres against a seawall are
      always calmer than open water, and the flattening is what reads as
      "shelter" rather than a texture running under a wall. */
+  float wLongH = waveLong(wP, wT);
   float wCalm = 0.35 + 0.65 * smoothstep(0.0, 26.0, wShore.x);
   /* CAT'S PAWS. Wind over water is gusty, so chop arrives in patches — bands of
      ruffled water lying next to bands of glass. That patchiness is the largest
      single cue that a surface is water and not a plane with a texture on it,
-     and it costs one multiply because the slow field is already in hand. */
-  float wGust = 0.45 + 1.05 * wSwell;
+     and it costs one multiply because the slow field is already in hand.
+     Half the swing now comes from the long wave rather than all of it from the
+     noise field: crests are where chop builds, and splitting the term means the
+     patch pattern is no longer a pure function of one lattice. */
+  float wGust = 0.55 + 0.55 * wSwell + 0.25 * (0.5 + 0.5 * wLongH);
   vec2 wG = waveGrad(wP, wT, wCalm * 1.55, (0.30 + 0.70 * wNear) * wGust);
   vec3 wNormal = normalize(vec3(-wG.x, 1.0, -wG.y));
 
@@ -864,12 +908,37 @@ const WATER_BODY = /* glsl */ `
      exactly why the first pass had no visible surf. */
   float wSdF = max(0.0, wShore.x - ${(1.34).toFixed(2)});
 
-  /* The river runs siltier and greener than the bay. Centreline is the same
-     pair of sines cityLayout uses, so the tint follows the bend. */
-  float wRC = uRiverZ - 9.0 * sin((wP.x + 470.0) / 300.0) + 5.5 * sin((wP.x - 60.0) / 118.0);
-  float wRiv = (1.0 - smoothstep(34.0, 96.0, abs(wP.y - wRC)))
-             * (1.0 - smoothstep(${BAY.toFixed(1)} - 30.0, ${BAY.toFixed(1)} + 90.0, wP.x));
-  wCol = mix(wCol, uRiverC, wRiv * 0.86);
+  /* ---- the river ------------------------------------------------------
+     Siltier, greener and DARKER than the bay. The tint alone was never enough:
+     a 60 m strip of one flat colour held between two straight bulkheads is a
+     swimming pool whatever colour it is painted, which is exactly what the
+     `river` preset rendered. Three things fix it, and none of them is a colour:
+     depth across the channel, a current, and a shaded margin at the wall. */
+  wCol = mix(wCol, uRiverC, wRiv * 0.92);
+
+  /* 1. CROSS-CHANNEL DEPTH. A dredged channel is deepest on the thalweg and
+        shelves up to the quay. The bay's own depth grade cannot express this —
+        it runs on distance to shore, and in a 60 m channel that never gets past
+        its first fifth — so the river carries its own. */
+  wCol *= mix(1.0, mix(0.60, 1.04, smoothstep(0.08, 0.98, wRN)), wRiv);
+
+  /* 2. THE CURRENT. The single cue that separates a river from a pond, and the
+        one the old surface had none of. Streamwise filaments in a frame ~14x
+        longer along the channel than across it, sliding downstream at 1.3 m/s.
+        The time term is a uniform translation of the sample point, NOT a
+        position-weighted advection: weighting it by wRiv would shear the
+        lattice a little more every second and tear the field apart over the
+        length of a match. */
+  if (wRiv > 0.004) {
+    float wStr = wNoise(vec2((wP.x - wT * 1.30) * 0.075, (wP.y - wRC) * 0.85));
+    wCol *= mix(1.0, 0.84 + 0.32 * wStr, wRiv);
+  }
+
+  /* 3. THE MARGIN. The last couple of metres against a bulkhead sit in the
+        wall's own shadow and collect everything the channel is carrying, so
+        they are darker than open channel — the opposite of the bright shelf
+        the bay gets, and what stops the water reading as tiled to the edge. */
+  wCol *= 1.0 - 0.20 * wRiv * (1.0 - smoothstep(0.0, 3.2, wSdF));
 
   /* Sand showing through the first few metres. WET sand, not a brightened
      shallow: the old version lifted the turquoise 18% and added warmth, which
@@ -882,8 +951,11 @@ const WATER_BODY = /* glsl */ `
   /* Swell shading. A long wave is metres of extra water depth under a trough
      and metres less under a crest, and the body colour follows it — that slow
      tonal drift is the difference between a sea and a fill colour. Applied to
-     the graded body only, so foam and glitter still sit on top at full value. */
-  wCol *= 0.92 + 0.16 * wSwell;
+     the graded body only, so foam and glitter still sit on top at full value.
+     Driven mostly by the LONG WAVE rather than by the noise field: see
+     waveLong() for why the noise version was printing its own lattice across
+     the bay. */
+  wCol *= 0.945 + 0.075 * wLongH + 0.055 * wSwell;
 
   /* ---- foam ---------------------------------------------------------- */
 
@@ -922,7 +994,7 @@ const WATER_BODY = /* glsl */ `
      indistinguishable from no surf at all. A river bank without a waterline is
      what made that channel read as a swimming pool. */
   float wEdge = (1.0 - smoothstep(0.0, 2.2 + 2.6 * wFetch, wSdF))
-              * (0.34 + 0.58 * wFetch + 0.22 * wRiv);
+              * (0.34 + 0.58 * wFetch + 0.30 * wRiv);
   float wFoam = clamp(max(wBand, wEdge * 0.96), 0.0, 1.0);
 
   /* Whitecaps. Sparse on purpose: the old shader covered the bay in them and
@@ -1014,7 +1086,16 @@ const WATER_BODY = /* glsl */ `
      comparable amounts is exactly what turned the night skyline into wriggling
      noodles — the lateral term is now less than half what it was and the
      vertical term carries the break-up instead. */
-  wRefUv = clamp(wRefUv + wG.xy * vec2(0.020, 0.088), vec2(0.002), vec2(0.998));
+  /* The river gets several times the distortion of the bay, and it is not a
+     stylistic choice. Over open water the reflected towers arrive as separated
+     columns with dark chop between them, which breaks them up for free. Over a
+     60 m channel with a continuous podium wall standing on its bank, every tap
+     lands on the same lit facade and the sum came back as ONE hard-edged
+     rectangle lying on the water — read as a stain, not as a reflection, and
+     most of why that channel looked like a tiled pool. */
+  float wRivBlur = 1.0 + 3.2 * wRiv;
+  wRefUv = clamp(wRefUv + wG.xy * vec2(0.020, 0.088) * wRivBlur,
+                 vec2(0.002), vec2(0.998));
   /* Five taps smeared along screen-vertical. Two things at once: it dissolves
      the reflected skyline's stepped silhouette (a row of box crowns mirrors
      into a hard staircase, which reads as a stain rather than as buildings),
@@ -1023,7 +1104,7 @@ const WATER_BODY = /* glsl */ `
      angle, so one pixel of it integrates far more of the wave field, and the
      reflection has to dissolve accordingly. A reflection that stays equally
      crisp 400 m out is a decal. */
-  float wRefStep = 0.0072 * (1.0 + 2.2 * smoothstep(0.0, 220.0, wSdF));
+  float wRefStep = 0.0072 * (1.0 + 2.2 * smoothstep(0.0, 220.0, wSdF)) * wRivBlur;
   vec4 wRefl = texture2D(uRefl, wRefUv) * 0.34
     + texture2D(uRefl, clamp(wRefUv + vec2(0.0, wRefStep), 0.002, 0.998)) * 0.22
     + texture2D(uRefl, clamp(wRefUv - vec2(0.0, wRefStep), 0.002, 0.998)) * 0.22
@@ -1053,7 +1134,7 @@ const WATER_BODY = /* glsl */ `
      mirror a skyline the way the open bay does, and damping the mix here is
      also the cheapest place to stop a 40 m channel filling bank to bank with
      reflected windows. */
-  float wMix = clamp(wFres + wRefl.a * uMixFloor, 0.0, uMixCap) * (1.0 - wRiv * 0.42);
+  float wMix = clamp(wFres + wRefl.a * uMixFloor, 0.0, uMixCap) * (1.0 - wRiv * 0.50);
   vec3 wEmissive = wMirror * wMix * (1.0 - wFoam * 0.85) + wCol * uSelfLit;
   diffuseColor.rgb *= 1.0 - wMix * 0.55;      // what reflects does not transmit
 
@@ -1124,7 +1205,12 @@ function makeWaterMaterial(uniforms) {
       .replace('#include <lights_fragment_end>',
         '#include <lights_fragment_end>\ntotalEmissiveRadiance += wEmissive;');
   };
-  mat.customProgramCacheKey = () => 'miami-water-v3';
+  /* The bay is a ground-level surface and the promenade beside it is edible, so
+     a hole opened on the waterfront reaches it. Uncut, the water sheet simply
+     rendered over the void — a lid of turquoise lying across the hole, which is
+     the one thing in the frame that must never have anything over it. */
+  applyHoleCut(mat);
+  mat.customProgramCacheKey = () => 'miami-water-v4-cut';
   return mat;
 }
 
@@ -1636,10 +1722,15 @@ export function buildWater(ctx) {
        which is what the `river` preset looked like. Pulling it a little toward
        wet sand and taking the level down puts the silt back without inventing
        a colour or editing another agent's palette. */
+    /* Measured off the `river` preset: at 0.13 silt and 0.86 level the channel
+       still rendered LIGHTER and more saturated than Biscayne Bay in the same
+       build, which is backwards — the bay is clear ocean over sand and the
+       Miami River is a dredged industrial channel. More silt, and a level that
+       puts the thalweg clearly under the bay it drains into. */
     uRiverC: {
       value: new THREE.Color(PALETTE.WATER_RIVER)
-        .lerp(new THREE.Color(PALETTE.SAND_WET), 0.13)
-        .multiplyScalar(0.86),
+        .lerp(new THREE.Color(PALETTE.SAND_WET), 0.20)
+        .multiplyScalar(0.70),
     },
     // The far bay: uDeep held down, NOT slid toward navy. See the depth grade.
     uAbyss: { value: new THREE.Color(PALETTE.SEA_DEEP).multiplyScalar(0.72) },
@@ -1785,6 +1876,7 @@ export function buildWater(ctx) {
   console.info(
     `[water] ${rects} surface rects | ${shores.length} shorelines / ` +
     `${Math.round(stats.length)} m of seawall | ${stats.bollards} bollards | ` +
+    `${stats.piers} bridge piers | ${stats.steps} step flights | ` +
     `${marina.pontoons} pontoons / ${marina.piles} piles`
   );
   return g;
@@ -1839,10 +1931,13 @@ const WALL_PROFILE = (() => {
 })();
 
 function buildShoreStructures(ctx, group, shores, field, rng) {
-  const wallGeos = [];
+  const piers = buildBridgePiers(ctx.layout, field);
+  const wallGeos = piers.geos;      // same concrete, so they cost no draw call
   const walkGeos = [];
+  const vergeGeos = [];
   let totalLen = 0;
   let bollards = 0;
+  let steps = 0;
 
   const layout = ctx.layout;
   const blocks = layout.blocks;
@@ -1866,24 +1961,37 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
     /* Promenade / riverwalk apron behind the wall. Emitted band by band and
        dropped wherever a block or a carriageway already owns the ground —
        cityLayout pulls parcels 9 m back off the river, and that bare strip is
-       exactly what this fills. */
+       exactly what this fills.
+       -------------------------------------------------------------------
+       THE BANDS CARRY A CROSS-SECTION NOW, and that is the whole point of
+       emitting them separately in the first place. Laid at one flat tone the
+       riverwalk rendered as ten metres of undifferentiated grey running the
+       length of both banks — measured on the `river` preset it was the single
+       largest featureless surface in the frame, and it is 400 m of it. A real
+       waterfront edge is a sequence: a dark granite kerb band against the
+       parapet, the paving field, then planting against the back of the walk.
+       Three values and one hue is enough for a 3/4 camera to read it as a
+       designed edge instead of a slab. */
     const { pts, nrm } = shore;
+    /** Per-band: [tone, planted]. Band 0 sits against the coping. */
+    const BANDS = [[0.78, false], [1.02, false], [0.92, false], [1.0, true]];
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i], b = pts[i + 1];
       const na = nrm[i], nb = nrm[i + 1];
-      for (let bandI = 0; bandI < 4; bandI++) {
+      for (let bandI = 0; bandI < BANDS.length; bandI++) {
         const o0 = -1.66 - bandI * 2.1;
         const o1 = o0 - 2.1;
         const cx = (a.x + b.x) / 2 + ((na.x + nb.x) / 2) * (o0 + o1) / 2;
         const cz = (a.z + b.z) / 2 + ((na.z + nb.z) / 2) * (o0 + o1) / 2;
         if (layout.isRoad(cx, cz) || inBlock(cx, cz)) continue;
         if (field.at(cx, cz) > -0.8) continue;         // never pave open water
+        const [bandTone, planted] = BANDS[bandI];
         const q = new THREE.BufferGeometry();
         const ax0 = a.x + na.x * o0 * na.s, az0 = a.z + na.z * o0 * na.s;
         const ax1 = a.x + na.x * o1 * na.s, az1 = a.z + na.z * o1 * na.s;
         const bx0 = b.x + nb.x * o0 * nb.s, bz0 = b.z + nb.z * o0 * nb.s;
         const bx1 = b.x + nb.x * o1 * nb.s, bz1 = b.z + nb.z * o1 * nb.s;
-        const Y = ctx.Y_WALK;
+        const Y = ctx.Y_WALK + (planted ? 0.012 : 0);
         q.setAttribute('position', new THREE.Float32BufferAttribute([
           ax0, Y, az0, bx0, Y, bz0, bx1, Y, bz1, ax1, Y, az1,
         ], 3));
@@ -1895,19 +2003,34 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
           bx1 * 0.33, bz1 * 0.33, ax1 * 0.33, az1 * 0.33,
         ], 2));
         q.setIndex([0, 2, 1, 0, 3, 2]);
-        walkGeos.push(q);
+        if (planted) {
+          vergeGeos.push(q);
+        } else {
+          /* Bay-to-bay tonal drift ALONG the walk on top of the cross-section.
+             Two stations of one band at one exact value is where the flatness
+             comes back; the paving map's own 3 m repeat is not enough on a run
+             this long. */
+          const drift = 0.955 + 0.075
+            * (Math.abs(Math.sin(cx * 0.37 + cz * 0.61) * 43758.5) % 1);
+          withFlatColour(q, bandTone * drift);
+          walkGeos.push(q);
+        }
       }
     }
 
-    /* Steps down to the water. Rare and irregular, but they are the detail
-       that says "people use this edge" rather than "this is a retaining
-       wall" — and they break the 1 km coping line into episodes. */
-    let sinceSteps = rng() * 160;
+    /* Steps down to the water. Irregular, but they are the detail that says
+       "people use this edge" rather than "this is a retaining wall" — and they
+       break the coping line into episodes.
+       Pitched at 95-190 m rather than 190-340: at the old interval a 400 m
+       run of riverwalk carried one flight or none, so the episode the feature
+       exists to create never landed inside a camera frame. */
+    let sinceSteps = rng() * 90;
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1], b = pts[i];
       sinceSteps += Math.hypot(b.x - a.x, b.z - a.z);
-      if (sinceSteps < 190 + rng() * 150) continue;
+      if (sinceSteps < 95 + rng() * 95) continue;
       sinceSteps = 0;
+      steps++;
       const nv = nrm[i];
       const ang = Math.atan2(nv.x, nv.z);
       for (let s = 0; s < 4; s++) {
@@ -1992,13 +2115,23 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
   }
 
   if (wallGeos.length) {
-    const mat = solid({
+    /* HOLE-CUT, and it is not optional. The seawall is a ground-level structure
+       standing on the promenade, and the promenade IS edible — take a 20 m bite
+       out of Bayfront Park and an uncut parapet stays hanging over the void
+       with its bollards on it. Named so `solid()`'s parameter cache cannot hand
+       this patched instance to anyone else, and the program key is set
+       explicitly afterwards because applyHoleCut pins a constant one that would
+       otherwise discard the de-tiling variant baked into this material's
+       source. */
+    const mat = applyHoleCut(solid({
       map: Textures.concrete(512, PALETTE.SEAWALL),
       vertexColors: true,
       roughness: 0.93,
       metalness: 0.0,
       envMapIntensity: 0.45,
-    });
+      name: 'water-seawall',
+    }));
+    mat.customProgramCacheKey = () => 'miami-seawall-cut-v1';
     const mesh = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(wallGeos, false), mat);
     mesh.name = 'seawall';
     mesh.castShadow = true;
@@ -2011,6 +2144,7 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
     const mat = ground({
       map: Textures.paving(512, PALETTE.PLAZA, 'rgba(150,144,132,0.5)', 5),
       roughness: 0.95,
+      vertexColors: true,
       // Coplanar with the block sidewalk slabs where they overlap; the offset
       // is what keeps that join from shimmering.
       polygonOffset: true,
@@ -2024,7 +2158,98 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
     for (const q of walkGeos) q.dispose();
   }
 
-  return { length: totalLen, bollards };
+  /* The planted band at the back of the walk. One extra draw call, and it is
+     the only green anywhere on 800 m of riverbank — against four values of grey
+     paving it is worth several times what another paving tone would be. */
+  if (vergeGeos.length) {
+    const mesh = new THREE.Mesh(
+      BufferGeometryUtils.mergeGeometries(vergeGeos, false),
+      ground({
+        map: Textures.grass(),
+        roughness: 0.95,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -4,
+      })
+    );
+    mesh.name = 'promenade-verge';
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    for (const q of vergeGeos) q.dispose();
+  }
+
+  return { length: totalLen, bollards, steps, piers: piers.count };
+}
+
+/* -------------------------------------------------------- bridge piers --- */
+
+/**
+ * PIERS UNDER EVERY RIVER CROSSING.
+ *
+ * These did not exist. streets.js's buildBridge() says "piers are deliberately
+ * NOT built here — water.js already stands two pier walls under every entry in
+ * layout.bridges", and the foot of this file said the opposite; both comments
+ * were written against a version of the other module that no longer does it, so
+ * four crossings spanned open water on nothing at all.
+ *
+ * WHAT IS ACTUALLY VISIBLE, and why the pier is shaped the way it is.
+ * DECK_Y is a hard contract with vehicles.js at 1.20 m and the water sits at
+ * 0.12, so the soffit clears the channel by 18 cm — there is no headroom to
+ * show a pier IN. The read has to come from outboard instead: each pier is
+ * wider than the deck it carries, so it emerges either side of the fascia as a
+ * chunky block standing in the water with a ledge under the parapet. From the
+ * river camera that row of blocks marching across the channel is the whole
+ * difference between a bridge and a strip of asphalt lying on the bay.
+ *
+ * The long axis runs ACROSS the deck, which for every crossing here is ALONG
+ * the current (the roads run north/south, the river runs east/west), so the
+ * cutwaters land on the two ends that actually face the flow.
+ */
+const PIER_TOP = 1.06;      // just under the 1.20 m deck: the ledge is the read
+const PIER_BOT = -2.80;     // well below the surface, so no angle finds its foot
+
+function buildBridgePiers(layout, field) {
+  const geos = [];
+  let count = 0;
+  const H = PIER_TOP - PIER_BOT;
+  const Y = (PIER_TOP + PIER_BOT) / 2;
+
+  for (const br of layout.bridges || []) {
+    const alongZ = br.length >= br.width;
+    const half = (alongZ ? br.length : br.width) / 2;
+    const c = alongZ ? br.z : br.x;          // centre along the span
+    const cross = alongZ ? br.x : br.z;      // the road's fixed coordinate
+    const halfW = br.width / 2;
+    // ~13 m bays. Closer reads as a viaduct, wider as a bridge with no piers.
+    const n = Math.max(2, Math.round((half * 2) / 13));
+    for (let i = 0; i <= n; i++) {
+      const t = c - half + (half * 2 * i) / n;
+      const px = alongZ ? cross : t;
+      const pz = alongZ ? t : cross;
+      // Only in genuinely open channel. Everything nearer the bank than this is
+      // under the approach embankment streets.js already builds, where a pier
+      // would stand inside a wall.
+      if (field.at(px, pz) < 4.0) continue;
+
+      const shaftLen = halfW * 2 + 2.4;
+      geos.push(withFlatColour(
+        alongZ ? box(shaftLen, H, 2.5, px, Y, pz) : box(2.5, H, shaftLen, px, Y, pz),
+        0.88
+      ));
+      // Cutwaters: a box on the diagonal, half buried in the shaft end, so the
+      // pier presents a point to the current instead of a slab.
+      for (const s of [-1, 1]) {
+        const ox = alongZ ? s * shaftLen * 0.5 : 0;
+        const oz = alongZ ? 0 : s * shaftLen * 0.5;
+        geos.push(withFlatColour(
+          box(1.9, H * 0.94, 1.9, px + ox, Y - H * 0.03, pz + oz, Math.PI / 4),
+          0.96
+        ));
+      }
+      count++;
+    }
+  }
+  return { geos, count };
 }
 
 /* ---------------------------------------------------- prop factories --- */

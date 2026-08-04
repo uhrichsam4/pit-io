@@ -166,6 +166,45 @@ function vehicleMaterial() {
     emissiveIntensity: 0,     // driven from nightFactor every frame
     envMapIntensity: 1.1,
   });
+
+  /**
+   * PER-INSTANCE PAINT — why the shader is patched rather than using
+   * `instanceColor`.
+   *
+   * The fleet used to allocate ONE POOL PER PAINT COLOUR because three's
+   * `instanceColor` multiplies the WHOLE mesh: tint a sedan red and its
+   * windows, tyres and number plate go red too. That cost 103 InstancedMeshes
+   * for 36 shapes — 67 wasted draw calls in the beauty pass and another 67 in
+   * the shadow pass, and it was the single biggest reason the city carried 389
+   * pools (see docs/PERF_FINDINGS.md).
+   *
+   * The fix is a per-vertex SELECTOR. Each vertex says which of four
+   * per-instance colour slots repaints it, or zero for "use the colour baked
+   * into the geometry". Only the roles that actually differ between a shape's
+   * variants get a slot (see `tintPlan`), so glass, rubber, chrome, lamps and
+   * plates stay exactly as authored while the body, its knocked-back sills,
+   * the livery accent and a contrast roof all move per instance. One sedan
+   * pool, nine paints, one draw call.
+   */
+  _vehMat.customProgramCacheKey = () => 'veh-tint-v1';
+  _vehMat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        attribute float tintSel;
+        attribute vec3 aTint0;
+        attribute vec3 aTint1;
+        attribute vec3 aTint2;
+        attribute vec3 aTint3;`)
+      .replace('#include <color_vertex>', `#include <color_vertex>
+        {
+          vec3 vehTint = vec3(1.0);
+          if (tintSel > 3.5) vehTint = aTint3;
+          else if (tintSel > 2.5) vehTint = aTint2;
+          else if (tintSel > 1.5) vehTint = aTint1;
+          else if (tintSel > 0.5) vehTint = aTint0;
+          vColor.xyz *= vehTint;
+        }`);
+  };
   return _vehMat;
 }
 
@@ -1647,9 +1686,13 @@ function getShape(key) {
 }
 
 /**
- * A paint variant. Positions/normals/uvs are the SAME BufferAttribute objects
- * for every variant of a shape, so ten colours of sedan upload one vertex
- * buffer and ten small colour buffers.
+ * A paint variant, fully baked. Positions/normals/uvs are the SAME
+ * BufferAttribute objects for every variant of a shape.
+ *
+ * Only used now as the SAFETY VALVE for a shape whose variants repaint more
+ * roles than there are per-instance tint slots — see `tintPlan`. Nothing in
+ * the current fleet needs it (the worst is three), but a future paint scheme
+ * that does must degrade to an extra pool rather than to the wrong colours.
  */
 function variantGeometry(key, spec) {
   const s = getShape(key);
@@ -1664,8 +1707,149 @@ function variantGeometry(key, spec) {
     col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('tintSel', new THREE.BufferAttribute(new Float32Array(s.count), 1));
   g.computeBoundingSphere();
   return g;
+}
+
+/* ------------------------------------------------- per-instance paint --- */
+
+/** Per-instance colour slots a single vehicle pool can carry. */
+const MAX_TINT = 4;
+const WHITE3 = [1, 1, 1];
+
+/**
+ * Work out, per shape, WHICH roles actually change between its paint variants.
+ *
+ * This is derived rather than declared on purpose. A hand-written list of
+ * "the body and the roof are the tinted bits" silently produces the wrong
+ * colour the day someone adds a variant with a different rim or a different
+ * boot stripe. Comparing the resolved palettes cannot be wrong: a role whose
+ * colour is identical in every variant is baked into the geometry, and a role
+ * that moves gets a slot.
+ *
+ * Roles are grouped by the colour SEQUENCE they take across the variants, not
+ * by their palette key, so an exotic whose roof is simply its body colour
+ * shares the body's slot instead of burning a second one.
+ *
+ * @returns {null|{n:number, sel:Float32Array, variants:number[][][]}}
+ *   null means "this shape needs more slots than exist" — the caller falls
+ *   back to one pool per paint, which is what the whole fleet used to do.
+ */
+const _planCache = new Map();
+function tintPlan(key) {
+  if (_planCache.has(key)) return _planCache.get(key);
+  const def = FLEET[key];
+  const pals = def.paints.map(paletteFor);
+  const nRoles = ROLE_KEY.length;
+  /** slot index per role; 0 = baked into the geometry. */
+  const slotOf = new Uint8Array(nRoles);
+  const bySig = new Map();
+  let n = 0;
+  let ok = true;
+
+  for (let r = 0; r < nRoles && ok; r++) {
+    let varies = false;
+    for (let v = 1; v < pals.length; v++) {
+      const a = pals[0][r], b = pals[v][r];
+      if (a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2]) { varies = true; break; }
+    }
+    if (!varies) continue;
+    // Signature = the whole colour run. Two roles that are always the same
+    // colour as each other share one slot.
+    let sig = '';
+    for (let v = 0; v < pals.length; v++) {
+      const c = pals[v][r];
+      sig += `${c[0].toFixed(5)},${c[1].toFixed(5)},${c[2].toFixed(5)};`;
+    }
+    let s = bySig.get(sig);
+    if (s === undefined) {
+      if (n >= MAX_TINT) { ok = false; break; }
+      s = ++n;
+      bySig.set(sig, s);
+    }
+    slotOf[r] = s;
+  }
+
+  let plan = null;
+  if (ok) {
+    const sh = getShape(key);
+    const sel = new Float32Array(sh.count);
+    for (let i = 0; i < sh.count; i++) sel[i] = slotOf[sh.roles[i]];
+    // variants[v][slot-1] = the linear triple that slot takes on variant v.
+    const variants = pals.map((pal) => {
+      const out = new Array(MAX_TINT).fill(null);
+      for (let r = 0; r < nRoles; r++) {
+        const s = slotOf[r];
+        if (s) out[s - 1] = pal[r];
+      }
+      for (let s = 0; s < MAX_TINT; s++) if (!out[s]) out[s] = WHITE3;
+      return out;
+    });
+    plan = { n, sel, variants, slotOf };
+  }
+  _planCache.set(key, plan);
+  return plan;
+}
+
+/**
+ * ONE geometry per shape: everything that never changes is baked, everything
+ * that does carries a slot selector for the shader to look up per instance.
+ */
+const _shapeGeoCache = new Map();
+function shapeGeometry(key) {
+  let g = _shapeGeoCache.get(key);
+  if (g) return g;
+  const s = getShape(key);
+  const plan = tintPlan(key);
+  // Variant 0 supplies every baked colour. Safe by construction: a role is
+  // only baked when it is identical in every variant.
+  const pal = paletteFor(FLEET[key].paints[0]);
+  g = new THREE.BufferGeometry();
+  g.setAttribute('position', s.pos);
+  g.setAttribute('normal', s.nor);
+  g.setAttribute('uv', s.uv);
+  const col = new Float32Array(s.count * 3);
+  for (let i = 0; i < s.count; i++) {
+    const role = s.roles[i];
+    if (plan.slotOf[role]) { col[i * 3] = 1; col[i * 3 + 1] = 1; col[i * 3 + 2] = 1; }
+    else {
+      const c = pal[role];
+      col[i * 3] = c[0]; col[i * 3 + 1] = c[1]; col[i * 3 + 2] = c[2];
+    }
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('tintSel', new THREE.BufferAttribute(plan.sel, 1));
+  g.computeBoundingSphere();
+  _shapeGeoCache.set(key, g);
+  return g;
+}
+
+/**
+ * Write one instance's paint into the pool's tint attributes.
+ *
+ * The four attributes are allocated on first use and always all four, even for
+ * a single-livery shape like the taxi: the shader is shared by the whole fleet
+ * and declares all four, so a geometry that omitted them would leave the
+ * attribute unbound.
+ */
+function applyTint(pool, slot, type, vi) {
+  let attrs = pool._vehTint;
+  if (!attrs) {
+    attrs = pool._vehTint = [];
+    for (let s = 0; s < MAX_TINT; s++) {
+      const a = new THREE.InstancedBufferAttribute(new Float32Array(pool.capacity * 3), 3);
+      pool.geometry.setAttribute(`aTint${s}`, a);
+      attrs.push(a);
+    }
+  }
+  const plan = tintPlan(type);
+  const cols = plan ? plan.variants[vi % plan.variants.length] : null;
+  for (let s = 0; s < MAX_TINT; s++) {
+    const c = cols ? cols[s] : WHITE3;
+    attrs[s].setXYZ(slot, c[0], c[1], c[2]);
+    attrs[s].needsUpdate = true;
+  }
 }
 
 /**
@@ -1903,17 +2087,23 @@ const FLEET = {
 /* ================================================== spawn / pooling ==== */
 
 /**
- * Instantiate one vehicle. Pool key is (shape, paint) so the whole fleet of a
- * given colour is a single InstancedMesh; `hex` is deliberately NOT passed, so
- * the pool never allocates an instanceColor and the fall-proxy inherits the
- * baked colours exactly.
+ * Instantiate one vehicle.
+ *
+ * ONE POOL PER SHAPE. Paint rides in per-instance tint slots (see `tintPlan`),
+ * so a hundred and seventy taxis and three hundred and fifty sedans of nine
+ * colours are two InstancedMeshes rather than ten. `hex` is deliberately NOT
+ * passed: three's `instanceColor` would tint the glass and the tyres too, which
+ * is the exact problem the tint slots exist to solve.
  */
 function spawn(ctx, state, type, vi, x, surfaceY, z, rotY, dynamic) {
   const def = FLEET[type];
   const spec = def.paints[vi % def.paints.length];
-  const key = `veh:${type}:${vi}`;
+  const plan = tintPlan(type);
+  // A shape whose variants repaint more roles than there are slots keeps the
+  // old one-pool-per-paint behaviour rather than coming out the wrong colour.
+  const key = plan ? `veh:${type}` : `veh:${type}:${vi}`;
   const c = ctx.addInstanced(key, () => ({
-    geometry: variantGeometry(type, spec),
+    geometry: plan ? shapeGeometry(type) : variantGeometry(type, spec),
     material: vehicleMaterial(),
   }), {
     // Callers pass the SURFACE the thing stands on; seatY turns that into an
@@ -1925,13 +2115,14 @@ function spawn(ctx, state, type, vi, x, surfaceY, z, rotY, dynamic) {
     height: def.h,
     label: def.label,
     kind: type,
-    capacity: def.cap,
+    capacity: plan ? def.cap * def.paints.length : def.cap,
     dynamic,
     castShadow: true,
     receiveShadow: true,
     debrisColor: spec.paint ?? spec.hull ?? 0xffffff,
   });
   if (c) {
+    applyTint(c.pool, c.slot, type, vi);
     state.pools.add(c.pool);
     state.counts[type] = (state.counts[type] || 0) + 1;
     state.total++;

@@ -228,7 +228,7 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
     addMesh(object, opts) {
       (opts.parent || ctx.group(opts.group || 'misc')).add(object);
       if (opts.decor) return null;
-      const pos = opts.position || object.position;
+      let pos = opts.position || object.position;
       // Buildings and other one-off meshes: measure the assembled object.
       let mRadius = opts.radius ?? 1;
       let mHeight = opts.height ?? 1;
@@ -241,6 +241,16 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
           mRadius = Math.hypot(w, d) / 2;
           mHeight = Math.max(0.2, box.max.y - box.min.y);
           mPass = mPass ?? Math.max(0.12, Math.min(w, d) / 2 * 1.02);
+          // The support disc has to be centred on the footprint the player can
+          // see, not on whatever anchor the module happened to author. A
+          // building's parcel anchor is typically 0.7 m off the mass it grew;
+          // the merged pontoon decks carry world-space geometry with their
+          // transform left at the origin and were 11 m out. Keep the authored
+          // Y — that is the surface the object rests on, and the box bottom
+          // includes foundations and kerb skirts that must not lift it.
+          pos = new THREE.Vector3(
+            (box.min.x + box.max.x) / 2, pos.y, (box.min.z + box.max.z) / 2
+          );
           ctx.stats.measured++;
           if (Math.abs((opts.radius ?? 1) - mRadius) / Math.max(0.05, mRadius) > 0.35) {
             ctx.stats.corrected++;

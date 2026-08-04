@@ -260,7 +260,18 @@ export class OcclusionSystem {
    * building group); every mesh under it is patched and wired.
    */
   register(root) {
-    if (!root || root.userData.__occRegistered) return;
+    if (!root) return;
+    if (root.userData.__occRegistered) {
+      // Already known. It may have been dropped by unregister() because it was
+      // swallowed; props come back after RESPAWN_DELAY and the whole city comes
+      // back on a match restart, so re-arming has to be possible — and cheap.
+      // The patched materials and the parts list survive, so this is a push.
+      if (root.userData.__occParts && this.candidates.indexOf(root) < 0) {
+        root.userData.occFade = 1;
+        this.candidates.push(root);
+      }
+      return;
+    }
     root.userData.__occRegistered = true;
     root.userData.occFade = 1;
     root.userData.__occFaded = false;
@@ -313,11 +324,25 @@ export class OcclusionSystem {
     }
   }
 
-  /** Drop an object (it was swallowed). */
+  /**
+   * Drop an object (it was swallowed).
+   *
+   * Restoring the material is not optional. A building removed while it was
+   * mid-fade keeps its private clone, and that clone's uOccFade is frozen at
+   * whatever it had reached — so when the prop respawns thirty seconds later,
+   * or when a restart puts the whole city back, it comes back permanently
+   * half-dissolved and never fades again because it is no longer a candidate.
+   * That is the single most visible failure this system can produce.
+   */
   unregister(root) {
     const i = this.candidates.indexOf(root);
     if (i >= 0) this.candidates.splice(i, 1);
     this.fades.delete(root);
+    if (root && root.userData.__occRegistered) {
+      root.userData.occFade = 1;
+      this._pushFade(root);
+      this._setFadeMaterials(root, false);
+    }
   }
 
   /** Convenience: register every direct child of a group. */
@@ -329,8 +354,26 @@ export class OcclusionSystem {
   setEnabled(on) {
     this._enabled = on;
     if (!on) {
-      for (const root of this.candidates) root.userData.occFade = 1;
+      // Put every object back on its SHARED material as well as resetting the
+      // value: leaving a clone mounted means the object never picks up a later
+      // change to the real material, and it costs a draw-call state change for
+      // nothing.
+      for (const root of this.candidates) {
+        root.userData.occFade = 1;
+        this._pushFade(root);
+        this._setFadeMaterials(root, false);
+      }
       this.fades.clear();
+    }
+  }
+
+  /** Force everything back to solid without changing what is registered. */
+  resetAll() {
+    for (const root of this.candidates) {
+      if ((root.userData.occFade ?? 1) >= 1 && !root.userData.__occFaded) continue;
+      root.userData.occFade = 1;
+      this._pushFade(root);
+      this._setFadeMaterials(root, false);
     }
   }
 

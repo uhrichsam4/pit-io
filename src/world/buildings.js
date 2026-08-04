@@ -671,25 +671,29 @@ function glassNightTex(tint, floors = 10, bays = 10) {
 }
 
 /**
- * Lit windows for painted render, on the grid Textures.stucco punches:
- * 8 floors x 6 bays, window 54% of the bay wide and 44% of the floor tall,
- * starting 30% up the floor.
+ * Lit windows for painted render.
+ *
+ * The openings are no longer a grid that can be re-derived — Textures.stucco
+ * varies their width, height and position per column — so it publishes the
+ * rectangles it actually painted and this lights those. Deriving a second grid
+ * here is how a night facade ends up with rectangles of glow floating on the
+ * render between the real windows.
  */
 function stuccoNightTex(hex) {
   return litTexCached(`sn${hex}`, () => {
-    const size = 512, floors = 8, bays = 6;
+    const size = 512;
     const { c, g } = litCanvas(size);
     const rnd = litRNG(0x3311 ^ hex);
-    const fh = size / floors, bw = size / bays;
-    const winW = bw * 0.54, winH = fh * 0.44;
-    for (let f = 0; f < floors; f++) {
-      for (let i = 0; i < bays; i++) {
-        if (rnd() > 0.46) continue;
-        g.globalAlpha = 0.42 + rnd() * 0.58;
-        // Homes are warmer and more uneven than offices.
-        g.fillStyle = rnd() < 0.75 ? '#ffd79a' : '#ffeed0';
-        g.fillRect(i * bw + (bw - winW) / 2, f * fh + fh * 0.30, winW, winH);
-      }
+    const wins = Textures.stucco(hex, 8, 6).userData.windows || [];
+    for (const w of wins) {
+      if (rnd() > 0.46) continue;
+      // A blind or a curtain diffuses the light instead of hiding it, so those
+      // read as soft and pale; bare glass shows the lamp itself.
+      const soft = w.t === 'blind' || w.t === 'curtain';
+      g.globalAlpha = (soft ? 0.30 : 0.45) + rnd() * 0.55;
+      // Homes are warmer and more uneven than offices.
+      g.fillStyle = soft ? '#ffe6bc' : (rnd() < 0.75 ? '#ffd79a' : '#ffeed0');
+      g.fillRect(w.x + 1, w.y + 1, Math.max(1, w.w - 2), Math.max(1, w.h - 2));
     }
     g.globalAlpha = 1;
     return litTex(c);

@@ -91,8 +91,44 @@ export class Consumable {
     this.fallT = 0;
     this.eatenBy = null;
 
+    /**
+     * THE PHYSICS CENTRE IS NOT ALWAYS THE OBJECT'S ORIGIN.
+     *
+     * `position` is where the footprint actually sits — that is what the
+     * support maths must run on, because it is what the player sees resting on
+     * the ground. A mesh-backed object's own origin can be somewhere else
+     * entirely: a merged pontoon deck carries world-space geometry with its
+     * transform left at the origin, and a building's parcel anchor is not the
+     * centre of the mass it grew. Measured across the live city the median gap
+     * is 0.7 m and the worst is 11.4 m, which is a 51 m pontoon whose physics
+     * disc sat a fifth of its own length away from the deck.
+     *
+     * So the fall animation solves in physics space and this offset converts
+     * back to the object's frame on the way out. Zero for instanced props,
+     * whose slot transform IS the footprint.
+     */
+    this._restP = null;      // authored physics centre (mesh backing)
+    this._restQ = null;
+    this._restS = null;
+    this._restObjP = null;   // the object's own authored origin
+    this._poseOff = null;    // physics centre - object origin
+    if (this.backing === BACKING.MESH && this.object) {
+      this._restP = this.position.clone();
+      this._restQ = this.object.quaternion.clone();
+      this._restS = this.object.scale.clone();
+      this._restObjP = this.object.position.clone();
+      this._poseOff = this._restP.clone().sub(this._restObjP);
+    }
+
     // Scratch used by the fall animation so we don't allocate per frame.
     this._startPos = new THREE.Vector3();
+    this._startQuat = new THREE.Quaternion();
+    this._startScale = new THREE.Vector3(1, 1, 1);
+    this._pivot = new THREE.Vector3();
+    this._tipAxis = new THREE.Vector3(1, 0, 0);
+    this._spinAxis = new THREE.Vector3(0, 1, 0);
+    this._tipQuat = new THREE.Quaternion();
+    this._hasTipQuat = false;
     this._spin = new THREE.Vector3();
     this._tilt = new THREE.Euler();
     this._cellKey = 0;
@@ -104,6 +140,20 @@ export class Consumable {
 }
 
 const CELL = 24; // metres
+
+/**
+ * A hole's influence query reaches `max(r*INFLUENCE_F, r + 14)` from its
+ * centre, and finds objects by their CENTRE. An object of footprint radius `r`
+ * therefore cannot be missed while it overlaps the opening as long as
+ * `r <= 14` — which covers 27,486 of the 27,646 consumables in the city, but
+ * not the 160 garages, towers, landmarks, pontoons and superblock storefronts
+ * whose footprints run out to 33 m. Those were invisible to the hole whenever
+ * it was under an edge rather than near the middle, so a player could stand a
+ * 30 m opening under the corner of a car park and watch nothing happen.
+ *
+ * They are few enough to simply keep in a list and test exactly.
+ */
+export const LARGE_RADIUS = 14;
 
 export class EntityRegistry {
   constructor() {
@@ -117,6 +167,9 @@ export class EntityRegistry {
     /** Moving consumables (traffic) that must be re-hashed each frame. */
     /** @type {Consumable[]} */
     this.dynamics = [];
+    /** Consumables too wide for the spatial query to find by centre alone. */
+    /** @type {Consumable[]} */
+    this.large = [];
     this.aliveCount = 0;
     this.totalScore = 0;
     /** Populated by worldBuild for the HUD "city devoured" percentage. */
@@ -137,6 +190,7 @@ export class EntityRegistry {
     if (!bucket) { bucket = []; this.cells.set(k, bucket); }
     bucket.push(c);
     if (c.dynamic) this.dynamics.push(c);
+    if (c.radius > LARGE_RADIUS) this.large.push(c);
     this.aliveCount++;
     this.totalScore += c.score;
     return c;
@@ -168,6 +222,10 @@ export class EntityRegistry {
     if (c.dynamic) {
       const i = this.dynamics.indexOf(c);
       if (i >= 0) this.dynamics.splice(i, 1);
+    }
+    if (c.radius > LARGE_RADIUS) {
+      const i = this.large.indexOf(c);
+      if (i >= 0) this.large.splice(i, 1);
     }
     this.active.delete(c);
     this.aliveCount--;

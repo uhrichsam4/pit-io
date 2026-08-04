@@ -462,6 +462,14 @@ function pack(colourCanvas, heightCanvas, roughCanvas, size, opts = {}) {
     companions.normalScale = opts.normalScale ?? 1.0;
   }
   if (roughCanvas) companions.roughnessMap = dataTex(roughCanvas);
+  /*
+   * Pre-built companions, for generators that paint a dozen recoloured variants
+   * of ONE surface. A facade's relief and its gloss do not depend on what
+   * colour it was painted, and normalMapFromHeight is the most expensive step
+   * in this file — sixteen stucco tints were paying for sixteen byte-identical
+   * normal maps. Passed in, the whole tint set shares one.
+   */
+  if (opts.companions) Object.assign(companions, opts.companions);
   map.userData.companions = companions;
   // Which tuning row worldDetail() should use. See MACRO below.
   map.userData.family = opts.family || 'default';
@@ -1031,6 +1039,266 @@ function meander(g, size, x0, y0, len, segs, spread, rand) {
     g.lineTo(x, y);
   }
   g.stroke();
+}
+
+/* ------------------------------------------------- painted-render shell --- */
+
+/**
+ * Everything about a stucco facade that is NOT its paint colour.
+ *
+ * WHY THIS IS SPLIT OUT.
+ * Two reasons, and they reinforce each other.
+ *
+ * 1. COST. `stucco` is generated once per facade tint — sixteen times in this
+ *    city — and every one of those rebuilt a byte-identical height field and
+ *    ran `normalMapFromHeight` over it, which is the most expensive single step
+ *    in this file. Relief and gloss do not depend on paint, so they are built
+ *    once here and handed to `pack` as ready-made companions.
+ * 2. DETAIL. Because the window layer is now paid for ONCE, it can be an order
+ *    of magnitude richer than it was. The previous version drew one identical
+ *    rectangle in every one of the 48 cells, which rendered as a mechanical
+ *    lattice — a tower of it was the loudest repeat in the whole skyline.
+ *
+ * The window layer is composited as an RGBA overlay, so every mark in it is
+ * either a neutral alpha wash (reveals, string courses, piers, grime) or an
+ * object that has its own colour whatever the wall is (glazing, blinds, rails,
+ * air conditioners). Nothing in here has to know the tint.
+ *
+ * COLUMN TYPES ARE PICKED PER BAY, NOT PER CELL. A real apartment stack repeats
+ * vertically — the same room sits above the same room — so the bedroom window,
+ * the balcony door and the bathroom slit run in columns. Randomising every cell
+ * independently trades one failure (a lattice) for another (TV static).
+ */
+function stuccoShell(floors, bays, size) {
+  return cached(`tex-stucco-shell-${floors}-${bays}-${size}`, () => {
+    const rand = mulberry32(0x811a ^ (floors << 9) ^ bays);
+    const { tooth, patch } = fields(`stucco-${size}`, () => {
+      const r = mulberry32(0x811a);
+      return {
+        tooth: fbm(size, size >> 3, 2, r),   // render texture
+        patch: fbm(size, 5, 3, r),           // patchy repaint
+      };
+    });
+
+    const ov = canvas(size);
+    const go = ctx2d(ov);
+    const hgt = canvas(size);
+    const gh = paintGrey(hgt, size, 138, [{ f: tooth, amp: 0.65 }, { f: patch, amp: 0.2 }]);
+    const rgh = canvas(size);
+    const gr = paintGrey(rgh, size, 218, [{ f: patch, amp: 0.16 }]);
+
+    const fh = size / floors, bw = size / bays;
+    const windows = [];
+
+    /*
+     * KEEP-OUT CORNER.
+     * buildings.js pins every piece of coloured trim in the city to the texel at
+     * (8, 8) of this map and multiplies the colour it finds there to whatever
+     * the trim should be. That corner has to stay plain render, so nothing below
+     * draws inside `KEEP` px of the origin.
+     */
+    const KEEP = 22;
+
+    /* --- storey rhythm ---------------------------------------------------- */
+    // A string course at the head of every storey. Drawn at the FOOT of the
+    // floor's band so floor 0's course lands at the bottom of the tile and the
+    // keep-out corner stays clean; the tile wraps, so the top edge still gets
+    // one from the row above.
+    for (let f = 0; f < floors; f++) {
+      const cy = (f + 1) * fh - fh * 0.055;
+      const deep = rand() < 0.45;               // some storeys get a real slab
+      const ch = fh * (deep ? 0.055 : 0.028);
+      go.fillStyle = deep ? 'rgba(255,252,246,0.42)' : 'rgba(255,252,246,0.24)';
+      go.fillRect(0, cy, size, ch);
+      go.fillStyle = deep ? 'rgba(38,30,24,0.30)' : 'rgba(38,30,24,0.17)';
+      go.fillRect(0, cy + ch, size, fh * 0.030);
+      gh.fillStyle = deep ? 'rgb(228,228,228)' : 'rgb(196,196,196)';
+      gh.fillRect(0, cy, size, ch);
+      gh.fillStyle = 'rgb(62,62,62)'; gh.fillRect(0, cy + ch, size, fh * 0.022);
+    }
+
+    /* --- expressed piers -------------------------------------------------- */
+    // Two of the bay joints run as a shallow pier the full height. This is the
+    // one mark that survives to skyline distance and it is what stops a render
+    // facade reading as a flat card with dots on it.
+    for (let i = 1; i < bays; i++) {
+      if (rand() > 0.42) continue;
+      const px = i * bw - bw * 0.10, pw = bw * 0.20;
+      go.fillStyle = 'rgba(255,251,242,0.13)'; go.fillRect(px, 0, pw, size);
+      go.fillStyle = 'rgba(30,24,18,0.16)'; go.fillRect(px + pw, 0, bw * 0.045, size);
+      gh.fillStyle = 'rgb(190,190,190)'; gh.fillRect(px, 0, pw, size);
+      gh.fillStyle = 'rgb(74,74,74)'; gh.fillRect(px + pw, 0, bw * 0.045, size);
+    }
+
+    /* --- column types ----------------------------------------------------- */
+    const COL = [];
+    for (let i = 0; i < bays; i++) {
+      const t = rand();
+      COL.push({
+        kind: t < 0.32 ? 'wide' : t < 0.55 ? 'door' : t < 0.80 ? 'pair' : 'small',
+        // A shade hood over the openings — a real Miami detail, and the only
+        // thing on a render facade that throws a hard horizontal shadow.
+        hood: rand() < 0.34,
+        // Wall units hung under the sill. Not on every floor of the column.
+        ac: rand() < 0.45,
+        jog: (rand() - 0.5) * bw * 0.14,
+      });
+    }
+
+    const GLASS_DARK = 'rgba(38,58,74,0.94)';
+    const paneOf = (t) => (t < 0.30 ? 'sky' : t < 0.52 ? 'dark' : t < 0.70 ? 'blind'
+      : t < 0.86 ? 'curtain' : 'open');
+
+    /** One opening: reveal, glazing, treatment, sill. */
+    const opening = (x, y, w, h, treat, rail) => {
+      if (w < 3 || h < 3) return;
+      // Reveal — the wall is 200 mm thick, so the head and one jamb are in shade.
+      go.fillStyle = 'rgba(44,34,26,0.34)';
+      roundRect(go, x - 1.8, y - 1.8, w + 3.6, h + 3.6, 2.2); go.fill();
+
+      go.fillStyle = GLASS_DARK;
+      roundRect(go, x, y, w, h, 1.6); go.fill();
+      // Sky reflection down the pane. Its strength is the main thing that makes
+      // one window read differently from the one beside it.
+      const g1 = go.createLinearGradient(x, y, x, y + h);
+      const k = treat === 'sky' ? 0.72 : treat === 'open' ? 0.24 : 0.44;
+      g1.addColorStop(0.0, `rgba(226,242,252,${(0.86 * k).toFixed(3)})`);
+      g1.addColorStop(0.40, `rgba(150,196,224,${(0.42 * k).toFixed(3)})`);
+      g1.addColorStop(1.0, `rgba(70,110,140,${(0.20 * k).toFixed(3)})`);
+      go.fillStyle = g1;
+      roundRect(go, x, y, w, h, 1.6); go.fill();
+
+      if (treat === 'blind') {
+        // Slatted blind pulled part way down: a pale block with slat lines.
+        const bh = h * (0.34 + 0.34 * ((x * 7 + y * 13) % 5) / 5);
+        go.fillStyle = 'rgba(238,228,206,0.82)';
+        go.fillRect(x + 1, y + 1, w - 2, bh);
+        go.fillStyle = 'rgba(120,106,86,0.30)';
+        for (let s = 2; s < bh; s += 2.6) go.fillRect(x + 1, y + s, w - 2, 0.9);
+        go.fillStyle = 'rgba(30,24,18,0.22)';
+        go.fillRect(x + 1, y + bh, w - 2, 1.4);
+      } else if (treat === 'curtain') {
+        const side = ((x | 0) & 1) ? 0 : 1;
+        const cw = w * (0.32 + 0.22 * (((y | 0) % 3) / 3));
+        go.fillStyle = 'rgba(244,236,222,0.72)';
+        go.fillRect(x + (side ? w - cw - 1 : 1), y + 1, cw, h - 2);
+        go.fillStyle = 'rgba(110,98,82,0.16)';
+        for (let s = 0; s < cw; s += 2.4) {
+          go.fillRect(x + (side ? w - cw - 1 : 1) + s, y + 1, 0.9, h - 2);
+        }
+      } else if (treat === 'open') {
+        // Sash pushed up — a dark slot at the head with the frame below it.
+        go.fillStyle = 'rgba(18,26,34,0.78)';
+        go.fillRect(x + 1.5, y + 1.5, w - 3, h * 0.34);
+      }
+
+      // Frame: a light head and jambs, so the opening reads as joinery.
+      go.strokeStyle = 'rgba(252,248,238,0.62)';
+      go.lineWidth = 1.1;
+      go.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+      if (w > 14) {
+        go.beginPath();
+        go.moveTo(x + w / 2, y + 1); go.lineTo(x + w / 2, y + h - 1); go.stroke();
+      }
+
+      // Sill.
+      go.fillStyle = 'rgba(255,251,240,0.80)';
+      go.fillRect(x - 2.4, y + h, w + 4.8, 2.4);
+      go.fillStyle = 'rgba(40,32,24,0.22)';
+      go.fillRect(x - 2.4, y + h + 2.4, w + 4.8, 1.6);
+
+      if (rail) {
+        // Juliet balustrade across a full-height door.
+        go.strokeStyle = 'rgba(250,248,240,0.62)';
+        go.lineWidth = 1.0;
+        const ry = y + h * 0.50;
+        go.beginPath(); go.moveTo(x - 2, ry); go.lineTo(x + w + 2, ry); go.stroke();
+        const n = Math.max(3, Math.round(w / 4));
+        for (let s = 0; s <= n; s++) {
+          const px = x - 2 + (w + 4) * (s / n);
+          go.beginPath(); go.moveTo(px, ry); go.lineTo(px, y + h); go.stroke();
+        }
+      }
+
+      gh.fillStyle = 'rgb(70,70,70)'; gh.fillRect(x, y, w, h);
+      gh.fillStyle = 'rgb(216,216,216)'; gh.fillRect(x - 2.4, y + h, w + 4.8, 2.4);
+      gr.fillStyle = treat === 'blind' || treat === 'curtain' ? 'rgb(150,150,150)' : 'rgb(46,46,46)';
+      gr.fillRect(x, y, w, h);
+      windows.push({ x, y, w, h, t: treat });
+    };
+
+    for (let f = 0; f < floors; f++) {
+      const y0 = f * fh;
+      for (let i = 0; i < bays; i++) {
+        const c = COL[i];
+        const bx = i * bw + c.jog;
+        const t = rand();
+        const treat = paneOf(t);
+        let x, y, w, h;
+        if (c.kind === 'door') {
+          w = bw * 0.60; h = fh * 0.58; x = bx + (bw - w) / 2; y = y0 + fh * 0.20;
+        } else if (c.kind === 'wide') {
+          w = bw * 0.66; h = fh * 0.40; x = bx + (bw - w) / 2; y = y0 + fh * 0.30;
+        } else if (c.kind === 'small') {
+          w = bw * 0.30; h = fh * 0.30; x = bx + (bw - w) / 2 + bw * 0.06; y = y0 + fh * 0.33;
+        } else {
+          w = bw * 0.26; h = fh * 0.38; x = bx + bw * 0.14; y = y0 + fh * 0.31;
+        }
+        // Nothing may touch the flat-texel corner: skip the one opening that
+        // could, rather than shifting the whole grid for it.
+        if (x < KEEP && y < KEEP) { y = Math.max(y, KEEP + 2); h = Math.min(h, fh * 0.34); }
+
+        if (c.hood && y > KEEP + 6) {
+          go.fillStyle = 'rgba(255,252,244,0.66)';
+          go.fillRect(x - 3.4, y - 5.4, w + 6.8, 2.4);
+          go.fillStyle = 'rgba(34,26,20,0.30)';
+          go.fillRect(x - 3.4, y - 3.0, w + 6.8, 2.6);
+          gh.fillStyle = 'rgb(232,232,232)'; gh.fillRect(x - 3.4, y - 5.4, w + 6.8, 2.4);
+          gh.fillStyle = 'rgb(56,56,56)'; gh.fillRect(x - 3.4, y - 3.0, w + 6.8, 1.8);
+        }
+
+        opening(x, y, w, h, treat, c.kind === 'door');
+        if (c.kind === 'pair') {
+          opening(x + bw * 0.42, y, bw * 0.26, h, paneOf((t * 7.13) % 1), false);
+        }
+
+        // Split unit hung on the wall under the sill. Miami has one of these
+        // under about every third window and nothing else says "apartments".
+        if (c.ac && ((f * 3 + i * 5) % 7) < 3 && y + h + 10 < y0 + fh) {
+          const ax = x + w * 0.5 - bw * 0.10, ay = y + h + 5.5;
+          go.fillStyle = 'rgba(214,212,202,0.95)';
+          go.fillRect(ax, ay, bw * 0.20, fh * 0.075);
+          go.fillStyle = 'rgba(60,58,52,0.55)';
+          go.fillRect(ax + 1, ay + 1.4, bw * 0.20 - 2, fh * 0.030);
+          go.fillStyle = 'rgba(24,20,16,0.26)';
+          go.fillRect(ax, ay + fh * 0.075, bw * 0.20, 2.0);
+          gh.fillStyle = 'rgb(226,226,226)'; gh.fillRect(ax, ay, bw * 0.20, fh * 0.075);
+          gr.fillStyle = 'rgb(120,120,120)'; gr.fillRect(ax, ay, bw * 0.20, fh * 0.075);
+        }
+      }
+    }
+
+    /* Rain staining under sills and slabs, and the mortar-grey wash that
+       collects at the head of every storey. Kept off the keep-out corner. */
+    for (let i = 0; i < 22; i++) {
+      const x = rand() * size, w = 2 + rand() * 9, h = size * (0.06 + rand() * 0.22);
+      const y = rand() * size;
+      if (x < KEEP + w && y < KEEP + h) continue;
+      const g2 = go.createLinearGradient(0, y, 0, y + h);
+      g2.addColorStop(0, 'rgba(92,80,64,0.15)');
+      g2.addColorStop(1, 'rgba(92,80,64,0)');
+      go.fillStyle = g2; go.fillRect(x, y, w, h);
+    }
+
+    return {
+      tooth,
+      patch,
+      overlay: ov,
+      windows,
+      normalMap: dataTex(normalMapFromHeight(downscale(hgt, 256), 256, 1.1 * (size / 256))),
+      roughnessMap: dataTex(rgh),
+    };
+  });
 }
 
 /* =========================================================== TEXTURES === */
@@ -2008,105 +2276,31 @@ export const Textures = {
   /**
    * Stucco / painted render with punched windows, sills, balcony slabs and a
    * railing hint. `floors` / `bays` are divisions per tile (see `glass`).
+   *
+   * Everything except the paint colour comes from `stuccoShell` and is shared
+   * by every tint — see the note there.
    */
   stucco(hex = PALETTE.STUCCO_PINK, floors = 8, bays = 6, size = 512) {
     return cached(`tex-stucco-${hex}-${floors}-${bays}-${size}`, () => {
-      const rand = mulberry32(0x33aa71 ^ (hex | 0));
       const wall = srgb(hex);
-      // Fixed seed, so identical for all sixteen facade tints. Shared.
-      const { tooth, patch } = fields(`stucco-${size}`, () => {
-        const r = mulberry32(0x811a);
-        return {
-          tooth: fbm(size, size >> 3, 2, r),   // render texture
-          patch: fbm(size, 5, 3, r),           // patchy repaint
-        };
-      });
+      const sh = stuccoShell(floors, bays, size);
 
       const col = canvas(size);
       const gc = paintBase(col, size, wall, [
-        { f: patch, amp: 0.055, tint: [1.05, 1.0, 0.92] },
-        { f: tooth, amp: 0.05 },
+        { f: sh.patch, amp: 0.055, tint: [1.05, 1.0, 0.92] },
+        { f: sh.tooth, amp: 0.05 },
       ]);
-      const hgt = canvas(size);
-      const gh = paintGrey(hgt, size, 138, [{ f: tooth, amp: 0.65 }, { f: patch, amp: 0.2 }]);
-      const rgh = canvas(size);
-      const gr = paintGrey(rgh, size, 218, [{ f: patch, amp: 0.16 }]);
+      gc.drawImage(sh.overlay, 0, 0);
 
-      const fh = size / floors, bw = size / bays;
-      const winW = bw * 0.54, winH = fh * 0.44;
-      const hasBalcony = floors <= 14;
-
-      for (let f = 0; f < floors; f++) {
-        const y0 = f * fh;
-
-        /* Balcony slab: a projecting band with its own drop shadow. That
-           shadow is what gives a flat box facade real depth from the air. */
-        if (hasBalcony && f > 0) {
-          const by = y0 + fh * 0.04;
-          gc.fillStyle = 'rgba(255,252,244,0.55)';
-          gc.fillRect(0, by, size, fh * 0.055);
-          gc.fillStyle = 'rgba(60,48,40,0.22)';
-          gc.fillRect(0, by + fh * 0.055, size, fh * 0.05);
-          gh.fillStyle = 'rgb(225,225,225)'; gh.fillRect(0, by, size, fh * 0.055);
-          gh.fillStyle = 'rgb(70,70,70)'; gh.fillRect(0, by + fh * 0.055, size, fh * 0.03);
-        }
-
-        for (let i = 0; i < bays; i++) {
-          const x = i * bw + (bw - winW) / 2;
-          const y = y0 + fh * 0.30;
-          const isLit = rand() < 0.10;
-
-          /* Reveal: the wall is thick, so the opening has a shadowed edge. */
-          gc.fillStyle = 'rgba(70,56,44,0.28)';
-          roundRect(gc, x - 1.6, y - 1.6, winW + 3.2, winH + 3.2, 2.5); gc.fill();
-
-          gc.fillStyle = isLit ? css(srgb(PALETTE.GLASS_LIT), 0.95) : 'rgba(44,68,84,0.92)';
-          roundRect(gc, x, y, winW, winH, 2); gc.fill();
-
-          const grad = gc.createLinearGradient(x, y, x, y + winH);
-          grad.addColorStop(0.0, 'rgba(255,253,244,0.50)');
-          grad.addColorStop(0.45, 'rgba(178,216,236,0.12)');
-          grad.addColorStop(1.0, 'rgba(255,255,255,0.14)');
-          gc.fillStyle = grad;
-          roundRect(gc, x, y, winW, winH, 2); gc.fill();
-
-          /* Glass is recessed and smooth; the sill projects. */
-          gh.fillStyle = 'rgb(72,72,72)'; gh.fillRect(x, y, winW, winH);
-          gr.fillStyle = isLit ? 'rgb(90,90,90)' : 'rgb(44,44,44)'; gr.fillRect(x, y, winW, winH);
-
-          gc.fillStyle = 'rgba(255,250,238,0.7)';
-          gc.fillRect(x - 2.5, y + winH, winW + 5, 2.6);
-          gh.fillStyle = 'rgb(215,215,215)';
-          gh.fillRect(x - 2.5, y + winH, winW + 5, 2.6);
-
-          /* Railing in front of the opening on balcony floors. */
-          if (hasBalcony && f > 0) {
-            gc.strokeStyle = 'rgba(250,248,240,0.55)';
-            gc.lineWidth = 1.0;
-            const ry = y + winH * 0.52;
-            gc.beginPath(); gc.moveTo(x - 3, ry); gc.lineTo(x + winW + 3, ry); gc.stroke();
-            for (let k = 0; k <= 6; k++) {
-              const px = x - 3 + (winW + 6) * (k / 6);
-              gc.beginPath(); gc.moveTo(px, ry); gc.lineTo(px, y + winH + 1); gc.stroke();
-            }
-          }
-
-        }
-      }
-
-      /* Grime collecting under sills and slabs. */
-      for (let i = 0; i < 14; i++) {
-        const x = rand() * size, w = 3 + rand() * 10, h = size * (0.08 + rand() * 0.24);
-        const y = rand() * size;
-        const grad = gc.createLinearGradient(0, y, 0, y + h);
-        grad.addColorStop(0, 'rgba(96,84,68,0.13)');
-        grad.addColorStop(1, 'rgba(96,84,68,0)');
-        gc.fillStyle = grad; gc.fillRect(x, y, w, h);
-      }
-
-      return pack(col, hgt, rgh, size, {
-        normalStrength: 1.1, normalScale: 0.8, normalSize: 256, family: 'facade',
+      const map = pack(col, null, null, size, {
+        family: 'facade',
+        companions: { normalMap: sh.normalMap, normalScale: 0.8, roughnessMap: sh.roughnessMap },
       });
+      // Published so the night pass can light exactly the openings that were
+      // painted, instead of re-deriving a grid that no longer exists.
+      map.userData.windows = sh.windows;
+      map.userData.tileSize = size;
+      return map;
     });
   },
 

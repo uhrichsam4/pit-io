@@ -263,14 +263,26 @@ export class HUD {
   /* ====================================================================== */
 
   setLeaderboard(holes, me) {
-    const sorted = [...holes].sort((a, b) => b.score - a.score);
+    // Same comparator as Match._rank(). Score alone leaves two holes on zero
+    // trading places every frame, and — worse — lets the board disagree with
+    // the rank the match itself believes in, so the crowned leader on the
+    // minimap could be sitting second here.
+    const sorted = [...holes].sort(
+      (a, b) => (b.score - a.score) || (b.eatCount - a.eatCount) || (a.id - b.id)
+    );
     const cap = window.innerHeight < 560 ? 5 : 8;
     const shown = sorted.slice(0, cap);
+    const ranks = shown.map((_, i) => i + 1);
 
     // The player must always be on the board, even sitting in 11th — an
-    // out-of-frame rank is exactly the moment you need to see it.
+    // out-of-frame rank is exactly the moment you need to see it. The pinned
+    // row keeps its TRUE rank: stamping the slot index there printed "5" next
+    // to a player the header simultaneously called 7th.
     const myRank = me ? sorted.indexOf(me) + 1 : 0;
-    if (me && myRank > cap) shown[shown.length - 1] = me;
+    if (me && myRank > cap) {
+      shown[shown.length - 1] = me;
+      ranks[ranks.length - 1] = myRank;
+    }
 
     const members = shown.map((h) => h.id).sort((a, b) => a - b).join(',');
     if (members !== this._members) {
@@ -283,7 +295,11 @@ export class HUD {
     // the board is permanently mid-transition and reads as a smear of
     // overlapping rows. One move per 0.35 s lets each 0.26 s slide land. The
     // rank digits ride along so a row's number always matches its slot.
-    const order = shown.map((h) => h.id).join(',');
+    //
+    // The key carries the ranks, not just the ids: when the player is pinned
+    // into the last slot their number changes while the slot order does not,
+    // and keying on order alone froze that digit for the rest of the match.
+    const order = shown.map((h, i) => `${h.id}:${ranks[i]}`).join(',');
     if (order !== this._order && this._now - this._lastReorder > 0.35) {
       this._flipReorder(shown);
       this._order = order;
@@ -291,7 +307,7 @@ export class HUD {
       for (let i = 0; i < shown.length; i++) {
         const row = this._rows.get(shown[i].id);
         if (!row) continue;
-        const rank = i + 1;
+        const rank = ranks[i];
         if (rank === row.rank) continue;
         row.rank = rank;
         row.rk.textContent = String(rank);

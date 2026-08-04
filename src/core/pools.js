@@ -78,6 +78,8 @@ export class InstancedProp {
      */
     this._dirtySlots = new Set();
     this._dirtyAll = true;
+    /** Reused by flush() so coalescing costs no allocation. */
+    this._sorted = [];
   }
 
   /** Mark one slot's matrix for upload. */
@@ -164,11 +166,38 @@ export class InstancedProp {
       this._dirtySlots.clear();
       return;
     }
-    if (this._dirtySlots.size === 0) return;
+    const n = this._dirtySlots.size;
+    if (n === 0) return;
     attr.clearUpdateRanges();
-    // One 16-float range per changed row. `updateRanges` is consumed and
-    // cleared by WebGLAttributes after each upload, so it is rebuilt each time.
-    for (const slot of this._dirtySlots) attr.addUpdateRange(slot * 16, 16);
+
+    /*
+     * Each update range becomes its own bufferSubData call, and driver
+     * overhead per call dominates the 64 bytes it carries. One range per
+     * changed row was fine for the two cones the player is nibbling; a 30 m
+     * hole destabilises several hundred slots in a single pool and turned one
+     * upload into several hundred. So: coalesce runs, and past a sixth of the
+     * pool just send the whole buffer, which is one call either way.
+     */
+    if (n * 6 >= this.count) {
+      attr.needsUpdate = true;
+      this._dirtySlots.clear();
+      return;
+    }
+
+    const slots = this._sorted;
+    slots.length = 0;
+    for (const s of this._dirtySlots) slots.push(s);
+    slots.sort((a, b) => a - b);
+    let start = slots[0], prev = slots[0];
+    for (let i = 1; i < slots.length; i++) {
+      const s = slots[i];
+      // Bridging a one- or two-row gap re-sends up to 128 wasted bytes and
+      // saves a whole call, which is a trade worth making every time.
+      if (s <= prev + 2) { prev = s; continue; }
+      attr.addUpdateRange(start * 16, (prev - start + 1) * 16);
+      start = s; prev = s;
+    }
+    attr.addUpdateRange(start * 16, (prev - start + 1) * 16);
     attr.needsUpdate = true;
     this._dirtySlots.clear();
   }

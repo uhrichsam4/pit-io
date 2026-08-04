@@ -493,6 +493,167 @@ function tripodGeo(head) {
   return BufferGeometryUtils.mergeGeometries(parts, false);
 }
 
+/* ------------------------------------------------ street-life fittings --- */
+
+/**
+ * The kit the long tail of the city carries with it — see docs/STREET_LIFE.md.
+ *
+ * These are BUILDINGS' worth of nothing individually and a whole layer of the
+ * city collectively: a blanket of sunglasses on the pavement, a folding table
+ * of phone cases, a bedroll and two bundled bags in a doorway, a shopping
+ * trolley, a soapbox, a cooler of cold drinks. Each is one merged geometry in
+ * one instanced pool and a real consumable with a measured footprint, exactly
+ * like a bin or a bench, because a player has to be able to eat them.
+ *
+ * They are modelled to the same standard as everything else in the city. A
+ * person's belongings are not a joke prop.
+ */
+function vendorMatGeo() {
+  const parts = [];
+  // The blanket itself: a shallow slab, not a plane. A zero-thickness rug
+  // z-fights the pavement and reads as a decal.
+  parts.push(box(1.70, 0.045, 1.20, 0, 0.022, 0, 1.0));
+  // Goods laid out in rows — small enough to read as "wares", large enough to
+  // survive minification into a coloured band.
+  let k = 0;
+  for (let ix = -1; ix <= 1; ix++) {
+    for (let iz = -1; iz <= 1; iz++) {
+      const w = 0.30 + (k % 3) * 0.045;
+      parts.push(box(w, 0.085 + (k % 2) * 0.04, 0.24,
+        ix * 0.48, 0.088, iz * 0.36, k % 2 ? 0.62 : 0.86));
+      k++;
+    }
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** Trestle table with a cloth and stacked stock. */
+function foldTableGeo() {
+  const parts = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      parts.push(box(0.055, 0.72, 0.055, sx * 0.62, 0.36, sz * 0.28, 0.42));
+    }
+  }
+  parts.push(box(1.44, 0.05, 0.68, 0, 0.745, 0, 1.0));      // top
+  parts.push(box(1.48, 0.22, 0.72, 0, 0.66, 0, 0.80));      // cloth skirt
+  for (let i = 0; i < 5; i++) {
+    parts.push(box(0.20, 0.09 + (i % 2) * 0.05, 0.17,
+      -0.52 + i * 0.26, 0.815, (i % 2) * 0.12 - 0.06, i % 2 ? 0.58 : 0.92));
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** Cooler on the pavement, lid ajar. Cold drinks, two dollars. */
+function coolerGeo() {
+  const parts = [];
+  parts.push(box(0.62, 0.36, 0.40, 0, 0.18, 0, 1.0));
+  parts.push(box(0.66, 0.055, 0.44, 0, 0.385, 0, 0.74));
+  parts.push(box(0.10, 0.045, 0.045, 0.33, 0.24, 0, 0.40));  // handle
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/**
+ * A rolled sleeping bag and two bundled bags — someone's belongings, kept
+ * together the way anyone keeps their things together.
+ */
+function bedrollGeo() {
+  const parts = [];
+  const roll = new THREE.CylinderGeometry(0.16, 0.16, 0.86, 7, 1, false, Math.PI / 7);
+  roll.rotateZ(Math.PI / 2);
+  roll.translate(0, 0.165, 0);
+  parts.push(shadeGeo(roll, 1.0));
+  const bagA = new THREE.SphereGeometry(0.22, 6, 4);
+  bagA.scale(1.0, 0.82, 0.9);
+  bagA.translate(0.36, 0.19, 0.30);
+  parts.push(shadeGeo(bagA, 0.78));
+  const bagB = new THREE.SphereGeometry(0.17, 6, 4);
+  bagB.scale(1.0, 0.86, 0.95);
+  bagB.translate(-0.30, 0.15, 0.26);
+  parts.push(shadeGeo(bagB, 0.62));
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** A supermarket trolley. Open basket of thin bars, four small castors. */
+function trolleyGeo() {
+  const parts = [];
+  const BW = 0.52, BL = 0.82, BH = 0.40, Y = 0.42;
+  // Basket walls as vertical bars, so it reads as mesh rather than as a box.
+  for (let i = 0; i <= 5; i++) {
+    const z = -BL / 2 + (i / 5) * BL;
+    for (const sx of [-1, 1]) parts.push(box(0.022, BH, 0.022, sx * BW / 2, Y + BH / 2, z, 0.72));
+  }
+  for (let i = 0; i <= 3; i++) {
+    const x = -BW / 2 + (i / 3) * BW;
+    for (const sz of [-1, 1]) parts.push(box(0.022, BH, 0.022, x, Y + BH / 2, sz * BL / 2, 0.72));
+  }
+  parts.push(box(BW, 0.03, BL, 0, Y, 0, 0.72));                 // floor
+  parts.push(box(BW + 0.05, 0.028, BL + 0.05, 0, Y + BH, 0, 0.86));  // rim
+  // Contents: bags and a blanket, because a trolley in use is never empty.
+  parts.push(box(0.36, 0.26, 0.30, 0.02, Y + 0.22, 0.12, 1.0));
+  parts.push(box(0.28, 0.20, 0.24, -0.06, Y + 0.18, -0.22, 0.66));
+  // Frame and handle.
+  for (const sx of [-1, 1]) parts.push(box(0.028, Y, 0.028, sx * BW / 2, Y / 2, -BL / 2 + 0.04, 0.5));
+  for (const sx of [-1, 1]) parts.push(box(0.028, Y, 0.028, sx * BW / 2, Y / 2, BL / 2 - 0.04, 0.5));
+  parts.push(box(BW + 0.04, 0.034, 0.034, 0, Y + BH + 0.16, -BL / 2 - 0.02, 0.5));
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const w = new THREE.CylinderGeometry(0.048, 0.048, 0.026, 7);
+      w.rotateZ(Math.PI / 2);
+      w.translate(sx * BW / 2, 0.048, sz * (BL / 2 - 0.08));
+      parts.push(shadeGeo(w, 0.28));
+    }
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** A wooden crate: a soapbox to stand on, a stool to sit on, a stall counter. */
+function crateGeo() {
+  const parts = [];
+  parts.push(box(0.46, 0.40, 0.38, 0, 0.20, 0, 1.0));
+  parts.push(box(0.49, 0.035, 0.41, 0, 0.395, 0, 0.80));
+  for (const sz of [-1, 1]) parts.push(box(0.48, 0.04, 0.035, 0, 0.22, sz * 0.19, 0.66));
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** A hand-lettered cardboard sign, propped up. Never carries a caption. */
+function signCardGeo() {
+  const parts = [];
+  const board = new THREE.BoxGeometry(0.44, 0.34, 0.018);
+  board.rotateX(-0.30);
+  board.translate(0, 0.19, 0);
+  parts.push(shadeGeo(board, 1.0));
+  // Two lines of writing, blocked in. Deliberately abstract: legible text on a
+  // sign held by someone in this position would be putting words in a
+  // stranger's mouth for entertainment.
+  for (let i = 0; i < 2; i++) {
+    const line = new THREE.BoxGeometry(0.30 - i * 0.08, 0.028, 0.006);
+    line.rotateX(-0.30);
+    line.translate(0, 0.235 - i * 0.075, 0.012 + i * 0.022);
+    parts.push(shadeGeo(line, 0.34));
+  }
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
+/** A pigeon. Six centimetres of city. */
+function pigeonGeo() {
+  const parts = [];
+  const body = new THREE.SphereGeometry(0.075, 5, 3);
+  body.scale(0.85, 0.9, 1.35);
+  body.translate(0, 0.085, 0);
+  parts.push(shadeGeo(body, 1.0));
+  const head = new THREE.SphereGeometry(0.038, 5, 3);
+  head.translate(0, 0.145, 0.075);
+  parts.push(shadeGeo(head, 0.88));
+  parts.push(box(0.022, 0.014, 0.034, 0, 0.142, 0.108, 0.42));   // beak
+  parts.push(box(0.026, 0.05, 0.026, 0, 0.028, 0.01, 0.36));     // legs
+  const tail = new THREE.BoxGeometry(0.07, 0.016, 0.09);
+  tail.rotateX(0.25);
+  tail.translate(0, 0.095, -0.11);
+  parts.push(shadeGeo(tail, 0.80));
+  return BufferGeometryUtils.mergeGeometries(parts, false);
+}
+
 /**
  * The merged body used ONLY for the tumble after a swallow: one mesh, arms
  * thrown up, legs kicking. Cartoon panic, no ragdoll.
@@ -673,6 +834,13 @@ export function buildPedestrians(ctx) {
   const venues = findVenues(ctx, rng, paths);
   const shoots = [];
 
+  // Everything already standing on the pavement, with its MEASURED footprint.
+  // Built before the placers so they can ask "is this spot actually empty"
+  // instead of asking the 9 m occupancy grid, and used again afterwards to
+  // push anyone who still ended up inside something back out of it.
+  const obstacles = buildObstacleField(ctx);
+  const corridor = buildClearance(paths, obstacles);
+
   placeSeated(ctx, rng, furniture, agents, 250);
   placeTerraceLife(ctx, rng, furniture, agents, 120);
   placeVenueLife(ctx, rng, venues, agents, Y_WALK, 210);
@@ -686,6 +854,9 @@ export function buildPedestrians(ctx) {
 
   const N = agents.length;
   if (!N) return;
+
+  /* -------------------------------------------- nobody stands in a bench --- */
+  const cleared = clearCrowd(agents, obstacles, paths);
 
   // WHERE EACH PERSON BELONGS. A pedestrian that has been swallowed comes back
   // 30 s later like every other prop, and "comes back" has to mean back to
@@ -782,6 +953,7 @@ export function buildPedestrians(ctx) {
     matGlow,
     shoots,
     venues,
+    obstacles,
     // Anything that only has to be right a few times a second: the day/night
     // response, the venue migration, and pulling a ring light whose stand has
     // just been eaten. Running these per frame for 1,450 agents buys nothing.
@@ -813,6 +985,13 @@ export function buildPedestrians(ctx) {
     `(hidden until someone is swallowed) | ${nItem} held items, ${nGlow} ring lights | ` +
     `${venues.length} venues, ${paths.length} sidewalk loops, ${net.crossings.length} crossings`
   );
+  console.info(
+    `[pedestrians] clearance: ${obstacles.n} measured obstacles | ` +
+    `${corridor.samples} corridor samples (${corridor.blocked} fully blocked) | ` +
+    `${cleared.fixed} people moved out of furniture, ${cleared.stuck} left tight`
+  );
+  console.info('[pedestrians] blockers', JSON.stringify(
+    Object.entries(corridor.why).sort((a, b) => b[1] - a[1]).slice(0, 18)));
 }
 
 /** Plain numbers only — see why at the publish site. */
@@ -821,12 +1000,25 @@ function census(st) {
   const modes = {};
   const roles = {};
   let held = 0, dogs = 0;
+  /**
+   * LIVE regression counter for "people standing inside the furniture".
+   *
+   * A build-time audit only ever sees frame zero, and the defect it is looking
+   * for is mostly produced by MOVEMENT — a walker drifting into a planter three
+   * minutes into the match. Counting it here, against the same measured
+   * footprints the corridor was carved from, is the only way a reviewer can
+   * check it at the moment they are looking at the frame. Sitters and cyclists
+   * are excluded: a person on a bench is inside that bench on purpose.
+   */
+  let inProps = 0;
   for (const a of st.agents) {
     if (a.held) { held++; continue; }
     const m = MODE_NAME[a.mode] || 'UNKNOWN';
     modes[m] = (modes[m] || 0) + 1;
     if (a.role) roles[a.role] = (roles[a.role] || 0) + 1;
     if (a.dog) dogs++;
+    if (a.mode !== MODE.SIT && a.mode !== MODE.CYCLE && st.obstacles
+        && !spotIsClear(st.obstacles, a.x, a.z, WALK_R * 0.82)) inProps++;
   }
   return {
     agents: st.agents.length,
@@ -835,9 +1027,125 @@ function census(st) {
     shoots: st.shoots.length,
     venues: st.venues.length,
     dogs,
+    inProps,
     modes,
     roles,
   };
+}
+
+/* ======================================================= obstacle field === */
+
+/**
+ * EVERYTHING ALREADY STANDING ON THE PAVEMENT, from the registry.
+ *
+ * `ctx.isFree` is a 3 m occupancy grid that answers "has anyone claimed
+ * anywhere near here", and it rounds any non-zero radius up to a 9x9 m
+ * neighbourhood. Used as a placement test it rejects almost every candidate on
+ * a busy frontage, which is why the crowd placers stopped consulting it for
+ * individual people — and why a review then found people standing inside
+ * benches, shelters, planters and kiosks.
+ *
+ * The registry has what is actually needed: the MEASURED contact radius of
+ * every object worldBuild sized from its geometry. This grid indexes exactly
+ * those, so a person can stand 40 cm from a bollard and 1.6 m from a bus
+ * shelter, which is what a real pavement looks like.
+ *
+ * What is deliberately NOT an obstacle:
+ *   · anything under 34 cm tall — a manhole, a kerb inlay, a painted marking.
+ *     You walk over those.
+ *   · anything over ~4.2 m of contact radius — that is a building, and its
+ *     half-diagonal would blanket the pavement in front of it. The sidewalk
+ *     graph already runs outside the building line.
+ *   · vehicles and boats — they live on the carriageway, in bays and on the
+ *     water, and a crossing pedestrian has to be able to walk in front of one.
+ */
+const OBST_CELL = 5;
+const NOT_OBSTACLE = /^(sedan|suv|hatchback|pickup|sports|convertible|taxi|police|supercar|roadster|gtCoupe|deliveryVan|boxTruck|flatbed|garbageTruck|cementMixer|cityBus|articBus|shuttleBus|ambulance|scooter|motorcycle|bicycle|motorYacht|sailBoat|waterTaxi|skiff|sportFisher|cruiseShip|jetSki|pedestrian|dog)$/;
+
+function buildObstacleField(ctx) {
+  const cells = new Map();
+  const kinds = new Map();
+  let n = 0;
+  for (const c of ctx.registry.byId.values()) {
+    if (c.height < 0.34) continue;
+    // A big footprint that is also tall is a building; a big footprint that is
+    // low is a fountain basin or a raised planter, and people really do have to
+    // walk round those.
+    if (c.radius > 5.5 || c.radius < 0.07) continue;
+    if (c.height > 6 && c.radius > 1.6) continue;
+    if (NOT_OBSTACLE.test(c.kind)) continue;
+    // `radius` is the half-DIAGONAL of the contact patch, so treating it as a
+    // circle over-blocks a long thin bench by about 40% at its ends. 0.8 is
+    // the compromise that keeps a person out of the bench without pushing the
+    // whole pavement stream into the road.
+    const r = Math.max(0.16, c.radius * 0.80);
+    const k = (Math.floor(c.position.x / OBST_CELL) + 2048) * 8192
+            + (Math.floor(c.position.z / OBST_CELL) + 2048);
+    let b = cells.get(k);
+    if (!b) { b = []; cells.set(k, b); kinds.set(k, []); }
+    b.push(c.position.x, c.position.z, r);
+    kinds.get(k).push(c.kind);
+    n++;
+  }
+  return { cells, kinds, n };
+}
+
+/**
+ * Push a point out of anything it is standing inside.
+ *
+ * Iterative because a person wedged between a planter and a bench has to be
+ * moved out of both, and moving them off one can put them into the other.
+ * Four passes settles every case in the city; beyond that the spot is simply
+ * full and the caller should try somewhere else.
+ *
+ * @returns {boolean} true if the point ended up clear
+ */
+const _clearOut = { x: 0, z: 0, moved: 0 };
+function clearOfProps(field, x, z, pr) {
+  let ox = x, oz = z, worst = 0;
+  for (let pass = 0; pass < 4; pass++) {
+    let px = 0, pz = 0, hit = 0;
+    const cx = Math.floor(ox / OBST_CELL), cz = Math.floor(oz / OBST_CELL);
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const b = field.cells.get((cx + i + 2048) * 8192 + (cz + j + 2048));
+        if (!b) continue;
+        for (let q = 0; q < b.length; q += 3) {
+          const dx = ox - b[q], dz = oz - b[q + 1];
+          const need = b[q + 2] + pr;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= need * need) continue;
+          const d = Math.sqrt(d2) || 1e-4;
+          const push = need - d;
+          if (pass === 0 && push > worst) worst = push;
+          px += (dx / d) * push; pz += (dz / d) * push;
+          hit++;
+        }
+      }
+    }
+    if (!hit) break;
+    ox += px; oz += pz;
+  }
+  _clearOut.x = ox; _clearOut.z = oz;
+  _clearOut.moved = worst;
+  return true;
+}
+
+/** Is this spot clear of furniture? Cheap version of the above. */
+function spotIsClear(field, x, z, pr) {
+  const cx = Math.floor(x / OBST_CELL), cz = Math.floor(z / OBST_CELL);
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      const b = field.cells.get((cx + i + 2048) * 8192 + (cz + j + 2048));
+      if (!b) continue;
+      for (let q = 0; q < b.length; q += 3) {
+        const dx = x - b[q], dz = z - b[q + 1];
+        const need = b[q + 2] + pr;
+        if (dx * dx + dz * dz < need * need) return false;
+      }
+    }
+  }
+  return true;
 }
 
 /* ========================================================= sidewalk data === */
@@ -878,8 +1186,176 @@ function buildPaths(net) {
       lat: Math.min(1.35, Math.max(0.30, (Math.min(b.w, b.d) - 16) * 0.07)),
       hooks: new Array(n).fill(null),
       agents: [],
+      /** Free lateral band, per CLEAR_STEP of arc. Filled by buildClearance. */
+      clearLo: null, clearHi: null, clearN: 0,
     });
   }
+  return out;
+}
+
+/* ------------------------------------------------- walking corridor --- */
+
+const CLEAR_STEP = 1.0;      // metres of arc per sample
+const CLEAR_PAD = 1.30;      // along-track dilation: advance warning of a bench
+const WALK_R = 0.26;         // a walking person's shoulder half-width + margin
+
+/**
+ * Carve the free walking corridor out of each pavement loop.
+ *
+ * A walker's position is (arc length, lateral offset), and the lateral offset
+ * used to be a free choice inside +-`lat`. On a Brickell frontage that band is
+ * full of benches, planters, bins and bus shelters, so a stream of people
+ * walked straight through the street furniture — the loudest single defect in
+ * the crowd, and one a static placement fix cannot touch because the people
+ * are MOVING.
+ *
+ * So the band is measured instead. Every metre of every loop stores the widest
+ * lateral interval that is genuinely free, and `stepWalk` steers inside it. The
+ * along-track test is dilated by CLEAR_PAD so the interval closes a metre and a
+ * bit BEFORE the obstacle, which turns a clip into a swerve.
+ *
+ * When a loop is completely blocked at some point — a shelter that spans the
+ * whole pavement — the interval falls back to the full band rather than to
+ * nothing: an unavoidable clip is better than a person frozen or teleported.
+ */
+function buildClearance(paths, field) {
+  let blocked = 0, samples = 0;
+  const why = {};
+  for (const p of paths) {
+    const n = Math.max(4, Math.ceil(p.total / CLEAR_STEP));
+    const lo = new Float32Array(n);
+    const hi = new Float32Array(n);
+    const lim = p.lat * 1.35;
+    for (let i = 0; i < n; i++) {
+      const s = i * CLEAR_STEP;
+      const sm = sampleLoop(p, s, 0);
+      const inv = 1 / (Math.hypot(sm.dx, sm.dz) || 1);
+      const ux = sm.dx * inv, uz = sm.dz * inv;
+      // Right-hand normal of the loop's own direction. `stepWalk` measures lat
+      // along the walker's direction of travel, so a walker going the other way
+      // sees the interval mirrored — hence the symmetric band below.
+      const nx = -uz, nz = ux;
+
+      // Collect the blocked lateral intervals at this station.
+      let aLo = -lim, aHi = lim;
+      const cx = Math.floor(sm.x / OBST_CELL), cz = Math.floor(sm.z / OBST_CELL);
+      const spans = [];
+      for (let gi = -1; gi <= 1; gi++) {
+        for (let gj = -1; gj <= 1; gj++) {
+          const b = field.cells.get((cx + gi + 2048) * 8192 + (cz + gj + 2048));
+          if (!b) continue;
+          for (let q = 0; q < b.length; q += 3) {
+            const dx = b[q] - sm.x, dz = b[q + 1] - sm.z;
+            const along = dx * ux + dz * uz;
+            const r = b[q + 2];
+            if (Math.abs(along) > r + CLEAR_PAD) continue;
+            const lat = dx * nx + dz * nz;
+            const w = r + WALK_R;
+            if (lat - w > lim || lat + w < -lim) continue;
+            spans.push([lat - w, lat + w, field.kinds.get(
+              (cx + gi + 2048) * 8192 + (cz + gj + 2048))[q / 3]]);
+          }
+        }
+      }
+      if (spans.length) {
+        // Sweep the blocked spans in order and keep the widest gap between
+        // them that still lies inside the loop's own lateral band.
+        spans.sort((u, v) => u[0] - v[0]);
+        let cur = -lim, best = -1;
+        for (const sp of spans) {
+          if (sp[0] > cur) {
+            const end = Math.min(sp[0], lim);
+            if (end - cur > best) { best = end - cur; aLo = cur; aHi = end; }
+          }
+          if (sp[1] > cur) cur = sp[1];
+          if (cur >= lim) break;
+        }
+        if (cur < lim && lim - cur > best) { best = lim - cur; aLo = cur; aHi = lim; }
+        // Fully blocked: better an unavoidable clip than a frozen pavement.
+        if (best < 0.34) {
+          aLo = -lim; aHi = lim; blocked++;
+          for (const sp of spans) why[sp[2]] = (why[sp[2]] || 0) + 1;
+        }
+      }
+      lo[i] = aLo; hi[i] = aHi;
+      samples++;
+    }
+    p.clearLo = lo; p.clearHi = hi; p.clearN = n;
+  }
+  return { samples, blocked, why };
+}
+
+/**
+ * The final placement sweep: nobody is standing inside the street furniture.
+ *
+ * Runs after every placer, because the placers legitimately fight over the same
+ * ground and only the finished crowd knows where everyone ended up. Two kinds
+ * of agent are deliberately left alone:
+ *
+ *   · anyone SITTING. A person on a bench, on a café chair or on the grass is
+ *     supposed to be inside that bench's footprint — that is what sitting is.
+ *   · anyone whose position is a hard requirement of their behaviour: a
+ *     presenter on their mark, a doorman on the door, a valet at the kerb.
+ *     Those are moved by at most a nudge, and never off their spot.
+ *
+ * Walkers are handled through `lat` rather than through x/z, because their
+ * position is regenerated from (arc length, lateral offset) on every tick and
+ * writing x/z directly would be undone on frame one.
+ */
+function clearCrowd(agents, field, paths) {
+  let fixed = 0, stuck = 0;
+  const band = { lo: 0, hi: 0 };
+  for (const a of agents) {
+    if (a.mode === MODE.SIT || a.mode === MODE.CYCLE) continue;
+    const pr = a.bike ? 0.42 : WALK_R;
+
+    if (a.path) {
+      // Snap the walker's lane into the measured corridor, then rebuild x/z
+      // from it so the very first rendered frame already agrees with the sim.
+      clearanceAt(a.path, a.s, a.dir, band);
+      const mid = (band.lo + band.hi) * 0.5;
+      let lat = a.latTarget;
+      if (lat < band.lo || lat > band.hi) {
+        lat = band.hi - band.lo > 0.7
+          ? Math.max(band.lo + 0.2, Math.min(band.hi - 0.2, lat))
+          : mid;
+        fixed++;
+      }
+      a.latTarget = a.lat = lat;
+      const sm = sampleLoop(a.path, a.s, 0);
+      const inv = 1 / (Math.hypot(sm.dx, sm.dz) || 1);
+      const ux = sm.dx * inv * a.dir, uz = sm.dz * inv * a.dir;
+      a.x = sm.x + (-uz) * lat;
+      a.z = sm.z + ux * lat;
+      a.yaw = Math.atan2(ux, uz);
+      continue;
+    }
+
+    if (spotIsClear(field, a.x, a.z, pr)) continue;
+    clearOfProps(field, a.x, a.z, pr);
+    // A stationary character has a REASON to be where they are. Two metres is
+    // the most that can be given away before a doorman is no longer on the
+    // door; past that, leave them and let the placement read as tight rather
+    // than teleport them across the pavement.
+    const dx = _clearOut.x - a.x, dz = _clearOut.z - a.z;
+    if (dx * dx + dz * dz > 4) { stuck++; continue; }
+    a.x = _clearOut.x; a.z = _clearOut.z;
+    fixed++;
+  }
+  void paths;
+  return { fixed, stuck };
+}
+
+/** Free lateral band at arc length `s` on loop `p`, for a walker heading `dir`. */
+function clearanceAt(p, s, dir, out) {
+  if (!p.clearLo) { out.lo = -p.lat * 1.3; out.hi = p.lat * 1.3; return out; }
+  let i = Math.round(s / CLEAR_STEP) % p.clearN;
+  if (i < 0) i += p.clearN;
+  // `lat` in stepWalk is measured along the RIGHT of travel; the profile is
+  // stored along the right of the loop's own winding, so a walker going
+  // backwards sees it mirrored.
+  if (dir >= 0) { out.lo = p.clearLo[i]; out.hi = p.clearHi[i]; }
+  else { out.lo = -p.clearHi[i]; out.hi = -p.clearLo[i]; }
   return out;
 }
 
@@ -2131,6 +2607,337 @@ function buildRigs(ctx, shoots, glowPool) {
   }
 }
 
+/* ========================================================== street life === */
+
+/**
+ * THE LONG TAIL — docs/STREET_LIFE.md.
+ *
+ * A city is not only commuters. What separates Brickell from a crowd
+ * simulation is the people who are not going anywhere: domino players, a
+ * vendor with a blanket of sunglasses, someone asleep on a bench in the sun,
+ * a preacher with an indifferent crowd, someone doing tai chi in the park at
+ * an odd hour, a rough sleeper with their belongings in the shade behind a
+ * block, a promoter outside a club at midnight.
+ *
+ * HOW THEY ARE TREATED. Exactly the same as everyone else: the same rig, the
+ * same modelling standard, the same consumption contract, no exaggerated
+ * silhouettes and no captions. A rough sleeper here is a person sitting down
+ * with their things beside them, and their things are modelled with the same
+ * care as a café table. Nothing in this section is a punchline.
+ *
+ * WHERE THEY GO. By plausibility, never evenly:
+ *   · domino and chess at park and plaza tables
+ *   · vendors where there is footfall — the promenade, the retail spine
+ *   · buskers and preachers where there is room to stand and be seen
+ *   · people resting in the QUIET parts: the shaded side of a block, the
+ *     service frontage, the back of a lot. Explicitly not on the polished
+ *     Brickell Avenue frontage, which is both where they are not in the real
+ *     city and where putting them would read as set dressing.
+ */
+function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props, cap) {
+  const { layout } = ctx;
+  let spent = 0;
+  const clear = (x, z, r) => spotIsClear(field, x, z, r)
+    && !layout.isWater(x, z) && !layout.isRoad(x, z);
+
+  /**
+   * Find standing room near a pavement loop.
+   * `side` +1 walks in toward the building line, -1 out toward the kerb.
+   */
+  const pitch = (path, r, side, lo, hi, need) => {
+    const b = path.block;
+    for (let t = 0; t < 10; t++) {
+      const i = r.int(0, path.n - 1);
+      let nx = b.x - path.px[i], nz = b.z - path.pz[i];
+      const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+      const off = (lo + r() * (hi - lo)) * side;
+      const x = path.px[i] + nx * off, z = path.pz[i] + nz * off;
+      if (!clear(x, z, need)) continue;
+      return { x, z, nx, nz, yaw: Math.atan2(-nx * side, -nz * side) };
+    }
+    return null;
+  };
+
+  const person = (r, arch, x, z, yaw, mode, role) => {
+    const a = makeAgent(r, arch);
+    a.x = x; a.z = z; a.y = yWalk;
+    a.yaw = yaw;
+    a.mode = mode;
+    a.role = role;
+    a.idleSeed = r() * 100;
+    a.items = null;
+    agents.push(a); spent++;
+    return a;
+  };
+
+  /* --- dominoes and chess at the park tables --------------------------- */
+  // Real tables, not invented ones: four people round a table that is not
+  // there is the "floating prop" failure with people in it.
+  const tables = furniture.seats.filter((s) => s.kind === 'picnic' && !s.taken);
+  const byTable = new Map();
+  for (const s of tables) {
+    const k = `${Math.round(s.x / 3)}:${Math.round(s.z / 3)}`;
+    if (!byTable.has(k)) byTable.set(k, []);
+    byTable.get(k).push(s);
+  }
+  const groups = [...byTable.values()].filter((g) => g.length >= 2);
+  for (const g of groups) {
+    if (spent >= cap) break;
+    const r = makeRNG(((Math.round(g[0].x) * 73856093) ^ (Math.round(g[0].z) * 19349663)) >>> 0);
+    if (!r.chance(0.34)) continue;
+    const game = r.chance(0.62) ? 'domino' : 'chess';
+    const play = Math.min(g.length, r.int(2, 4));
+    for (let k = 0; k < play; k++) {
+      const s = g[k];
+      s.taken = true;
+      // Retirees, mostly. A guayabera and a wide hat is the Miami of it.
+      const a = person(r, ARCH_PLAYER, s.x, s.z, s.yaw + (r() - 0.5) * 0.20,
+        MODE.SIT, 'boardgame');
+      a.hipY = s.seatY / a.size;
+      a.seatYaw = a.yaw;
+      a.sitSprawl = false;
+      a.lean = 0.20 + r() * 0.10;
+      a.game = game;
+      if (r.chance(0.55)) { a.hat = true; a.hatHex = rng.pick(HAT_COLORS); a.hatScale = 1.18; }
+      if (spent >= cap) break;
+    }
+    // The tiles or the pieces on the table between them.
+    props.push({
+      kind: game === 'domino' ? 'dominoSet' : 'chessSet',
+      x: g[0].x + (r() - 0.5) * 0.3, z: g[0].z + (r() - 0.5) * 0.3, y: yWalk, yaw: r() * 6.28,
+    });
+    // Spectators. A domino game without anyone leaning over it is a chore.
+    const watch = r.weighted([[0, 32], [1, 34], [2, 24], [3, 10]]);
+    for (let k = 0; k < watch && spent < cap; k++) {
+      const ang = r() * Math.PI * 2, rad = 1.5 + r() * 0.7;
+      const x = g[0].x + Math.cos(ang) * rad, z = g[0].z + Math.sin(ang) * rad;
+      if (!clear(x, z, WALK_R)) continue;
+      person(r, pickArchetype(r, false), x, z,
+        Math.atan2(g[0].x - x, g[0].z - z), MODE.IDLE, 'spectator');
+    }
+  }
+
+  /* --- everything that hangs off a pavement loop ------------------------ */
+  for (const path of paths) {
+    if (spent >= cap) break;
+    const b = path.block;
+    const r = makeRNG((b.seed ^ 0x7d31ab) >>> 0);
+    const life = b.streetLife ?? 0.3;
+    const green = b.zone === ZONE.PARK || b.zone === ZONE.PLAZA;
+    const prom = b.bayfront || b.riverwalk;
+    const busy = life > 0.52 || prom || green;
+    const quiet = life < 0.46 && !prom;
+
+    /* --- someone selling something off a blanket or a table ------------- */
+    if (busy && r.chance(prom ? 0.30 : 0.17)) {
+      const p = pitch(path, r, 1, 2.4, 4.2, 1.3);
+      if (p) {
+        const onTable = r.chance(0.45);
+        const goods = r.pick(GOODS_COLORS);
+        props.push({ kind: onTable ? 'streetTable' : 'streetMat', x: p.x, z: p.z, y: yWalk,
+          yaw: p.yaw, hex: goods });
+        // Behind their own stock, facing the footfall.
+        const bx = p.x - Math.sin(p.yaw) * (onTable ? 0.72 : 1.10);
+        const bz = p.z - Math.cos(p.yaw) * (onTable ? 0.72 : 1.10);
+        if (clear(bx, bz, WALK_R * 0.7)) {
+          const a = person(r, ARCH_VENDOR, bx, bz, p.yaw, onTable ? MODE.IDLE : MODE.SIT, 'vendor');
+          if (!onTable) {
+            a.hipY = 0.415 / a.size;
+            a.seatYaw = a.yaw;
+            a.sitSprawl = false;
+            a.lean = 0.14;
+            addItem(a, AT.SEAT, 0.42 / a.size, 0.40 / a.size, 0.38 / a.size,
+              PALETTE.WOOD_DECK, 0, 0.3, 0.20 / a.size);
+          }
+          if (r.chance(0.5)) {
+            props.push({ kind: 'streetCooler', x: bx + Math.cos(p.yaw) * 0.85,
+              z: bz - Math.sin(p.yaw) * 0.85, y: yWalk, yaw: p.yaw });
+          }
+        }
+        // Someone actually buying, half the time.
+        if (r.chance(0.5)) {
+          const cx = p.x + Math.sin(p.yaw) * 1.15, cz = p.z + Math.cos(p.yaw) * 1.15;
+          if (clear(cx, cz, WALK_R)) {
+            person(r, pickArchetype(r, false), cx, cz, p.yaw + Math.PI, MODE.IDLE, 'spectator');
+          }
+        }
+      }
+    }
+
+    /* --- a preacher, and the crowd that is mostly not listening --------- */
+    if ((green || prom || life > 0.62) && r.chance(0.10)) {
+      const p = pitch(path, r, 1, 3.0, 6.0, 1.8);
+      if (p) {
+        props.push({ kind: 'soapbox', x: p.x, z: p.z, y: yWalk, yaw: p.yaw });
+        const a = person(r, ARCH_SPEAKER, p.x, p.z, p.yaw, MODE.IDLE, 'preacher');
+        // Standing ON the crate, so the whole body rides 0.40 m up.
+        a.y = yWalk + 0.40;
+        a.riser = 0.40;
+        addItem(a, AT.HAND_L, 0.13, 0.19, 0.045, PALETTE.WOOD_DARK, 0);
+        const crowd = r.int(1, 4);
+        for (let k = 0; k < crowd && spent < cap; k++) {
+          const ang = p.yaw + (k / crowd - 0.5) * 1.7 + (r() - 0.5) * 0.3;
+          const rad = 2.2 + r() * 1.6;
+          const x = p.x + Math.sin(ang) * rad, z = p.z + Math.cos(ang) * rad;
+          if (!clear(x, z, WALK_R)) continue;
+          // Indifferent as often as attentive — that is what makes it read.
+          person(r, pickArchetype(r, false), x, z,
+            Math.atan2(p.x - x, p.z - z) + (r() - 0.5) * 0.9,
+            MODE.IDLE, r.chance(0.55) ? 'audience' : 'spectator');
+        }
+      }
+    }
+
+    /* --- tai chi / yoga on the grass at an odd hour --------------------- */
+    if (green && r.chance(0.26)) {
+      const n = r.int(1, 4);
+      const cx = b.x + (r() - 0.5) * b.w * 0.4, cz = b.z + (r() - 0.5) * b.d * 0.4;
+      const face = r() * Math.PI * 2;
+      for (let k = 0; k < n && spent < cap; k++) {
+        const x = cx + (k - (n - 1) / 2) * 1.9 + (r() - 0.5) * 0.4;
+        const z = cz + (r() - 0.5) * 0.8;
+        if (!clear(x, z, WALK_R)) continue;
+        const a = person(r, ARCH_TAICHI, x, z, face, MODE.IDLE, 'taichi');
+        a.idleSeed = k * 0.7;      // in loose unison, not in lockstep
+      }
+    }
+
+    /* --- someone feeding the pigeons ------------------------------------ */
+    if ((green || prom) && r.chance(0.22)) {
+      const p = pitch(path, r, 1, 2.0, 5.0, 1.2);
+      if (p) {
+        const a = person(r, ARCH_RESIDENT, p.x, p.z, p.yaw, MODE.SIT, 'feeder');
+        a.hipY = 0.42 / a.size;
+        a.seatYaw = a.yaw;
+        a.sitSprawl = false;
+        a.lean = 0.10;
+        addItem(a, AT.SEAT, 0.42 / a.size, 0.40 / a.size, 0.38 / a.size,
+          PALETTE.WOOD_DECK, 0, 0, 0.20 / a.size);
+        for (let k = 0, nb = r.int(3, 7); k < nb; k++) {
+          const ang = p.yaw + (r() - 0.5) * 2.4, rad = 0.9 + r() * 1.8;
+          props.push({ kind: 'pigeon', x: p.x + Math.sin(ang) * rad,
+            z: p.z + Math.cos(ang) * rad, y: yWalk, yaw: r() * 6.28,
+            hex: r.pick(PIGEON_COLORS) });
+        }
+      }
+    }
+
+    /* --- somebody having an argument with nobody ------------------------ */
+    if (busy && r.chance(0.09)) {
+      const p = pitch(path, r, 1, 1.9, 3.4, 0.9);
+      if (p) person(r, pickArchetype(r, false), p.x, p.z, p.yaw, MODE.IDLE, 'arguer');
+    }
+
+    /* --- the quiet, out-of-the-way places ------------------------------- */
+    // Concentrated where they actually are — the shaded side of a block, the
+    // service frontage, the back of a lot — and never on the polished
+    // Brickell Avenue face of a tower.
+    if (quiet && r.chance(0.30)) {
+      // Hard against the building line, out of the walking stream.
+      const p = pitch(path, r, 1, 3.6, 5.4, 1.1);
+      if (p) {
+        const a = person(r, ARCH_RESTING, p.x, p.z, p.yaw + Math.PI, MODE.SIT, 'streetRest');
+        // Sitting on the ground with their back to the wall, knees drawn up.
+        a.hipY = 0.30 + r() * 0.02;
+        a.seatYaw = a.yaw;
+        a.sitSprawl = false;
+        a.lean = -0.06;
+        const bx = p.x + Math.sin(a.yaw + 1.5) * 0.85;
+        const bz = p.z + Math.cos(a.yaw + 1.5) * 0.85;
+        if (clear(bx, bz, 0.4)) {
+          props.push({ kind: 'bedroll', x: bx, z: bz, y: yWalk, yaw: a.yaw,
+            hex: r.pick(BEDDING_COLORS) });
+        }
+        if (r.chance(0.34)) {
+          const sx = p.x + Math.sin(a.yaw) * 0.62, sz = p.z + Math.cos(a.yaw) * 0.62;
+          props.push({ kind: 'signCard', x: sx, z: sz, y: yWalk, yaw: a.yaw });
+        }
+        if (r.chance(0.28)) {
+          const tx = p.x + Math.sin(a.yaw - 1.5) * 1.15, tz = p.z + Math.cos(a.yaw - 1.5) * 1.15;
+          if (clear(tx, tz, 0.6)) {
+            props.push({ kind: 'trolley', x: tx, z: tz, y: yWalk, yaw: a.yaw + 1.57 });
+          }
+        }
+        // A dog, sometimes. Company, and the reason people stop.
+        if (r.chance(0.20)) {
+          a.dog = true;
+          a.dogHex = r.pick(DOG_COLORS);
+          a.dogPhase = r() * 6.28;
+          a.dogRest = true;
+        }
+      }
+    }
+  }
+
+  /* --- asleep on a bench in the sun ------------------------------------- */
+  // A real bench, taken whole: nobody else is sitting on it.
+  const benches = furniture.seats.filter((s) => s.kind !== 'chair' && s.kind !== 'picnic');
+  for (const s of benches) {
+    if (spent >= cap) break;
+    if (s.taken) continue;
+    if (!rng.chance(0.012)) continue;
+    s.taken = true;
+    const a = person(rng, pickArchetype(rng, false), s.x, s.z, s.yaw, MODE.SIT, 'asleep');
+    a.lying = true;
+    a.hipY = s.seatY / a.size;
+    a.seatYaw = a.yaw;
+    a.lean = 1.34;                 // torso down along the seat
+    if (rng.chance(0.5)) { a.hat = true; a.hatHex = rng.pick(HAT_COLORS); a.hatScale = 1.15; }
+  }
+
+  return spent;
+}
+
+/**
+ * Stand the street-life kit up as real consumables.
+ *
+ * Same contract as everything else in the city: measured footprint, correct
+ * ground contact, edible. One pool per kind, and every one of them small.
+ */
+const STREET_PROPS = {
+  streetMat: { geo: vendorMatGeo, label: 'Street Vendor Mat', cap: 90, score: 6, tier: 'SMALL' },
+  streetTable: { geo: foldTableGeo, label: 'Folding Table', cap: 90, score: 6, tier: 'SMALL' },
+  streetCooler: { geo: coolerGeo, label: 'Drinks Cooler', cap: 90, score: 4, tier: 'TINY' },
+  bedroll: { geo: bedrollGeo, label: 'Bedroll', cap: 140, score: 4, tier: 'TINY' },
+  trolley: { geo: trolleyGeo, label: 'Trolley', cap: 90, score: 5, tier: 'SMALL' },
+  soapbox: { geo: crateGeo, label: 'Crate', cap: 90, score: 3, tier: 'TINY' },
+  signCard: { geo: signCardGeo, label: 'Cardboard Sign', cap: 120, score: 2, tier: 'TINY' },
+  dominoSet: { geo: crateGeo, label: 'Dominoes', cap: 60, score: 2, tier: 'TINY', scale: 0.34 },
+  chessSet: { geo: crateGeo, label: 'Chess Set', cap: 60, score: 2, tier: 'TINY', scale: 0.34 },
+  pigeon: { geo: pigeonGeo, label: 'Pigeon', cap: 400, score: 1, tier: 'TINY' },
+};
+
+function buildStreetProps(ctx, list) {
+  const pos = new THREE.Vector3();
+  let n = 0;
+  for (const p of list) {
+    const def = STREET_PROPS[p.kind];
+    if (!def) continue;
+    pos.set(p.x, p.y, p.z);
+    const c = ctx.addInstanced(`street_${p.kind}`, () => ({
+      geometry: def.geo(),
+      material: solid({
+        color: 0xffffff, vertexColors: true, roughness: 0.80, metalness: 0.0,
+        envMapIntensity: 0.45,
+      }),
+    }), {
+      position: pos,
+      rotationY: p.yaw,
+      scale: (def.scale ?? 1) * (0.94 + (p.jitter ?? 0.06)),
+      hex: p.hex ?? STREET_HEX[p.kind] ?? PALETTE.FABRIC_WHITE,
+      capacity: def.cap,
+      tier: ctx.TIER[def.tier],
+      label: def.label,
+      kind: p.kind,
+      debrisColor: p.hex ?? PALETTE.FABRIC_WHITE,
+      score: def.score,
+      castShadow: true,
+    });
+    if (c) n++;
+  }
+  return n;
+}
+
 /* ============================================================== buskers === */
 
 /** A singer or a bucket drummer with a small ring of people watching. */
@@ -2279,8 +3086,29 @@ function placeChildren(ctx, rng, agents, cap) {
  * declared physics against the real mesh; zeroing it to force invisibility
  * would make both of them lie.
  *
+ * WHY THE POOLS ARE SMALL (docs/PERF_FINDINGS.md, win 2)
+ * -----------------------------------------------------
+ * An InstancedMesh pays vertex cost for its whole `count`, not for the
+ * instances that happen to be visible. One pool of 831 people therefore cost
+ * 160 k triangles the instant a SINGLE person fell into a hole — and late game,
+ * with a hole eating a pavement, that is exactly when the frame is busiest.
+ *
+ * The obvious fix is a small pool leased on demand, but that breaks the
+ * gameplay contract outright: the object that falls has to BE the placed
+ * instance, and a leased slot is a copy standing in for it. So the pool is cut
+ * into fixed BUCKETS instead. Each person keeps their own permanent slot — the
+ * registry entry, the authored transform and the respawn all behave exactly as
+ * before — but only the ~64-person bucket containing someone who is actually
+ * falling is ever drawn. Same contract, a thirteenth of the triangles.
+ *
+ * Consecutive agents are also spatially close (the walker placer fills one
+ * pavement loop at a time), so a hole swallowing a group tends to light up one
+ * bucket rather than ten.
+ *
  * @returns {Map<InstancedProp, {n:number}>} the refcount table
  */
+const FALL_BUCKET = 64;
+
 function registerConsumables(ctx, agents, rng) {
   const variants = new Map();
   const fallPools = new Map();
@@ -2307,9 +3135,14 @@ function registerConsumables(ctx, agents, rng) {
         hivis: [PALETTE.PALM_TRUNK, PALETTE.TAR_SEAM, PALETTE.NEON_YELLOW, PALETTE.CAR_GRAPHITE],
         cycle: [PALETTE.PALM_TRUNK_DARK, PALETTE.TAR_SEAM, PALETTE.NEON_AQUA, PALETTE.CAR_GRAPHITE],
       }[family];
+      let geo = null;
       variants.set(family, {
-        key: `pedFall_${family}`,
-        geo: () => fallBodyGeo(spec[0], spec[1], spec[2], spec[3], family === 'cycle', PALETTE.CAR_TEAL),
+        family,
+        n: 0,
+        // One BufferGeometry shared by every bucket of this family: the buckets
+        // exist to shrink the DRAW, not to duplicate the mesh.
+        geo: () => (geo ||= fallBodyGeo(
+          spec[0], spec[1], spec[2], spec[3], family === 'cycle', PALETTE.CAR_TEAL)),
       });
     }
     return variants.get(family);
@@ -2318,8 +3151,9 @@ function registerConsumables(ctx, agents, rng) {
   const pos = new THREE.Vector3();
   for (const a of agents) {
     const v = poolFor(a);
+    const key = `pedFall_${v.family}_${(v.n++ / FALL_BUCKET) | 0}`;
     pos.set(a.x, a.y, a.z);
-    const c = ctx.addInstanced(v.key, () => ({
+    const c = ctx.addInstanced(key, () => ({
       geometry: v.geo(),
       material: solid({
         color: 0xffffff, vertexColors: true, roughness: 0.78, metalness: 0.0,
@@ -2329,7 +3163,7 @@ function registerConsumables(ctx, agents, rng) {
       position: pos,
       rotationY: a.yaw,
       scale: a.size,
-      capacity: 1400,
+      capacity: FALL_BUCKET,
       tier: a.bike ? TIER.MEDIUM : TIER.SMALL,
       radius: a.bike ? 0.75 : 0.36,
       height: 1.78 * a.size,
@@ -2794,6 +3628,7 @@ function stepReturn(st, a, dt) {
  * frame and a fresh literal each time is 600 garbage objects a frame.
  */
 const _sm = { seg: 0, x: 0, z: 0, dx: 0, dz: 0 };
+const _band = { lo: 0, hi: 0 };
 function sampleLoop(p, s, seg) {
   const cum = p.cum;
   let i = seg;
@@ -2856,8 +3691,22 @@ function stepWalk(st, a, dt) {
   const inv = 1 / (Math.hypot(sm.dx, sm.dz) || 1);
   const ux = sm.dx * inv * a.dir, uz = sm.dz * inv * a.dir;
   const nx = -uz, nz = ux;
-  const want = Math.max(-p.lat * 1.3, Math.min(p.lat * 1.3, a.latTarget + push));
+  let want = Math.max(-p.lat * 1.3, Math.min(p.lat * 1.3, a.latTarget + push));
+  /* --- steer inside the free corridor ---------------------------------
+   * Looked up a metre and a half AHEAD, not underfoot: by the time a bench is
+   * beside you it is too late to walk round it, and `lat` only closes at
+   * 4/s. The band itself was already dilated by CLEAR_PAD at build time, so
+   * between the two a walker starts leaning out of the way about 2.5 m early.
+   */
+  clearanceAt(p, a.s + a.dir * 1.5, a.dir, _band);
+  if (want < _band.lo) want = _band.lo;
+  else if (want > _band.hi) want = _band.hi;
   a.lat += (want - a.lat) * Math.min(1, dt * 4);
+  // And a hard stop at the station they are actually on, so a walker who has
+  // been shoved sideways by the crowd still cannot end up inside a planter.
+  clearanceAt(p, a.s, a.dir, _band);
+  if (a.lat < _band.lo) a.lat = _band.lo;
+  else if (a.lat > _band.hi) a.lat = _band.hi;
 
   a.x = sm.x + nx * a.lat;
   a.z = sm.z + nz * a.lat;
