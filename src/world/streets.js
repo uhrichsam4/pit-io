@@ -79,6 +79,11 @@ const Y_PATCH = 0.008;
  * a try/catch — so the whole city fails to build.
  */
 const Y_SEAM = Y_PATCH + 0.003;
+/**
+ * Standing damp. Above the wear layer (it lies ON the polished asphalt) and
+ * below the sealant, which is proud of everything on the carriageway.
+ */
+const Y_DAMP = Y_PATCH + 0.0015;
 const Y_TINT = 0.010;
 const Y_MARK = 0.018;
 const Y_IRON = 0.024;
@@ -155,6 +160,25 @@ const BAR_W = 0.55;      // one zebra bar
 const BAR_PITCH = 1.18;
 const STOP_BAR = 0.45;
 const STOP_SET = 0.95;   // stop line sits this far back from the zebra
+
+/**
+ * CROSSING VOCABULARY.
+ *
+ * The corridor stays 3.6 m wide whatever style lands in it — RAMP_B, the stop
+ * bar setback, the median nose pull-back and pedestrians.js's crossing points
+ * are all measured off CROSS_W, so the *geometry* of a crossing is a contract.
+ * What is painted INSIDE that corridor is not, and it has to vary.
+ *
+ * The default gameplay framing has twenty crossings in it at once. When every
+ * one is the identical bar stencil at the identical pitch, the frame stops
+ * reading as a city and starts reading as wallpaper — the art bible's "tiling
+ * so obvious you can count the repeats" and its "crosswalk markings that read
+ * as random white rectangles", arriving as the same defect. Real practice also
+ * varies: a signalled arterial gets a high-visibility continental or ladder
+ * marking because it has to be seen at 55 km/h, and a residential crossroads
+ * gets two transverse lines because it does not.
+ */
+const XWALK = { CONTINENTAL: 0, LADDER: 1, TRANSVERSE: 2, DASHED: 3 };
 
 /* ========================================================== geometry === */
 
@@ -377,6 +401,15 @@ export function buildStreets(ctx) {
   const road = new Surf(9.0);
   const alley = new Surf(4.0);
   const patch = new Surf(9.0);
+  /**
+   * Standing damp — the water the afternoon sun has not lifted out of the
+   * gutter yet. Its own mesh purely so it can carry its own ROUGHNESS, which is
+   * the whole point of it: by day it is a barely-there dark stain against the
+   * kerb, and after dark it drops to a near-mirror while the rest of the
+   * carriageway only half does, so the road stops being one uniformly damp
+   * sheet and starts having wet places in it.
+   */
+  const damp = new Surf(9.0);
   const busl = new Surf(9.0);
   const white = new Surf(4);
   const yellow = new Surf(4);
@@ -419,10 +452,16 @@ export function buildStreets(ctx) {
    * neither meant anything. Safety yellow is what Miami actually uses on most
    * of its newer ramps, it is already in the palette's accent set, and it is
    * the only warm hue on the footway that cannot be confused with a lane.
-   * One brick variant is kept so a crossroads is still never four identical
-   * corners.
+   *
+   * The third variant used to be brick 0xc06038 — kept so a crossroads is never
+   * four identical corners, but it put the brick family straight back on the
+   * footway six metres from the bus lane it was meant to be distinguished from,
+   * and the street-level frame showed exactly that. It is now the OTHER thing
+   * Miami actually installs: a dark cast-iron detectable-warning plate. Third
+   * distinct value, no shared hue with any traffic lane, and against bone paving
+   * it is the highest-contrast of the three.
    */
-  const C_TACTILE = [lin(0xd9a534), lin(PALETTE.CURB_PAINT), lin(0xc06038)];
+  const C_TACTILE = [lin(0xd9a534), lin(PALETTE.CURB_PAINT), lin(0x6b5c4c)];
   const C_APRON = lin(PALETTE.CONCRETE_DARK, 0.92);
   const C_BAY_BLUE = lin(0x2f6fbf);
   const C_CYCLE = lin(0x3f7f5c);
@@ -435,7 +474,7 @@ export function buildStreets(ctx) {
   const stat = {
     crossBars: 0, ramps: 0, manholes: 0, arrows: 0, medianM: 0, bridges: 0,
     xovers: 0, bays: 0, loading: 0, accessible: 0, seams: 0, cycleM: 0,
-    ev: 0, inlets: 0,
+    ev: 0, inlets: 0, pools: 0, xwalk: [0, 0, 0, 0],
   };
 
   /**
@@ -913,6 +952,34 @@ export function buildStreets(ctx) {
     }
   }
 
+  /**
+   * THE KERBSIDE BAY GRID, PUBLISHED.
+   *
+   * vehicles.js already re-derives all of this by hand so its parked fleet
+   * lands on the painted bays, and the comment on parkingRun calls the 6.6 m
+   * tick a contract. props.js is the third consumer and it is not on the grid:
+   * it marches parking meters along the kerb on a 9.6 m rhythm of its own, and
+   * 6.6 and 9.6 share no useful common multiple, so a meter turns up anywhere
+   * between the middle of a bay and the middle of a tick and never twice in the
+   * same relation to the paint. A meter is supposed to stand ON the division
+   * between the two bays it serves — that alignment is the only reason a row of
+   * them reads as a parking street rather than as posts.
+   *
+   * Published rather than fixed here because the meters are props.js's to
+   * place. Everything it needs to land on the paint is below.
+   */
+  ctx.parking = {
+    TICK: 6.6,
+    /** Kerb-side offset of the bay line from a road centre; 0 = no bays here. */
+    bayLine(r) {
+      const P = lanePlan(r);
+      return P.park < 2.15 ? 0 : r.half - P.park;
+    },
+    /** Nearest bay DIVISION to `t` — where a meter or a bay tick belongs. */
+    tickNear: (t) => Math.round(t / 6.6) * 6.6,
+    /** Centre of the bay that contains `t`. */
+    bayCentre: (t) => Math.floor(t / 6.6) * 6.6 + 3.3,
+  };
 
   for (const r of [...layout.roadsX, ...layout.roadsZ]) {
     const P = lanePlan(r);
@@ -1010,6 +1077,68 @@ export function buildStreets(ctx) {
         } else {
           seam(t, lo, 0, 1, hi - lo, 0.12, t * 5.1, col);
           seam(t + w, lo, 0, 1, hi - lo, 0.12, t * 5.1 + 9, col);
+        }
+      }
+    }
+  }
+
+  /* --- standing damp in the channel -------------------------------------- */
+
+  /**
+   * One irregular pool of damp, flattened along the gutter it sits in.
+   *
+   * A ten-sided blob rather than a disc: the whole value of this thing is that
+   * it is the only shape on the carriageway with no straight edge and no axis,
+   * so the radius is jittered per vertex and the outline is squashed across the
+   * channel. Two rings — a wet core and a drying margin — because a puddle with
+   * a hard edge reads as a decal, and the margin is also what carries the
+   * transition when the night driver takes the core down to a mirror.
+   */
+  function pool(cx, cz, along, across, alongX, seed) {
+    const n = 10;
+    const ring = (k, y, col) => {
+      const pts = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + seed;
+        const j = 0.70 + h01(seed + i, k) * 0.48;
+        const u = Math.cos(a) * along * k * j;
+        const v = Math.sin(a) * across * k * j;
+        pts.push(alongX ? [cx + u, cz + v] : [cx + v, cz + u]);
+      }
+      damp.polyY(pts, y, col);
+    };
+    ring(1.0, Y_DAMP, 0.96);            // drying margin
+    ring(0.62, Y_DAMP + 0.0015, 0.88);  // the wet core
+    stat.pools++;
+  }
+
+  for (const r of [...layout.roadsX, ...layout.roadsZ]) {
+    const P = lanePlan(r);
+    const alongX = r.axis !== 'x';       // an x-road's gutter runs along z
+    /* The band water is allowed to stand in.
+       On the kerb side it stops 0.74 m short of the carriageway edge: the
+       gutter pan is a swept concrete channel starting 0.36 m out over the
+       asphalt at y = 6-16 mm, so a blob at Y_DAMP lapping onto it both fights
+       it on depth and covers the one bright value that makes the kerb read as
+       a profile. On the other side it stops clear of the bus-lane bed, which
+       wins the depth test against this layer and would slice a puddle in half
+       along a dead-straight line. */
+    const oOut = r.half - 0.74;
+    const oIn = Math.max(0.6, P.bus ? r.half - P.park - 0.25 : oOut - 3.2);
+    const halfBand = (oOut - oIn) * 0.5;
+    if (halfBand < 0.45) continue;
+    for (const [a, b] of tintRuns(r)) {
+      if (b - a < 24) continue;
+      for (let t = a + 8; t < b - 8; t += 52 + h01(t, r.pos + 3.3) * 74) {
+        for (const s of [-1, 1]) {
+          if (h01(t * 1.7, r.pos * s + 9.1) > 0.52) continue;
+          const along = 1.1 + h01(t + 1.3, s * 2.7) * 2.2;
+          const across = Math.min(along * 0.42, halfBand);
+          // Drift the centre inside whatever slack the band has left.
+          const o = (oIn + oOut) / 2 + (h01(t, s + 4.1) - 0.5) * (halfBand - across) * 1.7;
+          const [px, pz] = roadPt(r, s, t, o);
+          if (layout.isWater(px, pz)) continue;
+          pool(px, pz, along, across, alongX, t * 0.37 + s);
         }
       }
     }
@@ -1311,23 +1440,79 @@ export function buildStreets(ctx) {
   }
 
   /**
-   * Zebra bars across a carriageway. `axis` = the axis the road runs on.
+   * Which marking goes in this crossing's corridor. Hashed off the two road
+   * positions, so it is stable across rebuilds and the four legs of one
+   * junction do not all draw the same answer.
+   */
+  function xwalkStyle(r, cross) {
+    const h = h01(r.pos * 1.7 + 4.3, cross * 0.83);
+    if (r.cls === STREET) {
+      if (h < 0.26) return XWALK.CONTINENTAL;
+      if (h < 0.38) return XWALK.LADDER;
+      if (h < 0.74) return XWALK.TRANSVERSE;
+      return XWALK.DASHED;
+    }
+    // Arterials: high-visibility markings, because that is what they carry.
+    if (h < 0.54) return XWALK.CONTINENTAL;
+    if (h < 0.90) return XWALK.LADDER;
+    return XWALK.TRANSVERSE;
+  }
+
+  /**
+   * A pedestrian crossing across a carriageway. `axis` = the axis the road
+   * runs on; `p` below is measured ACROSS the carriageway (the direction the
+   * pedestrian walks) and `c` along the corridor.
    *
-   * Each bar is toned by how close it sits to a WHEEL TRACK. Tyres scrub paint
+   * Every bar is toned by how close it sits to a WHEEL TRACK. Tyres scrub paint
    * off in two ribbons per lane and nowhere else, so a crossing worn evenly
    * across its whole width is the tell that it was stamped rather than driven
    * over. The tracks here are the same +-0.86 m off each lane centre that the
    * asphalt polish pass uses, so the wear in the paint lines up with the sheen
    * in the road on either side of it.
+   *
+   * NOTHING HERE MAY OVERLAP ANYTHING ELSE PAINTED AT Y_MARK. The white and
+   * yellow marking meshes share a y and a polygon offset, so an overlap is a
+   * guaranteed z-fight rather than a layering decision — which is why the rungs
+   * of a ladder stop exactly on the inner face of its rails instead of running
+   * under them, and why a median road leaves the island footprint unpainted.
    */
   function zebra(r, cross, axis) {
     const lo = r.pos - r.half, hi = r.pos + r.half;
     const P = lanePlan(r);
-    const span = hi - lo - 1.4;
-    const n = Math.max(3, Math.floor(span / BAR_PITCH));
-    const start = (lo + hi) / 2 - (n - 1) * BAR_PITCH / 2;
-    for (let i = 0; i < n; i++) {
-      const p = start + i * BAR_PITCH;
+    const style = xwalkStyle(r, cross);
+    stat.xwalk[style]++;
+    const hh = h01(cross * 1.31 + 2.7, r.pos * 0.57);
+
+    /* Crossings are repainted one at a time on whatever cycle the district is
+       on, so a junction with four of them has four different amounts of paint
+       left. This single multiplier is most of what stops a row of crossings
+       reading as one stamp repeated. */
+    const age = 0.72 + hh * 0.28;
+
+    const put = (p0, p1, c0, c1, col) => {
+      if (p1 - p0 < 1e-3) return;
+      if (axis === 'x') white.rect(p0, p1, c0, c1, Y_MARK, col);
+      else white.rect(c0, c1, p0, p1, Y_MARK, col);
+      stat.crossBars++;
+    };
+
+    /* The raised island, if this road has one. At the crossing the island is
+       already tapered away — medians stop CROSS_GAP + CROSS_W + 1.6 short of a
+       junction — but the painted nose that replaces it lives at Y_MARK in the
+       yellow mesh, so paint here would fight it. Leaving the gap is also simply
+       what a crossing with a refuge looks like. */
+    const gapHalf = r.median ? r.medianW * 0.5 + 0.45 : 0;
+
+    /** Emit across the carriageway, split around the refuge. */
+    const span2 = (p0, p1, c0, c1, colAt) => {
+      const runs = gapHalf > 0
+        ? cut([[p0, p1]], r.pos - gapHalf, r.pos + gapHalf)
+        : [[p0, p1]];
+      for (const [a, b] of runs) if (b - a > 0.15) put(a, b, c0, c1, colAt(a, b));
+    };
+
+    /** Tyre-track wear at a point across the carriageway. */
+    const wearAt = (p) => {
       const off = Math.abs(p - r.pos);
       let d = 9;
       if (off > P.inner) {
@@ -1335,11 +1520,42 @@ export function buildStreets(ctx) {
         const lc = P.inner + (k + 0.5) * LANE_W;
         d = Math.min(Math.abs(off - (lc - 0.86)), Math.abs(off - (lc + 0.86)));
       }
-      const wear = 0.70 + 0.30 * Math.min(1, d / 0.62);
-      const col = wear * fade(p, cross);
-      if (axis === 'x') white.rect(p - BAR_W / 2, p + BAR_W / 2, cross - CROSS_W / 2, cross + CROSS_W / 2, Y_MARK, col);
-      else white.rect(cross - CROSS_W / 2, cross + CROSS_W / 2, p - BAR_W / 2, p + BAR_W / 2, Y_MARK, col);
-      stat.crossBars++;
+      return 0.70 + 0.30 * Math.min(1, d / 0.62);
+    };
+
+    const cw = CROSS_W - 0.22;                 // paint stops short of the corridor
+    const eLo = cross - cw / 2, eHi = cross + cw / 2;
+    const ew = style === XWALK.LADDER ? 0.15 : 0.21;
+    const a0 = lo + 0.55, a1 = hi - 0.55;
+
+    if (style !== XWALK.CONTINENTAL) {
+      for (const e of [eLo + ew, eHi - ew]) {
+        if (style === XWALK.DASHED) {
+          // A transverse crossing laid in dashes: the cheapest marking there is,
+          // and the one a quiet residential crossroads actually gets.
+          for (let t = a0; t < a1 - 0.7; t += 1.55) {
+            span2(t, Math.min(t + 0.86, a1), e - ew, e + ew,
+              (p) => age * wearAt(p) * fade(p, e));
+          }
+        } else {
+          span2(a0, a1, e - ew, e + ew, () => age * 0.95);
+        }
+      }
+    }
+    if (style === XWALK.TRANSVERSE || style === XWALK.DASHED) return;
+
+    /* Bars. Pitch and width both drift per crossing — two crossings on opposite
+       arms of one junction laid at the identical rhythm is exactly the beat the
+       eye locks on to. A ladder's rungs abut the inner face of its rails. */
+    const pitch = BAR_PITCH * (0.90 + hh * 0.30);
+    const bw = BAR_W * (0.84 + h01(cross * 2.9, r.pos * 1.13 + 5.1) * 0.42);
+    const c0 = style === XWALK.LADDER ? eLo + ew * 2 : eLo;
+    const c1 = style === XWALK.LADDER ? eHi - ew * 2 : eHi;
+    const n = Math.max(3, Math.floor((hi - lo - 1.4) / pitch));
+    const start = (lo + hi) / 2 - (n - 1) * pitch / 2;
+    for (let i = 0; i < n; i++) {
+      const p = start + i * pitch;
+      span2(p - bw / 2, p + bw / 2, c0, c1, () => age * wearAt(p) * fade(p, cross));
     }
   }
 
@@ -1535,25 +1751,38 @@ export function buildStreets(ctx) {
     const x0 = ix.x - ix.halfX + 1.6, x1 = ix.x + ix.halfX - 1.6;
     const z0 = ix.z - ix.halfZ + 1.6, z1 = ix.z + ix.halfZ - 1.6;
     const w = 0.22;
+    // The two side strips stop at the top and bottom ones. Running all four
+    // corner-to-corner double-covers each corner square inside one mesh at one
+    // y — four little z-fights per box, on the surface the camera looks at all
+    // game.
     yellow.rect(x0, x1, z0, z0 + w, Y_MARK, 1.0);
     yellow.rect(x0, x1, z1 - w, z1, Y_MARK, 1.0);
-    yellow.rect(x0, x0 + w, z0, z1, Y_MARK, 1.0);
-    yellow.rect(x1 - w, x1, z0, z1, Y_MARK, 1.0);
-    // 45-degree hatch: clip the line x - z = k against the box analytically.
-    // Sparse and thin on purpose — a full-density box junction is correct in
-    // London and a wall of yellow in a bright toy city.
-    // Sparser and dimmer than the border. At 9 m pitch a 40 m box carries five
-    // lines instead of nine, which is the difference between "hatched" and a
-    // sheet of yellow filling a quarter of the frame.
-    const kMin = x0 - z1, kMax = x1 - z0;
-    for (let k = kMin; k < kMax; k += 9.0) {
-      const ax = Math.max(x0, k + z0), az = ax - k;
-      const bx = Math.min(x1, k + z1), bz = bx - k;
+    yellow.rect(x0, x0 + w, z0 + w, z1 - w, Y_MARK, 1.0);
+    yellow.rect(x1 - w, x1, z0 + w, z1 - w, Y_MARK, 1.0);
+    /* 45-degree hatch: clip the line x - z = k against the box analytically.
+       ONE diagonal family only. A true box junction is cross-hatched, but the
+       two families would cross inside a single mesh at a single y with a single
+       polygon offset, and every one of those ~25 intersections per box is a
+       guaranteed z-fight — the art bible's automatic failure, bought for a
+       detail nobody can resolve from the game camera anyway.
+       Pitch 5.2, not 9: at 9 m a 40 m box carried four lines so long and so far
+       apart that they read as loose yellow streaks lying on the asphalt rather
+       than as a hatch. Denser, thinner and dimmer is what turns them back into
+       one marking, and it is still nowhere near the wall of yellow a
+       full-density London box would be. */
+    // Clipped INSIDE the border, not to the box: a diagonal that runs out onto
+    // the 0.22 m border strip is the same coplanar overlap in the same mesh.
+    const hw = 0.085;
+    const ix0 = x0 + w + hw * 1.5, ix1 = x1 - w - hw * 1.5;
+    const iz0 = z0 + w + hw * 1.5, iz1 = z1 - w - hw * 1.5;
+    const kMin = ix0 - iz1, kMax = ix1 - iz0;
+    for (let k = kMin; k < kMax; k += 5.2) {
+      const ax = Math.max(ix0, k + iz0), az = ax - k;
+      const bx = Math.min(ix1, k + iz1), bz = bx - k;
       if (bx - ax < 0.4) continue;
-      const hw = 0.11;
       yellow.quadUp(
         [ax + hw, Y_MARK, az - hw], [bx + hw, Y_MARK, bz - hw],
-        [bx - hw, Y_MARK, bz + hw], [ax - hw, Y_MARK, az + hw], 0.80
+        [bx - hw, Y_MARK, bz + hw], [ax - hw, Y_MARK, az + hw], 0.68
       );
     }
   }
@@ -1683,8 +1912,12 @@ export function buildStreets(ctx) {
 
       // Detectable warning surface at the head of every kerb ramp.
       for (const [a, c] of windows) tactilePad(e, a, c, tactileCol, x0, x1, z0, z1);
-      // Driveway apron + the yellow across the dropped kerb.
-      for (const [a, c] of xo) crossover(e, a, c, sw, x0, x1, z0, z1);
+      // Driveway apron + the yellow across the dropped kerb. A parking block's
+      // crossover is a structure ramp and gets threshold markings instead of
+      // the domestic saw-cut joints.
+      for (const [a, c] of xo) {
+        crossover(e, a, c, sw, x0, x1, z0, z1, b.zone === ZONE.PARKING);
+      }
 
       /* A painted loading kerb where the frontage is busy enough to need one.
          This is the only place in the file that paints the kerb itself, and it
@@ -1924,7 +2157,14 @@ export function buildStreets(ctx) {
       flat.quadUp([A[0], ya, A[1]], [B[0], ya, B[1]],
         [C[0], yb, C[1]], [D[0], yb, D[1]], col);
     }
-    const dot = [col[0] * 0.62, col[1] * 0.62, col[2] * 0.62];
+    /* Blisters read DARKER on a bright pad (they are little shadow traps) and
+       LIGHTER on a dark one (they are the only part of a cast plate the sun
+       actually reaches). Keying off the pad's own value means the same code
+       gives both, instead of the iron plate coming out as a black square with
+       blacker dots on it. */
+    const lum = col[0] * 0.30 + col[1] * 0.59 + col[2] * 0.11;
+    const k = lum > 0.22 ? 0.62 : 1.85;
+    const dot = [col[0] * k, col[1] * k, col[2] * k];
     const n = Math.max(3, Math.floor((s1 - s0) / 0.31));
     const pitch = (s1 - s0) / n;
     for (let i = 0; i < n; i++) {
@@ -1961,20 +2201,27 @@ export function buildStreets(ctx) {
   }
 
   /** Driveway apron across the footway, plus its saw-cut joints. */
-  function crossover(e, a, c, sw, x0, x1, z0, z1) {
+  function crossover(e, a, c, sw, x0, x1, z0, z1, garage) {
     const o0 = 1.90, o1 = Math.max(o0 + 0.7, sw);
     const y = Y_WALK + 0.005;
     const p = (ss, oo) => edgePoint(e, ss, oo, x0, x1, z0, z1);
     const A = p(a, o0), B = p(c, o0), C = p(c, o1), D = p(a, o1);
     flat.quadUp([A[0], y, A[1]], [B[0], y, B[1]],
       [C[0], y, C[1]], [D[0], y, D[1]], C_APRON);
-    for (const f of [1 / 3, 2 / 3]) {
-      const ss = a + (c - a) * f;
-      const j0 = p(ss - 0.04, o0), j1 = p(ss + 0.04, o0);
-      const j2 = p(ss + 0.04, o1), j3 = p(ss - 0.04, o1);
-      const jy = y + 0.003;
-      white.quadUp([j0[0], jy, j0[1]], [j1[0], jy, j1[1]],
-        [j2[0], jy, j2[1]], [j3[0], jy, j3[1]], 0.44);
+    // A garage ramp gets threshold markings instead: they land in the same
+    // stretch of apron the joints would, in the same mesh at the same y, so it
+    // has to be one or the other.
+    if (!garage) {
+      for (const f of [1 / 3, 2 / 3]) {
+        const ss = a + (c - a) * f;
+        const j0 = p(ss - 0.04, o0), j1 = p(ss + 0.04, o0);
+        const j2 = p(ss + 0.04, o1), j3 = p(ss - 0.04, o1);
+        const jy = y + 0.003;
+        white.quadUp([j0[0], jy, j0[1]], [j1[0], jy, j1[1]],
+          [j2[0], jy, j2[1]], [j3[0], jy, j3[1]], 0.44);
+      }
+    } else {
+      garageThreshold(p, a, c, o0, o1, y + 0.004);
     }
     // Strictly inside the FULLY dropped window: over the flares the sweep is
     // still part-way down, and paint pinned to the dropped profile there ends
@@ -1999,6 +2246,48 @@ export function buildStreets(ctx) {
     // Also claim the gutter in front of it, so nothing is stood in the throat.
     const throat = p((a + c) / 2, -0.2);
     ctx.occupy(throat[0], throat[1], Math.max(2.0, (c - a) * 0.4));
+  }
+
+  /**
+   * THRESHOLD MARKINGS AT A PARKING-STRUCTURE ENTRANCE.
+   *
+   * A garage ramp is not a wide driveway, it is signed — and from the game's
+   * 3/4 camera the signage is the only thing that distinguishes it. Without
+   * these a 7.4 m dropped kerb in a 60 m frontage just reads as a missing piece
+   * of pavement, which is worse than having no entrance at all.
+   *
+   * Three marks, all of which survive being a dozen pixels wide: a yellow bar
+   * at the building line (the threshold every garage in Miami has painted
+   * across it), a divider down the middle, and one chevron per half pointing
+   * the way that half runs. Everything is authored in the edge's (s, o) frame
+   * and laid strictly inside the apron, so nothing here can overlap the kerb
+   * paint below it or the trench drain in front of it.
+   */
+  function garageThreshold(p, a, c, o0, o1, y) {
+    const wide = c - a >= 5.0;
+    const deep = o1 - o0 >= 1.9;
+    if (!wide) return;
+    const mid = (a + c) / 2;
+
+    const bar = (s0, s1, oa, ob, surf, col) => {
+      const A = p(s0, oa), B = p(s1, oa), C = p(s1, ob), D = p(s0, ob);
+      surf.quadUp([A[0], y, A[1]], [B[0], y, B[1]], [C[0], y, C[1]], [D[0], y, D[1]], col);
+    };
+
+    bar(a + 0.35, c - 0.35, o1 - 0.42, o1 - 0.06, yellow, 1.0);
+    if (!deep) return;
+    bar(mid - 0.09, mid + 0.09, o0 + 0.18, o1 - 0.52, white, 0.90);
+
+    // Tip toward the building for the entry half, toward the street for the
+    // exit half. Kept clear of both the divider and the threshold bar.
+    const half = Math.min(0.66, (c - a) * 0.15);
+    const runL = Math.min(1.0, (o1 - o0) * 0.42);
+    for (const sg of [-1, 1]) {
+      const cx = mid + sg * (c - a) * 0.25;
+      const tip = sg < 0 ? o1 - 0.62 : o0 + 0.34;
+      const back = sg < 0 ? tip - runL : tip + runL;
+      white.polyY([p(cx, tip), p(cx - half, back), p(cx + half, back)], y, 0.90);
+    }
   }
 
   /* ================================================== 6. the medians === */
@@ -2396,6 +2685,23 @@ export function buildStreets(ctx) {
 
   addMesh(group, patch, matPatch, 'road-wear');
 
+  /**
+   * Standing damp. Same albedo and same relief as the road it lies on — the
+   * ONLY thing that separates it is roughness, which is exactly what separates
+   * a wet patch of asphalt from a dry one in reality. In daylight it is a
+   * slightly darker, slightly sharper stain in the channel; the night driver
+   * takes it most of the way to a mirror.
+   */
+  const matDamp = layer({
+    map: asphaltMap,
+    normalMap: asphaltNormal,
+    // Half the relief of the dry road: water fills the surface texture in, and
+    // flattening the normal is most of what makes the eye call it wet.
+    normalScale: new THREE.Vector2(0.45, 0.45),
+    roughness: 0.86, vertexColors: true, name: 'streets-damp',
+  }, 2.5);
+  addMesh(group, damp, matDamp, 'road-damp');
+
   // Crack sealant. Glossier and darker than anything else on the carriageway:
   // bitumen is the one part of a road surface that is genuinely shiny, and
   // that specular is most of what makes the line read as tar and not as a
@@ -2488,9 +2794,16 @@ export function buildStreets(ctx) {
 
   let matGlow = null;
   if (!lampGlow.empty) {
-    matGlow = new THREE.MeshBasicMaterial({
+    /* Hole-cut, same reasoning as the poles under it. Without it a hole that
+       takes the bridge deletes every standard on the crossing and leaves their
+       lamp heads hanging in a row over open water — and unlike the poles these
+       are unlit basic material, so they would be the BRIGHTEST thing left
+       floating. MeshBasicMaterial carries `transformed`, `#include <common>`
+       and `#include <color_fragment>`, which is everything the patch splices
+       into. */
+    matGlow = applyHoleCut(new THREE.MeshBasicMaterial({
       color: new THREE.Color(PALETTE.LAMP_GLOW), toneMapped: false, vertexColors: true,
-    });
+    }));
     const gm = new THREE.Mesh(lampGlow.build(), matGlow);
     gm.name = 'bridge-lamp-glow';
     gm.matrixAutoUpdate = false;
@@ -2512,7 +2825,16 @@ export function buildStreets(ctx) {
    *     one thing on a night street that refuses to go dark. Left alone they
    *     crush into the asphalt and the entire lane structure disappears, which
    *     is a readability failure whatever else is in the frame.
-   *  3. The bridge lamps, which were previously lit at noon.
+   *  3. STANDING DAMP. The whole carriageway going glossy at once is a single
+   *     flat lacquer, and a lacquered road reads as plastic. The pools in the
+   *     channel drop much further than the road around them, so the sheen gets
+   *     a shape: bright where the water is, dull where it is not. They are held
+   *     at roughness 0.20 rather than driven to a mirror on purpose — a true
+   *     mirror facing straight up reflects the empty night zenith and comes out
+   *     BLACK, whereas a 0.20 lobe is wide enough to pull in the sodium band
+   *     the night IBL paints along its horizon, which is the colour a wet road
+   *     under a city actually is.
+   *  4. The bridge lamps, which were previously lit at noon.
    */
   const nightWet = [matRoad, matPatch, matBus];
   const nightPaint = [matWhite, matYellow];
@@ -2529,6 +2851,9 @@ export function buildStreets(ctx) {
       m.metalness = 0.07 * n;
       m.envMapIntensity = 0.30 + 0.30 * n;
     }
+    matDamp.roughness = 0.86 - 0.66 * n;
+    matDamp.metalness = 0.04 + 0.22 * n;
+    matDamp.envMapIntensity = 0.42 + 1.05 * n;
     // A touch of lift in daylight too: it is what keeps a crossing legible
     // inside a tower's shadow without making it glow.
     for (const m of nightPaint) m.emissiveIntensity = 0.025 + 0.21 * n;
@@ -2558,7 +2883,10 @@ export function buildStreets(ctx) {
 
   console.debug(
     `[streets] ${layout.blocks.length} blocks | ${stat.ramps} kerb ramps | ` +
-    `${stat.xovers} crossovers | ${stat.crossBars} zebra bars | ` +
+    `${stat.xovers} crossovers | ${stat.crossBars} crossing marks ` +
+    `(${stat.xwalk[0]} continental / ${stat.xwalk[1]} ladder / ` +
+    `${stat.xwalk[2]} transverse / ${stat.xwalk[3]} dashed) | ` +
+    `${stat.pools} damp pools | ` +
     `${stat.arrows} arrows | ${stat.bays} bays (${stat.accessible} accessible, ` +
     `${stat.loading} loading, ${stat.ev} EV) | ${Math.round(stat.cycleM)} m cycle lane | ` +
     `${stat.seams} crack seams | ${stat.manholes} manholes | ` +

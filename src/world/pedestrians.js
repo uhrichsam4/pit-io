@@ -795,6 +795,10 @@ export function buildPedestrians(ctx) {
   // path and the path points back, and the screenshot harness serialises
   // whatever DEV can reach. A cyclic 900-element graph breaks page.evaluate.
   scene.userData.pedestrianCount = N;
+  // A FLAT census instead. Reviewers need to check that the crowd is a mix and
+  // that the mix moves with the clock, and the only alternative to this is
+  // reaching into the agent graph — which is exactly what breaks the harness.
+  scene.userData.pedestrianStats = () => census(state);
 
   const count = (fn) => agents.filter(fn).length;
   const walkers = count((a) => a.mode <= MODE.CROSS);
@@ -809,6 +813,31 @@ export function buildPedestrians(ctx) {
     `(hidden until someone is swallowed) | ${nItem} held items, ${nGlow} ring lights | ` +
     `${venues.length} venues, ${paths.length} sidewalk loops, ${net.crossings.length} crossings`
   );
+}
+
+/** Plain numbers only — see why at the publish site. */
+const MODE_NAME = Object.keys(MODE);
+function census(st) {
+  const modes = {};
+  const roles = {};
+  let held = 0, dogs = 0;
+  for (const a of st.agents) {
+    if (a.held) { held++; continue; }
+    const m = MODE_NAME[a.mode] || 'UNKNOWN';
+    modes[m] = (modes[m] || 0) + 1;
+    if (a.role) roles[a.role] = (roles[a.role] || 0) + 1;
+    if (a.dog) dogs++;
+  }
+  return {
+    agents: st.agents.length,
+    inThePit: held,
+    night: +(st.night).toFixed(3),
+    shoots: st.shoots.length,
+    venues: st.venues.length,
+    dogs,
+    modes,
+    roles,
+  };
 }
 
 /* ========================================================= sidewalk data === */
@@ -1117,6 +1146,20 @@ function placeWalkers(ctx, rng, paths, agents, yWalk, budget) {
    * looks abandoned EVERYWHERE. Weighting by (streetLife - 0.34)^3.6 spends
    * almost the whole budget on the ~90 loops the hero cameras actually see and
    * leaves the warehouse district genuinely, correctly deserted.
+   *
+   * DON'T SOFTEN THIS EXPECTING DENSER STREETS — it was tried and measured.
+   * Against a floored, gentler curve (0.18 + max(0, life - 0.30))^1.8, which
+   * cuts the spine-to-side-street ratio from ~120x to ~9x:
+   *
+   *     curve        occupied 100 m cells   busiest 5 cells   median   within 70 m of
+   *                                                                    crowd / street-level
+   *     ^3.6         109                    76 72 54 53 49    8        27 / 26
+   *     floored^1.8  111                    71 64 51 50 41    10       31 / 25
+   *
+   * i.e. no material difference at any camera, because the binding constraint
+   * is the head count, not its distribution. 1,555 people over a city this size
+   * is ~10 per hectare however you spread them. Pavement reads busier only with
+   * more agents, and the density brief caps this module at 1,600.
    */
   const raw = new Float64Array(paths.length);
   let sum = 0;
@@ -1278,16 +1321,38 @@ function placeCrossingQueues(ctx, rng, net, agents, yWalk, budget) {
   const linked = net.crossings.filter((c) => c.ends);
   if (!linked.length) return;
   let spent = 0;
-  // Busiest junctions first: a queue is only worth spending agents on where
-  // the camera is likely to be.
+  /*
+   * Busiest junctions first — but "busiest" is TWO things, and this used to
+   * only look at one of them.
+   *
+   * streetLife is a property of the BLOCK: how much retail bustle is on its
+   * frontage. It says nothing about how big the junction is. Sorting on it
+   * alone sent the whole 180-agent budget to shopfront corners and skipped the
+   * six-lane signalised crossings — which is exactly where every gameplay
+   * camera in this game is pointed, and why the street-level preset framed a
+   * major junction with bare pavement on all four corners.
+   *
+   * cr.roadHalf is the half-width of the carriageway the crossing spans, so it
+   * is a direct measure of how important the junction is. Both terms count now,
+   * and the queue LENGTH scales with the junction too: a big crossing gets a
+   * line at each kerb, a side street gets nobody, which is what they look like.
+   */
+  const bigness = (c) => Math.min(1, c.roadHalf / 13);
   const order = linked
-    .map((c) => ({ c, w: (c.ends[0].path.streetLife + c.ends[1].path.streetLife) * 0.5 + rng() * 0.25 }))
+    .map((c) => ({
+      c,
+      big: bigness(c),
+      w: (c.ends[0].path.streetLife + c.ends[1].path.streetLife) * 0.30
+        + bigness(c) * 0.55 + rng() * 0.20,
+    }))
     .sort((a, b) => b.w - a.w);
 
-  for (const { c } of order) {
+  for (const { c, big } of order) {
     if (spent >= budget) break;
     for (let e = 0; e < 2; e++) {
-      const n = rng.weighted([[0, 30], [1, 34], [2, 24], [3, 12]]);
+      const n = big > 0.8 ? rng.weighted([[1, 18], [2, 30], [3, 30], [4, 22]])
+        : big > 0.55 ? rng.weighted([[0, 20], [1, 34], [2, 30], [3, 16]])
+          : rng.weighted([[0, 46], [1, 34], [2, 20]]);
       const end = c.ends[e];
       // Which way is "back from the kerb" for this end.
       const away = c.axis === 'z'
@@ -2081,13 +2146,28 @@ function placeBuskers(ctx, rng, paths, agents, yWalk, cap) {
     if (spent >= cap) break;
     const b = path.block;
     const r = makeRNG((b.seed ^ 0x41b7) >>> 0);
-    if (!r.chance(0.26)) continue;
-    const i = r.int(0, path.n - 1);
-    let nx = b.x - path.px[i], nz = b.z - path.pz[i];
-    const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
-    const bx = path.px[i] + nx * (2.2 + r() * 1.6);
-    const bz = path.pz[i] + nz * (2.2 + r() * 1.6);
-    if (layout.isWater(bx, bz) || layout.isRoad(bx, bz) || !ctx.isFree(bx, bz, 0)) continue;
+    // Tuned against the census, not guessed: 0.26 landed 6 pitches across the
+    // whole city once placement started succeeding at all, which is too few for
+    // a promenade and a plaza to both have one.
+    if (!r.chance(0.38)) continue;
+    // SEVERAL TRIES AT A PITCH, not one. A busker wants exactly the ground
+    // props.js wants — the busy frontage two metres in from the kerb — and it
+    // gets there first. With a single attempt the whole feature placed zero
+    // buskers in the entire city; this is the same fix placeCreators already
+    // carries, for the same reason.
+    let bx = 0, bz = 0, nx = 0, nz = 0, found = false;
+    for (let attempt = 0; attempt < 8 && !found; attempt++) {
+      const i = r.int(0, path.n - 1);
+      nx = b.x - path.px[i]; nz = b.z - path.pz[i];
+      const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+      // Widen the search as attempts fail: a plaza or a lawn has clear ground
+      // further in, and that is where a pitch with room for an audience is.
+      const off = 2.2 + r() * (1.6 + attempt * 0.9);
+      bx = path.px[i] + nx * off;
+      bz = path.pz[i] + nz * off;
+      found = !layout.isWater(bx, bz) && !layout.isRoad(bx, bz) && ctx.isFree(bx, bz, 0);
+    }
+    if (!found) continue;
     ctx.occupy(bx, bz, 1.4);
 
     const drummer = r.chance(0.45);
@@ -2317,6 +2397,21 @@ function setFallBodyLive(st, c, on) {
   c.pool.mesh.visible = rec.n > 0;
 }
 
+/**
+ * The same handover, for the dog on the end of the lead.
+ *
+ * Kept separate from the owner's because the two are independent consumables
+ * with independent states — the hole can take either one first — and because
+ * this has to run on every tick of the owner's life cycle, including the ticks
+ * where the owner themselves is in the pit.
+ */
+function stepDogHandover(st, a) {
+  const ds = a.dogC.state;
+  setFallBodyLive(st, a.dogC, ds === 1 || ds === 2);
+  if (ds >= 1 && !a.dogHeld) { a.dogHeld = true; hideDog(st, a); }
+  else if (ds === 0) a.dogHeld = false;
+}
+
 /* ================================================================ update === */
 
 /**
@@ -2352,6 +2447,13 @@ function updateCrowd(st, dt) {
   for (let i = 0; i < agents.length; i++) {
     const a = agents[i];
 
+    // A dog is its own consumable and OUTLIVES ITS OWNER, so its handover has
+    // to run before the owner's — every branch below `continue`s, and a dog
+    // whose owner went down the hole first would then never get handed over:
+    // its animated instance stayed frozen on the pavement while the merged body
+    // fell invisibly, which is the vanishing bug this module exists to not have.
+    if (a.dogC) stepDogHandover(st, a);
+
     /* ---- who owns this body? -------------------------------------------
      * Exactly the handover vehicles.js performs. WOBBLE means the hole has
      * taken ground from under them: from that moment the consume system owns
@@ -2367,7 +2469,9 @@ function updateCrowd(st, dt) {
           a.dead = true;
           detachPath(a);
           a.crossing = null;
-          hideAgent(st, a, i, false);      // the dog is its own consumable
+          // The dog is left standing: it is its own consumable and the hole
+          // takes it a moment later, on its own terms.
+          hideAgent(st, a, i, false);
           setFallBodyLive(st, c, true);
         }
         continue;
@@ -2386,14 +2490,6 @@ function updateCrowd(st, dt) {
       }
     } else if (a.dead) {
       continue;
-    }
-    // A dog is its own consumable and outlives its owner, so it gets its own
-    // handover: the animated dog goes away, the merged one tumbles.
-    if (a.dogC) {
-      const ds = a.dogC.state;
-      setFallBodyLive(st, a.dogC, ds === 1 || ds === 2);
-      if (ds >= 1 && !a.dogHeld) { a.dogHeld = true; hideDog(st, a); }
-      else if (ds === 0) a.dogHeld = false;
     }
 
     const dx = a.x - fx, dz = a.z - fz;
@@ -2650,7 +2746,11 @@ function panicCheck(st, a, dt) {
       // hour ago runs back to that kerb instead of back to their table.
       if (a.path) { a.retPath = a.path; a.retS = a.s; }
       else if (a.crossing && a.crossEnd) { a.retPath = a.crossEnd.path; a.retS = a.crossEnd.path.cum[a.crossEnd.index]; }
-      else { a.retPath = null; a.retX = a.x; a.retZ = a.z; a.retMode = a.mode; a.retYaw = a.yaw; }
+      else {
+        a.retPath = null;
+        a.retX = a.x; a.retY = a.y; a.retZ = a.z;
+        a.retMode = a.mode; a.retYaw = a.yaw;
+      }
       detachPath(a);
       a.crossing = null;
       a.mode = MODE.FLEE;
@@ -2677,6 +2777,12 @@ function stepReturn(st, a, dt) {
     joinPath(st.rng, a, a.retPath, a.retS, st.rng.chance(0.5) ? 1 : -1);
     a.lastHookSeg = a.seg;
   } else {
+    // SNAP to the exact mark, don't just arrive near it. gotoPoint stops within
+    // 28 cm, which on a loop is invisible but on a chair is the difference
+    // between sitting on the seat and hovering beside it — and the same 28 cm
+    // walks a presenter off their tripod's framing and a queuer out of the line.
+    a.x = a.retX; a.z = a.retZ;
+    if (a.retY !== undefined) a.y = a.retY;
     a.mode = a.retMode ?? MODE.IDLE;
     a.yaw = a.retYaw ?? a.yaw;
   }
@@ -3238,11 +3344,29 @@ function poseAgent(st, a, i) {
         headExtra = -0.04 + g * 0.03;
         break;
       }
-      case 'operator':
-        // Both hands on the rig, eye down to the monitor.
-        armL = -1.18; armR = -1.12;
+      case 'operator': {
+        /*
+         * Hands ON the camera, and the angle is SOLVED, not authored.
+         *
+         * This used to be -1.18 / -1.12, which is 68 degrees forward. On a rig
+         * with no elbow that puts both hands 1.2 m up and half a metre out —
+         * below the camera head and short of it — so the operator stood there
+         * with two straight parallel arms reaching into thin air. At street
+         * level it read as a sleepwalker, and parallel arms are the specific
+         * tell that gives a crowd system away.
+         *
+         * tripodGeo puts the camera body at 1.62 m. The hand rides 0.50 along
+         * the arm from a shoulder at ~1.41 m, so cos(swing) = (1.41 - 1.58)/0.50
+         * and the arm has to come UP past horizontal to reach it.
+         */
+        const drift = Math.sin(t * 0.5) * 0.04;
+        armL = -1.92 + drift;
+        // Never exactly parallel: the offhand rides the focus ring, a little
+        // lower and a little further round than the hand on the body.
+        armR = -1.74 - drift;
         lean = 0.13; headExtra = 0.16;
         break;
+      }
       case 'boom':
         // Pole overhead in both hands, watching the subject.
         armL = -2.05 + Math.sin(t * 0.6) * 0.05;

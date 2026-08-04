@@ -281,6 +281,17 @@ function paletteFor(v) {
 class Shape {
   constructor() {
     this.p = []; this.n = []; this.u = []; this.r = [];
+    /**
+     * Where `carLamps` put the lamps, if it was called.
+     *
+     * The decorative light CARDS (brake flare, indicators, headlight pool) have
+     * to sit just proud of the panel the real lamp is baked into. Guessing that
+     * from `def.len` put every brake card 0.3 m INSIDE the bodywork, where the
+     * depth test hid it outright — the whole fleet drove around with no brake
+     * lights. Recording the lamp plane at build time is the only way the cards
+     * and the baked lamps can be describing the same car.
+     */
+    this.lamp = null;
   }
   get tris() { return this.r.length / 3; }
 
@@ -366,7 +377,7 @@ class Shape {
     const pos = new THREE.BufferAttribute(new Float32Array(this.p), 3);
     const nor = new THREE.BufferAttribute(new Float32Array(this.n), 3);
     const uv = new THREE.BufferAttribute(new Float32Array(this.u), 2);
-    return { count, pos, nor, uv, roles: Uint8Array.from(this.r) };
+    return { count, pos, nor, uv, roles: Uint8Array.from(this.r), lamp: this.lamp };
   }
 }
 
@@ -674,6 +685,43 @@ function carLamps(sh, o) {
   if (o.grille !== false) faceZ(sh, 0, o.yG ?? yH - 0.24, zF, o.wG ?? 1.02, 0.17, ROLE.DARK, 1);
   faceZ(sh, 0, o.yP ?? 0.44, zF, 0.44, 0.12, ROLE.PLATE, 1);
   faceZ(sh, 0, o.yP ?? 0.44, zR, 0.44, 0.12, ROLE.PLATE, -1);
+  // The lamp plane, for the light cards. First call wins: `police` and `taxi`
+  // decorate a body that already declared one, and the base car is the one
+  // carrying the lamps.
+  if (!sh.lamp) sh.lamp = { zF, zR, yH, yT, dx, wL, hL };
+}
+
+/**
+ * Front and rear fog / running lamps low in the bumper.
+ *
+ * Two triangles a corner, and they are what stops the LOWER half of a car going
+ * completely dead after dark: the tail lamps are up at boot height, so from the
+ * game's 3/4 camera a queue of cars at a red showed one band of red floating in
+ * the air with unlit bodywork under it.
+ */
+function bumperLamps(sh, o) {
+  const { zF, zR, y, dx } = o;
+  for (const s of [-1, 1]) {
+    faceZ(sh, s * dx, y, zF, 0.16, 0.08, ROLE.HEAD, 1);
+    faceZ(sh, s * dx, y, zR, 0.16, 0.08, ROLE.TAIL, -1);
+  }
+}
+
+/**
+ * The horizontal detail a car needs, because the game's camera looks DOWN.
+ *
+ * From 40 m up, the bonnet, roof and boot are most of a car's visible area, and
+ * all three were one unbroken slab of paint — which is why the fleet read as
+ * coloured lozenges rather than as cars. The black plenum strip at the base of
+ * the windscreen (wipers, scuttle vent) and a shut line at the boot are four
+ * triangles, and they are the only body detail the default camera angle can
+ * actually see. Both are pinned to the FLAT part of the upper surface: a
+ * horizontal decal on the sloping nose would float off it.
+ */
+function topDetail(sh, o) {
+  const { y, zCowl, w, zShut } = o;
+  faceY(sh, 0, y, zCowl, w, 0.17, ROLE.DARK);
+  if (zShut !== undefined) faceY(sh, 0, y, zShut, (o.wShut ?? w * 0.95), 0.06, ROLE.BODY_LO);
 }
 
 /* ====================================================== shape: cars ==== */
@@ -692,8 +740,11 @@ function sedan(sh) {
   ], { edgeRoles: CABIN_ROLES, skip: new Set([0]), capStart: ROLE.GLASS, capEnd: ROLE.GLASS_HI });
   pillar(sh, 0.85, 1.24, -0.10, 0.11, 0.34);
   faceZ(sh, 0, 1.16, 0.86, 1.30, 0.10, ROLE.INTERIOR, 1);   // dash below the screen
+  // Upper surface is flat at y = 1.09 between z = -1.74 and z = 1.28.
+  topDetail(sh, { y: 1.09, zCowl: 1.16, w: 1.30, zShut: -1.58 });
   wheels4(sh, 0.86, 1.45, -1.45, 0.36, 0.26);
   carLamps(sh, { zF: 2.31, zR: -2.31, yH: 0.72, yT: 0.78, dx: 0.56, rx: 0.92, rz: 0.95 });
+  bumperLamps(sh, { zF: 2.31, zR: -2.31, y: 0.50, dx: 0.64 });
   mirrors(sh, 0.95, 1.06, 0.66);
 }
 
@@ -712,8 +763,10 @@ function suv(sh) {
   pillar(sh, 0.91, 1.58, -0.20, 0.12, 0.40);
   // Roof rails: the one detail that separates an SUV from a tall hatchback.
   for (const s of [-1, 1]) box(sh, s * 0.66, 2.00, -0.4, 0.07, 0.07, 2.5, ROLE.DARK);
+  topDetail(sh, { y: 1.41, zCowl: 1.22, w: 1.36 });
   wheels4(sh, 0.93, 1.55, -1.55, 0.42, 0.30);
   carLamps(sh, { zF: 2.42, zR: -2.42, yH: 1.02, yT: 1.16, dx: 0.62, wL: 0.46, yG: 0.72, wG: 1.14, yP: 0.52, rx: 0.99, rz: 1.05 });
+  bumperLamps(sh, { zF: 2.42, zR: -2.42, y: 0.58, dx: 0.70 });
   mirrors(sh, 1.02, 1.40, 0.76);
 }
 
@@ -730,8 +783,12 @@ function hatchback(sh) {
     { z: 0.86, w: 1.50, h: 0.42, y0: 1.12, rake: -0.44 },
   ], { edgeRoles: CABIN_ROLES, skip: new Set([0]), capStart: ROLE.GLASS, capEnd: ROLE.GLASS_HI });
   pillar(sh, 0.83, 1.30, -0.30, 0.10, 0.30);
+  // Upper surface tapers 1.18 -> 1.14 over the parallel span; 1.145 is the
+  // local height at the scuttle, so the decal lies on it rather than over it.
+  topDetail(sh, { y: 1.145, zCowl: 1.00, w: 1.24 });
   wheels4(sh, 0.84, 1.28, -1.28, 0.35, 0.25);
   carLamps(sh, { zF: 1.98, zR: -1.98, yH: 0.76, yT: 0.94, dx: 0.54, wL: 0.36, wG: 0.9, yP: 0.46, rx: 0.88, rz: 0.85 });
+  bumperLamps(sh, { zF: 1.98, zR: -1.98, y: 0.44, dx: 0.60 });
   mirrors(sh, 0.92, 1.16, 0.50);
 }
 
@@ -754,6 +811,7 @@ function pickup(sh) {
   for (const s of [-1, 1]) box(sh, s * 0.94, 1.24, -1.55, 0.14, 0.44, 2.28, ROLE.BODY);
   box(sh, 0, 1.24, -2.66, 1.94, 0.44, 0.14, ROLE.BODY);
   faceY(sh, 0, 1.40, -1.55, 1.74, 2.24, ROLE.DARK);
+  topDetail(sh, { y: 1.51, zCowl: 1.52, w: 1.42 });
   wheels4(sh, 0.97, 1.75, -1.78, 0.46, 0.33);
   carLamps(sh, { zF: 2.72, zR: -2.72, yH: 1.08, yT: 1.24, dx: 0.66, wL: 0.44, yG: 0.78, wG: 1.2, yP: 0.58 });
   mirrors(sh, 1.08, 1.46, 0.58);
@@ -774,6 +832,7 @@ function sports(sh) {
     { z: 0.62, w: 1.62, h: 0.34, y0: 0.86, rake: -0.62 },
   ], { edgeRoles: CABIN_GLOSS_ROLES, skip: new Set([0]), capStart: ROLE.GLOSS, capEnd: ROLE.GLASS_HI });
   chamfer(sh, 0, 1.16, -2.02, 1.44, 0.06, 0.34, 0.03, ROLE.GLOSS_LO);  // ducktail spoiler
+  topDetail(sh, { y: 0.862, zCowl: 0.76, w: 1.30 });
   chamfer(sh, 0, 0.30, 2.20, 1.50, 0.09, 0.26, 0.03, ROLE.CARBON);     // front splitter
   faceZ(sh, 0, 0.36, -2.22, 1.20, 0.22, ROLE.CARBON, -1);              // rear diffuser
   exhaust(sh, 0.40, 0.42, -2.30, 0.07);
@@ -874,6 +933,7 @@ function gtCoupe(sh) {
   // Bonnet power bulge and a pair of vents: the long nose needs an event.
   chamfer(sh, 0, 1.02, 1.50, 1.10, 0.06, 0.90, 0.05, ROLE.GLOSS);
   for (const s of [-1, 1]) faceY(sh, s * 0.58, 0.99, 0.98, 0.26, 0.44, ROLE.CARBON);
+  topDetail(sh, { y: 0.985, zCowl: 0.50, w: 1.30 });
   chamfer(sh, 0, 1.16, -2.28, 1.40, 0.06, 0.30, 0.03, ROLE.GLOSS_LO);
   faceZ(sh, 0, 0.38, -2.44, 1.24, 0.24, ROLE.CARBON, -1);
   exhaust(sh, 0.48, 0.44, -2.52, 0.07);
@@ -955,6 +1015,10 @@ function deliveryVan(sh) {
     faceX(sh, s * 1.03, 0.74, -0.80, 2.60, 0.16, ROLE.ACCENT, s);
   }
   faceZ(sh, 0, 1.50, -2.95, 1.52, 0.92, ROLE.ACCENT, -1);
+  // A van's roof is the largest unbroken surface in the fleet and the camera
+  // looks straight down at it. Four pressed ribs and a hatch, ten triangles.
+  for (const z of [-1.9, -0.9, 0.1, 1.1]) faceY(sh, 0, 2.54, z, 1.58, 0.09, ROLE.BODY_LO);
+  faceY(sh, 0, 2.54, -2.55, 0.62, 0.62, ROLE.DARK);
   chamfer(sh, 0, 0.42, 2.62, 1.90, 0.30, 0.30, 0.07, ROLE.BODY_LO);
   wheels4(sh, 0.98, 1.70, -1.98, 0.43, 0.30);
   carLamps(sh, { zF: 2.95, zR: -2.95, yH: 0.78, yT: 1.30, dx: 0.70, wL: 0.34, yG: 0.50, wG: 1.1, yP: 0.42 });
@@ -974,6 +1038,8 @@ function boxTruck(sh) {
   chamfer(sh, 0, 2.05, -1.55, 2.38, 2.60, 5.40, 0.10, ROLE.WHITE);
   faceX(sh, 1.20, 2.05, -1.55, 5.10, 1.90, ROLE.ACCENT, 1);
   faceX(sh, -1.20, 2.05, -1.55, 5.10, 1.90, ROLE.ACCENT, -1);
+  // Roof bows on the load box: 13 m^2 of white slab, aimed straight at the camera.
+  for (const z of [-3.6, -2.4, -1.2, 0.0, 0.9]) faceY(sh, 0, 3.35, z, 2.02, 0.10, ROLE.DARK);
   chamfer(sh, 0, 0.62, -1.55, 2.30, 0.30, 5.30, 0.06, ROLE.DARK);
   wheels4(sh, 1.13, 2.70, -2.10, 0.54, 0.34);
   wheel(sh, 1.13, 0.54, -3.10, 0.54, 0.34, 6); wheel(sh, -1.13, 0.54, -3.10, 0.54, 0.34, 6);
@@ -1168,6 +1234,10 @@ function scooter(sh) {
   // one-sided wheel, so from the far side you looked through the bike.
   wheel(sh, 0.02, 0.30, 0.66, 0.30, 0.11, 7, { twin: true });
   wheel(sh, 0.02, 0.30, -0.66, 0.30, 0.13, 7, { twin: true });
+  // Two-wheelers never call carLamps, so they declare their lamp plane by hand
+  // — otherwise the brake card falls back to the bounding box and sits at hub
+  // height, halfway down the back wheel.
+  sh.lamp = { zF: 0.78, zR: -0.96, yH: 0.92, yT: 0.80, dx: 0, wL: 0.16, hL: 0.09 };
 }
 
 /**
@@ -1196,6 +1266,7 @@ function motorcycle(sh) {
   faceZ(sh, 0, 0.62, -0.88, 0.20, 0.07, ROLE.PLATE, -1);
   for (const s of [-1, 1]) faceX(sh, s * 0.19, 1.06, 0.68, 0.11, 0.08, ROLE.AMBER, s);
   cyl(sh, 0.22, 0.42, -0.52, 0.08, 0.09, 0.66, 6, 'z', ROLE.CHROME); // exhaust can
+  sh.lamp = { zF: 0.81, zR: -0.86, yH: 1.02, yT: 0.98, dx: 0, wL: 0.19, hL: 0.10 };
 }
 
 function bicycle(sh) {
@@ -1592,11 +1663,16 @@ const _metricCache = new Map();
 function shapeMetrics(key) {
   let m = _metricCache.get(key);
   if (m) return m;
-  const p = getShape(key).pos.array;
+  const sh = getShape(key);
+  const p = sh.pos.array;
   let minY = Infinity, maxY = -Infinity;
-  for (let i = 1; i < p.length; i += 3) {
-    if (p[i] < minY) minY = p[i];
-    if (p[i] > maxY) maxY = p[i];
+  let frontZ = -Infinity, backZ = Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    const y = p[i + 1], z = p[i + 2];
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z > frontZ) frontZ = z;
+    if (z < backZ) backZ = z;
   }
   // Contact band: the lowest fifth of the object, which is what rests on the
   // ground. A bus mirror 3 m up says nothing about the bay it needs.
@@ -1608,8 +1684,33 @@ function shapeMetrics(key) {
     if (p[i + 2] < minZ) minZ = p[i + 2]; if (p[i + 2] > maxZ) maxZ = p[i + 2];
   }
   const cw = maxX - minX, cd = maxZ - minZ;
-  m = { minY, height: maxY - minY, contactW: cw, contactD: cd,
-        radius: Math.hypot(cw, cd) / 2 };
+  const height = maxY - minY;
+
+  /* --- where the decorative light cards belong ------------------------------
+   * These used to be guessed from FLEET.len ("the tail is 40% of the length
+   * back"), and the guess was short on EVERY shape in the fleet: a sedan's
+   * brake card landed at z = -1.98 against a tail panel at z = -2.31, i.e.
+   * 0.33 m inside solid bodywork, where the depth test threw it away. The city
+   * has had no visible brake lights at all. The lamp plane is now taken from
+   * the shape that baked the lamps, and falls back to measured extents for the
+   * two-wheelers and boats that have no `carLamps` call. */
+  const L = sh.lamp;
+  const lampY = L ? L.yT : Math.max(0.42, Math.min(1.15, height * 0.48));
+  m = {
+    minY, height, contactW: cw, contactD: cd,
+    radius: Math.hypot(cw, cd) / 2,
+    frontZ, backZ,
+    bodyL: frontZ - backZ,
+    midZ: (frontZ + backZ) * 0.5,
+    /** Distance AHEAD of the origin at which the headlight pool starts. */
+    noseZ: (L ? L.zF : frontZ) - 0.05,
+    /** Distance BEHIND the origin of the brake card, just proud of the panel. */
+    tailZ: (L ? -L.zR : -backZ) + 0.07,
+    lampY,
+    lampW: L ? Math.max(0.34, L.dx * 2 + L.wL) : Math.max(0.34, cw * 0.86),
+    lampH: L ? Math.max(0.20, Math.min(0.46, L.hL * 1.7))
+             : Math.max(0.20, Math.min(0.42, height * 0.22)),
+  };
   _metricCache.set(key, m);
   return m;
 }
@@ -2104,6 +2205,67 @@ class Traffic {
       arr.push(info);
     }
     for (const arr of this.byRoadDir.values()) arr.sort((a, b) => a.lane.index - b.lane.index);
+
+    /* --- who gives way where nobody is signalled -------------------------
+     * roadNetwork only signals a junction when at least one of its two roads
+     * is bigger than a STREET, so on the minor grid `lightFor` answers green
+     * to both axes for ever and the two streams simply drove through each
+     * other. That is the "cars driving through each other" failure, and it was
+     * happening at every street x street crossing in the city.
+     *
+     * Each unsignalled junction therefore caches, per approach axis, the lanes
+     * an approaching driver has to look at, plus which axis holds priority.
+     * Priority alternates on a checkerboard rather than following one axis, so
+     * neither direction is systematically starved and no street reads as
+     * permanently subordinate. */
+    for (const ix of this.net.intersections) {
+      if (ix.signalled) continue;
+      // Always rebuilt, never reused: these hold live lane lists, and a stale
+      // one from a previous world would be describing cars that no longer exist.
+      ix.vehCross = { x: [], z: [] };
+      ix.vehPriority = ((ix.ri + ix.rj) % 2) ? 'x' : 'z';
+      for (const laneAxis of ['x', 'z']) {
+        const axis = laneAxis === 'x' ? 'z' : 'x';
+        const ri = laneAxis === 'x' ? ix.rj : ix.ri;
+        for (const dir of [1, -1]) {
+          const list = this.byRoadDir.get(`${axis}:${ri}:${dir}`);
+          if (!list) continue;
+          for (const o of list) {
+            ix.vehCross[laneAxis].push({ info: o, sJ: this.net.sFor(o.lane, ix.x, ix.z) });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Is it unsafe to enter this unsignalled junction right now?
+   *
+   * Two separate reasons, and they are not the same rule. Anything already IN
+   * the box stops everybody, whichever axis it came from — that is what makes
+   * the crossing first-come-first-served rather than a race. Anything merely
+   * APPROACHING only stops the subordinate axis, so the priority street keeps
+   * flowing instead of both directions creeping at every corner.
+   */
+  _crossBusy(v, lane, ix) {
+    const arr = ix.vehCross && ix.vehCross[lane.axis];
+    if (!arr) return false;
+    const yielding = ix.vehPriority !== lane.axis;
+    const box = (lane.axis === 'x' ? ix.halfX : ix.halfZ) + 3.0;
+    for (let i = 0; i < arr.length; i++) {
+      const { info, sJ } = arr[i];
+      const L = info.list;
+      for (let k = 0; k < L.length; k++) {
+        const o = L[k];
+        // A car the consume system has taken over is not going anywhere, so
+        // waiting for it to clear would stall the crossing for ever.
+        if (o.dead || (o.c && o.c.state >= 1)) continue;
+        const d = sJ - o.s;
+        if (Math.abs(d) < box + o.len * 0.5) return true;
+        if (yielding && d > 0 && d < 22 && o.v > 1.2) return true;
+      }
+    }
+    return false;
   }
 
   /** Sorted insert — lists are short, so a linear scan beats a binary search. */
@@ -2236,7 +2398,11 @@ class Traffic {
       v.mode = 'drive';
       v.lat = v.latT = v.latV = 0;
       v.hazard = false; v.held = false; v.boost = 0; v.moveT = 0;
-      v.turn = null; v.decided = -1;
+      // A revived car is a fresh car: no stale dive or lean carried over from
+      // whatever it was doing when the ground went out from under it.
+      v.acc = 0; v.pitch = 0; v.roll = 0;
+      v.yawPrev = this.net.headingOf(info.lane);
+      v.turn = null; v.decided = -1; v.waitT = 0; v.giveT = 0;
       v.cool = 6 + this.rng() * 12;
       this._insert(info, v);
       this.tally.revived++;
@@ -2291,9 +2457,30 @@ class Traffic {
      */
     if (lane.busLane) {
       if (!v.busStop || this.busHalts >= 5) return;
-      const s = v.s + 26 + this.rng() * 40;
-      if (!clearOfJunction(s)) return;
-      if (!this.rng.chance(0.55)) return;
+      // Halt where props.js actually built a stop. A bus pulling up at a random
+      // stretch of kerb, thirty metres from the shelter and the queue of people
+      // waiting under it, is the tell that the two modules are not describing
+      // the same city. `registerStops` fills these in; the random fallback only
+      // runs on a bus lane that genuinely has no stop on it.
+      let s = -1;
+      const S = info.stops;
+      if (S) {
+        // Every stop in reach, not just the first: shelters sit on block
+        // frontages and plenty of them are inside the junction clearance, so
+        // taking the nearest and giving up if it fails means never halting.
+        for (let i = 0; i < S.length; i++) {
+          if (S[i] < v.s + 22) continue;
+          if (S[i] > v.s + 200) break;              // sorted
+          if (!clearOfJunction(S[i])) continue;
+          s = S[i];
+          break;
+        }
+        if (s < 0) return;
+      } else {
+        s = v.s + 26 + this.rng() * 40;
+        if (!clearOfJunction(s)) return;
+      }
+      if (!this.rng.chance(0.7)) return;
       this.busHalts++;
       this.tally.busStops++;
       v.haltsBus = true;
@@ -2525,11 +2712,33 @@ class Traffic {
               // Give up rather than deadlock the whole approach.
               if (v.waitT > 7) { this._dropTurn(v); mustStop = false; }
             }
+            // Give way where there is no signal to do it for us.
+            if (!mustStop && !j.ix.signalled && dStop < 20) {
+              if (this._crossBusy(v, lane, j.ix)) { mustStop = true; v.giveT += dt; }
+              else v.giveT = 0;
+              // Nothing in a grid of minor streets is worth a permanent stand-off.
+              if (v.giveT > 6) { mustStop = false; v.giveT = 0; }
+            } else if (v.giveT) {
+              v.giveT = 0;
+            }
+            /* KEEP CLEAR. IDM only knows about the car in front, so a queue
+             * discharging past a junction parked its tail across the box and
+             * the cross stream then drove straight through it. Do not cross
+             * the line unless there is room for the whole vehicle on the far
+             * side of the junction. */
+            if (!mustStop && dStop < 22 && lead && !lead.dead && lead.v < 1.4
+                && (!lead.c || lead.c.state === 0)) {
+              const far = j.s + (lane.axis === 'x' ? j.ix.stopX : j.ix.stopZ);
+              if (lead.s - lead.len * 0.5 < far + v.len + IDM_S0) mustStop = true;
+            }
             if (mustStop) acc = Math.min(acc, this._interact(v, Math.max(0.05, dStop), 0));
           }
         }
 
         acc = Math.max(-BRAKE_MAX, Math.min(aMax, acc));
+        // Kept for the updater: weight transfer is the difference between a
+        // fleet that stops and a fleet that dives onto its nose when it stops.
+        v.acc = acc;
 
         /* --- what the lamps say ------------------------------------------
          * Brake lights are the cheapest legibility win in the whole module:
@@ -2649,6 +2858,7 @@ class Traffic {
       // kerb and a lane of lit brake lights is most of what a night frame is.
       v.brake = false;
       v.blink = 0;
+      v.acc = 0;
       this._lateral(v, dt);
       if ((v.parkT -= dt) > 0) continue;
       const info = v.info;
@@ -2835,6 +3045,47 @@ class Traffic {
     for (const info of this.lanes) if (info.bays) info.bays.sort((a, b2) => a.s - b2.s);
     return n;
   }
+
+  /**
+   * Attach the bus stops props.js built to the bus lane that serves them.
+   *
+   * props.js runs before this module, so the registry is already the shared
+   * record of where every shelter and stop flag went. Reading it here is what
+   * makes a bus halt at a shelter with people under it instead of at an
+   * arbitrary 26-66 m down the road, and it needs no new contract between the
+   * two modules beyond the prop `kind`, which is stable.
+   */
+  registerStops(registry) {
+    const buses = this.lanes.filter((i) => i.lane.busLane);
+    if (!buses.length) return 0;
+    let n = 0;
+    for (const c of registry.byId.values()) {
+      if (c.kind !== 'busShelter' && c.kind !== 'busStopFlag') continue;
+      let best = null, bestD = 11;
+      for (const info of buses) {
+        const L = info.lane;
+        // Perpendicular distance from the stop to this lane's centreline.
+        const d = Math.abs((L.axis === 'x' ? c.position.x : c.position.z) - L.cross);
+        if (d >= bestD) continue;
+        const s = this.net.sFor(L, c.position.x, c.position.z);
+        let on = false;
+        for (const sg of info.segs) if (s > sg.lo + 14 && s < sg.hi - 30) { on = true; break; }
+        if (!on) continue;
+        bestD = d; best = { info, s };
+      }
+      if (!best) continue;
+      if (!best.info.stops) best.info.stops = [];
+      // A shelter and its flag are metres apart and are one stop, not two.
+      const S = best.info.stops;
+      let dup = false;
+      for (let i = 0; i < S.length; i++) if (Math.abs(S[i] - best.s) < 14) { dup = true; break; }
+      if (dup) continue;
+      S.push(best.s);
+      n++;
+    }
+    for (const info of buses) if (info.stops) info.stops.sort((a, b) => a - b);
+    return n;
+  }
 }
 
 /* ======================================================== placement ==== */
@@ -3009,7 +3260,7 @@ function placeMoving(ctx, state, traf, rng) {
           // Cached so the updater never has to look the shape up per frame.
           yOff: seatY(type, 0),
           v: lane.speed * vf * 0.75, v0: lane.speed * vf, vf,
-          turn: null, decided: -1, waitT: 0, held: false,
+          turn: null, decided: -1, waitT: 0, giveT: 0, held: false,
           noTurn: type === 'articBus',
           /* --- driving personality ------------------------------------- */
           // Comfortable acceleration. A city where every car pulls away at the
@@ -3031,22 +3282,30 @@ function placeMoving(ctx, state, traf, rng) {
           canPark: CAN_PARK.has(type),
           doublePark: DOUBLE_PARKERS.has(type),
           taxi: type === 'taxi',
-          /* --- light-card metrics, measured once per vehicle ----------- */
-          noseZ: def.len * 0.40,
+          /* --- ride: how the body moves on its springs ------------------ */
+          acc: 0, pitch: 0, roll: 0, yawPrev: traf.net.headingOf(lane),
+          // Half the axle span, for reading the road gradient under the car.
+          axleZ: m.bodyL * 0.38,
+          // A stiff sports car dives less than a laden van, and a bus barely
+          // pitches at all. One number, straight off the mass class.
+          softness: big ? 0.5 : QUICK.has(type) ? 0.7 : 1.0,
+          /* --- light-card metrics, all measured off the shape ----------- */
+          // Every one of these used to be a fraction of FLEET.len. They are now
+          // the shape's own lamp plane, so a card is proud of the panel it
+          // belongs to instead of buried a third of a metre inside it.
+          noseZ: m.noseZ,
           beamW: m.contactW * 1.5,
-          beamL: 10 + def.len * 0.9,
-          hazY: m.height * 0.42,
+          beamL: 10 + m.bodyL * 0.9,
+          hazY: m.lampY,
           hazW: m.contactW + 0.06,
-          hazD: m.contactD + 0.06,
-          // Tail card sits just aft of the bodywork so it is never coplanar
-          // with it; the lamp band is clamped because a bus's tail lights are
-          // at car height, not at half the height of a bus.
-          tailZ: def.len * 0.40 + 0.10,
-          lampY: Math.max(0.42, Math.min(1.15, m.height * 0.48)),
-          lampW: Math.max(0.34, m.contactW * 0.86),
-          lampH: Math.max(0.20, Math.min(0.42, m.height * 0.22)),
+          hazD: m.bodyL + 0.10,
+          hazZ: m.midZ,
+          tailZ: m.tailZ,
+          lampY: m.lampY,
+          lampW: m.lampW,
+          lampH: m.lampH,
           indW: m.contactW + 0.10,
-          indL: def.len,
+          indL: m.bodyL,
         }, info);
       }
     }
@@ -3198,11 +3457,27 @@ const BOAT_Y = 0.12;
 function placeBoats(ctx, state, rng) {
   const { layout } = ctx;
   const boats = [];
+  /**
+   * Water that is already spoken for.
+   *
+   * A cruise ship is 45 m long and 10 m in the beam, and the inshore mooring
+   * band runs straight through both berths — which is how a 10 m sailing boat
+   * ended up moored 12 m from the centreline of one, i.e. inside it. The berths
+   * are claimed before anything else is laid out.
+   */
+  const keepOut = [];
+  const claimed = (x, z) => {
+    for (let i = 0; i < keepOut.length; i++) {
+      const k = keepOut[i];
+      if (Math.abs(x - k.x) < k.rx && Math.abs(z - k.z) < k.rz) return true;
+    }
+    return false;
+  };
   // Nothing floats on land. isWater() also reports dry inside a bridge AABB,
   // which is the point: a hull moored under a causeway is inside the deck, not
   // under it. That is how a skiff ended up parked in the Brickell Key Causeway.
   const put = (type, x, z, rot, moving, cruise) => {
-    if (!layout.isWater(x, z)) return null;
+    if (!layout.isWater(x, z) || claimed(x, z)) return null;
     const c = spawn(ctx, state, type, pickVariant(rng, type), x, BOAT_Y, z, rot, !!moving);
     if (!c) return null;
     const b = { c, x, z, rot, phase: rng() * 6.28, speed: 0 };
@@ -3210,6 +3485,15 @@ function placeBoats(ctx, state, rng) {
     boats.push(b);
     return c;
   };
+
+  // Two cruise vessels at the port terminals north and south of the channel.
+  // First, so their berths are claimed before the mooring bands are laid out.
+  for (const [bx, bz, brot] of [[WORLD.BAY_EDGE + 17, -448, 0.02],
+    [WORLD.BAY_EDGE + 19, 455, Math.PI - 0.02]]) {
+    if (put('cruiseShip', bx, bz, brot, true)) {
+      keepOut.push({ x: bx, z: bz, rx: 15, rz: 33 });
+    }
+  }
 
   // Basins. water.js lays a walkway 6 m off the landward edge with 1.5 m
   // finger docks every ~9 m; boats moor ALONGSIDE the fingers, bow toward the
@@ -3292,10 +3576,6 @@ function placeBoats(ctx, state, rng) {
       put(type, x, z, Math.PI / 2 + (s > 0 ? 0.1 : -0.1));
     }
   }
-
-  // Two cruise vessels at the port terminals north and south of the channel.
-  put('cruiseShip', WORLD.BAY_EDGE + 17, -448, 0.02, true);
-  put('cruiseShip', WORLD.BAY_EDGE + 19, 455, Math.PI - 0.02, true);
 
   /* ------------------------------------------------------ under way ---- */
   /**
@@ -3664,6 +3944,9 @@ export function buildVehicles(ctx) {
 
   const freeBays = placeParked(ctx, state, rng);
   const bays = traf.registerBays(freeBays);
+  // props.js has already built the shelters; this is where the buses learn
+  // that they are supposed to stop at them.
+  const busStops = traf.registerStops(ctx.registry);
   const lots = placeLots(ctx, state, rng);
   placeBikes(ctx, state, rng);
   placeMachinery(ctx, state, rng);
@@ -3682,6 +3965,7 @@ export function buildVehicles(ctx) {
     cruising: boats.reduce((n, b) => n + (b.speed ? 1 : 0), 0),
     lanes: traf.lanes.length,
     bays,
+    busStops,
     atKerb: traf.parked.length,
     blocking: traf.blocking,
     busHalts: traf.busHalts,
@@ -3693,7 +3977,8 @@ export function buildVehicles(ctx) {
 
   console.info(
     `[vehicles] ${state.total} vehicles | ${moving} driving on ${traf.lanes.length} lanes | `
-    + `${bays} free kerb bays | ${boats.length} boats | ${state.pools.size} pools`
+    + `${bays} free kerb bays | ${busStops} bus stops | ${boats.length} boats | `
+    + `${state.pools.size} pools`
   );
   return state;
 }
@@ -3705,6 +3990,9 @@ function makeUpdater(ctx, traf, state, boats) {
   const decks = state.decks;
   const out = { x: 0, z: 0, rot: 0 };
   const q = new THREE.Quaternion();
+  // Yaw only. The light cards lie flat on the road and must NOT inherit the
+  // body's dive and roll, or a braking car's headlight pool rocks with it.
+  const qy = new THREE.Quaternion();
   const e = new THREE.Euler();
   const pos = new THREE.Vector3();
   const scl = new THREE.Vector3(1, 1, 1);
@@ -3795,10 +4083,48 @@ function makeUpdater(ctx, traf, state, boats) {
       // for the matrix every frame, which is what stopped cars ever tilting.
       if (c.state >= 1) { stow(v); continue; }
       traf.place(v, out);
-      const surf = deckHeight(decks, out.x, out.z);
+      const sn = Math.sin(out.rot), cs = Math.cos(out.rot);
+
+      /* --- the body on its springs -------------------------------------
+       * Three things tilt a car and all three were missing, which is why the
+       * fleet slid around perfectly flat: a bridge ramp (traffic climbed the
+       * causeways bolt upright, wheels through the deck at one end and in the
+       * air at the other), braking, and cornering. The ramp term is measured
+       * from the deck under each axle rather than assumed, so it is exactly
+       * the surface streets.js built. */
+      let surf, grade = 0;
+      if (decks.length) {
+        const yF = deckHeight(decks, out.x + sn * v.axleZ, out.z + cs * v.axleZ);
+        const yR = deckHeight(decks, out.x - sn * v.axleZ, out.z - cs * v.axleZ);
+        surf = (yF + yR) * 0.5;
+        if (yF !== yR) grade = Math.atan2(yF - yR, 2 * v.axleZ);
+      } else {
+        surf = 0;
+      }
+      // Weight transfer, smoothed: a spring rate, not a step function.
+      const dive = -v.acc * 0.005 * v.softness;
+      v.pitch += (dive - v.pitch) * Math.min(1, dt * 8);
+      // Roll comes out of the yaw rate the path is already producing, so a
+      // turn arc and a lane change both lean without either knowing about it.
+      let dyaw = out.rot - v.yawPrev;
+      if (dyaw > Math.PI) dyaw -= Math.PI * 2;
+      else if (dyaw < -Math.PI) dyaw += Math.PI * 2;
+      v.yawPrev = out.rot;
+      // A respawn at the map edge is a teleport, not a corner.
+      const rollT = Math.abs(dyaw) > 0.4 ? 0
+        : Math.max(-0.075, Math.min(0.075, (dyaw / dt) * v.v * 0.006 * v.softness));
+      v.roll += (rollT - v.roll) * Math.min(1, dt * 7);
+
       pos.set(out.x, surf + v.yOff, out.z);
-      e.set(0, out.rot, 0);
-      q.setFromEuler(e);
+      e.set(0, out.rot, 0, 'YXZ');
+      qy.setFromEuler(e);
+      const tilt = grade + v.pitch;
+      if (Math.abs(tilt) > 2e-4 || Math.abs(v.roll) > 2e-4) {
+        e.set(tilt, out.rot, v.roll, 'YXZ');
+        q.setFromEuler(e);
+      } else {
+        q.copy(qy);
+      }
       c.position.copy(pos);
       const p = c.pool;
       p.slotPos[c.slot].copy(pos);
@@ -3810,10 +4136,9 @@ function makeUpdater(ctx, traf, state, boats) {
       // bay has its lights off — that contrast between the moving lanes and the
       // parked kerb is most of what makes the night frame read.
       if (lit > 0.02 && v.mode !== 'parked') {
-        const sn = Math.sin(out.rot), cs = Math.cos(out.rot);
         pos.set(out.x + sn * v.noseZ, surf + 0.035, out.z + cs * v.noseZ);
         scl.set(v.beamW, 1, v.beamL);
-        beams.setTransform(v.beam, pos, q, scl);
+        beams.setTransform(v.beam, pos, qy, scl);
         v.beamShown = true;
       } else if (v.beamShown) {
         beams.setTransform(v.beam, gone, nilQ, nil);
@@ -3824,10 +4149,9 @@ function makeUpdater(ctx, traf, state, boats) {
       // drawing in daylight — a red flare on the back of a decelerating car is
       // how you read a queue forming from 200 m up.
       if (v.brake && v.mode !== 'parked') {
-        const sn = Math.sin(out.rot), cs = Math.cos(out.rot);
         pos.set(out.x - sn * v.tailZ, surf + v.lampY, out.z - cs * v.tailZ);
         scl.set(v.lampW, v.lampH, 1);
-        brakes.setTransform(v.beam, pos, q, scl);
+        brakes.setTransform(v.beam, pos, qy, scl);
         v.brakeShown = true;
       } else if (v.brakeShown) {
         brakes.setTransform(v.beam, gone, nilQ, nil);
@@ -3838,9 +4162,9 @@ function makeUpdater(ctx, traf, state, boats) {
       if (v.hazard && v.hazSlot === undefined && hazFree.length) v.hazSlot = hazFree.pop();
       if (v.hazSlot !== undefined) {
         if (v.hazard) {
-          pos.set(out.x, surf + v.hazY, out.z);
+          pos.set(out.x + sn * v.hazZ, surf + v.hazY, out.z + cs * v.hazZ);
           scl.set(v.hazW, 1, v.hazD);
-          hazards.setTransform(v.hazSlot, pos, q, scl);
+          hazards.setTransform(v.hazSlot, pos, qy, scl);
         } else {
           hazards.setTransform(v.hazSlot, gone, nilQ, nil);
           hazFree.push(v.hazSlot);
@@ -3854,9 +4178,9 @@ function makeUpdater(ctx, traf, state, boats) {
       if (wantInd && v.indSlot === undefined && indFree.length) v.indSlot = indFree.pop();
       if (v.indSlot !== undefined) {
         if (wantInd) {
-          pos.set(out.x, surf + v.lampY, out.z);
+          pos.set(out.x + sn * v.hazZ, surf + v.lampY, out.z + cs * v.hazZ);
           scl.set(v.blink * v.indW, v.lampH, v.indL);
-          indics.setTransform(v.indSlot, pos, q, scl);
+          indics.setTransform(v.indSlot, pos, qy, scl);
         } else {
           indics.setTransform(v.indSlot, gone, nilQ, nil);
           indFree.push(v.indSlot);
@@ -3892,7 +4216,9 @@ function makeUpdater(ctx, traf, state, boats) {
       const ph = time * 0.62 + b.phase;
       const heave = b.speed ? 0.02 : 0.045;
       pos.set(b.x, BOAT_Y + Math.sin(ph) * heave, b.z);
-      e.set(Math.sin(ph * 0.83 + 1.1) * 0.011, b.rot, Math.cos(ph * 0.71) * 0.017);
+      // Yaw-pitch-roll in the hull's own frame: with the default XYZ order a
+      // boat lying east-west pitched about the world axis and swam sideways.
+      e.set(Math.sin(ph * 0.83 + 1.1) * 0.011, b.rot, Math.cos(ph * 0.71) * 0.017, 'YXZ');
       q.setFromEuler(e);
       c.position.copy(pos);
       const p = c.pool;
@@ -3902,7 +4228,7 @@ function makeUpdater(ctx, traf, state, boats) {
       registry.rehash(c);
 
       if (b.wake) {
-        e.set(0, b.rot, 0);
+        e.set(0, b.rot, 0, 'YXZ');
         q.setFromEuler(e);
         pos.set(b.x, BOAT_Y + 0.03, b.z);
         scl.set(b.wake, 1, b.wakeL);

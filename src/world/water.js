@@ -55,6 +55,37 @@
  * water samples it in screen space (a mirrored camera shares the main
  * projection, so screen UV is the correct lookup) and falls back to the IBL
  * anywhere the proxy did not cover. Towers reflect; it costs nothing.
+ *
+ * The proxy LIGHTS UP. Its fragment shader carries a night state — a dark
+ * facade plus a stochastic window lattice plus a lit crown — cross-faded on
+ * nightFactor. A reflection that only ever darkens leaves the bay as a hole in
+ * the middle of a glowing city, which is exactly what the first night build
+ * looked like.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DAY/NIGHT CONTRACT — READ THIS BEFORE TOUCHING A COLOUR IN HERE
+ * ---------------------------------------------------------------------------
+ * NOTHING about the light is baked. This module used to snapshot
+ * LIGHTING.SUN_ELEVATION / SUN_AZIMUTH / SUN_COLOR / SKY_MID / SKY_HORIZON into
+ * its uniforms at build time, which pinned the bay at 14:24 forever: after dark
+ * it stayed a self-lit electric cyan sheet BRIGHTER THAN THE CITY BEHIND IT.
+ *
+ * Every light-dependent uniform is now driven per frame from what engine.js
+ * publishes — `scene.userData.sunDir`, `.sunDiscDir`, `.nightFactor`,
+ * `.goldenFactor` and `.dayNight` — inside the water mesh's own
+ * `onBeforeRender`, which is the one callback guaranteed to fire once per
+ * rendered frame without game.js having to know this module exists.
+ *
+ * What follows the light: the specular direction, the specular and glitter
+ * colour and tightness, the reflected sky gradient, the body albedo, the foam
+ * brightness, the unlit floor, the Fresnel floor and cap, and the reflected
+ * skyline's own shading. Look values live in DAY_LOOK / NIGHT_LOOK below and
+ * are lerped on nightFactor — one place to retune, no shader edits.
+ *
+ * The DAY_LOOK endpoints are chosen so that at t = DAY.START the resolved
+ * uniforms are numerically what the previously authored (baked) rig produced,
+ * to within 4% on the horizon band. The afternoon frame the whole city was
+ * reviewed under does not move.
  */
 
 import * as THREE from 'three';
@@ -89,6 +120,76 @@ const LAND_BOX = { x0: -546, x1: 338, z0: -546, z1: 546 };
 
 const SEAWALL_TOP = 1.36;
 const COPING_LIP = 1.14;
+
+/* --------------------------------------------------------- day / night --- */
+
+/**
+ * The two ends of the water's look, lerped on scene.userData.nightFactor.
+ *
+ * WHY THESE ARE AUTHORED RATHER THAN DERIVED FROM THE LIGHT RIG
+ * The engine's own night stop only halves the key (3.55 -> 1.80) and doubles
+ * the ambient, because the whole city has to stay readable after dark. Feed
+ * that straight into a surface whose albedo is a saturated turquoise and whose
+ * emissive floor is 40% of that albedo and you get exactly the defect this
+ * pass exists to kill: a bay noticeably brighter than the lit towers standing
+ * on it. Water is the one large surface in frame with no bounce coming back
+ * into it, so it has to be pushed down harder than the rig does on its own.
+ *
+ *   bodyMul     multiplies the depth-graded albedo. The night value is not a
+ *               grey scale-down: it is bluer than it is green, which is what
+ *               turns turquoise into the deep blue-green a moonlit bay is.
+ *   foamMul     the same for whitecaps and surf. Foam at night is lit by the
+ *               moon and by the city, not by the sun.
+ *   selfLit     the unlit floor added to the emissive. This is the single
+ *               biggest contributor to the old glowing-cyan night: 40% of a
+ *               bright albedo, added after the lighting, every hour of the day.
+ *   glintTight  the specular exponent of the sparkle. Moon glitter is a much
+ *               tighter, harder path than sun glitter — narrow and sharp, not
+ *               a broad sheen.
+ *   mixFloor    how much reflection covered pixels keep whatever the Fresnel
+ *   mixCap      says, and the ceiling on it. Both open up at night because the
+ *               reflected, lit skyline IS the night bay.
+ */
+const DAY_LOOK = {
+  bodyMul: [1.00, 1.00, 1.00],
+  foamMul: [1.00, 1.00, 1.00],
+  selfLit: 0.40,
+  glareGain: 2.20,
+  glintGain: 1.00,
+  glintTight: 46.0,
+  mixFloor: 0.17,
+  mixCap: 0.74,
+  reflAmt: 1.15,
+};
+const NIGHT_LOOK = {
+  bodyMul: [0.155, 0.235, 0.310],
+  foamMul: [0.200, 0.265, 0.355],
+  selfLit: 0.012,
+  glareGain: 0.85,
+  glintGain: 0.42,
+  glintTight: 190.0,
+  mixFloor: 0.42,
+  mixCap: 0.90,
+  /* NOT boosted after dark, even though the night reflection is the point.
+     uReflAmt scales the target's own radiance, and the night proxy is already
+     emissive: push it past 1.0 and a reflected window comes out brighter than
+     the window it is a reflection of, which is the same defect this whole pass
+     is here to remove, just one bounce further along. */
+  reflAmt: 1.00,
+};
+
+/**
+ * How many boat wakes the shader carries. Every one costs a branch and an
+ * exp() on every water pixel on screen, so this is deliberately small and the
+ * tracker spends the slots on the boats NEAREST THE CAMERA — a wake 600 m out
+ * is three pixels wide.
+ */
+const MAX_WAKES = 5;
+
+/** vehicles.js FLEET keys that float. Used to pull boats out of the registry. */
+const WAKE_KINDS = new Set([
+  'motorYacht', 'sailBoat', 'waterTaxi', 'skiff', 'sportFisher', 'cruiseShip', 'jetSki',
+]);
 
 /* ============================================================ geometry === */
 
@@ -531,13 +632,19 @@ const WATER_PARS = /* glsl */ `
   uniform vec2  uShoreOrigin;
   uniform vec2  uShoreSize;
   uniform vec2  uShoreRanges;
-  uniform vec3  uDeep, uMidC, uShallow, uFoamC, uRiverC;
+  uniform vec3  uDeep, uMidC, uShallow, uFoamC, uRiverC, uAbyss, uSandC;
   uniform vec3  uSunDirW, uSunTint, uSkyHi, uSkyLo;
+  uniform vec3  uBodyMul, uFoamMul, uSpill;
+  uniform float uSelfLit, uGlareGain, uGlintGain, uGlintTight;
+  uniform float uMixFloor, uMixCap, uNight;
   uniform sampler2D uRefl;
   uniform float uReflAmt;
   uniform float uRiverZ;
   uniform vec4  uBridges[6];
   uniform int   uBridgeCount;
+  uniform vec4  uWakeA[${MAX_WAKES}];
+  uniform vec4  uWakeB[${MAX_WAKES}];
+  uniform int   uWakeCount;
   varying vec3  vWaterPos;
   varying vec4  vReflCoord;
 
@@ -552,9 +659,17 @@ const WATER_PARS = /* glsl */ `
     return mix(mix(wHash(i), wHash(i + vec2(1.0, 0.0)), u.x),
                mix(wHash(i + vec2(0.0, 1.0)), wHash(i + vec2(1.0, 1.0)), u.x), u.y);
   }
+  /* Value noise lives on a lattice, and three octaves sharing ONE world-axis
+     aligned lattice is why the old bay was tiled with ~20 m square blotches you
+     could count: every octave put its features on the same grid lines and they
+     reinforced instead of cancelling. Rotating 40 deg between octaves (and
+     once up front, so the base octave is not axis aligned either) breaks the
+     alignment for four multiplies a sample. */
   float wFbm(vec2 p){
+    mat2 R = mat2(0.766, 0.643, -0.643, 0.766);
+    p = R * p;
     float v = 0.0, a = 0.5;
-    for (int i = 0; i < 3; i++) { v += a * wNoise(p); p = p * 2.07 + 9.3; a *= 0.5; }
+    for (int i = 0; i < 3; i++) { v += a * wNoise(p); p = R * p * 2.07 + 9.3; a *= 0.5; }
     return v;
   }
 
@@ -584,19 +699,31 @@ const WATER_PARS = /* glsl */ `
   /* Sum of directional waves. Only the analytic GRADIENT is used — the surface
      stays geometrically flat, so the whole bay is a handful of triangles and
      every bit of relief is per-pixel. Frequencies are mutually irrational so
-     the pattern never visibly repeats. */
-  vec2 waveGrad(vec2 p, float t, float k) {
+     the pattern never visibly repeats.
+
+     CREST SHARPENING. A pure sine sum gives a rolling, soapy surface with no
+     edges in it; real chop has narrow crests and broad troughs. Adding the
+     second harmonic of each wave's own phase to the GRADIENT (not the height)
+     is a Gerstner-shaped profile for one extra cos per wave, and it is what
+     puts a hard specular line on the crest instead of a soft sheen.
+
+     The kd argument scales only the three short waves. Their wavelength is
+     under 4 m, so past ~250 m one screen pixel spans several crests and they
+     alias into television static; the caller fades them out on the screen
+     footprint, because there is no mip chain here to do it for us — every bit
+     of this relief is analytic. */
+  vec2 waveGrad(vec2 p, float t, float k, float kd) {
     vec2 g = vec2(0.0);
-    #define WAV(dx, dz, f, s, a) { \
+    #define WAV(dx, dz, f, s, a, sh, m) { \
       float ph = (p.x * (dx) + p.y * (dz)) * (f) + t * (s); \
-      g += vec2(dx, dz) * (cos(ph) * (a) * (f) * k); }
-    WAV( 0.94,  0.34, 0.071, 0.90, 0.52)
-    WAV( 0.58, -0.81, 0.129, 1.28, 0.33)
-    WAV(-0.38,  0.93, 0.237, 1.71, 0.175)
-    WAV( 0.99, -0.16, 0.427, 2.33, 0.092)
-    WAV( 0.22,  0.98, 0.803, 3.19, 0.044)
-    WAV(-0.71, -0.70, 1.451, 4.40, 0.020)
-    WAV( 0.46, -0.89, 2.311, 6.10, 0.0092)
+      g += vec2(dx, dz) * ((cos(ph) + (sh) * cos(2.0 * ph)) * (a) * (f) * k * (m)); }
+    WAV( 0.94,  0.34, 0.071, 0.90, 0.52,   0.42, 1.0)
+    WAV( 0.58, -0.81, 0.129, 1.28, 0.33,   0.38, 1.0)
+    WAV(-0.38,  0.93, 0.237, 1.71, 0.175,  0.32, 1.0)
+    WAV( 0.99, -0.16, 0.427, 2.33, 0.098,  0.26, 1.0)
+    WAV( 0.22,  0.98, 0.803, 3.19, 0.050,  0.00, kd)
+    WAV(-0.71, -0.70, 1.451, 4.40, 0.024,  0.00, kd)
+    WAV( 0.46, -0.89, 2.311, 6.10, 0.0115, 0.00, kd)
     #undef WAV
     return g;
   }
@@ -623,37 +750,56 @@ const WATER_BODY = /* glsl */ `
   float wT = uTime;
   vec3 wV = normalize(cameraPosition - vWaterPos);
 
+  /* How much world one pixel covers here. Everything with a wavelength under
+     this has to be faded out or it aliases. */
+  float wFoot = max(fwidth(wP.x), fwidth(wP.y));
+  float wNear = 1.0 - smoothstep(0.10, 0.52, wFoot);
+
   /* Chop is damped in the shallows: the last few metres against a seawall are
      always calmer than open water, and the flattening is what reads as
      "shelter" rather than a texture running under a wall. */
   float wCalm = 0.35 + 0.65 * smoothstep(0.0, 26.0, wShore.x);
-  vec2 wG = waveGrad(wP, wT, wCalm);
+  vec2 wG = waveGrad(wP, wT, wCalm, 0.30 + 0.70 * wNear);
   vec3 wNormal = normalize(vec3(-wG.x, 1.0, -wG.y));
 
-  /* ---- depth grade -------------------------------------------------- */
-  float wDepth = clamp(wShore.y / 115.0, 0.0, 1.0);
-  vec3 wCol = mix(uShallow, uMidC, smoothstep(0.0, 0.16, wDepth));
-  // Never all the way to the deep swatch: this is Biscayne Bay, and the last
-  // 15% of that ramp is where turquoise starts reading as North Atlantic navy.
-  wCol = mix(wCol, mix(uDeep, uMidC, 0.16), smoothstep(0.20, 0.86, wDepth));
+  /* ---- depth grade --------------------------------------------------
+     Distance offshore is read from the HIGH-PRECISION signed channel while it
+     is in range (0.44 m per LSB over +-56 m) and only handed over to the long
+     channel (1.33 m per LSB over 340 m) beyond it. They encode the same
+     quantity; reading the long one everywhere is what terraced the river — a
+     26 m wide channel got nineteen quantisation levels across it and the grade
+     came out as visible steps. */
+  float wDist = mix(wShore.x, wShore.y, smoothstep(30.0, 50.0, wShore.x));
+
+  /* Turquoise shelf -> deep cyan -> a deeper cyan still in the open bay. The
+     last step is NOT a slide toward navy: uAbyss is uDeep held at 72%, which
+     keeps the far water unmistakably Biscayne while giving the grade somewhere
+     to go. Without it every pixel past 115 m offshore landed on one colour and
+     the whole bay read as a flat sheet of paint. */
+  vec3 wCol = mix(uShallow, uMidC, smoothstep(0.0, 26.0, wDist));
+  wCol = mix(wCol, uDeep, smoothstep(34.0, 190.0, wDist) * 0.94);
+  wCol = mix(wCol, uAbyss, smoothstep(200.0, 620.0, wDist) * 0.80);
+
   /* The seawall stands 1.32 m out over the contour, so the WATERLINE the camera
      can actually see is that far offshore. Foam and shallows are measured from
      there — measured from the contour they all hide behind the wall, which is
      exactly why the first pass had no visible surf. */
   float wSdF = max(0.0, wShore.x - ${(1.34).toFixed(2)});
 
-  /* Sand showing through the first few metres. Kept tight — a wide pale apron
-     washes out the skyline reflection, which is the one thing the bay is here
-     to deliver. */
-  wCol = mix(wCol, uShallow * 1.18 + vec3(0.04, 0.03, 0.01),
-             (1.0 - smoothstep(0.0, 5.0, wSdF)) * 0.42);
-
   /* The river runs siltier and greener than the bay. Centreline is the same
      pair of sines cityLayout uses, so the tint follows the bend. */
   float wRC = uRiverZ - 9.0 * sin((wP.x + 470.0) / 300.0) + 5.5 * sin((wP.x - 60.0) / 118.0);
   float wRiv = (1.0 - smoothstep(34.0, 96.0, abs(wP.y - wRC)))
              * (1.0 - smoothstep(${BAY.toFixed(1)} - 30.0, ${BAY.toFixed(1)} + 90.0, wP.x));
-  wCol = mix(wCol, uRiverC, wRiv * 0.72);
+  wCol = mix(wCol, uRiverC, wRiv * 0.86);
+
+  /* Sand showing through the first few metres. WET sand, not a brightened
+     shallow: the old version lifted the turquoise 18% and added warmth, which
+     made a pale cyan apron indistinguishable from foam and turned the river —
+     which is never more than 26 m across, i.e. all apron — into a swimming
+     pool. Suppressed in the river, because the Miami River is silt. */
+  wCol = mix(wCol, uSandC, (1.0 - smoothstep(0.0, 6.0, wSdF)) * 0.26
+                           * (1.0 - wRiv * 0.85) * (1.0 - uNight * 0.85));
 
   /* ---- foam ---------------------------------------------------------- */
   /* Two noise fields do all of it: one lacy and fast for the texture of the
@@ -669,7 +815,19 @@ const WATER_BODY = /* glsl */ `
      them into flat white rectangles. */
   float wOpen = max(max(shoreRaw(wP + vec2(45.0, 0.0)), shoreRaw(wP - vec2(45.0, 0.0))),
                     max(shoreRaw(wP + vec2(0.0, 45.0)), shoreRaw(wP - vec2(0.0, 45.0))));
-  float wFetch = 0.22 + 0.78 * smoothstep(10.0, 44.0, max(wOpen, wShore.x));
+  /* The x-probes run ALONG the river, so they report open water in a 52 m
+     channel and the surf model thinks the Miami River is Biscayne Bay. It is
+     not: a river gets a lick at the bulkhead, not a breaking line. */
+  float wFetch = (0.22 + 0.78 * smoothstep(10.0, 44.0, max(wOpen, wShore.x)))
+               * (1.0 - wRiv * 0.55);
+
+  /* SHAPED lace. The raw fBm is a smooth hill field in 0..1, and the old code
+     multiplied the band by (0.34 + 0.90 * it) — a term that never reaches
+     zero, so the "foam" was a continuous pale wash with no holes in it. From
+     the game camera that is haze, not surf. Remapping hard gives foam that has
+     dark water showing THROUGH the aeration, which is the whole read. */
+  float wTex = smoothstep(0.26, 0.68, wLace + 0.16 * wSwell);
+
   /* Scalloped, breathing band — a constant-width line is the tell.
      Sized generously: the coping oversails the wall face by 0.3 m and stands
      1.24 m above the surface, so from a low camera it screens roughly the
@@ -677,7 +835,7 @@ const WATER_BODY = /* glsl */ `
      never sees. */
   float wWidth = (6.5 + 8.0 * wSwell + 2.4 * sin(wT * 0.8 + wSwell * 21.0)) * wFetch;
   float wBand = 1.0 - smoothstep(0.0, max(2.0, wWidth), wSdF);
-  wBand *= (0.34 + 0.90 * wLace) * wFetch;
+  wBand *= (0.18 + 1.05 * wTex) * wFetch;
   /* Bright wash hugging the wall, the part that never fully drains back. */
   float wEdge = (1.0 - smoothstep(0.0, 1.2 + 2.2 * wFetch, wSdF)) * (0.42 + 0.58 * wFetch);
   float wFoam = clamp(max(wBand, wEdge * 0.96), 0.0, 1.0);
@@ -686,14 +844,50 @@ const WATER_BODY = /* glsl */ `
      it read as scum on a swimming pool. */
   float wCap = smoothstep(0.72, 0.92, wSwell)
              * smoothstep(24.0, 130.0, wSdF)
-             * (0.25 + 0.75 * wLace) * wFetch;
+             * (0.10 + 0.95 * wTex) * wFetch;
   wFoam = clamp(wFoam + wCap * 0.45, 0.0, 1.0);
-  wCol = mix(wCol, uFoamC, wFoam * 0.92);
+
+  /* ---- boat wakes -----------------------------------------------------
+     Fed live from the boats vehicles.js is already moving (see makeWakeTracker
+     — water.js finds them in the entity registry rather than asking another
+     agent's module for an API). A wake is two separate things and drawing only
+     one of them is why a foam smear behind a hull never convinces:
+       the trail   churned, aerated water directly astern, wide as the beam and
+                   spreading slowly, dying out over a boat-length or ten;
+       the arms    the Kelvin V, which opens at a FIXED angle (~19.5 deg)
+                   whatever the speed. That fixed angle is the read: it is the
+                   thing your eye knows a boat wake by. */
+  float wWake = 0.0;
+  for (int wi = 0; wi < ${MAX_WAKES}; wi++) {
+    if (wi >= uWakeCount) break;
+    vec4 wa = uWakeA[wi];
+    vec2 wd = wP - wa.xy;
+    float ws = -dot(wd, wa.zw);                    // metres astern of the hull
+    vec4 wb = uWakeB[wi];
+    if (ws < -1.0 || ws > wb.y) continue;
+    float wlat = abs(wd.x * wa.w - wd.y * wa.z);   // metres off the track
+    if (wlat > wb.x + ws * 0.42 + 3.0) continue;
+    float wFade = 1.0 - ws / wb.y;
+    wFade *= wFade;
+    float wSpread = wb.x + ws * 0.14;
+    float wTrail = (1.0 - smoothstep(wSpread * 0.35, wSpread, wlat)) * wFade;
+    float wArmD = (wlat - ws * 0.354 - wb.x * 0.55) / (0.95 + 0.055 * ws);
+    float wArm = exp(-wArmD * wArmD) * wFade * smoothstep(0.5, 4.0, ws);
+    wWake += (wTrail * 0.80 + wArm * 1.00) * wb.z;
+  }
+  wWake = clamp(wWake, 0.0, 1.0) * (0.44 + 0.70 * wLace);
+  wFoam = clamp(max(wFoam, wWake), 0.0, 1.0);
+
+  wCol = mix(wCol, uFoamC * uFoamMul, wFoam * 0.92);
+  wCol *= uBodyMul;
 
   /* Split the body colour between lit diffuse and an unlit floor. A tower
      shadow landing on a fully-lit turquoise plane drops it to grey-blue and
      reads as an oil slick, not as shade; carrying 45% of the colour unlit
-     keeps the shadow as a tonal shift instead of a stain. */
+     keeps the shadow as a tonal shift instead of a stain. The floor itself is
+     uSelfLit, and it collapses to ~0 after dark: an unlit term is by
+     definition immune to the sun going down, which is precisely how the bay
+     ended up out-glowing the city it reflects. */
   diffuseColor.rgb = wCol * 0.62;
 
   /* Foam is matte and opaque; open water is a near-mirror. */
@@ -709,7 +903,11 @@ const WATER_BODY = /* glsl */ `
      skyline actually covers it, has no seam to cross. */
   vec3 wR = reflect(-wV, wNormal);
   vec3 wSky = mix(uSkyLo, uSkyHi, pow(clamp(wR.y, 0.0, 1.0), 0.42));
-  wSky += uSunTint * pow(max(dot(wR, uSunDirW), 0.0), 130.0) * 2.2;   // sun glare path
+  // Glare path. uSkyLo/uSkyHi/uSunTint/uSunDirW are all live: at golden hour
+  // this lays an orange road down the bay toward the real sun, and after dark
+  // it becomes a narrow cold moon path, because the direction and the colour
+  // both come from the cycle instead of from a build-time snapshot of 14:24.
+  wSky += uSunTint * pow(max(dot(wR, uSunDirW), 0.0), 130.0) * uGlareGain;
 
   /* Projective lookup, not screen UV: a mirrored look-at frame is left-handed,
      so the target is horizontally flipped and only its own projection reads it
@@ -735,21 +933,33 @@ const WATER_BODY = /* glsl */ `
      covered pixels get a floor. Looking near-horizontally down the channel it
      goes past 0.9 and the bay turns into a sheet of white sky, so it is capped
      — Biscayne Bay has to stay turquoise all the way out. */
-  float wMix = clamp(wFres + wRefl.a * 0.17, 0.0, 0.74);
-  vec3 wEmissive = wMirror * wMix * (1.0 - wFoam * 0.85) + wCol * 0.40;
+  float wMix = clamp(wFres + wRefl.a * uMixFloor, 0.0, uMixCap);
+  vec3 wEmissive = wMirror * wMix * (1.0 - wFoam * 0.85) + wCol * uSelfLit;
   diffuseColor.rgb *= 1.0 - wMix * 0.55;      // what reflects does not transmit
 
-  /* Glitter: only inside the sun's specular path, and faded out once one
+  /* Glitter: only inside the key's specular path, and faded out once one
      screen pixel covers more than a wave crest — otherwise the far bay turns
-     into television static. */
+     into television static. Tightness is live, because moon glitter is a much
+     harder, narrower path than sun glitter and reusing the sun's exponent
+     after dark spreads it into a milky sheen. */
   vec3 wH = normalize(uSunDirW + wV);
-  float wPath = pow(max(dot(wNormal, wH), 0.0), 46.0);
-  float wFoot = max(fwidth(wP.x), fwidth(wP.y));
-  float wNear = 1.0 - smoothstep(0.12, 0.55, wFoot);
+  float wPath = pow(max(dot(wNormal, wH), 0.0), uGlintTight);
   float wGlint = wNoise(wP * 1.35 + vec2(wT * 0.55, -wT * 0.38))
                * wNoise(wP * 3.30 - vec2(wT * 0.90, wT * 0.62));
-  wEmissive += uSunTint * smoothstep(0.60, 0.94, wGlint) * wPath * 5.0 * wNear
-             * (1.0 - wFoam);
+  wEmissive += uSunTint * smoothstep(0.60, 0.94, wGlint) * wPath * 5.0 * uGlintGain
+             * wNear * (1.0 - wFoam);
+
+  /* City spill. After dark the promenade lamps, shopfronts and signage throw
+     light onto the first few tens of metres of water; without it a lit city
+     meets the bay along a hard black line and the whole waterfront reads as a
+     cut-out. uSpill is zero by day, so this costs a multiply and nothing else.
+     Modulated by the wave gradient so it shimmers instead of sitting there as
+     a painted band, and killed inside foam, which is already bright. */
+  float wSpillK = (1.0 - smoothstep(0.0, 40.0, wSdF))
+                * (0.40 + 0.90 * wLace)
+                * (0.55 + 2.4 * length(wG))
+                * (1.0 - wFoam * 0.6);
+  wEmissive += uSpill * wSpillK;
 `;
 
 /* =========================================================== materials === */
@@ -791,19 +1001,91 @@ function makeWaterMaterial(uniforms) {
       .replace('#include <lights_fragment_end>',
         '#include <lights_fragment_end>\ntotalEmissiveRadiance += wEmissive;');
   };
-  mat.customProgramCacheKey = () => 'miami-water-v1';
+  mat.customProgramCacheKey = () => 'miami-water-v2';
   return mat;
 }
 
 /* ========================================================= reflections === */
 
 /**
- * Skyline proxy: one merged, flat-shaded box per massing block, straight from
- * the layout. It is never seen directly — only mirrored in the bay — so a box
- * with a baked vertical gradient is entirely sufficient, and it keeps the
- * reflection pass at two draw calls.
+ * The proxy's shader. Two states, cross-faded on nightFactor.
+ *
+ * WHY THE NIGHT STATE IS SYNTHESISED HERE RATHER THAN DARKENED
+ * A reflection that only ever gets darker is a reflection that disappears, and
+ * "the waterfront towers lighting up and smearing across the bay" is the shot
+ * this whole module exists to deliver. So after dark the proxy stops being a
+ * silhouette and becomes a light source: a near-black facade carrying a
+ * stochastic lattice of lit windows plus a lit crown.
+ *
+ * WHY THE WINDOW LATTICE RUNS ON (x + z)
+ * Every proxy box is axis aligned, so on an X-facing wall x is constant and the
+ * sum sweeps with z; on a Z-facing wall it sweeps with x. One expression covers
+ * both orientations and needs no normal attribute (which the proxy deletes, to
+ * keep the merge small). The only surface it degenerates on is a 45 deg wall,
+ * and there are none.
  */
-function buildSkylineProxy(layout) {
+const PROXY_VERT = /* glsl */ `
+  attribute vec3 color;
+  attribute vec2 aInfo;          // x = per-building seed, y = height fraction
+  varying vec3 vDay;
+  varying vec2 vInfo;
+  varying vec3 vW;
+  void main() {
+    vDay = color;
+    vInfo = aInfo;
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vW = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const PROXY_FRAG = /* glsl */ `
+  uniform float uNight, uDayGain;
+  uniform vec3  uDayTint, uWinWarm, uWinHome, uWinCool, uNightBody;
+  varying vec3 vDay;
+  varying vec2 vInfo;
+  varying vec3 vW;
+
+  float pHash(vec2 p){
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+  }
+
+  void main() {
+    vec3 day = vDay * uDayTint * uDayGain;
+
+    float u = (vW.x + vW.z) * 0.2817;                    // ~3.55 m window bays
+    vec2  cell = vec2(floor(u), floor((vW.y - 3.0) * 0.2597));   // 3.85 m floors
+    float sd = vInfo.x * 91.7;
+    float r1 = pHash(cell + sd);
+    float r2 = pHash(cell * 1.83 + sd + 17.0);
+    // Occupancy varies per building: an office block at 2 a.m. is a grid of
+    // four lit floors, a condo tower is speckled everywhere. One value for all
+    // of them reads as a texture, not as a city.
+    float occ = 0.22 + 0.36 * fract(vInfo.x * 7.13);
+    float on  = step(1.0 - occ, r1);
+    vec3  wc  = r2 < 0.55 ? uWinWarm : (r2 < 0.86 ? uWinHome : uWinCool);
+    // Podiums stay busy, crowns thin out — that vertical falloff is what makes
+    // the reflected column taper instead of sitting there as a solid bar.
+    float band = mix(1.20, 0.70, smoothstep(0.15, 1.0, vInfo.y));
+    vec3  win  = wc * on * band * (0.50 + 0.80 * r2);
+    // The top few per cent of a Brickell tower is a lit cap, and in a
+    // reflection that cap is the brightest thing in the frame.
+    float crown = smoothstep(0.95, 0.995, vInfo.y);
+    vec3 night = uNightBody * (0.45 + 1.0 * vInfo.y) + win + uWinCool * crown * 1.10;
+
+    gl_FragColor = vec4(mix(day, night, uNight), 1.0);
+  }
+`;
+
+/**
+ * Skyline proxy: one merged box per massing block, straight from the layout.
+ * It is never seen directly — only mirrored in the bay — so a box with a baked
+ * vertical gradient plus the night shader above is entirely sufficient, and it
+ * keeps the reflection pass at two draw calls.
+ */
+function buildSkylineProxy(layout, uniforms) {
   const rng = makeRNG(0x5ea5);
   const geos = [];
   const haze = new THREE.Color(PALETTE.SKY_HORIZON);
@@ -823,23 +1105,28 @@ function buildSkylineProxy(layout) {
     // Loud per-building value spread: a reflected block of towers that is all
     // one value reads as a stain on the bay, not as a skyline.
     base.offsetHSL((rng() - 0.5) * 0.05, 0, (rng() - 0.5) * 0.20);
+    const seed = rng();
 
     /* Vertical gradient baked into vertex colour: sky-lit crown, shaded base.
-       A reflection is read as a SILHOUETTE with a value ramp, nothing more —
-       and it has to sit clearly DARKER than the sky it replaces. The first
-       pass tinted the proxy toward the horizon haze until it matched the
+       A daylight reflection is read as a SILHOUETTE with a value ramp, nothing
+       more — and it has to sit clearly DARKER than the sky it replaces. The
+       first pass tinted the proxy toward the horizon haze until it matched the
        reflected sky exactly, and the towers became mathematically present and
        visually invisible. */
     const pos = g.attributes.position;
     const col = new Float32Array(pos.count * 3);
+    const info = new Float32Array(pos.count * 2);
     for (let i = 0; i < pos.count; i++) {
       const t = THREE.MathUtils.clamp(pos.getY(i) / Math.max(1, h), 0, 1);
       const k = 0.20 + 0.55 * t;
       col[i * 3] = base.r * k;
       col[i * 3 + 1] = base.g * k;
       col[i * 3 + 2] = base.b * k;
+      info[i * 2] = seed;
+      info[i * 2 + 1] = t;
     }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aInfo', new THREE.BufferAttribute(info, 2));
     g.deleteAttribute('uv');
     g.deleteAttribute('normal');
     geos.push(g);
@@ -847,8 +1134,22 @@ function buildSkylineProxy(layout) {
   if (!geos.length) return null;
   const merged = BufferGeometryUtils.mergeGeometries(geos, false);
   for (const g of geos) g.dispose();
-  return new THREE.Mesh(merged, new THREE.MeshBasicMaterial({
-    vertexColors: true, toneMapped: false, fog: false,
+
+  /*
+   * DoubleSide is load-bearing, not a precaution. Mirroring the camera flips
+   * the handedness of the view matrix, so every triangle's winding flips in
+   * screen space and three's FrontSide culling throws away exactly the faces
+   * the reflection is supposed to show — leaving the far INTERIOR wall of each
+   * box. That is why the reflected skyline used to be a set of pale
+   * washed-out streaks with no facade detail in them, and it is why the window
+   * lattice below would have landed on the wrong surface.
+   */
+  return new THREE.Mesh(merged, new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: PROXY_VERT,
+    fragmentShader: PROXY_FRAG,
+    side: THREE.DoubleSide,
+    fog: false,
   }));
 }
 
@@ -868,8 +1169,8 @@ function blankTexture() {
   return t;
 }
 
-function installReflection(ctx, water, uniforms) {
-  const proxy = buildSkylineProxy(ctx.layout);
+function installReflection(ctx, uniforms, proxyU, hooks) {
+  const proxy = buildSkylineProxy(ctx.layout, proxyU);
   if (!proxy) return;
 
   const rt = new THREE.WebGLRenderTarget(1024, 576, {
@@ -894,6 +1195,9 @@ function installReflection(ctx, water, uniforms) {
   const camUp = new THREE.Vector3();
   const target = new THREE.Vector3();
   const prevColor = new THREE.Color();
+  /* Whatever the proxy did not cover clears to a dim horizon, LIVE — a target
+     cleared to a baked afternoon haze bleeds a pale fringe around every
+     reflected tower at midnight. */
   const fringe = new THREE.Color(PALETTE.SKY_HORIZON).multiplyScalar(0.5);
   // Clip space (-1..1) -> texture space (0..1).
   const bias = new THREE.Matrix4().set(
@@ -902,13 +1206,33 @@ function installReflection(ctx, water, uniforms) {
     0, 0, 0.5, 0.5,
     0, 0, 0, 1
   );
-  let lastT = -1;
+  /*
+   * The target only needs filling when something that changes it changed.
+   * Keying on uTime alone was wrong in two directions: GTAO renders the scene a
+   * SECOND time each frame for its normal buffer (same uTime — must skip), and
+   * the menu camera orbits while the game clock is stopped (same uTime — must
+   * NOT skip). Key on the camera pose and the clock together and both cases
+   * fall out correctly.
+   */
+  const pose = new Float32Array(9).fill(NaN);
+  const posesMatch = (camera, t) => {
+    const p = camera.position, q = camera.quaternion;
+    const same = pose[0] === p.x && pose[1] === p.y && pose[2] === p.z
+      && pose[3] === q.x && pose[4] === q.y && pose[5] === q.z && pose[6] === q.w
+      && pose[7] === t && pose[8] === camera.aspect;
+    pose[0] = p.x; pose[1] = p.y; pose[2] = p.z;
+    pose[3] = q.x; pose[4] = q.y; pose[5] = q.z; pose[6] = q.w;
+    pose[7] = t; pose[8] = camera.aspect;
+    return same;
+  };
 
-  water.onBeforeRender = (renderer, scene, camera) => {
-    // GTAO renders the scene a second time for its normal buffer; the target
-    // only needs filling once per simulated frame.
-    if (uniforms.uTime.value === lastT) return;
-    lastT = uniforms.uTime.value;
+  hooks.push((renderer, scene, camera) => {
+    // The fringe follows the sky the proxy is standing in front of.
+    const dn = scene.userData.dayNight;
+    if (dn) fringe.copy(dn.skyLo).multiplyScalar(0.5);
+
+    const tod = scene.userData.timeOfDay || 0;
+    if (posesMatch(camera, uniforms.uTime.value + tod)) return;
 
     camera.getWorldPosition(camPos);
     camera.getWorldDirection(camDir);
@@ -939,6 +1263,179 @@ function installReflection(ctx, water, uniforms) {
     renderer.render(rScene, vcam);
     renderer.setRenderTarget(prevRT);
     renderer.setClearColor(prevColor, prevAlpha);
+  });
+}
+
+/* ------------------------------------------------------- day and night --- */
+
+/** Lerp an authored [r,g,b] pair straight into a working-space colour. */
+function lerpRGB(out, a, b, t) {
+  return out.setRGB(
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t
+  );
+}
+
+/**
+ * Resolve every light-dependent uniform from the live cycle. Runs once per
+ * rendered frame off the water mesh's own onBeforeRender — see the header for
+ * why this module does not wait to be called by game.js.
+ *
+ * Cost is about forty lerps and no allocation, which is why it runs
+ * unconditionally rather than trying to detect that the hour has not moved.
+ */
+function makeLightingUpdate(scene, uniforms, proxyU) {
+  const spec = new THREE.Vector3(0, 1, 0);
+  const tint = new THREE.Color();
+  /* Sodium street lighting with a bite of Miami aqua in it. Scaled small on
+     purpose: this term exists to stop the waterfront ending in a hard black
+     line, not to light the bay. */
+  const SPILL_NIGHT = new THREE.Color(PALETTE.SODIUM)
+    .lerp(new THREE.Color(PALETTE.NEON_AQUA), 0.20)
+    .multiplyScalar(0.155);
+
+  return () => {
+    const ud = scene.userData;
+    const dn = ud.dayNight;
+    const key = ud.sunDir;
+    if (!dn || !key) return;                 // pre-contract engine: leave the seed values
+    const night = THREE.MathUtils.clamp(ud.nightFactor || 0, 0, 1);
+    const golden = THREE.MathUtils.clamp(ud.goldenFactor || 0, 0, 1);
+
+    /*
+     * SPECULAR DIRECTION. Not the key: the key is floored at 24 deg elevation
+     * so its shadow ortho stays renderable, and a glitter path anchored 24 deg
+     * up is a puddle of sparkle under the camera instead of the road of light
+     * running to the horizon that a low sun actually lays on water.
+     *
+     * So the glitter follows the ASTRONOMICAL sun (which really does set),
+     * softly floored just above the horizon, and hands over to the key — which
+     * at night IS the moon — on nightFactor. Both share the same azimuth every
+     * hour of the cycle, so this interpolation only ever moves the elevation:
+     * the path rises and falls, it never swings sideways.
+     */
+    spec.copy(ud.sunDiscDir || key);
+    if (spec.y < 0.045) { spec.y = 0.045; spec.normalize(); }
+    uniforms.uSunDirW.value.copy(spec).lerp(key, night).normalize();
+
+    uniforms.uSunTint.value.copy(dn.keyColor);
+    uniforms.uSkyHi.value.copy(dn.skyHi);
+    uniforms.uSkyLo.value.copy(dn.skyLo);
+    uniforms.uNight.value = night;
+
+    lerpRGB(uniforms.uBodyMul.value, DAY_LOOK.bodyMul, NIGHT_LOOK.bodyMul, night);
+    lerpRGB(uniforms.uFoamMul.value, DAY_LOOK.foamMul, NIGHT_LOOK.foamMul, night);
+    const mix1 = (k) => DAY_LOOK[k] + (NIGHT_LOOK[k] - DAY_LOOK[k]) * night;
+    uniforms.uSelfLit.value = mix1('selfLit');
+    uniforms.uGlareGain.value = mix1('glareGain') * (1 + 0.85 * golden);
+    // Golden hour is the hour water is FOR. Widen and brighten the sparkle.
+    uniforms.uGlintGain.value = mix1('glintGain') * (1 + 1.10 * golden);
+    uniforms.uGlintTight.value = mix1('glintTight') * (1 - 0.32 * golden);
+    uniforms.uMixFloor.value = mix1('mixFloor');
+    uniforms.uMixCap.value = mix1('mixCap');
+    uniforms.uReflAmt.value = mix1('reflAmt');
+    uniforms.uSpill.value.copy(SPILL_NIGHT).multiplyScalar(night);
+
+    /* ---- the reflected skyline ---- */
+    proxyU.uNight.value = night;
+    // Tint the daylight proxy halfway toward the key's hue so the reflected
+    // city goes orange when the city does, and normalise out the key's own
+    // brightness so only the HUE lands here — the level is uDayGain's job.
+    tint.copy(dn.keyColor);
+    const m = Math.max(tint.r, tint.g, tint.b) || 1;
+    proxyU.uDayTint.value.setRGB(
+      0.5 + 0.5 * tint.r / m, 0.5 + 0.5 * tint.g / m, 0.5 + 0.5 * tint.b / m
+    );
+    proxyU.uDayGain.value = THREE.MathUtils.clamp(dn.keyIntensity / 3.55, 0.5, 1.1);
+  };
+}
+
+/* ------------------------------------------------------------- wakes ---- */
+
+/**
+ * Find the boats and hand the shader the nearest few that are under way.
+ *
+ * WHY THIS READS THE REGISTRY INSTEAD OF ASKING vehicles.js
+ * vehicles.js owns the boats and already moves them; water.js owns the water
+ * they move through. Neither module may edit the other, and inventing a
+ * cross-module callback would have needed both. The registry is the shared
+ * surface that already exists: boats are registered dynamic consumables whose
+ * `kind` is their FLEET key and whose `position` vehicles.js updates every
+ * frame. Reading it is free and needs nobody's cooperation.
+ *
+ * Speed and heading come from the position DELTA rather than from any velocity
+ * the other module might expose, so this keeps working whatever vehicles.js
+ * does internally — including the jet skis, which weave.
+ */
+function makeWakeTracker(ctx, uniforms) {
+  const registry = ctx.registry;
+  const camPos = new THREE.Vector3();
+  /** Preallocated so a per-frame sort does not churn the heap. */
+  const cand = [];
+  for (let i = 0; i < 64; i++) cand.push({ x: 0, z: 0, dx: 0, dz: 0, spd: 0, d2: 0, r: 1 });
+  let boats = null;
+  let prev = null;
+  let lastT = -1;
+
+  return (renderer, scene, camera) => {
+    const t = uniforms.uTime.value;
+
+    if (boats === null) {
+      // water.js builds FIRST, so there are no boats to find until the world is
+      // finished. Resolve on the first rendered frame, once.
+      boats = [];
+      for (const c of registry.dynamics) if (WAKE_KINDS.has(c.kind)) boats.push(c);
+      prev = new Float32Array(boats.length * 2);
+      for (let i = 0; i < boats.length; i++) {
+        prev[i * 2] = boats[i].position.x;
+        prev[i * 2 + 1] = boats[i].position.z;
+      }
+      lastT = t;
+      return;
+    }
+
+    const dt = t - lastT;
+    // dt === 0 is the GTAO pass re-rendering the same frame; dt < 0 is a reset.
+    if (dt <= 1e-5) { if (dt < 0) lastT = t; return; }
+    lastT = t;
+
+    camera.getWorldPosition(camPos);
+    let n = 0;
+    for (let i = 0; i < boats.length; i++) {
+      const c = boats[i];
+      const p = c.position;
+      const dx = p.x - prev[i * 2], dz = p.z - prev[i * 2 + 1];
+      prev[i * 2] = p.x;
+      prev[i * 2 + 1] = p.z;
+      if (c.state >= 1) continue;                 // being eaten, or gone
+      const d = Math.hypot(dx, dz);
+      // Moored hulls heave and roll on the spot; only forward motion makes a
+      // wake, and 0.6 m/s is below the speed at which one would be visible.
+      if (d / dt < 0.6) continue;
+      if (n >= cand.length) break;
+      const e = cand[n++];
+      e.x = p.x; e.z = p.z;
+      e.dx = dx / d; e.dz = dz / d;
+      e.spd = d / dt;
+      e.r = c.radius || 2;
+      const ox = p.x - camPos.x, oz = p.z - camPos.z;
+      e.d2 = ox * ox + oz * oz;
+    }
+    // Spend the handful of shader slots on what the player can actually see.
+    const near = cand.slice(0, n).sort((a, b) => a.d2 - b.d2);
+    const used = Math.min(MAX_WAKES, near.length);
+    for (let i = 0; i < used; i++) {
+      const w = near[i];
+      uniforms.uWakeA.value[i].set(w.x, w.z, w.dx, w.dz);
+      uniforms.uWakeB.value[i].set(
+        Math.max(1.2, w.r * 0.62),                       // half-beam of the trail
+        Math.min(190, 16 + w.spd * 13 + w.r * 2.5),      // how far it survives
+        Math.min(1.0, 0.26 + w.spd * 0.11),              // how hard it foams
+        0
+      );
+    }
+    uniforms.uWakeCount.value = used;
   };
 }
 
@@ -951,7 +1448,13 @@ export function buildWater(ctx) {
 
   const field = buildShoreField(layout);
 
-  /* ------------------------------------------------------- uniforms --- */
+  /* ------------------------------------------------------- uniforms ---
+   * SEED VALUES ONLY. Every light-dependent one of these is overwritten from
+   * scene.userData before the first pixel is drawn (makeLightingUpdate runs at
+   * the top of the water mesh's onBeforeRender). They are seeded from LIGHTING
+   * so that a build without the day/night contract — or the single frame
+   * between construction and the first render — still looks like the authored
+   * afternoon rather than like black. */
   const sunEl = THREE.MathUtils.degToRad(LIGHTING.SUN_ELEVATION);
   const sunAz = THREE.MathUtils.degToRad(LIGHTING.SUN_AZIMUTH);
   const sunDir = new THREE.Vector3(
@@ -959,6 +1462,12 @@ export function buildWater(ctx) {
     Math.sin(sunEl),
     Math.cos(sunAz) * Math.cos(sunEl)
   ).normalize();
+
+  const wakeA = [], wakeB = [];
+  for (let i = 0; i < MAX_WAKES; i++) {
+    wakeA.push(new THREE.Vector4(0, 0, 0, 1));
+    wakeB.push(new THREE.Vector4(1, 1, 0, 0));
+  }
 
   const uniforms = {
     uTime: { value: 0 },
@@ -971,22 +1480,54 @@ export function buildWater(ctx) {
     uShallow: { value: new THREE.Color(PALETTE.SEA_SHALLOW) },
     uFoamC: { value: new THREE.Color(PALETTE.SEA_FOAM) },
     uRiverC: { value: new THREE.Color(PALETTE.WATER_RIVER) },
+    // The far bay: uDeep held down, NOT slid toward navy. See the depth grade.
+    uAbyss: { value: new THREE.Color(PALETTE.SEA_DEEP).multiplyScalar(0.72) },
+    // Wet sand under the first few metres. A real colour, not a brightened
+    // shallow — see the wash in WATER_BODY for what that cost us.
+    uSandC: { value: new THREE.Color(PALETTE.SAND_WET) },
     uSunDirW: { value: sunDir },
     uSunTint: { value: new THREE.Color(LIGHTING.SUN_COLOR) },
     // Matched to the sky dome's own radiance so the reflected horizon and the
     // real horizon are the same colour where they meet.
     uSkyHi: { value: new THREE.Color(LIGHTING.SKY_MID).multiplyScalar(LIGHTING.SKY_GAIN) },
     uSkyLo: { value: new THREE.Color(PALETTE.SKY_HORIZON).multiplyScalar(LIGHTING.SKY_GAIN * 1.04) },
+    /* ---- driven by makeLightingUpdate, seeded at the day endpoint ---- */
+    uNight: { value: 0 },
+    uBodyMul: { value: new THREE.Color().setRGB(...DAY_LOOK.bodyMul) },
+    uFoamMul: { value: new THREE.Color().setRGB(...DAY_LOOK.foamMul) },
+    uSpill: { value: new THREE.Color(0, 0, 0) },
+    uSelfLit: { value: DAY_LOOK.selfLit },
+    uGlareGain: { value: DAY_LOOK.glareGain },
+    uGlintGain: { value: DAY_LOOK.glintGain },
+    uGlintTight: { value: DAY_LOOK.glintTight },
+    uMixFloor: { value: DAY_LOOK.mixFloor },
+    uMixCap: { value: DAY_LOOK.mixCap },
     // Replaced by the live target as soon as the reflection pass installs; the
     // 1x1 transparent fallback keeps the sampler bound if it never does.
     uRefl: { value: blankTexture() },
     uReflMat: { value: new THREE.Matrix4() },
-    uReflAmt: { value: 1.15 },
+    uReflAmt: { value: DAY_LOOK.reflAmt },
     uRiverZ: { value: WORLD.RIVER_Z },
     uBridges: { value: bridgeCutouts(layout) },
     uBridgeCount: { value: Math.min(6, (layout.bridges || []).length) },
+    uWakeA: { value: wakeA },
+    uWakeB: { value: wakeB },
+    uWakeCount: { value: 0 },
     // Legacy alias so anything that reached for the old foam colour still works.
     uFoam: { value: new THREE.Color(PALETTE.SEA_FOAM) },
+  };
+
+  /* The reflected skyline's own shading. Shared with makeLightingUpdate, which
+     is what makes the city in the bay light up as the city does. */
+  const proxyU = {
+    uNight: { value: 0 },
+    uDayGain: { value: 1 },
+    uDayTint: { value: new THREE.Color(1, 1, 1) },
+    uWinWarm: { value: new THREE.Color(PALETTE.WINDOW_OFFICE) },
+    uWinHome: { value: new THREE.Color(PALETTE.WINDOW_HOME) },
+    uWinCool: { value: new THREE.Color(PALETTE.NEON_AQUA).multiplyScalar(0.85) },
+    // Unlit concrete under a night sky: not black, but far below its windows.
+    uNightBody: { value: new THREE.Color(PALETTE.SKY_MID).multiplyScalar(0.055) },
   };
 
   /* -------------------------------------------------- water surface --- */
@@ -1045,7 +1586,21 @@ export function buildWater(ctx) {
   g.add(water);
   for (const q of geos) q.dispose();
 
-  installReflection(ctx, water, uniforms);
+  /* ------------------------------------------------- per-frame work ---
+   * onBeforeRender is the hook, because it is the only one that fires once per
+   * rendered frame without game.js having to call this module by name — and
+   * game.js currently only drives uTime. Everything that has to follow the
+   * clock hangs off here.
+   *
+   * ORDER MATTERS. The lighting resolve has to land before the reflection
+   * render, or the proxy draws one frame behind the hour it is standing in.
+   */
+  const hooks = [makeLightingUpdate(scene, uniforms, proxyU)];
+  hooks.push(makeWakeTracker(ctx, uniforms));
+  installReflection(ctx, uniforms, proxyU, hooks);
+  water.onBeforeRender = (renderer, rScene, camera) => {
+    for (let i = 0; i < hooks.length; i++) hooks[i](renderer, rScene, camera);
+  };
 
   /* -------------------------------------------- seawall + promenade --- */
   const shores = buildShorelines(field);

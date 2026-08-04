@@ -63,6 +63,14 @@
  *             degrees. One 70 m field over a 1040 m map is fifteen visible
  *             copies; cross-fading a 220 m band into it moves most of the
  *             energy to a period four times wider than the world.
+ *   `mid`     a THIRD read of the world field at roughly a quarter of the tile
+ *             (18-25 m) and rotated -61 degrees. Measured on the park and
+ *             intersection presets, the near band's 46-88 m period puts barely
+ *             one lobe across everything the gameplay camera can see, so a
+ *             plaza the size of a city block rendered as one flat card. This is
+ *             the band that carries the read at 10-40 m, and unlike `detail` it
+ *             samples a field with no straight-line features, so paving, brick
+ *             and concrete can have it without turning into plaid.
  *   `detail`  a second read of the surface's own colour map at ~2.9x and
  *             rotated 26 degrees, luminance only, normalised by the map's mean.
  *             This owns the 5-30 m band, which is where the gameplay camera
@@ -523,6 +531,7 @@ const MACRO_HEAD = /* glsl */ `
   ) * uMacroA.x;
   vec3 mcF = texture2D( uMacroMap, mcUV ).rgb - 0.5;
   float mcSlabR = 0.0;
+  float mcMidT = 0.0;
 `;
 
 /**
@@ -552,13 +561,53 @@ function macroFar(scale, weight) {
 `;
 }
 
+/**
+ * The band the gameplay camera actually lives in.
+ *
+ * Added AFTER the near/far cross-fade rather than mixed into it, and with its
+ * own gain baked in, so it cannot quietly rescale tuning that was set against
+ * two bands.
+ *
+ * Leads on the BROAD channel, same as the near band does. That is safe here and
+ * it is the point: the field's r channel is one big soft lobe per tile, so read
+ * at 0.38 of the tile it delivers lobes 15-17 m across — the size of a bay of
+ * pavement, a parking apron, a patch of road that dries slower than the rest.
+ * Reading the same channel twice only correlates when the two reads are at a
+ * similar scale; at 2.6x apart and 61 degrees off they share nothing.
+ */
+function macroMid(scale, weight) {
+  return /* glsl */ `
+  {
+    vec2 mUV = vec2( mcUV.x * 0.4848 + mcUV.y * 0.8746,
+                    -mcUV.x * 0.8746 + mcUV.y * 0.4848 ) * ${(1 / scale).toFixed(5)};
+    vec3 mcM = texture2D( uMacroMap, mUV ).rgb - 0.5;
+    mcMidT = ( mcM.r + mcM.g * 0.45 ) * ${weight.toFixed(4)};
+  }
+`;
+}
+
 const MACRO_BODY = /* glsl */ `
-  float mcT = mcF.r + mcF.g * 0.62 + mcF.b * 0.34;
+  /*
+   * The field's three channels are its broad / mid / fine bands, so this is a
+   * spectral weighting, not a blend. g is up from 0.62: at m = 71 the g channel
+   * is 9-10 m across, which is the size at which the eye reads "this surface
+   * has weather on it", and it was being rolled off harder than the 3 m fine
+   * band that minification destroys anyway.
+   */
+  float mcT = mcF.r + mcF.g * 0.85 + mcF.b * 0.34 + mcMidT;
   diffuseColor.rgb *= 1.0 + mcT * uMacroA.y;
-  // A pure brightness wobble reads as dirt. Letting the warm/cool axis drift
-  // with it is what makes it read as sun-bleach, damp and age instead.
-  diffuseColor.rgb *= vec3( 1.0 + mcF.r * uMacroA.w, 1.0 - mcF.r * uMacroA.w * 0.2,
-                            1.0 - mcF.r * uMacroA.w );
+  /*
+   * A pure brightness wobble reads as dirt. Letting the warm/cool axis drift
+   * with it is what makes it read as sun-bleach, damp and age instead.
+   *
+   * ASYMMETRIC on purpose. A symmetric swing warms the bright lobes and cools
+   * the dark ones by the same amount, and a dark lobe of carriageway is already
+   * lit almost entirely by the cyan sky fill — measured at r:b 0.82 on the
+   * street-level preset, which is blue-grey asphalt, listed automatic-failure
+   * #1. Sun-bleach only ever removes colour anyway; nothing paints a road blue.
+   */
+  float mcH = mcF.r * uMacroA.w * mix( 0.30, 1.0, step( 0.0, mcF.r ) );
+  diffuseColor.rgb *= vec3( 1.0 + mcH, 1.0 - mcH * 0.2, 1.0 - mcH );
 `;
 
 /**
@@ -584,9 +633,12 @@ function macroDetail(scale, weight, meanLuma) {
     vec2 dUV = vec2( vMapUv.x * 0.8988 - vMapUv.y * 0.4384,
                      vMapUv.x * 0.4384 + vMapUv.y * 0.8988 ) * ${scale.toFixed(5)};
     float dL = dot( texture2D( map, dUV ).rgb, vec3( 0.2126, 0.7152, 0.0722 ) );
+    // Clamp tightened from 0.55..1.7: with three world bands stacked underneath
+    // it, a detail layer allowed to nearly double the albedo is what turned the
+    // carriageway into cloud.
     diffuseColor.rgb *= clamp(
       1.0 + ( dL * ${(1 / Math.max(0.01, meanLuma)).toFixed(4)} - 1.0 ) * ${weight.toFixed(4)},
-      0.55, 1.7 );
+      0.62, 1.48 );
   }
   #endif
 `;
@@ -608,6 +660,15 @@ function macroDetail(scale, weight, meanLuma) {
  *
  * Faded out by `fwidth` once a slab is under ~3 px: a per-pixel hash has no mip
  * chain, and left running at skyline distance it is pure aliasing noise.
+ *
+ * AMPLITUDE. This was set at +-5.7% and a 1024 px crop of the street-level
+ * preset showed a sheet of one flat cream with a grid drawn on it — the mosaic
+ * is the single strongest thing a real sidewalk has and it was below the
+ * threshold of visibility. It is now +-12% of value on the ordinary slabs, plus
+ * two named minorities: slabs relaid out of a warmer batch, and slabs that are
+ * permanently damp in the shade of a building. Value AND hue, because twenty
+ * slabs at twenty brightnesses of the same cream still reads as one material
+ * under a dimmer.
  */
 function macroSlab(cells, tone, rough) {
   const C = cells.toFixed(1);
@@ -616,7 +677,7 @@ function macroSlab(cells, tone, rough) {
   {
     vec2 sc = vMapUv * ${C};
     float px = max( fwidth( sc.x ), fwidth( sc.y ) );
-    float aa = 1.0 - smoothstep( 0.28, 0.80, px );
+    float aa = 1.0 - smoothstep( 0.32, 0.95, px );
     if ( aa > 0.003 ) {
       float rowIn = floor( sc.y ) - floor( sc.y / ${C} ) * ${C};
       float shift = mod( ${(cells - 1).toFixed(1)} - rowIn, 2.0 ) * 0.5;
@@ -625,9 +686,17 @@ function macroSlab(cells, tone, rough) {
       p3 += dot( p3, p3.yzx + 33.33 );
       vec2 hh = fract( ( p3.xx + p3.yz ) * p3.zy );
       diffuseColor.rgb *= 1.0 + ( hh.x - 0.5 ) * ${tone.toFixed(4)} * aa;
-      // One slab in fifteen was lifted and relaid out of a different batch.
-      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 1.09, 1.035, 0.90 ),
-                               step( 0.935, hh.y ) * 0.6 * aa );
+      // Slabs are cast in batches and the sand in the mix is never twice the
+      // same colour, so the mosaic drifts on the warm/cool axis as well as in
+      // value. Decorrelated from the value hash or the two just multiply.
+      float sh = ( fract( hh.x * 41.17 ) - 0.5 ) * ${(tone * 0.42).toFixed(4)} * aa;
+      diffuseColor.rgb *= vec3( 1.0 + sh, 1.0 + sh * 0.15, 1.0 - sh );
+      // One slab in fifteen was lifted and relaid out of a different batch...
+      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 1.16, 1.07, 0.86 ),
+                               step( 0.935, hh.y ) * aa );
+      // ...and one in eleven sits in permanent shade and never dries out.
+      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 0.80, 0.81, 0.83 ),
+                               step( 0.910, fract( hh.y * 7.31 ) ) * aa );
       mcSlabR = ( hh.y - 0.5 ) * ${rough.toFixed(4)} * aa;
     }
   }
@@ -657,13 +726,28 @@ function macroWear(hex, threshold, strength) {
 `;
 }
 
-/** Optional: mown-lawn banding. Only injected for surfaces that ask for it. */
+/**
+ * Optional: mown-lawn banding. Only injected for surfaces that ask for it.
+ *
+ * TWO periods, because a mown lawn has two. The fast term is the mower deck —
+ * roughly 3.5 m out and 3.5 m back, so a 7 m cycle — and it is the thing that
+ * says "someone cuts this". The slow term is the broad tonal drift across a
+ * lawn, and it is all the old single-sine setting produced: at 48 m per cycle
+ * there was less than one band across the whole of Bayfront Park, which reads
+ * as a gradient, not as stripes.
+ *
+ * `aa` is not optional once the fast term exists. A 7 m band is sub-pixel from
+ * the skyline preset and a raw sine there is pure moire, so it is faded out by
+ * fwidth of its own phase before it can alias.
+ */
 const MACRO_STRIPE = /* glsl */ `
   {
     // The phase wanders with the broad band, so the bands bend and fade in and
     // out instead of striping the entire city in one direction.
     float ph = dot( mcUV, uMacroB.zw ) * uMacroB.x + mcF.r * 9.0;
-    float band = sin( ph ) * ( 0.55 + mcF.g );
+    float aa = 1.0 - smoothstep( 0.55, 2.10, fwidth( ph ) );
+    float band = sin( ph ) * ( 0.55 + mcF.g ) * aa
+               + sin( ph * 0.135 + mcF.b * 3.0 ) * 0.55;
     diffuseColor.rgb *= 1.0 + band * uMacroB.y;
   }
 `;
@@ -686,9 +770,16 @@ const MACRO_HEIGHT = /* glsl */ `
   }
 `;
 
+/**
+ * The mid band drives roughness with the SAME sign it drives albedo, which is
+ * not a coincidence worth losing: a patch of ground that is darker is damp, and
+ * damp is glossier. Coupling the two is what turns a brightness wobble into
+ * weather.
+ */
 const MACRO_ROUGH = /* glsl */ `
   roughnessFactor = clamp(
-    roughnessFactor * ( 1.0 + ( mcF.g * 0.7 + mcF.b ) * uMacroA.z + mcSlabR ), 0.045, 1.0 );
+    roughnessFactor * ( 1.0 + ( mcF.g * 0.7 + mcF.b + mcMidT * 0.85 ) * uMacroA.z
+                        + mcSlabR ), 0.045, 1.0 );
 `;
 
 /**
@@ -703,51 +794,68 @@ const MACRO_ROUGH = /* glsl */ `
  *   stripe    [1/metres, strength, angle deg] for mown banding
  *   rise      [metres, value ramp, hue ramp] gradient up a building
  *   far       [scale, cross-fade] second world band, see macroFar
+ *   mid       [scale, gain] third world band at ~m/4, see macroMid
  *   detail    [uv scale, weight] second read of the map itself, see macroDetail
  *   slab      [tone, roughness] per-slab world hash, see macroSlab. Needs the
  *             texture to have declared its `cells`.
  *   wear      [colour, threshold, strength] walked-off turf, see macroWear
  *
- * COST. `far` and `detail` are one extra texture fetch each. They are on for
- * the five surfaces that fill the frame and off for everything else: a facade
- * is a few hundred square metres seen once, and it does not have a repeat
- * problem worth a fetch.
+ * COST. `far`, `mid` and `detail` are one extra texture fetch each. `mid` is on
+ * for everything that covers ground, because that is the band the camera looks
+ * at; `detail` stays off for anything with straight-line features in its map.
  */
 const MACRO = {
   //                metres albedo rough  hue
+  /*
+   * Asphalt was the muddiest surface in the game and this row is why: a 0.31
+   * albedo swing and a 1.35 detail weight, both cloud-shaped, on top of each
+   * other. A 1:1 crop of the street-level preset showed a dusty warm plane with
+   * soft brown lobes — a dirt lot, not a wearing course. Half of that energy has
+   * moved into `mid` (structured, and at the scale you can see) and into
+   * roughness (which reads as the sun catching a rough surface, not as dirt).
+   */
   asphalt: {
-    m: 88, a: 0.31, r: 0.42, h: 0.055,
-    far: [3.10, 0.44], detail: [0.3413, 1.35],
+    m: 88, a: 0.25, r: 0.50, h: 0.036,
+    far: [3.10, 0.42], mid: [0.380, 0.44], detail: [0.3413, 0.80],
   },
   paving: {
-    m: 71, a: 0.24, r: 0.38, h: 0.048,
-    far: [3.10, 0.40], slab: [0.115, 0.26],
+    m: 71, a: 0.22, r: 0.38, h: 0.034,
+    far: [3.10, 0.38], mid: [0.400, 0.42], slab: [0.240, 0.34],
   },
   // Turf is the one surface where big albedo variation is not a defect: a lawn
   // really is a patchwork, and a flat green plane is the fakest thing in frame.
   grass: {
-    m: 57, a: 0.52, r: 0.24, h: 0.105, stripe: [7.5, 0.052, 24],
-    far: [2.70, 0.38], detail: [0.3830, 0.85],
-    wear: [PALETTE.GRASS_WORN, 0.52, 0.55],
+    // a and the wear threshold both pulled back when the mid band landed:
+    // mcT's range grew about 35%, and turf is the family with the largest
+    // gain on it, so the same row would have doubled the amount of bald
+    // ground and pushed the bright lobes past the tone curve into acid lime.
+    m: 57, a: 0.42, r: 0.24, h: 0.105, stripe: [51, 0.062, 24],
+    far: [2.70, 0.36], mid: [0.400, 0.42], detail: [0.3830, 0.85],
+    wear: [PALETTE.GRASS_WORN, 0.64, 0.55],
   },
   sand: {
     m: 66, a: 0.26, r: 0.30, h: 0.060,
-    far: [2.90, 0.38], detail: [0.3627, 0.75],
+    far: [2.90, 0.38], mid: [0.400, 0.38], detail: [0.3627, 0.75],
   },
-  concrete: { m: 46, a: 0.19, r: 0.30, h: 0.040, far: [3.30, 0.34] },
+  concrete: {
+    m: 46, a: 0.19, r: 0.32, h: 0.038,
+    far: [3.30, 0.34], mid: [0.450, 0.34],
+  },
   rooftop: {
-    m: 49, a: 0.30, r: 0.42, h: 0.055,
-    far: [3.00, 0.40], detail: [0.3471, 1.05],
+    m: 49, a: 0.30, r: 0.42, h: 0.050,
+    far: [3.00, 0.40], mid: [0.420, 0.38], detail: [0.3471, 0.95],
   },
-  wood:      { m: 38, a: 0.20, r: 0.32, h: 0.050 },
-  brick:     { m: 44, a: 0.17, r: 0.28, h: 0.040, rise: [125, 0.15, 0.03] },
-  facade:    { m: 52, a: 0.13, r: 0.26, h: 0.032, rise: [125, 0.17, 0.035] },
+  wood:      { m: 38, a: 0.20, r: 0.32, h: 0.050, mid: [0.460, 0.26] },
+  brick:     { m: 44, a: 0.17, r: 0.28, h: 0.040, rise: [125, 0.15, 0.03],
+    mid: [0.440, 0.26] },
+  facade:    { m: 52, a: 0.13, r: 0.26, h: 0.032, rise: [125, 0.17, 0.035],
+    mid: [0.430, 0.30] },
   // Glass must NOT get an albedo wobble — a curtain wall is machine-made and
   // blotchy glass reads as dirt on the lens. It gets a roughness break, which
   // shows up as some sheets being cleaner than others, plus the height ramp:
   // the crown mirrors the zenith, the podium mirrors the street.
   glass:     { m: 60, a: 0.03, r: 0.34, h: 0.008, rise: [175, 0.34, 0.10] },
-  default:   { m: 78, a: 0.18, r: 0.30, h: 0.042 },
+  default:   { m: 78, a: 0.18, r: 0.30, h: 0.042, mid: [0.400, 0.32] },
 };
 
 const _macroMats = [];
@@ -784,6 +892,7 @@ function worldDetail(material, family = 'default', gain = 1) {
    */
   const ud = (material.map && material.map.userData) || {};
   const far = t.far ? macroFar(t.far[0], t.far[1]) : '';
+  const mid = t.mid ? macroMid(t.mid[0], t.mid[1] * gain) : '';
   const detail = (t.detail && material.map && ud.meanLuma)
     ? macroDetail(t.detail[0], t.detail[1] * gain, ud.meanLuma) : '';
   const slab = (t.slab && material.map && ud.cells)
@@ -809,7 +918,7 @@ function worldDetail(material, family = 'default', gain = 1) {
       .replace('#include <common>', `#include <common>\n${pars}`)
       .replace(
         '#include <map_fragment>',
-        `#include <map_fragment>\n${MACRO_HEAD}${far}${MACRO_BODY}`
+        `#include <map_fragment>\n${MACRO_HEAD}${far}${mid}${MACRO_BODY}`
         + `${uB ? MACRO_STRIPE : ''}${uC ? MACRO_HEIGHT : ''}`
         + `${detail}${slab}${wear}`
       )
@@ -825,7 +934,7 @@ function worldDetail(material, family = 'default', gain = 1) {
   // the identity of the program and have to be in the key.
   const prevKey = material.customProgramCacheKey;
   const tag = `macro-${family}-${gain.toFixed(2)}-${uB ? 's' : ''}${uC ? 'r' : ''}`
-    + `${far ? 'F' : ''}${wear ? 'W' : ''}`
+    + `${far ? 'F' : ''}${mid ? 'M' : ''}${wear ? 'W' : ''}`
     + `${detail ? `D${Math.round(ud.meanLuma * 1000)}` : ''}`
     + `${slab ? `S${ud.cells}` : ''}`;
   material.customProgramCacheKey = () => (prevKey ? prevKey.call(material) : '') + '|' + tag;
@@ -965,7 +1074,13 @@ export const Textures = {
       // all it contributes is shimmer; this band is the coarsest thing that
       // still reads as individual stone rather than as tone, and it is what
       // gives the normal map something the sun can catch.
-      const chip = fbm(size, size >> 3, 2, rand);
+      // `contrast` is the whole point. Plain fBm at this cell count is a soft
+      // cloud, and a soft cloud in a height field is a dented sheet of card, not
+      // a chip seal — a dump of the normal map showed nothing but the 7 cm grit
+      // hiss with no stone in it at all. Pushed through a hard sigmoid the same
+      // field breaks into discrete lumps with flat gaps between them, which is
+      // what a stone in a bitumen matrix actually is and what the sun can catch.
+      const chip = contrast(fbm(size, size >> 3, 2, rand), 2.5);
       const grit = fbm(size, size >> 2, 2, rand);
 
       const col = canvas(size);
@@ -974,7 +1089,12 @@ export const Textures = {
         // they are the only ones with any chance of surviving the mip chain.
         // A road that varies in HUE reads as mud; one that varies in VALUE
         // reads as asphalt, so the tints are barely off neutral.
-        { f: macro, amp: 0.120, tint: [1.10, 1.0, 0.86] },
+        // Tint pulled back from [1.10,1.0,0.86]. Measured on the street-level
+        // preset the carriageway rendered at r:b 1.29-1.43 — warmer than the
+        // BONE SIDEWALK beside it, which is how a road ends up reading as dried
+        // mud. The macro hue drift in worldDetail is stacked on top of this, so
+        // the two have to be budgeted together, not tuned separately.
+        { f: macro, amp: 0.120, tint: [1.05, 1.0, 0.92] },
         { f: band, amp: 0.112, tint: [1.02, 1.0, 0.96] },
         // Everything under half a metre is HALVED from what it was. At 40 m the
         // old settings rendered as an even sandpaper hiss over the whole
@@ -986,19 +1106,29 @@ export const Textures = {
         { f: grit, amp: 0.046, tint: [1.0, 0.99, 0.97] },
       ]);
 
+      // Height carries everything the albedo is not allowed to. The chip band
+      // leads now rather than the 7 cm grit: 18 cm is the coarsest feature that
+      // still reads as individual stone, it is what survives to 40 m, and it is
+      // the only channel in which "aggregate" can be loud without becoming the
+      // sandpaper hiss the albedo rebalance above exists to prevent.
       const hgt = canvas(size);
       const gh = paintGrey(hgt, size, 128, [
-        { f: grit, amp: 0.80 },
-        { f: chip, amp: 0.55 },
-        { f: mid, amp: 0.30 },
+        { f: chip, amp: 1.05 },
+        { f: grit, amp: 0.46 },
+        { f: mid, amp: 0.34 },
         { f: band, amp: 0.22 },
         { f: macro, amp: 0.18 },
       ]);
 
+      // Wider roughness spread than before. A wearing course is genuinely
+      // uneven in gloss — the fines polish, the exposed stone does not — and
+      // that variation is legible from the gameplay camera in a way that a
+      // matching amount of albedo variation is not.
       const rgh = canvas(size);
       const gr = paintGrey(rgh, size, 236, [
-        { f: band, amp: 0.30 },
-        { f: mid, amp: 0.16 },
+        { f: band, amp: 0.38 },
+        { f: mid, amp: 0.22 },
+        { f: chip, amp: 0.16 },
         { f: grit, amp: 0.10 },
       ]);
 
@@ -1031,9 +1161,17 @@ export const Textures = {
       }
 
       /* Crack sealant: a raised, glossy bead. Visible mostly as a specular
-         change, which does not repeat the way a dark line does. */
-      const seam = css(srgb(PALETTE.TAR_SEAM), 0.20);
-      for (let i = 0; i < 7; i++) {
+         change, which does not repeat the way a dark line does.
+
+         FOUR, not seven, and fainter in albedo. streets.js builds the real
+         sealed cracks as geometry, per road, at the actual crack's position —
+         so every seam painted in here is a SECOND set of cracks that repeats
+         every 9 m. In a dump of the colour map they were the loudest thing on
+         it, and a distinctive wandering line drawn 50 times across the frame is
+         the definition of a countable repeat. What is left is background
+         crazing for the sealant geometry to sit among. */
+      const seam = css(srgb(PALETTE.TAR_SEAM), 0.13);
+      for (let i = 0; i < 4; i++) {
         const x0 = rand() * size, y0 = rand() * size;
         const len = size * (0.5 + rand() * 0.8);
         const lw = 1.0 + rand() * 1.8;
@@ -1047,9 +1185,9 @@ export const Textures = {
       }
 
       /* Hairline cracks: height only. In albedo they read as a black cobweb. */
-      gc.strokeStyle = 'rgba(74,68,58,0.10)';
+      gc.strokeStyle = 'rgba(74,68,58,0.07)';
       gh.strokeStyle = 'rgba(78,78,78,0.7)';
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 6; i++) {
         const x0 = rand() * size, y0 = rand() * size;
         const len = size * (0.10 + rand() * 0.20);
         const s = rand() * 1000;
@@ -1096,12 +1234,17 @@ export const Textures = {
          seams and the repairs too, exactly as the real thing does. Tied to the
          same field that drives the normal map, so the dark is always in the
          hollows and the two channels agree under any sun angle. */
+      // 0.42 up from 0.30, and the threshold widened: at 0.30 the shading was
+      // measurable and invisible. This is the one high-frequency albedo feature
+      // that is allowed to be loud, because it is tied to the height field —
+      // the dark always lands in a hollow the normal map is already shading the
+      // same way, so it sharpens the relief instead of competing with it.
       {
         const chipN = normalise(chip);
         const img = gc.getImageData(0, 0, size, size);
         const d = img.data;
         for (let i = 0, o = 0; i < size * size; i++, o += 4) {
-          const k = 1 - Math.max(0, 0.52 - chipN[i]) * 0.30;
+          const k = 1 - Math.max(0, 0.58 - chipN[i]) * 0.42;
           d[o] *= k; d[o + 1] *= k; d[o + 2] *= k;
         }
         gc.putImageData(img, 0, 0);
@@ -1114,11 +1257,13 @@ export const Textures = {
          polish has to stay isotropic (the soft sweeps above) unless it is
          drawn per-road in streets.js where the direction is known. */
 
-      // normalScale down from 0.9: with the 18 cm chip band now in the height
-      // field there is more relief to catch, and the 7 cm grain was the other
-      // half of the shimmer the albedo rebalance above was fixing.
+      // Back up to 0.92. The earlier cut to 0.76 was made to kill shimmer that
+      // was actually coming from the ALBEDO grain, and it took the aggregate
+      // with it: a 1:1 crop of the carriageway had no visible stone at all.
+      // Normal relief costs nothing at distance — it averages toward flat — so
+      // this is the cheap half of "readable at 4 m and at 40 m".
       return pack(col, hgt, rgh, size, {
-        normalStrength: 1.35, normalScale: 0.76, family: 'asphalt',
+        normalStrength: 1.55, normalScale: 0.92, family: 'asphalt',
       });
     });
   },
@@ -1142,22 +1287,37 @@ export const Textures = {
       // the one thing this generator can push hard without striping the bridge
       // decks and park paths that share it.
       const pit = contrast(fbm(size, size >> 2, 1, rand), 2.4);
+      // Patchy shutter release / curing blotch. Also direction-free, and at
+      // roughly a fifth of the tile it is the band that stops a seawall reading
+      // as a blank sheet from thirty metres.
+      const blotch = normalise(fbm(size, 5, 2, rand));
 
+      /*
+       * Amplitudes roughly doubled from where they were. A dump of this map was
+       * almost literally blank paper — a base at 0.82 albedo with +-3% on it —
+       * and it dresses the seawall, every podium, every bridge deck and the park
+       * paths, which between them are a large fraction of the frame. Concrete is
+       * not a uniform material: it is poured in lifts, on different days, out of
+       * different trucks, and every one of those shows.
+       */
       const col = canvas(size);
       const gc = paintBase(col, size, rgb, [
-        { f: macro, amp: 0.075, tint: [1.1, 1.0, 0.85] },
-        { f: mid, amp: 0.035 },
-        { f: fine, amp: 0.03 },
-        { f: pit, amp: 0.028 },
+        { f: macro, amp: 0.135, tint: [1.06, 1.0, 0.90] },
+        { f: blotch, amp: 0.075, tint: [1.0, 1.0, 1.04] },
+        { f: mid, amp: 0.050 },
+        { f: fine, amp: 0.038 },
+        { f: pit, amp: 0.048 },
       ]);
       const hgt = canvas(size);
       const gh = paintGrey(hgt, size, 128, [
-        { f: pit, amp: 0.70 },
+        { f: pit, amp: 0.85 },
         { f: fine, amp: 0.55 },
         { f: mid, amp: 0.35 },
       ]);
       const rgh = canvas(size);
-      const gr = paintGrey(rgh, size, 232, [{ f: mid, amp: 0.16 }, { f: macro, amp: 0.18 }]);
+      const gr = paintGrey(rgh, size, 232, [
+        { f: mid, amp: 0.16 }, { f: macro, amp: 0.18 }, { f: blotch, amp: 0.26 },
+      ]);
 
       /* Board-form marks: cast concrete is poured against plywood in courses
          and keeps the joint for life — a hairline recess with a lip of grout
@@ -1223,8 +1383,42 @@ export const Textures = {
         gr.fillRect(x, 0, w, h);
       }
 
+      /* Efflorescence. Salt water wicks through the slab, evaporates at the
+         face and leaves a chalky bloom — on the Biscayne seawall this is the
+         single most characteristic mark concrete carries, and it is round, so
+         unlike the board-form courses it costs nothing on a horizontal path.
+         Dead matte where it sits: the bloom is a powder. */
+      for (let i = 0; i < 8; i++) {
+        const x = rand() * size, y = rand() * size, r = size * (0.06 + rand() * 0.15);
+        wrapped(gc, size, () => {
+          const rg = gc.createRadialGradient(x, y, 0, x, y, r);
+          rg.addColorStop(0.0, 'rgba(255,253,246,0.34)');
+          rg.addColorStop(0.55, 'rgba(252,248,238,0.15)');
+          rg.addColorStop(1.0, 'rgba(252,248,238,0)');
+          gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
+        });
+        wrapped(gr, size, () => {
+          const rg = gr.createRadialGradient(x, y, 0, x, y, r);
+          rg.addColorStop(0, 'rgba(255,255,255,0.55)');
+          rg.addColorStop(1, 'rgba(255,255,255,0)');
+          gr.fillStyle = rg; gr.beginPath(); gr.arc(x, y, r, 0, 7); gr.fill();
+        });
+      }
+
+      /* ...and the opposite: algae and grime in the damp corners. Warm-grey,
+         never green-grey, or a seawall in full sun reads as pond scum. */
+      for (let i = 0; i < 6; i++) {
+        const x = rand() * size, y = rand() * size, r = size * (0.08 + rand() * 0.17);
+        wrapped(gc, size, () => {
+          const rg = gc.createRadialGradient(x, y, 0, x, y, r);
+          rg.addColorStop(0, 'rgba(122,116,96,0.26)');
+          rg.addColorStop(1, 'rgba(122,116,96,0)');
+          gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
+        });
+      }
+
       return pack(col, hgt, rgh, size, {
-        normalStrength: 0.8, normalScale: 0.65, normalSize: 256, family: 'concrete',
+        normalStrength: 1.0, normalScale: 0.72, normalSize: 256, family: 'concrete',
       });
     });
   },
@@ -1237,10 +1431,12 @@ export const Textures = {
     return cached(`tex-paving-${size}-${base}-${line}-${cells}`, () => {
       const rand = mulberry32(0x2f77a3 ^ (cells * 7919));
       // Sidewalks are the second-most-common failure (blown to white), so the
-      // base is pulled under ALBEDO_CEIL. Only slightly warmed, though: paving
-      // that goes past bone into tan stops reading as concrete, and the warm
-      // key light plus the grade's highlight tint already push it that way.
-      const rgb = warmBalance(srgb(base), 0.20, 0.93);
+      // base is pulled under ALBEDO_CEIL. Barely warmed, though: paving that
+      // goes past bone into tan stops reading as concrete, and the warm key
+      // light plus the grade's highlight tint already push it that way. Measured
+      // on the street-level preset it was landing at r:b 1.34-1.41, which is
+      // sand, not bone — hence 0.11 rather than the 0.20 that was here.
+      const rgb = warmBalance(srgb(base), 0.11, 0.93);
 
       const macro = normalise(fbm(size, 3, 3, rand));
       const fine = fbm(size, size >> 3, 2, rand);
@@ -1248,7 +1444,7 @@ export const Textures = {
 
       const col = canvas(size);
       const gc = paintBase(col, size, rgb, [
-        { f: macro, amp: 0.065, tint: [1.12, 1.0, 0.82] },
+        { f: macro, amp: 0.065, tint: [1.06, 1.0, 0.91] },
         { f: fine, amp: 0.03 },
         { f: grain, amp: 0.035 },
       ]);
@@ -1312,7 +1508,7 @@ export const Textures = {
        * normal map it is the reason one course catches the sun and the next
        * one does not, which is worth more than any amount of albedo mottle.
        */
-      gh.lineWidth = 0.9;
+      gh.lineWidth = 1.05;
       for (let j = 0; j < cells; j++) {
         const y0 = j * step, y1 = y0 + step;
         const across = j % 2 === 0;
@@ -1320,8 +1516,12 @@ export const Textures = {
         const n = Math.max(4, Math.round(span / 3.4));
         for (let k = 0; k < n; k++) {
           const t = (k + 0.35 + rand() * 0.3) / n;
+          // Contrast up from 0.30/0.24. A broom finish that does not survive to
+          // the gameplay camera is a broom finish that does not exist, and the
+          // alternating course direction is the only thing making one slab
+          // catch the sun differently from its neighbour.
           gh.strokeStyle = rand() < 0.5
-            ? 'rgba(206,206,206,0.30)' : 'rgba(56,56,56,0.24)';
+            ? 'rgba(214,214,214,0.44)' : 'rgba(48,48,48,0.36)';
           gh.beginPath();
           if (across) { const y = y0 + t * step; gh.moveTo(0, y); gh.lineTo(size, y); }
           else { const x = t * size; gh.moveTo(x, y0); gh.lineTo(x, y1); }
@@ -1376,29 +1576,32 @@ export const Textures = {
         }
       }
 
-      /* Corner wear + a couple of faint stains. */
+      /* Corner wear: grit collects in the joint and gets ground into the arris,
+         so the darkest part of any slab is its corners. Up from 0.22 — in a
+         dump of the finished map this was not visible at all, and it is what
+         stops each slab reading as a flat chip of colour. */
       for (let j = 0; j < cells; j++) {
         const off = rowShift[j] * step;
         for (let i = 0; i < cells; i++) {
-          if (rand() > 0.4) continue;
+          if (rand() > 0.55) continue;
           const cx = i * step + off;
           const cy = (j + (rand() < 0.5 ? 0 : 1)) * step;
-          const r = step * (0.12 + rand() * 0.14);
+          const r = step * (0.14 + rand() * 0.18);
           wrapped(gc, size, () => {
             const rg = gc.createRadialGradient(cx, cy, 0, cx, cy, r);
-            rg.addColorStop(0, 'rgba(118,108,90,0.22)');
-            rg.addColorStop(1, 'rgba(118,108,90,0)');
+            rg.addColorStop(0, 'rgba(112,102,84,0.34)');
+            rg.addColorStop(1, 'rgba(112,102,84,0)');
             gc.fillStyle = rg;
             gc.beginPath(); gc.arc(cx, cy, r, 0, 7); gc.fill();
           });
         }
       }
       /* Damp / dirt patches, metres across so they still read from the air. */
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 7; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.10 + rand() * 0.16);
         wrapped(gc, size, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
-          rg.addColorStop(0, 'rgba(126,114,92,0.17)');
+          rg.addColorStop(0, 'rgba(126,114,92,0.27)');
           rg.addColorStop(1, 'rgba(126,114,92,0)');
           gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
         });
@@ -1439,7 +1642,7 @@ export const Textures = {
       // `cells` travels with the texture so macroSlab() can line its world-space
       // hash up with the grid that was actually painted here.
       return pack(col, hgt, rgh, size, {
-        normalStrength: 1.25, normalScale: 0.85, family: 'paving', cells,
+        normalStrength: 1.45, normalScale: 0.95, family: 'paving', cells,
       });
     });
   },

@@ -524,11 +524,51 @@ function gBollardStone(m) {
   ], { cols: [P.CONCRETE_DARK, P.PRECAST, P.PRECAST] });
 }
 
+/**
+ * Cast-iron bell bollard with a ball finial.
+ *
+ * The third bollard MODEL, not a recolour. `bollard` is the single most placed
+ * object in the city (875 of them) and `bollardStone` is a square block, so a
+ * kerb run that wants a third beat has only ever had two. This one is round
+ * like the first but has a waisted shaft, a collar and a ball on top, which is
+ * a different silhouette from every angle including straight down.
+ */
+function gBollardBell(m) {
+  // Six segments and the painted band folded into the sweep's own `cols`, so a
+  // bollard the city places hundreds of times costs 76 triangles rather than
+  // 117 — and at 6 it matches gBollard, which is the house round-ness.
+  m.tube(0, 0, [[0, 0.185], [0.07, 0.155], [0.44, 0.120], [0.50, 0.118],
+    [0.72, 0.142], [0.80, 0.118]], 6, {
+    capTop: false,
+    cols: [P.BENCH_METAL, P.BENCH_METAL, P.ACCENT_SUN, P.BENCH_METAL, P.BENCH_METAL],
+  });
+  m.col(P.BENCH_METAL);
+  m.tube(0, 0, [[0.80, 0.100], [0.87, 0.128], [0.96, 0.052]], 6, { capTop: true });
+}
+
 function gHydrant(m) {
   m.tube(0, 0, [[0, 0.24], [0.07, 0.155], [0.62, 0.19]], 6, {
     cols: [P.HYDRANT_RED, P.HYDRANT_RED],
   });
   m.tube(0, 0, [[0.62, 0.19], [0.80, 0.085]], 6, { capTop: true, cols: [P.HYDRANT_YELLOW] });
+}
+
+/**
+ * Fire-department standpipe (the "Siamese" inlet every US frontage has and no
+ * procedural street ever does). Reads as a hydrant's tall cousin: same red, but
+ * a slim riser with two chrome inlets angled at the kerb and a placard on top.
+ */
+function gStandpipe(m) {
+  m.col(P.CONCRETE_DARK).prism(0, 0, [[0, 0.38, 0.32], [0.07, 0.32, 0.26]]);
+  m.col(P.HYDRANT_RED);
+  m.tube(0, 0, [[0.07, 0.105], [0.78, 0.095]], 6);
+  m.tube(0, 0, [[0.78, 0.145], [0.88, 0.135]], 6, { capTop: true });
+  // Inlets splay out toward the street so the pair reads as a pair from above.
+  m.col(P.CHROME);
+  for (const s of [-1, 1]) {
+    m.beam(0, 0.66, 0.03, s * 0.21, 0.74, 0.21, 0.135, 0.135);
+  }
+  m.col(P.SIGN_FACE).prism(0, 0.08, [[0.90, 0.26, 0.02], [1.06, 0.26, 0.02]]);
 }
 
 function gUplighter(m) {
@@ -566,6 +606,29 @@ function gBinMesh(m) {
   m.col(P.STEEL_DARK).prism(0, 0, [[0.80, 0.43, 0.43], [0.88, 0.41, 0.41]]);
 }
 
+/**
+ * Sacks put out for collection. The only SOFT silhouette on any pavement in the
+ * game — everything else this module makes is a box, a tube or a board — which
+ * is exactly why a back-of-house kerb needs it: three slumped bags say "bin day
+ * behind a restaurant" in a way no amount of extra wheelie bins can.
+ */
+function gTrashBags(m) {
+  // Three on the ground, one slung on top. Sizes and hues all differ; a matched
+  // set of bin bags is the tell.
+  const bags = [
+    [-0.30, -0.04, 0, 0.30, 0x353a3d],
+    [0.28, 0.08, 0, 0.34, 0x2c3134],
+    [0.00, 0.30, 0, 0.27, 0x3d4245],
+    [-0.05, 0.02, 0.44, 0.26, 0x323739],
+  ];
+  for (const [x, z, y, r, hex] of bags) {
+    m.col(hex);
+    m.tube(x, z, [
+      [y, r * 0.72], [y + r * 0.55, r], [y + r * 1.20, r * 0.66], [y + r * 1.62, r * 0.15],
+    ], 6, { capTop: true });
+  }
+}
+
 /* -- seating -------------------------------------------------------------- */
 
 function gBenchSlat(m) {
@@ -594,6 +657,38 @@ function gBenchBackless(m) {
   for (const s of [-1, 1]) {
     m.beam(s * 0.68, 0, 0.16, s * 0.68, 0.41, 0.14, 0.07, 0.07);
     m.beam(s * 0.68, 0, -0.16, s * 0.68, 0.41, -0.14, 0.07, 0.07);
+  }
+}
+
+/**
+ * Bowed civic bench: three precast segments set on a shallow arc with a timber
+ * seat and a slim steel back rail.
+ *
+ * `benchSlat` is placed 706 times and `benchConcrete` is a straight bar, so
+ * every plaza in the city was ruled with straight lines of seating. The bow is
+ * only 0.2 m over 2.6 m — enough that the shadow and the top edge curve, which
+ * is all the eye needs to stop counting copies.
+ */
+function gBenchCurve(m) {
+  for (let k = -1; k <= 1; k++) {
+    const x = k * 0.88;
+    const z = (k * k) * 0.22;          // shallow bow, deepest at the ends
+    m.col(P.PRECAST);
+    m.prism(x, z, [
+      [0, 0.82, 0.54], [0.06, 0.76, 0.48], [0.38, 0.76, 0.48], [0.43, 0.86, 0.58],
+    ], { cols: [P.CONCRETE_DARK, P.PRECAST, P.PRECAST] });
+    m.col(P.TEAK);
+    m.prism(x, z, [[0.43, 0.82, 0.54], [0.49, 0.78, 0.50]]);
+  }
+  // One continuous rail across all three seats, so it reads as one bench.
+  m.col(P.BENCH_METAL);
+  for (const s of [-1, 1]) {
+    m.beam(s * 1.24, 0.44, 0.16, s * 1.24, 0.86, -0.06, 0.07, 0.07, false);
+  }
+  m.beam(0, 0.46, -0.06, 0, 0.86, -0.06, 0.07, 0.07, false);
+  m.col(P.TEAK, 0.94);
+  for (const y of [0.72, 0.86]) {
+    m.beam(-1.28, y, -0.06, 1.28, y, -0.06, 0.10, 0.06, false);
   }
 }
 
@@ -862,6 +957,34 @@ function gBeachParasol(m) {
   m.tube(0, 0, [[0, 0.06], [2.02, 0.05]], 6);
   m.col(0xffffff);
   canopy(m, 2.02, 1.42, 2.16, 1.20, 2.46);
+}
+
+/**
+ * Square market parasol on a timber mast, with a fabric valance.
+ *
+ * Round canopies are 203 of the 203 parasols in the city and from the game's
+ * overhead camera a canopy IS its plan shape — so a terrace of them reads as a
+ * tray of identical discs. A square one costs the same triangles and changes
+ * the single most visible thing about the object. Fabric authored near-white so
+ * the per-instance tint colours it, same as the round pair.
+ */
+function gParasolSquare(m) {
+  m.col(P.WOOD_DARK);
+  m.tube(0, 0, [[0, 0.32], [0.05, 0.28], [0.07, 0.055], [2.16, 0.05]], 6);
+  m.col(0xffffff);
+  // Shallow hipped canopy, closed underneath — see canopy() for why the
+  // underside is one downward face rather than its own inverted surface.
+  m.prism(0, 0, [
+    [2.16, 2.24, 2.24], [2.28, 2.06, 2.06], [2.58, 0.16, 0.16],
+  ], { capTop: true, capBot: true });
+  m.col(0xf2f2f2);
+  // Valance: the scalloped skirt is what makes fabric read as fabric.
+  for (const [cx, cz, w, d] of [[0, 1.09, 2.24, 0.04], [0, -1.09, 2.24, 0.04],
+    [1.09, 0, 0.04, 2.24], [-1.09, 0, 0.04, 2.24]]) {
+    m.prism(cx, cz, [[1.94, w, d], [2.17, w, d]]);
+  }
+  m.col(P.STEEL_DARK);
+  m.tube(0, 0, [[2.58, 0.055], [2.70, 0.04]], 5, { capTop: true });
 }
 
 function gPatioHeater(m) {
@@ -1210,6 +1333,39 @@ function gScaffold(m) {
   m.prism(0, 0, [[1.90, 1.24, 0.90], [1.96, 1.24, 0.90]]);
 }
 
+/**
+ * Timber cable reel, stood on its rim and chocked.
+ *
+ * Every other object on a construction site is a box or a barrier, so the yard
+ * had no round vertical silhouette at all. It is chocked rather than free —
+ * which is both how a site leaves one and how it gets a contact patch wide
+ * enough for the support physics to behave: on the bare rim it would stand on a
+ * 9 cm line and topple the instant anything touched it.
+ */
+function gCableDrum(m) {
+  const R = 0.78;
+  // Flanges are discs in the XY plane, so the reel would roll along local x.
+  for (const s of [-1, 1]) {
+    m.col(s > 0 ? P.WOOD_DECK : P.WOOD_LIGHT);
+    m.xform(0, 0, R, s * 0.30);
+    m.discZ(0, 0, R, 0.09, 10, -Math.PI / 2);
+    m.reset();
+  }
+  m.col(0x2a2e31);
+  m.xform(0, 0, R, 0);
+  m.discZ(0, 0, R * 0.66, 0.50, 10, -Math.PI / 2);
+  m.reset();
+  m.col(P.WOOD_DARK);
+  for (const s of [-1, 1]) {
+    m.prism(s * 0.52, 0, [[0, 0.30, 0.76], [0.15, 0.24, 0.72]]);
+  }
+  // Axle boss, proud of the flange face so it never shares a plane with it.
+  m.col(P.STEEL_DARK);
+  m.xform(0, 0, R, 0.375);
+  m.discZ(0, 0, 0.17, 0.05, 8, -Math.PI / 2);
+  m.reset();
+}
+
 function gSandbags(m) {
   const rows = [
     [0, [-0.34, 0, 0.34]],
@@ -1345,6 +1501,40 @@ function gTerraceHedge(m) {
   m.col(P.HEDGE).prism(0, 0, [
     [0.44, 1.92, 0.46], [0.86, 2.02, 0.54], [1.00, 1.84, 0.38],
   ], { cols: [P.HEDGE, P.HEDGE_LIGHT] });
+}
+
+/**
+ * Slatted trellis on a planter, with a climber through it and a short run of
+ * bulbs along the head rail.
+ *
+ * The fourth terrace boundary, and the only one that is TALL. A hedge, a glass
+ * screen and a rope line are all waist height, so a street of terraces has no
+ * vertical rhythm at its edge at all; this one is 1.9 m and casts a real
+ * shadow. It is also the only boundary piece that lights up, which is what
+ * stops a fenced terrace going flat at night.
+ */
+function gPlantScreen(m) {
+  m.col(P.WOOD_DARK).prism(0, 0, [
+    [0, 1.88, 0.52], [0.07, 1.82, 0.46], [0.50, 1.94, 0.58],
+  ], { cols: [P.BRICK_DARK, P.WOOD_DARK, P.WOOD_DARK], capTop: false });
+  m.col(P.MULCH).plate(0, 0.46, 0, 1.84, 0.48);
+  m.col(P.TEAK);
+  for (const s of [-1, 1]) m.beam(s * 0.84, 0.42, 0, s * 0.84, 1.82, 0, 0.10, 0.09, false);
+  for (let k = 0; k < 5; k++) {
+    const y = 0.78 + k * 0.25;
+    m.beam(-0.90, y, 0, 0.90, y, 0, 0.09, 0.05, false);
+  }
+  // Climber: three clumps threaded up the lattice at different heights, so the
+  // planting reads as grown rather than as a hedge lifted onto a frame.
+  const clumps = [[-0.56, 0.86, 0.34], [0.10, 1.24, 0.40], [0.62, 0.74, 0.30]];
+  for (let k = 0; k < clumps.length; k++) {
+    const [x, y, r] = clumps[k];
+    shrub(m, x, y, 0, r, k % 2 ? P.HEDGE : P.HEDGE_LIGHT, 5);
+  }
+  m.lit(P.LAMP_GLOW, 1, 1.15);
+  for (const x of [-0.56, 0, 0.56]) {
+    m.tube(x, 0, [[1.80, 0.05], [1.70, 0.042]], 5, { capTop: true });
+  }
 }
 
 /* -- nightlife + hotel ---------------------------------------------------- */
@@ -1663,7 +1853,10 @@ function gPottedFicus(m) {
 function gPlanterUrn(m) {
   m.col(P.PRECAST).prism(0, 0, [[0, 0.58, 0.58], [0.09, 0.50, 0.50]],
     { cols: [P.CONCRETE_DARK] });
-  m.tube(0, 0, [[0.09, 0.21], [0.28, 0.17], [0.46, 0.31], [0.74, 0.46], [0.82, 0.44]], 8, {
+  // Six segments, same as gPlanterRound: it is now placed 500 times and the
+  // extra two segments cost 16 triangles each for a silhouette nobody can tell
+  // apart at any distance the game camera ever gets to.
+  m.tube(0, 0, [[0.09, 0.21], [0.28, 0.17], [0.46, 0.31], [0.74, 0.46], [0.82, 0.44]], 6, {
     cols: [P.PRECAST, P.PRECAST, P.PRECAST, P.CONCRETE_DARK],
   });
   m.col(P.MULCH).plate(0, 0.80, 0, 0.78, 0.78);
@@ -2002,7 +2195,9 @@ const DEFS = {
   cone: { g: gCone, tier: T.TINY, r: 0.30, h: 0.72, label: 'Traffic Cone', sv: 0.07, debris: P.CONE_ORANGE },
   bollard: { g: gBollard, tier: T.TINY, r: 0.16, h: 0.95, label: 'Bollard', sv: 0.06, debris: P.BOLLARD_DARK },
   bollardStone: { g: gBollardStone, tier: T.TINY, r: 0.20, h: 0.88, label: 'Stone Bollard', sv: 0.07, debris: P.PRECAST },
+  bollardBell: { g: gBollardBell, tier: T.TINY, r: 0.19, h: 0.96, label: 'Bell Bollard', sv: 0.07, debris: P.BENCH_METAL },
   hydrant: { g: gHydrant, tier: T.TINY, r: 0.25, h: 0.80, label: 'Fire Hydrant', sv: 0.05, debris: P.HYDRANT_RED },
+  standpipe: { g: gStandpipe, tier: T.SMALL, r: 0.25, h: 1.06, label: 'Standpipe', sv: 0.05, debris: P.HYDRANT_RED },
   uplighter: { g: gUplighter, tier: T.TINY, r: 0.16, h: 0.22, label: 'Uplighter', sv: 0.08, debris: P.STEEL_DARK },
   cleat: { g: gMooringCleat, tier: T.TINY, r: 0.22, h: 0.25, label: 'Mooring Cleat', debris: P.STEEL_DARK },
 
@@ -2013,9 +2208,11 @@ const DEFS = {
     tint: [P.BIN_GREEN, P.BIN_BLUE, P.BIN_GREY, P.BIN_GREEN, P.BIN_BLUE], debris: P.BIN_GREEN,
   },
   binMesh: { g: gBinMesh, tier: T.SMALL, r: 0.28, h: 0.88, label: 'Wire Bin', sv: 0.05, debris: P.BENCH_METAL },
+  trashBags: { g: gTrashBags, tier: T.TINY, r: 0.64, h: 0.86, label: 'Rubbish Sacks', sv: 0.10, debris: 0x353a3d },
 
   /* seating -------------------------------------------------------------- */
   benchSlat: { g: gBenchSlat, tier: T.SMALL, r: 1.00, h: 0.90, label: 'Bench', shadow: true, sv: 0.05, debris: P.BENCH_WOOD },
+  benchCurve: { g: gBenchCurve, tier: T.SMALL, r: 1.34, h: 0.89, label: 'Civic Bench', shadow: true, sv: 0.05, crumbles: true, debris: P.PRECAST },
   benchConcrete: { g: gBenchConcrete, tier: T.SMALL, r: 1.12, h: 0.56, label: 'Stone Bench', shadow: true, crumbles: true, debris: P.PRECAST },
   benchBackless: { g: gBenchBackless, tier: T.SMALL, r: 0.88, h: 0.46, label: 'Park Bench', sv: 0.05, debris: P.WOOD_DECK },
   picnicTable: { g: gPicnicTable, tier: T.MEDIUM, r: 1.10, h: 0.76, label: 'Picnic Table', shadow: true, sv: 0.05, debris: P.WOOD_DECK },
@@ -2072,6 +2269,8 @@ const DEFS = {
   serviceStation: { g: gServiceStation, tier: T.SMALL, r: 0.54, h: 1.12, label: 'Service Station', debris: P.WOOD_DARK },
   terraceRail: { g: gTerraceRail, tier: T.SMALL, r: 0.99, h: 1.06, label: 'Terrace Screen', debris: P.ALUMINIUM },
   terraceHedge: { g: gTerraceHedge, tier: T.SMALL, r: 1.06, h: 1.00, label: 'Terrace Hedge', shadow: true, sv: 0.05, debris: P.HEDGE },
+  /* No `sv` for the same reason as the rope: it packs on a boundary line. */
+  plantScreen: { g: gPlantScreen, tier: T.MEDIUM, r: 0.99, h: 2.02, label: 'Planted Screen', shadow: true, debris: P.HEDGE },
   /* No `sv` on the rope: it packs end to end on the boundary line, and a 5%
      length change there opens a visible gap between every pair. */
   terraceRope: { g: gTerraceRope, tier: T.SMALL, r: 1.02, h: 1.08, label: 'Rope Divider', debris: P.TEAK },
@@ -2150,6 +2349,12 @@ const DEFS = {
     g: gBeachParasol, tier: T.MEDIUM, r: 1.45, h: 2.44, label: 'Beach Parasol', shadow: true,
     tint: [P.FABRIC_SUN, P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_WHITE], debris: P.FABRIC_SUN,
   },
+  parasolSquare: {
+    g: gParasolSquare, tier: T.MEDIUM, r: 1.58, h: 2.70, label: 'Market Parasol', shadow: true, sv: 0.05,
+    tint: [P.FABRIC_WHITE, P.FABRIC_LIME, P.FABRIC_SKY, P.FABRIC_CORAL, P.FABRIC_SUN,
+      P.STUCCO_PEACH, P.FABRIC_AQUA],
+    debris: P.FABRIC_WHITE,
+  },
   heater: { g: gPatioHeater, tier: T.MEDIUM, r: 0.62, h: 2.10, label: 'Patio Heater', debris: P.ALUMINIUM },
   stringPole: { g: gStringPole, tier: T.MEDIUM, r: 0.26, h: 3.30, label: 'String-Light Pole', shadow: true, debris: P.WOOD_DARK },
 
@@ -2181,6 +2386,7 @@ const DEFS = {
   crate: { g: gCrate, tier: T.SMALL, r: 0.56, h: 0.68, label: 'Crate', sv: 0.09, debris: P.WOOD_DECK },
   pallet: { g: gPallet, tier: T.SMALL, r: 0.75, h: 0.48, label: 'Pallet Stack', sv: 0.07, debris: P.WOOD_LIGHT },
   scaffold: { g: gScaffold, tier: T.MEDIUM, r: 0.75, h: 1.96, label: 'Scaffold Tower', shadow: true, sv: 0.06, debris: P.SCAFFOLD },
+  cableDrum: { g: gCableDrum, tier: T.MEDIUM, r: 0.77, h: 1.56, label: 'Cable Reel', shadow: true, sv: 0.08, debris: P.WOOD_DECK },
   sandbags: { g: gSandbags, tier: T.SMALL, r: 0.48, h: 0.57, label: 'Sandbags', sv: 0.09, debris: P.SAND },
   portaloo: { g: gPortaloo, tier: T.MEDIUM, r: 0.80, h: 2.26, label: 'Portaloo', shadow: true, debris: 0xffffff },
 };
@@ -2189,7 +2395,8 @@ const DEFS = {
 const MAT_OF = {
   bollard: 'metal', stanchion: 'metal', bikeRack: 'metal', scaffold: 'metal',
   cleat: 'metal', busShelter: 'gloss', heater: 'metal',
-  umbrella: 'fabric', parasol: 'fabric',
+  umbrella: 'fabric', parasol: 'fabric', parasolSquare: 'fabric',
+  bollardBell: 'metal', standpipe: 'metal',
   velvetRope: 'metal', cigBin: 'metal', meshFence: 'metal', clothesRail: 'metal',
   dumpster: 'metal', barStool: 'metal', keyBoard: 'metal',
   terraceRail: 'gloss', pastryCase: 'gloss',
@@ -2554,6 +2761,22 @@ class Placer {
   }
 
   /**
+   * `claimFeet` for a prop whose feet are not in a line.
+   *
+   * A festoon gate and a rope line have two feet on one axis, so an array of
+   * offsets along local x says everything about them. A terrace awning has
+   * four, in two rows 1.8 m apart across the pavement — reserving the midline
+   * between them would leave both rows of posts unclaimed and let a table land
+   * inside one.
+   *
+   * @param {Array<[number, number]>} pts foot positions in local (x, z)
+   */
+  claimLocal(x, z, rot, pts, r) {
+    const c = Math.cos(rot), s = Math.sin(rot);
+    for (const [lx, lz] of pts) this.claim(x + lx * c + lz * s, z - lx * s + lz * c, r);
+  }
+
+  /**
    * @param {number} [claimR] ground footprint to test and reserve. Defaults to
    *   the prop's MEASURED contact footprint; pass 0 for things that legitimately
    *   share a footprint with something already placed (a basket hanging off a
@@ -2799,8 +3022,8 @@ function dressMedians(pl, layout, rng) {
         continue;
       }
       const key = rng.weighted([
-        ['uplighter', 9], ['planterRound', 4], ['bollardStone', 3],
-        ['planterTrough', 3],
+        ['uplighter', 9], ['planterRound', 3], ['planterUrn', 3], ['planterModern', 3],
+        ['bollardStone', 2], ['bollardBell', 2], ['planterTrough', 3],
       ]);
       // Uplighters graze the hedge, so they sit right against its face; planting
       // needs its own clear soil between hedge and kerb.
@@ -2916,30 +3139,58 @@ const COMPANION = {
   benchTeak: ['binMesh', 'planterRound'],
   lightboxSign: ['cigBin'],
   barStool: ['barStool'],
+  bollardBell: ['bollardBell', 'bollardBell'],
+  planterUrn: ['planterUrn', 'bollardBell'],
+  planterModern: ['planterModern', 'benchCurve'],
+  benchCurve: ['binTwin', 'planterModern'],
+  binTwin: ['newsBox', 'aboardPoster'],
+  trashBags: ['trashBags', 'binWheelie'],
+  stockTrolley: ['deliveryStack', 'crate'],
+  aboardPoster: ['sandwichBoard', 'pottedFicus'],
+  barrelTable: ['barStool', 'barrelTable'],
+  standpipe: ['bollardBell'],
+  gelatoCase: ['binMesh', 'chairStack'],
+  chairStack: ['chairStack'],
+  busStopFlag: ['binMesh', 'busBench'],
+  cableDrum: ['pallet', 'crate'],
 };
 
 /** Weighted kerbside vocabulary for a block. */
+/**
+ * Weighted kerbside vocabulary for a block.
+ *
+ * The weights are spread deliberately THIN across many models rather than
+ * concentrated on a few. The first cut of this table had `bollard` at 7 and
+ * `planterRound` at 6 out of ~60 total weight, and the result was 875 identical
+ * bollards and a city where every third planter was the same round pot — the
+ * exact defect the brief names. Adding a model is worth far more here than
+ * adding a placement: a third bollard and a third and fourth planter take the
+ * same ground and the same triangles and stop the eye counting copies.
+ */
 function kerbTable(b) {
   const t = [
-    ['bollard', 7], ['binMuni', 6], ['binWheelie', 4], ['planterRound', 6],
-    ['planterSquare', 4], ['benchSlat', 5], ['signStreet', 3], ['signParking', 3],
-    ['hydrant', 3], ['meter', 4], ['newsBox', 3], ['utilityBox', 2], ['cone', 2],
-    ['signOneWay', 3], ['benchTeak', 4], ['payStation', 2], ['cigBin', 2],
-    ['bikeRack', 3], ['scooter', 3], ['bicycle', 2], ['mailbox', 2],
+    ['bollard', 4], ['bollardBell', 4], ['binMuni', 5], ['binWheelie', 4],
+    ['planterRound', 4], ['planterSquare', 3], ['planterUrn', 4], ['planterModern', 3],
+    ['benchSlat', 4], ['signStreet', 3], ['signParking', 3],
+    ['hydrant', 3], ['standpipe', 2], ['meter', 4], ['newsBox', 3], ['utilityBox', 2],
+    ['cone', 2], ['signOneWay', 3], ['benchTeak', 3], ['payStation', 2], ['cigBin', 2],
+    ['bikeRack', 3], ['scooter', 3], ['bicycle', 2], ['mailbox', 2], ['binTwin', 3],
   ];
   if (b.streetLife > 0.5) {
-    t.push(['planterTrough', 5], ['binMesh', 3], ['phoneKiosk', 1], ['atmKiosk', 1],
+    t.push(['planterTrough', 4], ['binMesh', 3], ['phoneKiosk', 1], ['atmKiosk', 1],
       ['pottedPalm', 2], ['stanchion', 2], ['hotdogStand', 1], ['pottedFicus', 3],
-      ['wayfindTotem', 2], ['busBench', 3], ['flowerStand', 2]);
+      ['wayfindTotem', 2], ['busBench', 3], ['flowerStand', 2], ['aboardPoster', 3],
+      ['barrelTable', 2]);
   }
   if (b.streetLife < 0.45) {
-    // The quiet side of a block is where the servicing happens. A skip and a
-    // stack of pallets say "back of house" more cheaply than any signage.
+    // The quiet side of a block is where the servicing happens. A skip, a stack
+    // of pallets and a heap of sacks say "back of house" more cheaply than any
+    // signage — and the sacks are the only soft shape on the whole pavement.
     t.push(['bollardStone', 4], ['crate', 2], ['pallet', 1], ['dumpster', 3],
-      ['deliveryStack', 2], ['meshFence', 1]);
+      ['deliveryStack', 2], ['meshFence', 1], ['trashBags', 4], ['stockTrolley', 2]);
   }
-  if (b.onSpine) t.push(['benchConcrete', 3], ['foodCart', 1], ['displayRack', 1],
-    ['newsKiosk', 2], ['lightboxSign', 2]);
+  if (b.onSpine) t.push(['benchConcrete', 2], ['benchCurve', 3], ['foodCart', 1],
+    ['displayRack', 1], ['newsKiosk', 2], ['lightboxSign', 2]);
   return t;
 }
 
@@ -2982,17 +3233,30 @@ function kerbRun(pl, b, s, r, band, life) {
     }
   }
 
-  /* One shelter per busy boulevard frontage. */
+  /* One shelter per busy boulevard frontage — and where the frontage does not
+     earn a shelter, the pole-and-blade version of the same stop. A route that
+     only has stops on its grand frontages is a route with four stops on it. */
+  let stopped = false;
   if ((b.onBoulevard || b.onSpine) && life > 0.42 && len > 30 && r.chance(0.5)) {
     const u0 = 8 + r() * (len - 20);
     const p = edgePt(b, s, u0, Math.min(2.1, Math.max(1.5, band - 0.9)));
     const slid = pl.putAlong('busShelter', p.x, p.z, ux, uz, rot);
     if (slid !== null) {
+      stopped = true;
       const u = u0 + slid;
       const q = edgePt(b, s, u + 3.2, 1.1);
       pl.putAlong('binMesh', q.x, q.z, ux, uz, rot);
       const q2 = edgePt(b, s, u - 3.2, 1.15);
       pl.putAlong('signParking', q2.x, q2.z, ux, uz, rot);
+    }
+  }
+  if (!stopped && life > 0.28 && len > 24 && r.chance(0.34)) {
+    const u0 = 7 + r() * (len - 15);
+    const p = edgePt(b, s, u0, 1.0);
+    const slid = pl.putAlong('busStopFlag', p.x, p.z, ux, uz, rot);
+    if (slid !== null && r.chance(0.55)) {
+      const q = edgePt(b, s, u0 + slid + 2.4, Math.min(1.9, Math.max(1.3, band - 0.8)));
+      pl.putAlong(r.chance(0.5) ? 'busBench' : 'binMesh', q.x, q.z, ux, uz, rot);
     }
   }
 
@@ -3026,9 +3290,10 @@ function kerbRun(pl, b, s, r, band, life) {
     for (let u = 5 + r() * 4; u < len - 4; u += ((15.5 - 6.5 * life) / DENSITY) * (0.7 + r() * 0.8)) {
       const p = edgePt(b, s, u, midIn + (r() - 0.5) * 0.24);
       const key = r.weighted([
-        ['benchSlat', 8], ['planterSquare', 7], ['planterTrough', 5], ['binMuni', 4],
-        ['pottedPalm', 2], ['bollardStone', 4], ['cafeTable', life > 0.5 ? 6 : 1],
-        ['picnicTable', 2], ['stanchion', 2], ['lampPark', 3],
+        ['benchSlat', 6], ['benchCurve', 5], ['planterSquare', 5], ['planterTrough', 4],
+        ['planterModern', 4], ['planterUrn', 4], ['binMuni', 4],
+        ['pottedPalm', 2], ['bollardStone', 3], ['cafeTable', life > 0.5 ? 6 : 1],
+        ['picnicTable', 2], ['stanchion', 2], ['lampPark', 3], ['barrelTable', life > 0.5 ? 3 : 0],
       ]);
       if (key === 'cafeTable') { cafeCluster(pl, p.x, p.z, rot, r, 1); continue; }
       pl.putAlong(key, p.x, p.z, ux, uz, rot + (r() - 0.5) * 0.5);
@@ -3041,6 +3306,24 @@ function kerbRun(pl, b, s, r, band, life) {
     for (let u = 6 + r() * 4; u < len - 5; u += 9.6) {
       const p = edgePt(b, s, u, 1.0);
       pl.put('meter', p.x, p.z, rot);
+    }
+  }
+
+  /* IRONWORK. Drainage runs along the kerb at a surveyed spacing, not at
+     random, and a pavement with no covers in it is one of those absences you
+     cannot name but can see — every other flat surface in the city has been
+     given a joint pattern or a texture and this one had nothing. These are 9 cm
+     tall, so they cost almost nothing and they are the first thing a fresh hole
+     is allowed to take. They stand off the kerb by 0.8 m rather than in the
+     gutter: the gutter samples below GROUND_MIN and is refused there anyway. */
+  for (let u = 5 + r() * 9; u < len - 4; u += 26 + r() * 16) {
+    const p = edgePt(b, s, u, 0.82 + r() * 0.2);
+    pl.putAlong('drainGrate', p.x, p.z, ux, uz, rot + Math.PI / 2);
+  }
+  if (band > 2.6) {
+    for (let u = 9 + r() * 14; u < len - 5; u += 34 + r() * 22) {
+      const p = edgePt(b, s, u, band * (0.45 + r() * 0.25));
+      pl.putAlong('manholeCover', p.x, p.z, ux, uz, r() * TAU);
     }
   }
 }
@@ -3085,13 +3368,17 @@ function facadeRun(pl, b, s, r, band, life) {
      business rather than merely furnished, and it is the half of "storefront
      dressing" the module was missing entirely. */
   const table = shoppy
-    ? [['sandwichBoard', 6], ['produceCrate', 5], ['displayRack', 4], ['pottedPalm', 3],
-      ['binWheelie', 3], ['cafeChair', 2], ['crate', 3], ['planterTrough', 3], ['heater', 2],
-      ['clothesRail', 5], ['produceStand', 4], ['flowerStand', 3], ['deliveryStack', 3],
-      ['pastryCase', 2], ['menuBoard', 3], ['pottedFicus', 3]]
-    : [['pottedPalm', 3], ['planterSquare', 6], ['benchSlat', 5], ['binWheelie', 3],
-      ['bollardStone', 4], ['utilityBox', 2], ['sandwichBoard', 2], ['pottedFicus', 3],
-      ['deliveryStack', 2], ['cigBin', 2], ['benchTeak', 3]];
+    ? [['sandwichBoard', 5], ['aboardPoster', 5], ['produceCrate', 5], ['displayRack', 4],
+      ['pottedPalm', 3], ['binWheelie', 3], ['cafeChair', 2], ['crate', 3],
+      ['planterTrough', 3], ['heater', 2], ['clothesRail', 5], ['produceStand', 4],
+      ['flowerStand', 3], ['deliveryStack', 3], ['pastryCase', 2], ['gelatoCase', 3],
+      ['menuBoard', 3], ['pottedFicus', 3], ['stockTrolley', 3], ['chairStack', 3],
+      ['planterUrn', 3], ['cellarHatch', 3]]
+    : [['pottedPalm', 3], ['planterSquare', 4], ['planterUrn', 4], ['planterModern', 3],
+      ['benchSlat', 4], ['benchCurve', 3], ['binWheelie', 3],
+      ['bollardStone', 3], ['utilityBox', 2], ['sandwichBoard', 2], ['pottedFicus', 3],
+      ['deliveryStack', 2], ['cigBin', 2], ['benchTeak', 3], ['trashBags', 3],
+      ['stockTrolley', 2], ['cellarHatch', 2], ['standpipe', 2]];
 
   const [ux, uz] = EDGE_DIR[s];
   // Shop clutter stands AGAINST the glass, so this line is tighter than the
@@ -3184,7 +3471,13 @@ function cafeCluster(pl, x, z, rot, r, n = 1) {
     const ring = contactRadius(tk) + contactRadius(ck) + 0.26;
     const seats = 3 + r.int(0, 1);
     const shaded = r.chance(0.5);
-    const slots = seats + (shaded ? 1 : 0);
+    /* An ice bucket takes a slot of its own, standing on the floor beside the
+       table the way a real one does — the smallest object on a terrace and the
+       one that says somebody is actually being served rather than that the
+       chairs have been set out. Only clothed tables get one: a bare pedestal
+       table is a coffee table, and a champagne bucket at it is a joke. */
+    const served = tk === 'cafeTableCloth' && r.chance(0.3);
+    const slots = seats + (shaded ? 1 : 0) + (served ? 1 : 0);
     for (let k = 0; k < seats; k++) {
       const a = rot0 + (k / slots) * TAU + (r() - 0.5) * 0.22;
       const sx = cx + Math.cos(a) * ring, sz = cz + Math.sin(a) * ring;
@@ -3193,16 +3486,39 @@ function cafeCluster(pl, x, z, rot, r, n = 1) {
     }
     if (shaded) {
       const a = rot0 + (seats / slots) * TAU;
-      pl.put('umbrella', cx + Math.cos(a) * (ring + 0.35), cz + Math.sin(a) * (ring + 0.35), r() * TAU);
+      // Two canopy MODELS. From the game's overhead camera a parasol is its
+      // plan shape and nothing else, so a round-only terrace is a tray of
+      // identical discs however many colours are on it.
+      const uk = r.chance(0.42) ? 'parasolSquare' : 'umbrella';
+      pl.put(uk, cx + Math.cos(a) * (ring + 0.35), cz + Math.sin(a) * (ring + 0.35), r() * TAU);
+    }
+    if (served) {
+      const a = rot0 + ((seats + (shaded ? 1 : 0)) / slots) * TAU;
+      /* OUTSIDE the seat ring, not inside it. A clothed table reserves 0.81 m
+         and the bucket 0.50, so anything closer than 1.31 m from the table
+         centre is refused outright — which is why the first cut of this placed
+         exactly zero ice buckets in the entire city. */
+      const br = ring + 0.14;
+      pl.put('iceBucket', cx + Math.cos(a) * br, cz + Math.sin(a) * br, r() * TAU);
     }
   }
 }
 
 /* ------------------------------------------------------------- terrace --- */
 
-/** Terrace boundary vocabulary, longest first — see the pitch maths below. */
-const TERRACE_EDGE = [['terraceHedge', 5], ['terraceRail', 5], ['planterSquare', 3],
-  ['planterTrough', 3]];
+/**
+ * Terrace boundary vocabulary.
+ *
+ * Five entries, and the ONE chosen is used for the whole boundary of a given
+ * terrace (see restaurantTerrace) — a real restaurant buys one kind of screen,
+ * and mixing hedge, glass and rope along a single 12 m edge is the surest way
+ * to make a designed thing look scattered. The variety lives between terraces.
+ *
+ * `plantScreen` is the only tall one and the only one that lights up, so it is
+ * also what stops a whole street of terraces having a flat waist-height edge.
+ */
+const TERRACE_EDGE = [['terraceHedge', 5], ['terraceRail', 5], ['terraceRope', 4],
+  ['plantScreen', 4], ['planterSquare', 2], ['planterTrough', 2]];
 
 /**
  * A RESTAURANT TERRACE, laid out as a room rather than sprinkled as objects.
@@ -3261,8 +3577,13 @@ function restaurantTerrace(pl, b, r, band) {
      everything else keys off it — a terrace you cannot walk into reads as a
      storage yard. */
   const GAP = 2.5;
+  /* ONE boundary model per terrace, drawn once. Re-rolling it per section gave
+     every terrace a hedge, then a glass screen, then a rope, then a planter
+     along a single 12 m edge — which reads as four restaurants sharing a
+     pavement, not as one restaurant's terrace. */
+  const edgeKey = r.weighted(TERRACE_EDGE);
   for (let u = u0; fenced && u < u0 + span; ) {
-    const key = r.weighted(TERRACE_EDGE);
+    const key = edgeKey;
     /* Pack on the item's LENGTH ALONG THE KERB, and reserve a capsule rather
        than the circle its footprint bounds. A 2.04 m hedge bounds a 1.06 m
        circle, so circle-packing it leaves a 0.4 m hole between every pair and
@@ -3297,7 +3618,30 @@ function restaurantTerrace(pl, b, r, band) {
      against the shopfront. Across rather than along because the arch is 4 m
      wide and the terrace is only ever ~9-18 m long: along the frontage it
      would eat two table bays, across it uses depth nothing else wants. */
-  if (dFacade - dKerb > 3.6) {
+  /* SHADE OR LIGHT, never both. A terrace gets either a fabric awning over the
+     table line or a pair of festoon gates across it — the awning is 4.2 m of
+     canopy at 2.6 m and the gates are 4 m of wire at 3.1 m, so together they
+     interpenetrate and neither reads. Which one a terrace gets is the loudest
+     difference between two terraces on the same street, so it is a coin flip
+     rather than a rule. */
+  if (fenced && r.chance(0.5)) {
+    /* Four posts in two rows across the pavement, so the reservation cannot be
+       a line of feet — see claimLocal. The canopy sits ON the table line and
+       the tables slide a metre out of the way of the two posts that land in the
+       row, which is exactly what happens under a real one.
+       Gated on `fenced`, not on `roomy`: a fenced terrace is already 4.8 m of
+       pavement and the awning's deepest post lands at dTable + 1.11, so it
+       fits every one of them. Gating on `roomy` plus the arch's own 3.6 m depth
+       test meant an awning needed 5.55 m and the city got seven. */
+    const feet = [[-1.90, -0.92], [1.90, -0.92], [-1.90, 0.86], [1.90, 0.86]];
+    for (const du of [span * 0.26, span * 0.74]) {
+      if (Math.abs(u0 + du - uMid) < GAP * 0.5 + 2.0) continue;
+      const p = edgePt(b, s, u0 + du, dTable);
+      if (pl.put('terraceAwning', p.x, p.z, rot, 1, null, 0.34)) {
+        pl.claimLocal(p.x, p.z, rot, feet, 0.26);
+      }
+    }
+  } else if (dFacade - dKerb > 3.6) {
     const archRot = rot + Math.PI / 2;
     for (const du of [1.8, span - 1.8]) {
       const p = edgePt(b, s, u0 + du, (dKerb + dFacade) * 0.5);
@@ -3305,6 +3649,11 @@ function restaurantTerrace(pl, b, r, band) {
         pl.claimFeet(p.x, p.z, archRot, [-2.0, 2.0], 0.34);
       }
     }
+  } else if (r.chance(0.5)) {
+    // Too shallow for either gate: a single festoon pole is still worth having,
+    // and it is the only overhead light a narrow terrace can carry.
+    const p = edgePt(b, s, u0 + span * 0.3, Math.max(1.2, dKerb - 0.15));
+    pl.putAlong('stringPole', p.x, p.z, ux, uz, rot);
   }
 
   /* Tables, one line, square to the shopfront, skipping the bay in front of
@@ -3319,8 +3668,9 @@ function restaurantTerrace(pl, b, r, band) {
   /* Service and warmth against the glass — only where the depth is genuinely
      there. On a 4 m pavement this line would be standing in the table row. */
   if (!roomy) return;
-  const srv = [['serviceStation', 4], ['pastryCase', 3], ['heater', 5], ['pottedFicus', 3],
-    ['binMesh', 2]];
+  const srv = [['serviceStation', 4], ['pastryCase', 3], ['gelatoCase', 3], ['heater', 5],
+    ['pottedFicus', 3], ['binMesh', 2], ['chairStack', 3], ['barrelTable', 2],
+    ['drinksTub', 2], ['iceBucket', 2]];
   for (let u = u0 + 1.2; u < u0 + span - 1.0; u += 3.4 + r() * 2.2) {
     if (Math.abs(u - uMid) < 1.8) continue;
     const p = edgePt(b, s, u, dFacade + (r() - 0.5) * 0.2);
@@ -3397,6 +3747,14 @@ function hotelEntrance(pl, b, r, band) {
     pl.putAlong('keyBoard', k.x, k.z, ux, uz, rot);
     const sg = edgePt(b, s, mid - 7.0, 1.4);
     pl.putAlong('lightboxSign', sg.x, sg.z, ux, uz, rot);
+    // A bell cart parked at the door is the one object that says a hotel is
+    // OPERATING rather than merely built. It stands against the wall, out of
+    // the drive-through line under the canopy.
+    if (r.chance(0.7)) {
+      const lc = edgePt(b, s, mid + 3.2, Math.max(2.0, band - 0.75));
+      pl.putAlong('luggageCart', lc.x, lc.z, ux, uz, rot + Math.PI / 2 + (r() - 0.5) * 0.4);
+    }
+    loungeGroup(pl, b, s, mid - 8.8, band, rot, r);
   } else {
     const inset = Math.min(Math.max(1.75, band * 0.5), band - 1.65);
     const mid = anchorAlong(pl, b, s, mid0, inset, 'carpetRunner', rot);
@@ -3426,6 +3784,61 @@ function hotelEntrance(pl, b, r, band) {
     const sg = edgePt(b, s, mid - 6.6, 1.4);
     pl.putAlong('lightboxSign', sg.x, sg.z, ux, uz, rot);
   }
+}
+
+/**
+ * OUTDOOR LOUNGE SEATING, the two shapes it actually comes in.
+ *
+ * The brief asks for rooftop lounge furniture. Roofs belong to buildings.js and
+ * nothing standing on one has a ground contact patch this module can measure —
+ * a sofa up there would be a floating prop by every test the project has. So
+ * the lounge lives where the game can reach it: hotel forecourts, plazas, the
+ * marina apron.
+ *
+ * Both variants pass a small `claimR` and then claim the sofa's FEET. A sofa is
+ * 1.96 m across a 0.88 m body, so the circle bounding it is 1.07 m in every
+ * direction; reserve that and the low table 1.4 m in front of it is refused,
+ * which leaves a lounge that is a row of sofas facing nothing.
+ */
+const SOFA_FEET = [-0.72, 0, 0.72];
+
+/** Against a frontage: one sofa on the building line, a table in front of it. */
+function loungeGroup(pl, b, s, u, band, rot, r) {
+  if (band < 3.7 || u < 4 || u > edgeLen(b, s) - 4 || !r.chance(0.55)) return false;
+  const inset = Math.max(2.0, band - 1.35);
+  const p = edgePt(b, s, u, inset);
+  if (!pl.put('loungeSofa', p.x, p.z, rot, 1, null, 0.42)) return false;
+  pl.claimFeet(p.x, p.z, rot, SOFA_FEET, 0.44);
+  // Local +z faces the kerb, so the table goes out in front of the seat.
+  const nx = Math.sin(rot), nz = Math.cos(rot);
+  pl.put('loungeTable', p.x + nx * 1.42, p.z + nz * 1.42, rot);
+  if (r.chance(0.45)) {
+    const ax = Math.cos(rot), az = -Math.sin(rot);
+    pl.put('pottedFicus', p.x + ax * 1.7, p.z + az * 1.7, rot);
+  }
+  return true;
+}
+
+/** In the open: two sofas looking at each other across the table. */
+function loungeIsland(pl, x, z, face, r) {
+  const nx = Math.sin(face), nz = Math.cos(face);
+  if (!pl.free(x, z, 2.6) || !pl.sceneryClear(x, z, 2.2)) return false;
+  if (!pl.put('loungeTable', x, z, face)) return false;
+  let n = 0;
+  for (const sg of [-1, 1]) {
+    const sx = x - nx * sg * 1.62, sz = z - nz * sg * 1.62;
+    // Turned to look back at the table it is set around.
+    const srot = sg > 0 ? face : face + Math.PI;
+    if (!pl.put('loungeSofa', sx, sz, srot, 1, null, 0.42)) continue;
+    pl.claimFeet(sx, sz, srot, SOFA_FEET, 0.44);
+    n++;
+  }
+  if (n && r.chance(0.5)) {
+    const ax = Math.cos(face), az = -Math.sin(face);
+    pl.put(r.chance(0.5) ? 'parasolSquare' : 'pottedFicus',
+      x + ax * 2.5, z + az * 2.5, r() * TAU, 1, null, 0.75);
+  }
+  return n > 0;
 }
 
 function retailTerrace(pl, b, r, band) {
@@ -3462,6 +3875,32 @@ function retailTerrace(pl, b, r, band) {
     const p = edgePt(b, s, u, 1.5);
     pl.putAlong(r.chance(0.5) ? 'foodCart' : 'hotdogStand', p.x, p.z, ux, uz, rot);
   }
+  /* Standing room. A bar's pavement is high-tops and no chairs, which is a
+     completely different plan pattern from the café clusters above — same
+     ground, different rhythm, and it is the reason two retail frontages in a
+     row do not look like the same frontage twice. */
+  if (life > 0.5 && band > 2.6 && r.chance(0.42)) {
+    const u0 = 5 + r() * Math.max(1, len - 12);
+    for (let k = 0; k < 2 + r.int(0, 2); k++) {
+      const p = edgePt(b, s, u0 + k * 2.5, Math.max(1.8, band * 0.55) + (r() - 0.5) * 0.3);
+      const slid = pl.putAlong('barrelTable', p.x, p.z, ux, uz, r() * TAU);
+      if (slid === null) continue;
+      const q = edgePt(b, s, u0 + k * 2.5 + slid, Math.max(1.8, band * 0.55) - 1.0);
+      pl.put('barStool', q.x, q.z, rot + Math.PI + (r() - 0.5) * 0.6);
+    }
+    const t = edgePt(b, s, u0 - 2.0, Math.max(1.8, band - 0.7));
+    pl.putAlong('drinksTub', t.x, t.z, ux, uz, rot);
+  }
+  // Shade over a wide retail pavement, where there is no restaurant terrace to
+  // hang it off. Same four-post reservation as the terrace one.
+  if (band > 4.4 && r.chance(0.35)) {
+    const u = 6 + r() * Math.max(1, len - 12);
+    const p = edgePt(b, s, u, Math.min(band - 1.2, 2.6));
+    if (pl.put('terraceAwning', p.x, p.z, rot, 1, null, 0.34)) {
+      pl.claimLocal(p.x, p.z, rot,
+        [[-1.90, -0.92], [1.90, -0.92], [-1.90, 0.86], [1.90, 0.86]], 0.26);
+    }
+  }
   // Newspaper vending row: boxes stand shoulder to shoulder, so the row as a
   // whole is slid rather than each box independently.
   if (r.chance(0.32)) {
@@ -3486,15 +3925,24 @@ function towerForecourt(pl, b, r, band) {
   // Flanking potted palms + a rope line either side of the door. The pair is
   // symmetric about the entrance, so these do NOT slide — a lopsided pair of
   // door palms looks worse than a single one.
+  // ONE planter model for the flanking pair, chosen per building. A tower's
+  // door furniture is bought as a set; the variety belongs between towers.
+  const doorPlanter = r.weighted([['planterSquare', 4], ['planterUrn', 5], ['planterModern', 4]]);
   for (const sgn of [-1, 1]) {
     const p = edgePt(b, s, mid + sgn * 2.4, Math.max(1.8, band * 0.6));
     pl.put('pottedPalm', p.x, p.z, rot);
     const q = edgePt(b, s, mid + sgn * 4.6, Math.max(1.8, band * 0.6));
-    pl.put('planterSquare', q.x, q.z, rot);
+    pl.put(doorPlanter, q.x, q.z, rot);
   }
+  // A forecourt lounge, well off to the side of the door line.
+  loungeGroup(pl, b, s, mid + 9.5 + r() * 4, band, rot, r);
   if (r.chance(0.55)) {
     const p = edgePt(b, s, mid + 3.6, 1.6);
     pl.putAlong('valetStand', p.x, p.z, ux, uz, rot);
+  }
+  if (r.chance(0.4)) {
+    const p = edgePt(b, s, mid - 8.0 - r() * 3, Math.max(1.9, band - 0.8));
+    pl.putAlong('luggageCart', p.x, p.z, ux, uz, rot + Math.PI / 2 + (r() - 0.5) * 0.5);
   }
   if (r.chance(0.45)) {
     for (let k = 0; k < 5; k++) {
@@ -3566,6 +4014,22 @@ function eventCorner(pl, b, r) {
   }
   pl.put('cigBin', cx + ax * 2.6 + nx * 1.1, cz + az * 2.6 + nz * 1.1, face);
   pl.put('lightboxSign', cx - ax * 3.4 + nx * 0.6, cz - az * 3.4 + nz * 0.6, face);
+  /* The service side. An ice tub behind the counter and a couple of high-tops
+     out in front are what turn "a bar object" into a bar somebody is running:
+     the tub is on the staff side, the tables are on the crowd side, and that
+     asymmetry is what the eye reads as a working layout. */
+  pl.put('drinksTub', cx - ax * 2.1 - nx * 0.9, cz - az * 2.1 - nz * 0.9, face);
+  for (let k = 0; k < 2 + r.int(0, 1); k++) {
+    const tx = cx + ax * (k - 1) * 2.9 + nx * (3.4 + r() * 1.4);
+    const tz = cz + az * (k - 1) * 2.9 + nz * (3.4 + r() * 1.4);
+    if (!pl.put('barrelTable', tx, tz, r() * TAU)) continue;
+    for (let q = 0; q < 2; q++) {
+      const a = face + Math.PI * q + (r() - 0.5) * 0.6;
+      pl.put('barStool', tx + Math.sin(a) * 1.0, tz + Math.cos(a) * 1.0, a + Math.PI);
+    }
+  }
+  // Somewhere to sit that is not a stool, set back out of the crush.
+  loungeIsland(pl, cx - nx * 6.4 + ax * 3.0, cz - nz * 6.4 + az * 3.0, face + Math.PI / 2, r);
 }
 
 function plazaFurniture(pl, b, r) {
@@ -3581,24 +4045,33 @@ function plazaFurniture(pl, b, r) {
     const x = b.x + (r() - 0.5) * b.w * 0.82;
     const z = b.z + (r() - 0.5) * b.d * 0.82;
     const key = r.weighted([
-      ['benchConcrete', 7], ['planterSquare', 6], ['planterRound', 5], ['binMuni', 4],
-      ['bollardStone', 6], ['lampPark', 4], ['pottedPalm', 4], ['fountain', 2],
-      ['cafeTable', 4], ['benchSlat', 4], ['planterTrough', 3],
-      ['benchTeak', 5], ['pottedFicus', 4], ['wayfindTotem', 2], ['chessTable', 2],
+      ['benchConcrete', 5], ['benchCurve', 6], ['planterSquare', 4], ['planterRound', 4],
+      ['planterUrn', 5], ['planterModern', 4], ['binMuni', 3], ['binTwin', 3],
+      ['bollardStone', 4], ['bollardBell', 4], ['lampPark', 4], ['pottedPalm', 4],
+      ['fountain', 2], ['cafeTable', 4], ['benchSlat', 3], ['planterTrough', 3],
+      ['benchTeak', 4], ['pottedFicus', 4], ['wayfindTotem', 2], ['chessTable', 2],
+      ['barrelTable', 2], ['manholeCover', 3], ['parasolSquare', 2],
     ]);
     if (key === 'cafeTable') { cafeCluster(pl, x, z, r.pick(SQUARE), r, 1); continue; }
     // Open block: nothing here has a building claim, so an occupied cell means
     // nature.js's fountain apron or seating steps and the site is genuinely gone.
     pl.putOpen(key, x, z, squared(r));
   }
-  // A ring of planters around the centre reads as designed public realm.
+  // A ring of planters around the centre reads as designed public realm. One
+  // model for the whole ring — a ring of four different pots is not a ring.
   if (Math.min(b.w, b.d) > 34 && r.chance(0.6)) {
     const rad = Math.min(b.w, b.d) * 0.24;
     const k = 8 + r.int(0, 4);
+    const pot = r.weighted([['planterRound', 4], ['planterUrn', 5], ['planterModern', 3]]);
     for (let i = 0; i < k; i++) {
       const a = (i / k) * TAU;
-      pl.put('planterRound', b.x + Math.cos(a) * rad, b.z + Math.sin(a) * rad, a);
+      pl.put(pot, b.x + Math.cos(a) * rad, b.z + Math.sin(a) * rad, a);
     }
+  }
+  // One lounge island per decent plaza — the seating a bench is not.
+  if (Math.min(b.w, b.d) > 26 && r.chance(0.55)) {
+    loungeIsland(pl, b.x + (r() - 0.5) * b.w * 0.5, b.z + (r() - 0.5) * b.d * 0.5,
+      r.pick(SQUARE), r);
   }
 }
 
@@ -3609,10 +4082,11 @@ function parkFurniture(pl, b, r) {
     const x = b.x + (r() - 0.5) * b.w * 0.84;
     const z = b.z + (r() - 0.5) * b.d * 0.84;
     const key = r.weighted([
-      ['benchBackless', 8], ['benchSlat', 6], ['picnicTable', 6], ['binMesh', 5],
+      ['benchBackless', 7], ['benchSlat', 5], ['benchCurve', 5], ['picnicTable', 6],
+      ['binMesh', 4], ['binTwin', 3],
       ['lampPark', 5], ['fountain', 3], ['dogStation', 3], ['planterRound', 3],
-      ['bollardStone', 3], ['binMuni', 3],
-      ['benchTeak', 6], ['chessTable', 5], ['bbqGrill', 5],
+      ['planterUrn', 3], ['bollardStone', 3], ['binMuni', 2],
+      ['benchTeak', 6], ['chessTable', 5], ['bbqGrill', 5], ['trashBags', 1],
     ]);
     /* Benches in a park come in facing pairs across a walk, with the bin at one
        end — that trio is what makes a lawn read as a park rather than as an
@@ -3630,6 +4104,12 @@ function parkFurniture(pl, b, r) {
       continue;
     }
     pl.putOpen(key, x, z, squared(r));
+  }
+  // A park lounge under the trees. Same group as the plaza's, but turned to a
+  // random square heading so the two never read as the same set piece.
+  if (Math.min(b.w, b.d) > 24 && r.chance(0.5)) {
+    loungeIsland(pl, b.x + (r() - 0.5) * b.w * 0.55, b.z + (r() - 0.5) * b.d * 0.55,
+      r.pick(SQUARE), r);
   }
   // Picnic groves: tables come in twos and threes around a shady spot, set out
   // square to each other the way somebody would actually drag them.
@@ -3654,19 +4134,27 @@ function marinaApron(pl, b, r) {
     const x = b.x + (r() - 0.5) * b.w * 0.86;
     const z = b.z + (r() - 0.5) * b.d * 0.86;
     const key = r.weighted([
-      ['cleat', 8], ['crate', 6], ['bollardStone', 5], ['benchSlat', 4],
-      ['binMesh', 4], ['lampPark', 4], ['pallet', 4], ['planterRound', 3],
-      ['lounger', 3], ['parasol', 2], ['benchTeak', 5], ['deliveryStack', 3],
-      ['cigBin', 2],
+      ['cleat', 8], ['crate', 6], ['bollardStone', 4], ['bollardBell', 3], ['benchSlat', 3],
+      ['binMesh', 3], ['binTwin', 2], ['lampPark', 4], ['pallet', 4], ['planterRound', 3],
+      ['planterModern', 3], ['lounger', 3], ['parasol', 2], ['parasolSquare', 2],
+      ['benchTeak', 4], ['benchCurve', 3], ['deliveryStack', 3], ['cigBin', 2],
+      ['drinksTub', 2], ['barrelTable', 2], ['stockTrolley', 2], ['drainGrate', 3],
     ]);
     // A parasol stands on a 12 cm pole, so its measured footprint would let a
     // crate sit under the canopy. It reserves the ground its shade covers.
-    pl.putOpen(key, x, z, squared(r), 1, null, key === 'parasol' ? 0.9 : -1);
+    const shade = key === 'parasol' || key === 'parasolSquare';
+    pl.putOpen(key, x, z, squared(r), 1, null, shade ? 0.9 : -1);
   }
   // Cleats march along the seaward edge at a fixed dock spacing.
   const ez = b.x + b.w / 2 - 1.2;
   for (let u = 2.5; u < b.d - 2.5; u += 4.5) {
     pl.put('cleat', ez, b.z - b.d / 2 + u, 0);
+  }
+  // Waterside lounge — the marina is the one place in the city where sitting
+  // and looking at nothing in particular is the entire point of the ground.
+  if (Math.min(b.w, b.d) > 22 && r.chance(0.6)) {
+    loungeIsland(pl, b.x + (r() - 0.5) * b.w * 0.5, b.z + (r() - 0.5) * b.d * 0.5,
+      r.pick(SQUARE), r);
   }
 }
 
@@ -3683,8 +4171,11 @@ function beachFront(pl, b, r) {
       const placed = pl.put('lounger', x, z, Math.PI / 2 + (r() - 0.5) * 0.2);
       if (placed && r.chance(0.7)) pl.put('lounger', x, z + 1.35, Math.PI / 2 + (r() - 0.5) * 0.2);
       // The canopy is meant to overhang the loungers, so it reserves a little
-      // more than its 12 cm pole and nothing like its 2.8 m span.
-      if (placed && r.chance(0.6)) pl.put('parasol', x - 1.7, z + 0.7, 0, 1, null, 0.35);
+      // more than its 12 cm pole and nothing like its 2.8 m span. Round or
+      // square by the same coin flip the terraces use.
+      if (placed && r.chance(0.6)) {
+        pl.put(r.chance(0.4) ? 'parasolSquare' : 'parasol', x - 1.7, z + 0.7, r() * TAU, 1, null, 0.35);
+      }
     }
   }
   for (let u = 2.5; u < b.d - 2.5; u += 5.5) {
@@ -3709,9 +4200,10 @@ function lotFurniture(pl, b, r, band) {
     const [ux, uz] = EDGE_DIR[s];
     const rot = SIDE_ROT[s];
     const key = r.weighted([
-      ['bollard', 9], ['cone', 6], ['utilityBox', 4], ['barrel', 3],
-      ['signParking', 5], ['binWheelie', 3], ['aframe', 2],
-      ['payStation', 4], ['dumpster', 2], ['meshFence', 2],
+      ['bollard', 6], ['bollardBell', 4], ['cone', 6], ['utilityBox', 4], ['barrel', 3],
+      ['signParking', 5], ['binWheelie', 3], ['aframe', 2], ['standpipe', 3],
+      ['payStation', 4], ['dumpster', 2], ['meshFence', 2], ['trashBags', 3],
+      ['drainGrate', 4],
     ]);
     // One setback for the whole run, and a pitch that just clears the prop.
     const inset = 0.9 + r() * Math.max(0.3, band - 1.2);
@@ -3743,6 +4235,12 @@ function constructionYard(pl, b, r, band) {
     for (let u = 3 + r() * 4; u < len - 3; u += 7 + r() * 6) {
       const p = edgePt(b, s, u, 0.6);
       pl.put(r.chance(0.55) ? 'cone' : 'barrel', p.x, p.z, r() * TAU);
+    }
+    // A cable reel left against the hoarding — the round vertical the yard is
+    // otherwise entirely without.
+    if (r.chance(0.45)) {
+      const p = edgePt(b, s, 4 + r() * Math.max(1, len - 8), 2.4);
+      pl.putAlong('cableDrum', p.x, p.z, ...EDGE_DIR[s], rot + (r() - 0.5) * 0.5);
     }
   }
 
@@ -3791,7 +4289,7 @@ function constructionYard(pl, b, r, band) {
       ['crate', 9], ['pallet', 8], ['sandbags', 6], ['scaffold', 6],
       ['cone', 6], ['barrel', 5], ['aframe', 4], ['portaloo', 3],
       ['jersey', 3], ['waterBarrier', 3], ['dumpster', 5], ['meshFence', 4],
-      ['deliveryStack', 3],
+      ['deliveryStack', 3], ['cableDrum', 5], ['stockTrolley', 2], ['trashBags', 2],
     ]), x, z, ax, az, yard + (r() - 0.5) * 0.2);
   }
   // Portaloos come in banks of two or three, shoulder to shoulder facing out.

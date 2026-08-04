@@ -404,6 +404,54 @@ ROLE: planting, parks and public space.
 Verify with park, street-level, brickell-skyline, waterfront, and prop-audit.
 `, { label: 'nature', phase: 'Build' }),
 
+
+  () => agent(`${COMMON}
+
+The day/night agent has published the contract. Its report:
+${(lighting || 'FAILED — build against scene.userData.nightFactor anyway').slice(0, 2500)}
+
+YOU OWN: src/world/water.js
+
+ROLE: Biscayne Bay and the Miami River, across the whole day/night cycle.
+
+1. THE HIGHEST-VALUE FIX IN THE GAME RIGHT NOW. The day/night agent measured
+   it and could not fix it because the file is not theirs:
+
+     water.js bakes LIGHTING.SUN_ELEVATION / SUN_AZIMUTH / SUN_COLOR /
+     SKY_MID / SKY_HORIZON into its uniforms AT BUILD TIME, so the water is
+     permanently lit for 14:24. At night the bay becomes an electric cyan
+     sheet BRIGHTER THAN THE CITY — see shots/tod-sky2/waterfront.png.
+
+   Drive the water from the live contract instead, in your per-frame update:
+     scene.userData.sunDir          key direction, mutated in place
+     scene.userData.nightFactor     0..1
+     scene.userData.dayNight        { keyColor, keyIntensity, skyHi, skyLo,
+                                      hazeColor, fogColor, ambientLevel }
+   Specular direction and colour, sky reflection tint, depth colour, foam
+   brightness and sparkle must all follow the sun. At night the bay should be a
+   deep, calm, dark blue-green with moon glitter and the city's lights
+   reflecting in it — NOT a glowing cyan plane.
+
+2. REFLECTIONS AT NIGHT. The waterfront towers lighting up and smearing across
+   the bay is the money shot of this whole game. You already render a skyline
+   proxy into a mirrored target — make sure it carries emissive/night colour so
+   the reflection lights up as the city does.
+
+3. WHILE YOU ARE IN HERE. Improve the water itself per the user's brief:
+   sharper normals, better depth grading turquoise->deep cyan, believable foam
+   that follows the real coastline (you already have the signed distance
+   field), wake trails behind moving boats, and sun/moon glitter that tracks
+   the key.
+
+4. KEEP THE CONTRACT. buildWater(ctx) stays, and keep publishing
+   ctx.scene.userData.waterUniforms.uTime — game.js drives it.
+
+Verify at several hours:
+  node tools/shot.mjs --presets waterfront,river,menu-hero --out shots/water-day
+  node tools/shot.mjs --presets waterfront,river --out shots/water-night --script "__GAME__.engine.setTimeOfDay(0.88)"
+Read every image. The night bay must be darker than the lit city, not brighter.
+`, { label: 'water-daynight', phase: 'Build' }),
+
   () => agent(`${COMMON}
 
 The day/night agent has published the contract. Its report:

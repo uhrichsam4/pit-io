@@ -129,6 +129,16 @@ const CELL = {
   cycad: [512, 1024, 256, 256],       // sago palm — narrow, dark, spine-stiff whorl
   paddle: [768, 1024, 256, 256],      // traveller's palm / bird of paradise blade
   hibiscus: [1024, 1024, 256, 256],   // glossy shrub carrying big coral trumpets
+
+  /* --- fourth row: the two marks a city of royal palms has not got ---------
+   * Every palm above tops out between 8 and 14 m and every plant in the file
+   * is green, so a boulevard has ONE skyline and the whole map has ONE hue —
+   * and those are the two similarities the eye actually catches, long before
+   * it notices that two crowns have the same frond count. This row fixes both
+   * with one new cell: a stiff glaucous fan for a Bismarckia (the only plant
+   * in Miami that is silver), while the Washingtonia beside it just reuses
+   * fanA on a trunk twice as tall as anything else on the street. */
+  fanBlue: [1280, 1024, 256, 256],    // Bismarckia: near-circular silver-blue fan
 };
 
 /** Flat colour swatches, 64x128 each, along the bottom row. */
@@ -166,6 +176,36 @@ const cssOf = (hex, a = 1) => {
 const mixHex = (a, b, t) => {
   const x = rgbOf(a), y = rgbOf(b);
   return `rgb(${Math.round(x[0] + (y[0] - x[0]) * t)},${Math.round(x[1] + (y[1] - x[1]) * t)},${Math.round(x[2] + (y[2] - x[2]) * t)})`;
+};
+/** The same blend as an INT, for painters that need to mix again afterwards. */
+const blendHex = (a, b, t) => {
+  const x = rgbOf(a), y = rgbOf(b);
+  return (Math.round(x[0] + (y[0] - x[0]) * t) << 16)
+    | (Math.round(x[1] + (y[1] - x[1]) * t) << 8)
+    | Math.round(x[2] + (y[2] - x[2]) * t);
+};
+
+/**
+ * GLAUCOUS — the silver-blue of a Bismarck palm.
+ *
+ * Deliberately NOT a new invented colour, and deliberately not a per-instance
+ * tint either: a tint is a MULTIPLY against the atlas, and multiplying a
+ * saturated green can only ever darken it — there is no factor that turns
+ * 0x4da457 into silver. The hue has to be painted into the cell.
+ *
+ * So it is derived: the three palm greens pulled most of the way to SEAWALL
+ * (the warm grey the bay wall is already painted) and then nudged toward the
+ * bay itself. Computed from PALETTE rather than typed as literals so it tracks
+ * a regrade of the greens, and it stays inside the Miami palette while sitting
+ * far enough off every other plant in the city to read from 200 m.
+ */
+const GLAUCOUS = {
+  light: blendHex(blendHex(PALETTE.PALM_FROND_LIGHT, PALETTE.SEAWALL, 0.45),
+    PALETTE.FLOWER_WHITE, 0.30),
+  mid: blendHex(blendHex(PALETTE.PALM_FROND, PALETTE.SEAWALL, 0.55),
+    PALETTE.SEA_SHALLOW, 0.25),
+  dark: blendHex(blendHex(PALETTE.PALM_FROND_DARK, PALETTE.SEAWALL, 0.40),
+    PALETTE.SEA_DEEP, 0.18),
 };
 
 /* ------------------------------------------------------- cell painters --- */
@@ -233,19 +273,32 @@ function drawFrond(g, rect, seed, light, mid, dark, torn) {
   }
 }
 
-/** Costapalmate fan: segments radiating from a hinge at the bottom edge. */
-function drawFan(g, rect, seed) {
+/**
+ * Costapalmate fan: segments radiating from a hinge at the bottom edge.
+ *
+ * Parameterised because the difference between a sabal and a Bismarckia is
+ * entirely in these four numbers — the sabal is a two-thirds arc that tapers
+ * to short wings, the Bismarckia is very nearly a full disc of equal-length
+ * stiff segments — and painting a second near-copy of this function is how
+ * two species end up drifting apart the first time the leaflet shape changes.
+ */
+function drawFan(g, rect, seed, {
+  light = PALETTE.PALM_FROND_LIGHT,
+  mid = PALETTE.PALM_FROND,
+  dark = PALETTE.PALM_FROND_DARK,
+  spread = Math.PI * 1.06,
+  N = 26,
+  base = 0.52,
+  amp = 0.44,
+} = {}) {
   const [X, Y, W, H] = rect;
   const rand = mulberry32(seed);
   const ox = X + W * 0.5, oy = Y + H * 0.99;
-  const light = PALETTE.PALM_FROND_LIGHT, mid = PALETTE.PALM_FROND, dark = PALETTE.PALM_FROND_DARK;
-  const N = 26;
-  const spread = Math.PI * 1.06;
   for (let i = 0; i < N; i++) {
     const t = (i + 0.5) / N;
     const a = -Math.PI / 2 - spread / 2 + spread * t;
     // Longest at the crown of the fan, shorter at the two outer wings.
-    const len = H * (0.52 + 0.44 * Math.sin(Math.PI * t)) * (0.92 + rand() * 0.16);
+    const len = H * (base + amp * Math.sin(Math.PI * t)) * (0.92 + rand() * 0.16);
     const wide = len * 0.085;
     const sh = Math.abs(t - 0.42) * 1.5 + rand() * 0.3;
     g.fillStyle = sh < 0.45 ? mixHex(light, mid, sh / 0.45) : mixHex(mid, dark, Math.min(1, (sh - 0.45) / 0.55));
@@ -873,11 +926,21 @@ function dilateCell(gctx, rect, iterations) {
  * table, so adding a species cannot half-wire it.
  */
 const CUTOUT_CELLS = new Set([
-  'frondA', 'frondB', 'frondC', 'frondD', 'fanA', 'shrubA', 'seagrape',
+  'frondA', 'frondB', 'frondC', 'frondD', 'fanA', 'fanBlue', 'shrubA', 'seagrape',
   'grassTuft', 'coconut', 'canopyA', 'canopyB', 'canopyPink', 'canopyYel',
   'canopyRed', 'canopyPurple', 'canopyOlive', 'croton', 'groundcov', 'agave',
   'frondDead', 'cycad', 'paddle', 'hibiscus',
 ]);
+
+/**
+ * Costapalmate cells are painted radiating UP the cell from a hinge on its
+ * bottom edge, so their long axis is v and not u — `frondGeo` has to be told
+ * with `alongV`. One set rather than a literal comparison at the call site,
+ * because a fan species wired up without it renders its blades with the
+ * texture turned 90 degrees, which looks like a broken atlas and not like a
+ * missing flag.
+ */
+const FAN_CELLS = new Set(['fanA', 'fanBlue']);
 
 /** Cells whose colour the per-instance foliage tint is allowed to touch. */
 const TINTABLE_CELLS = new Set([...CUTOUT_CELLS, 'crownshaft', 'sw_leaf', 'sw_leafDark']);
@@ -928,6 +991,16 @@ function atlasTexture() {
   drawCycad(g, CELL.cycad, 0x5ac311);
   drawPaddle(g, CELL.paddle, 0x2b7ff1);
   drawFlowerShrub(g, CELL.hibiscus, 0x91d40b, PALETTE.CAR_RED);
+  /* The Bismarckia fan. The hinge is on the cell's bottom edge — frondGeo maps
+     v along the blade from its attachment point — so the arc cannot open much
+     past a half turn without running off the cell. What makes it read as the
+     stiff DISC a Bismarckia carries, rather than as a pale sabal, is therefore
+     the segment LENGTHS: near-equal all the way to the wings (high base, low
+     amp) and a third more of them. */
+  drawFan(g, CELL.fanBlue, 0x6fd3a1, {
+    light: GLAUCOUS.light, mid: GLAUCOUS.mid, dark: GLAUCOUS.dark,
+    spread: Math.PI * 1.10, N: 34, base: 0.76, amp: 0.22,
+  });
 
   drawBark(g, CELL.barkRoyal, 'royal', 0x1a2b3c);
   drawBark(g, CELL.barkCoco, 'coco', 0x2b3c4d);
@@ -1707,7 +1780,7 @@ function makePalm(spec) {
       rise: inner ? 0.75 : spec.rise,
       droop: inner ? 0.7 : spec.droop,
       roll: 0.30 + rng() * 0.25,
-      alongV: cell === 'fanA',
+      alongV: FAN_CELLS.has(cell),
     });
     _m4.makeRotationZ(pitch);
     f.applyMatrix4(_m4);
@@ -2341,7 +2414,10 @@ function palmVariant(b, r) {
   if (r() < 0.5) cells.reverse();
   // A third of palms swap one of their two blade cells for another, which is
   // what stops two variants that rolled similar proportions reading as twins.
-  if (b.swap && r() < 0.34) cells[0] = b.swap;
+  // `swapP` exists because one swap is not like the others: swapping frondA for
+  // frondC changes a crown's texture, but swapping fanA for fanBlue changes its
+  // COLOUR, and a fifth of a species is the most of that a boulevard can take.
+  if (b.swap && r() < (b.swapP ?? 0.34)) cells[0] = b.swap;
   return makePalm({
     seed: b.seed * 31 + Math.floor(r() * 8192),
     h,
@@ -2463,6 +2539,10 @@ const TINT_SETS = {
   canopy: [0xffffff, 0xeff8de, 0xdcedE2, 0xfdf3d6, 0xe4f4c9, 0xd3e5d4, 0xf6efd6, 0xe2f2dd],
   shrub: [0xffffff, 0xedf8d5, 0xd5ebd0, 0xfaf4d3, 0xe0f2c3, 0xcce2cb, 0xf2ecce, 0xd9efd6],
   bloom: [0xffffff, 0xffe7f0, 0xffd7c6, 0xfff0d2, 0xf4e0ff, 0xffe0e0, 0xfff8e6, 0xffd6e8],
+  // A Bismarckia's whole point is that it is NOT green, and the multiply can
+  // only ever take colour away — so this set varies the warmth of the silver
+  // and nothing else. A green tint here would quietly undo the cell.
+  glaucous: [0xffffff, 0xf3f7f0, 0xe9f3f6, 0xfbf4e8, 0xeef5ea, 0xf7f2ec],
   none: [0xffffff],
 };
 
@@ -2537,6 +2617,15 @@ const SPECIES = {
       seed: 53, h: 8.4, rBot: 0.40, rTop: 0.35, bark: 'barkFib', crownshaft: false,
       lean: 0.030, bulge: 0, fronds: 14, frondVar: 5, crownF: 0.37, frondW: 1.25,
       pitch: 0.34, rise: 0.58, droop: 0.80, cells: ['fanA'],
+      /* One variant in six carries the silver fan instead of the green one.
+         There are only a dozen park parcels in the whole city, so however hard
+         a park weights a Bismarckia there will never be many of them — and a
+         handful of specimens is not enough silver to change what the planting
+         reads AS from the game camera. A silver-fanned fan palm is a real and
+         common Miami plant (Latania, the glaucous sabal forms), it costs one
+         extra pool, and it spreads the one non-green hue in the file across the
+         medians, the street lines and the plazas where the camera actually is. */
+      swap: 'fanBlue', swapP: 0.17,
       // The straw petticoat of shed fronds is the ONE thing that tells a sabal
       // apart from every other palm on the street at 60 m.
       flag: 0.30, skirt: 7,
@@ -2560,7 +2649,11 @@ const SPECIES = {
       // contact band is only ~40 cm off the ground, so a frond that sagged the
       // way a coconut's does would land IN it and hand a waist-high shrub the
       // pass radius of a car.
+      // Silver saw palmetto is the commonest glaucous plant in south Florida
+      // and it puts the hue at ankle height, against paving, where a plaza
+      // border otherwise reads as one green texture with dots in it.
       pitch: 0.42, rise: 0.60, droop: 0.62, cells: ['fanA'], flag: 0.35,
+      swap: 'fanBlue', swapP: 0.30,
     },
   },
   arecaClump: {
@@ -2571,6 +2664,59 @@ const SPECIES = {
       seed: 173, h: 6.6, stems: 5, taper: 0.40, splay: 0.085, rBot: 0.17,
       bark: 'barkQueen', fronds: 8, crownF: 0.50, frondW: 0.42, pitch: 0.34,
       cells: ['frondC', 'frondA', 'frondB'],
+    },
+  },
+  /* THE TALL ONE.
+     Eight palms above and every one of them tops out between 8 and 14 m, so a
+     boulevard planted from them has a single flat skyline however different
+     the individual specimens are — and a flat line of crowns at one height is
+     the repetition the eye locks onto first, long before it starts counting
+     fronds. A Washingtonia is 17-20 m of bare stick with a small crown and a
+     shaggy petticoat, so one threaded into a royal line breaks the top edge
+     instead of adding another crown to it. It reuses the sabal's fan cell and
+     the sabal's boot bark: the whole species costs five pool slots. */
+  washingtonia: {
+    // 15.5 m nominal, MEASURED not guessed: the variant roll spans 0.80-1.24 and
+    // the instance scale another 0.84-1.18, so a nominal 17 put the tall tail of
+    // the population at 25 m — past every midrise in the city and into "why is
+    // there a radio mast in the park". At 15.5 the geometry measures 19-23 m,
+    // which still clears the royals' 17 m ceiling by a clear storey.
+    label: 'Fan Palm', tier: TIER.LARGE, h: 15.5, rad: 1.3, cap: 700, clear: 2.5, sep: 1.5,
+    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.38, contactMax: 1.1,
+    make: palmVariant,
+    base: {
+      seed: 193, h: 15.5, rBot: 0.38, rTop: 0.30, bark: 'barkFib', crownshaft: false,
+      lean: 0.030, bulge: 0.05, fronds: 13, frondVar: 4, crownF: 0.21, frondW: 1.28,
+      pitch: 0.30, rise: 0.55, droop: 0.86, cells: ['fanA'],
+      // crownF 0.21, not the sabal's 0.37: the crown has to stay SMALL relative
+      // to the trunk or a 17 m palm just reads as a royal seen from closer.
+      // The petticoat is the other half of the species — nine shed fronds, two
+      // more than a sabal, and on a trunk this tall it reads as a collar at
+      // 200 m where the crown itself has minified to a dot.
+      flag: 0.28, skirt: 9,
+    },
+  },
+  /* THE ONE THAT IS NOT GREEN.
+     Thirty species and every single one is a green mass, so from the game
+     camera all the planting in Miami is one material with a bumpy top. A
+     Bismarckia is a stiff silver-blue disc on a fat short trunk: different
+     hue, different silhouette, and a genuine specimen tree — so a handful in
+     the parks, the plaza panels and the yards is the honest number, not a
+     boulevard of them. `clear` and `sep` are large because the crown really is
+     nearly as wide as the plant is tall. */
+  bismarck: {
+    label: 'Bismarck Palm', tier: TIER.LARGE, h: 8.0, rad: 2.1, cap: 420, clear: 3.0, sep: 1.9,
+    debris: PALETTE.PALM_FROND, variants: 4, tints: 'glaucous', rBase: 0.62, contactMax: 1.6,
+    make: palmVariant,
+    base: {
+      seed: 197, h: 7.6, rBot: 0.62, rTop: 0.50, bark: 'barkFib', crownshaft: false,
+      lean: 0.020, bulge: 0.10, fronds: 15, frondVar: 4, crownF: 0.70, frondW: 1.45,
+      // Stiff and held high — a Bismarckia does not hang. `droop` well under
+      // `rise` keeps every blade tip above its own attachment point, which is
+      // also what keeps a 5 m crown out of the contact band the physics
+      // measures on a trunk only 7.6 m tall.
+      pitch: 0.46, rise: 0.52, droop: 0.44, cells: ['fanBlue'],
+      flag: 0.20,
     },
   },
 
@@ -2813,7 +2959,7 @@ const SPECIES = {
 };
 
 const PALMS = ['royalA', 'royalB', 'queenPalm', 'coconutA', 'coconutB', 'sabal',
-  'fanShort', 'arecaClump'];
+  'fanShort', 'arecaClump', 'washingtonia', 'bismarck'];
 const SHADE = ['banyan', 'liveOak', 'mahogany', 'tabebuia', 'poinciana', 'jacaranda', 'bougain'];
 /** Everything that reads as a tree from 40 m — used for stats only. */
 const CANOPY = [...SHADE, 'seagrapeT', 'mangrove', 'traveller'];
@@ -3380,10 +3526,19 @@ function buildMedians(ctx) {
        individuals rather than a stamp repeated 40 times. */
     const key = rng.weighted([['royalA', 40], ['royalB', 24], ['queenPalm', 14],
       ['sabal', 12], ['coconutA', 10]]);
-    // A second, subordinate species threaded through at every seventh position
-    // — the way a real avenue gets replanted a few trees at a time.
-    const infill = rng.weighted([['royalB', 30], ['queenPalm', 26], ['sabal', 24], ['coconutA', 20]]);
-    const STEP = 9.5;
+    /* A second, subordinate species threaded through at every seventh position
+       — the way a real avenue gets replanted a few trees at a time. The
+       Washingtonia earns the largest share of it precisely because it is the
+       one that is a different HEIGHT: from the menu-hero camera the median is
+       a ruled line of crowns at a constant altitude, and a spike every seventh
+       tree is what turns that line into a rhythm. */
+    const infill = rng.weighted([['washingtonia', 28], ['royalB', 22],
+      ['queenPalm', 20], ['sabal', 18], ['coconutA', 12]]);
+    /* Per ROAD, not per run and not global: the lattice still has to be shared
+       along one avenue or the palms stop lining up through the junctions, but
+       three boulevards planted at exactly 9.5 m are three copies of the same
+       avenue seen from different angles. */
+    const STEP = 8.6 + rng() * 2.4;
     let step = 0;
 
     for (const run of runs) {
@@ -3472,16 +3627,29 @@ function buildStreetTrees(ctx, B, b, rng) {
        as noise. */
     const palmy = grand ? rng.chance(0.82) : rng.chance(0.42);
     const key = palmy
-      ? rng.weighted([['royalA', 24], ['royalB', 18], ['queenPalm', 15],
-        ['coconutA', 15], ['sabal', 13], ['arecaClump', 8], ['coconutB', 7]])
+      ? rng.weighted(grand
+        // Only a boulevard is wide enough for a Washingtonia: a 17 m palm on a
+        // 13.5 m quiet street is a flagpole standing over two-storey shopfronts.
+        ? [['royalA', 22], ['royalB', 16], ['washingtonia', 12], ['queenPalm', 13],
+          ['coconutA', 13], ['sabal', 11], ['arecaClump', 7], ['coconutB', 6]]
+        : [['royalA', 24], ['royalB', 18], ['queenPalm', 15],
+          ['coconutA', 15], ['sabal', 13], ['arecaClump', 8], ['coconutB', 7]])
       : rng.weighted([['liveOak', 24], ['banyan', 12], ['tabebuia', 18],
         ['poinciana', 16], ['jacaranda', 12], ['mahogany', 10], ['bougain', 8]]);
-    // The accent is not "a smaller palm" — a 2 m palmetto standing one in six
-    // down a line of 13 m royals reads as a gap in the line, not as variety.
-    // It has to be another TREE, differing in crown rather than in height.
+    /* The accent is not "a smaller palm" — a 2 m palmetto standing one in six
+       down a line of 13 m royals reads as a gap in the line, not as variety.
+       It has to be another TREE, differing in crown rather than in height.
+       On a boulevard the Washingtonia is the BEST possible accent and a poor
+       run species, so it is weighted the opposite way round here: a single
+       17 m spike every sixth tree breaks the skyline of the line it is
+       threaded through, where a whole avenue of them just moves that skyline
+       up and flattens it again. */
     const accent = palmy
-      ? rng.weighted([['sabal', 26], ['queenPalm', 24], ['coconutA', 22],
-        ['arecaClump', 18], ['royalB', 10]])
+      ? rng.weighted(grand
+        ? [['washingtonia', 30], ['sabal', 18], ['queenPalm', 17], ['coconutA', 15],
+          ['arecaClump', 12], ['royalB', 8]]
+        : [['sabal', 26], ['queenPalm', 24], ['coconutA', 22],
+          ['arecaClump', 18], ['royalB', 10]])
       : rng.weighted([['tabebuia', 24], ['poinciana', 22], ['jacaranda', 20],
         ['bougain', 14], ['liveOak', 10], ['traveller', 10]]);
     const accentAt = 2 + rng.int(0, 3);
@@ -3721,6 +3889,49 @@ function parkBlock(ctx, B, b, rng) {
     }
   }
 
+  /* --- SPECIMENS: the plants a weighted mix will never deliver ----------- */
+  /*
+   * Third in the running order, straight after the hero feature and the lamps,
+   * and that position is the whole point.
+   *
+   * A specimen cannot come out of a mix, and the arithmetic is not subtle. The
+   * groves, the walk line and the yards all call plant() WITHOUT `force`, so
+   * `clear` is read against the shared occupancy grid — and inside a planted
+   * park that grid reads "claimed" almost everywhere (see the note on
+   * parkFeature). The species carrying the LARGEST clearances are therefore
+   * rejected first and hardest, which is exactly backwards: a Bismarckia's 3 m
+   * clearance is large *because* it is a feature plant. Measured, the mixes
+   * alone put SEVEN of them in the whole of Miami, and running this block after
+   * the groves only lifted that to nineteen — by then sixty-odd grove trees
+   * have taken the spacing set and there is nowhere on the lawn left to stand.
+   *
+   * So the park asks for two to four by name, before the scatter, forced past
+   * the over-claim exactly the way the street-tree line and the median already
+   * are. The invariants that matter — the bay, the carriageway, a building's
+   * measured footprint, nature's own spacing — are all still enforced inside
+   * plant(); `force` only ever overrules the buildings' over-claimed square.
+   */
+  const specN = Math.min(4, 2 + Math.round(b.area / 1600));
+  for (let i = 0; i < specN; i++) {
+    // Weighted hard toward the two species that change how the CITY reads —
+    // the only silver plant in it, and the one with a bare trunk and a small
+    // crown instead of a crown on a stub.
+    const key = rng.weighted([['bismarck', 44], ['washingtonia', 26],
+      ['poinciana', 12], ['banyan', 10], ['traveller', 8]]);
+    for (let t = 0; t < 14; t++) {
+      const sx = b.x + (rng() - 0.5) * b.w * 0.74;
+      const sz = b.z + (rng() - 0.5) * b.d * 0.74;
+      if (inKeep(sx, sz)) continue;
+      if (plant(ctx, key, sx, sz, rng() * 6.283, 0.92 + rng() * 0.26,
+        { force: true, clear: 2.6, tintIndex: i })) {
+        // A mulch ring a third wider than a street tree's: a specimen standing
+        // in bare mown turf reads as a tree someone forgot to remove.
+        treePit(B, sx, sz, 1.35, y + 0.02);
+        break;
+      }
+    }
+  }
+
   /* --- shade along the walk --------------------------------------------- */
   /* One species, one spacing, one offset: a path you can follow by its trees is
      the cheapest possible signal that somebody DESIGNED this park rather than
@@ -3728,8 +3939,9 @@ function parkBlock(ctx, B, b, rng) {
      ground it needs. */
   if (Math.min(b.w, b.d) > 26) {
     const alongX = b.w >= b.d;
-    const key = rng.weighted([['royalA', 22], ['liveOak', 20], ['sabal', 14],
-      ['tabebuia', 14], ['coconutA', 12], ['queenPalm', 10], ['jacaranda', 8]]);
+    const key = rng.weighted([['royalA', 21], ['liveOak', 19], ['sabal', 13],
+      ['tabebuia', 13], ['coconutA', 11], ['queenPalm', 10], ['jacaranda', 8],
+      ['washingtonia', 5]]);
     const runLen = (alongX ? hw : hd) * 2 - pin * 2;
     const n = Math.max(2, Math.round(runLen / 9));
     for (const s of [-1, 1]) {
@@ -3864,12 +4076,18 @@ function parkBlock(ctx, B, b, rng) {
    * own species, and cluster around them with a sqrt falloff (uniform in area,
    * so the grove is dense at the middle and frays at the edge).
    */
-  const coastal = () => rng.weighted([['royalA', 16], ['coconutA', 16], ['seagrapeT', 20],
-    ['sabal', 12], ['banyan', 10], ['queenPalm', 9], ['arecaClump', 8],
-    ['traveller', 5], ['poinciana', 7]]);
-  const inland = () => rng.weighted([['banyan', 14], ['liveOak', 16], ['royalA', 11],
-    ['royalB', 8], ['tabebuia', 10], ['poinciana', 10], ['jacaranda', 8],
-    ['mahogany', 7], ['arecaClump', 7], ['traveller', 4], ['bougain', 4], ['sabal', 3]]);
+  /* A park is where the two specimen palms belong: the Bismarckia needs 5 m of
+     clear crown and reads as a deliberate planting rather than as street
+     furniture, and the Washingtonia gives a grove an emergent above its own
+     canopy line. Both stay at single-figure weights — a park full of specimens
+     is a nursery. */
+  const coastal = () => rng.weighted([['royalA', 15], ['coconutA', 15], ['seagrapeT', 19],
+    ['sabal', 11], ['banyan', 9], ['queenPalm', 8], ['arecaClump', 7],
+    ['traveller', 5], ['poinciana', 6], ['washingtonia', 6], ['bismarck', 5]]);
+  const inland = () => rng.weighted([['banyan', 13], ['liveOak', 15], ['royalA', 10],
+    ['royalB', 7], ['tabebuia', 9], ['poinciana', 9], ['jacaranda', 8],
+    ['mahogany', 7], ['arecaClump', 6], ['traveller', 4], ['bougain', 4], ['sabal', 3],
+    ['washingtonia', 5], ['bismarck', 4]]);
   const speciesFor = b.bayfront ? coastal : inland;
 
   const treeN = Math.max(7, Math.round(b.area / 40));
@@ -3896,6 +4114,7 @@ function parkBlock(ctx, B, b, rng) {
     const tz = b.z + (rng() - 0.5) * b.d * 0.86;
     if (plant(ctx, speciesFor(), tx, tz, rng() * 6.283, 0.85 + rng() * 0.35)) planted++;
   }
+
 
   /* Understorey follows the groves rather than the parcel: shrub masses belong
      under the canopy edge, not marooned in the middle of the mown lawn.
@@ -4189,8 +4408,10 @@ function plazaBlock(ctx, B, b, rng) {
       B.add('kerb', box(gw + 0.34, 0.30, 0.3, gx, y + 0.145, gz + gd / 2, 1));
       B.add('kerb', box(0.3, 0.30, gd, gx - gw / 2, y + 0.145, gz, 1));
       B.add('kerb', box(0.3, 0.30, gd, gx + gw / 2, y + 0.145, gz, 1));
-      plant(ctx, rng.weighted([['liveOak', 30], ['jacaranda', 22], ['poinciana', 20],
-        ['bougain', 16], ['tabebuia', 12]]), gx, gz,
+      // A kerbed 7 x 5 m turf panel is exactly the site a Bismarckia is planted
+      // on in the real Brickell — one specimen, nothing else in the box.
+      plant(ctx, rng.weighted([['liveOak', 26], ['jacaranda', 19], ['poinciana', 17],
+        ['bougain', 14], ['tabebuia', 11], ['bismarck', 13]]), gx, gz,
       rng() * 6.283, 0.8 + rng() * 0.3, { clear: 1.6, y: 0.06 });
       for (let k = 0; k < 5; k++) {
         plant(ctx, rng.weighted(UNDER),
@@ -4206,8 +4427,8 @@ function plazaBlock(ctx, B, b, rng) {
   const off = (alongX ? hd : hw) * 0.62;
   if (runLen > 12) {
     const n = Math.max(2, Math.round(runLen / 8.5));
-    const key = rng.weighted([['royalA', 34], ['queenPalm', 24], ['sabal', 20],
-      ['arecaClump', 12], ['royalB', 10]]);
+    const key = rng.weighted([['royalA', 31], ['queenPalm', 22], ['sabal', 18],
+      ['washingtonia', 12], ['arecaClump', 10], ['royalB', 9]]);
     for (let s = -1; s <= 1; s += 2) {
       for (let i = 0; i <= n; i++) {
         const t = -runLen / 2 + (runLen / n) * i;
@@ -4403,8 +4624,8 @@ function waterfrontBlock(ctx, B, b, rng) {
   const n = Math.max(1, Math.round((hd * 2) / 8));
   for (let i = 0; i <= n; i++) {
     const pz = b.z - hd + (hd * 2 / n) * i;
-    const key = rng.weighted([['royalA', 25], ['coconutA', 22], ['royalB', 14],
-      ['queenPalm', 14], ['sabal', 14], ['arecaClump', 11]]);
+    const key = rng.weighted([['royalA', 23], ['coconutA', 20], ['royalB', 13],
+      ['queenPalm', 13], ['sabal', 13], ['arecaClump', 10], ['washingtonia', 8]]);
     if (plant(ctx, key, walkX, pz, rng() * 6.283, 0.88 + rng() * 0.34,
       { force: true, tintIndex: i })) {
       B.add('plazaInlay', disc(1.2, 8, walkX, y + 0.045, pz, null));
@@ -4425,6 +4646,19 @@ function waterfrontBlock(ctx, B, b, rng) {
     B.add('lawnA', tile(gw, hd * 2 - 5.0, gx, b.z, y + 0.05, 8));
     B.add('kerb', box(0.28, 0.28, hd * 2 - 5.0, gx - gw / 2, y + 0.14, b.z, 1));
     B.add('kerb', box(0.28, 0.28, hd * 2 - 5.0, gx + gw / 2, y + 0.14, b.z, 1));
+    /* Specimens down the turf strip, forced for the same reason as the park's.
+       A promenade is the one place in the city where the camera is guaranteed
+       to be looking along a planted line against open water, so it is where a
+       silver crown or a 20 m spike buys the most. Every third station, so the
+       strip stays a lawn with plants on it rather than a second tree line. */
+    const sn = Math.max(1, Math.round(hd * 2 / 22));
+    for (let i = 0; i < sn; i++) {
+      const pz = b.z - hd + (hd * 2 / sn) * (i + 0.5);
+      plant(ctx, rng.weighted([['bismarck', 40], ['washingtonia', 26],
+        ['traveller', 14], ['seagrapeT', 12], ['coconutA', 8]]),
+      gx + (rng() - 0.5) * gw * 0.3, pz, rng() * 6.283, 0.92 + rng() * 0.24,
+      { force: true, clear: 2.4, y: 0.05, tintIndex: i });
+    }
   }
 
   const edgeX = b.x + hw * 0.78;
@@ -4529,9 +4763,16 @@ function builtBlock(ctx, B, b, rng) {
     const yx = b.x + (rng() - 0.5) * b.w * 0.92;
     const yz = b.z + (rng() - 0.5) * b.d * 0.92;
     if (!openYard(yx, yz, 2.6)) continue;
-    const key = rng.weighted([['liveOak', 15], ['mahogany', 13], ['sabal', 13],
-      ['queenPalm', 12], ['royalB', 11], ['arecaClump', 10], ['poinciana', 9],
-      ['jacaranda', 7], ['coconutB', 6], ['banyan', 4]]);
+    /* The yards are where the Bismarckia actually gets distributed. There are
+       only a dozen park parcels in the whole city, so however hard the parks
+       weight a specimen there are never going to be many of them; side and
+       rear yards number in the hundreds, they are in shot from the high 3/4
+       camera all game, and a silver crown in a service yard between two coral
+       stucco walls is the single cheapest piece of hue variety on the map. */
+    const key = rng.weighted([['liveOak', 13], ['mahogany', 11], ['sabal', 11],
+      ['queenPalm', 10], ['royalB', 9], ['arecaClump', 8], ['poinciana', 8],
+      ['jacaranda', 7], ['coconutB', 6], ['banyan', 4], ['bismarck', 9],
+      ['washingtonia', 4]]);
     if (plant(ctx, key, yx, yz, rng() * 6.283, 0.82 + rng() * 0.34,
       { force: true, clear: 2.4, tintIndex: i })) {
       treePit(B, yx, yz, 1.0, ctx.Y_WALK + 0.02);
@@ -4574,9 +4815,9 @@ function builtBlock(ctx, B, b, rng) {
     const off = (along ? b.d : b.w) / 2 - 2.0;
     const ex = along ? b.x + t : b.x + (seaward === 'e' ? off : -off);
     const ez = along ? b.z + (seaward === 's' ? off : -off) : b.z + t;
-    const key = rng.weighted([['seagrapeT', 26], ['coconutA', 16], ['royalB', 12],
-      ['queenPalm', 8], ['shrub', 12], ['hibiscus', 9], ['ornGrass', 9],
-      ['croton', 8]]);
+    const key = rng.weighted([['seagrapeT', 24], ['coconutA', 15], ['royalB', 11],
+      ['queenPalm', 7], ['shrub', 11], ['hibiscus', 9], ['ornGrass', 8],
+      ['croton', 7], ['bismarck', 8]]);
     plantOut(ctx, key, ex, ez, inx, inz, rng() * 6.283, 0.85 + rng() * 0.35,
       { clear: 1.2, force: true, tintIndex: i }, 3, 1.4);
   }
