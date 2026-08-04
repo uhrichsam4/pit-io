@@ -1985,10 +1985,43 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
     const { pts, nrm } = shore;
     /** Per-band: [tone, planted]. Band 0 sits against the coping. */
     const BANDS = [[0.78, false], [1.02, false], [0.92, false], [1.0, true]];
+
+    /*
+     * WHICH SEGMENTS GET THE PLANTED BAND, RESOLVED FIRST.
+     *
+     * The band is the furthest one back, so it is the one whose midpoint most
+     * often lands on a road or inside a block and gets skipped. Deciding that
+     * per segment leaves single-segment islands: a 6 m green quad on bone
+     * paving with nothing either side of it, no kerb and no thickness, which is
+     * a decal rather than a verge — there were four in the `crowd` frame. A
+     * verge has to be long enough to be a verge, so anything under MIN_RUN
+     * consecutive segments is dropped. The paving bands underneath are
+     * untouched: a short run of PAVING is just paving.
+     */
+    const MIN_RUN = 4;
+    const nSeg = Math.max(0, pts.length - 1);
+    const planted3 = new Array(nSeg);
+    {
+      const o0 = -1.66 - 3 * 2.1, o1 = o0 - 2.1;
+      for (let i = 0; i < nSeg; i++) {
+        const a = pts[i], b = pts[i + 1], na = nrm[i], nb = nrm[i + 1];
+        const cx = (a.x + b.x) / 2 + ((na.x + nb.x) / 2) * (o0 + o1) / 2;
+        const cz = (a.z + b.z) / 2 + ((na.z + nb.z) / 2) * (o0 + o1) / 2;
+        planted3[i] = !layout.isRoad(cx, cz) && !inBlock(cx, cz) && field.at(cx, cz) <= -0.8;
+      }
+      for (let i = 0; i < nSeg; i++) {
+        if (!planted3[i]) continue;
+        let j = i; while (j < nSeg && planted3[j]) j++;
+        if (j - i < MIN_RUN) { for (let k = i; k < j; k++) planted3[k] = false; }
+        i = j;
+      }
+    }
+
     for (let i = 0; i < pts.length - 1; i++) {
       const a = pts[i], b = pts[i + 1];
       const na = nrm[i], nb = nrm[i + 1];
       for (let bandI = 0; bandI < BANDS.length; bandI++) {
+        if (bandI === 3 && !planted3[i]) continue;
         const o0 = -1.66 - bandI * 2.1;
         const o1 = o0 - 2.1;
         const cx = (a.x + b.x) / 2 + ((na.x + nb.x) / 2) * (o0 + o1) / 2;
@@ -2174,8 +2207,13 @@ function buildShoreStructures(ctx, group, shores, field, rng) {
   if (vergeGeos.length) {
     const mesh = new THREE.Mesh(
       BufferGeometryUtils.mergeGeometries(vergeGeos, false),
+      // Tinted to the parks' lawn value. nature.js multiplies this same texture
+      // by 0xc6cec8; untinted, the verge came out a third brighter than every
+      // lawn in the city and — flat on bone paving, no kerb, no thickness — it
+      // read as acid-green paint rather than as turf.
       ground({
         map: Textures.grass(),
+        color: 0xc6cec8,
         roughness: 0.95,
         polygonOffset: true,
         polygonOffsetFactor: -2,

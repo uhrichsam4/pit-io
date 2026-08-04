@@ -2073,7 +2073,16 @@ export function buildStreets(ctx) {
   for (const b of layout.blocks) {
     const x0 = b.x - b.w / 2, x1 = b.x + b.w / 2;
     const z0 = b.z - b.d / 2, z1 = b.z + b.d / 2;
-    const sw = Math.max(2.4, Math.min(b.sidewalk, Math.min(b.w, b.d) / 2 - 1.2));
+    /* A PARK'S PUBLIC REALM IS THE PARK, NOT ITS APRON.
+       `b.sidewalk` runs to 6.8 m, which is right in front of a retail podium
+       and absurd around a 23 m-deep garden square: it paved 6.8 m of every
+       edge and left 9 m of turf in the middle. nature.js used to hide that by
+       laying its lawn 3.8 m OUT over the paving — a green rectangle 1.5 cm
+       above the slabs, which is the misplaced object this pair of changes
+       removes. Cap the footway instead and the turf is both larger and
+       correctly inside its own kerb. */
+    const swWant = (b.zone === 'park') ? Math.min(b.sidewalk, 3.6) : b.sidewalk;
+    const sw = Math.max(2.4, Math.min(swWant, Math.min(b.w, b.d) / 2 - 1.2));
     b._swInset = sw;
 
     // Per-block paving tone. Real paving is laid in campaigns; a whole city at
@@ -3210,8 +3219,15 @@ export function buildStreets(ctx) {
     roughness: 0.94, vertexColors: true,
   }, 1), 'sidewalks');
 
+  /* TINTED DOWN TO THE PARKS' VALUE, and that is a defect fix rather than a
+     preference. nature.js multiplies the same `Textures.grass()` by 0xc6cec8
+     for its lawns and 0xaab2ac for the mowing stripe; taken straight, the
+     verge behind the kerb rendered a third brighter than every lawn in the
+     city and, sitting flat on bone paving with no kerb and no thickness, it
+     read as a strip of acid-green paint rather than as turf. Measured on the
+     `crowd` frame, where four of them lie across a plaza. */
   addMesh(group, plant, layer({
-    map: Textures.grass(), roughness: 0.95,
+    map: Textures.grass(), color: 0xc6cec8, roughness: 0.95,
   }, 2), 'planting');
 
   addMesh(group, iron, layer({
