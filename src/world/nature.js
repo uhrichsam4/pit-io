@@ -118,6 +118,17 @@ const CELL = {
   canopyOlive: [1280, 512, 256, 256], // dark glossy inland canopy (mahogany)
   barkQueen: [1024, 768, 128, 128],  // smooth pale grey-green ringed trunk
   barkMang: [1152, 768, 128, 128],   // dark, wet mangrove bark
+
+  /* --- third quadrant: SILHOUETTE contrast ------------------------------
+   * Everything above is a round crown on a stick or a green dome. From the
+   * game camera a city planted only out of those two shapes reads as one
+   * repeated asset however much you jitter the scale, so this row is about
+   * outlines that are not either: a shed-frond skirt, a stiff dark whorl at
+   * ankle height, and a stack of upright banana paddles. */
+  frondDead: [0, 1024, 512, 256],     // shed frond: tan, collapsed, half torn away
+  cycad: [512, 1024, 256, 256],       // sago palm — narrow, dark, spine-stiff whorl
+  paddle: [768, 1024, 256, 256],      // traveller's palm / bird of paradise blade
+  hibiscus: [1024, 1024, 256, 256],   // glossy shrub carrying big coral trumpets
 };
 
 /** Flat colour swatches, 64x128 each, along the bottom row. */
@@ -490,6 +501,159 @@ function drawGrassTuft(g, rect, seed) {
   }
 }
 
+/**
+ * ONE sago-palm leaf, hinged at the bottom edge and running up the cell.
+ *
+ * A whole cell of leaves — the way `fanA` is painted — is wrong for this plant:
+ * `makeWhorl` places every leaf as its own strip so the whorl has real
+ * three-dimensional spread, and a cell that already contained a whorl would
+ * give a whorl of whorls. Same reason `frondA` is one frond.
+ *
+ * Almost black-green, dead straight, needle-fine leaflets: the exact opposite
+ * of every soft round crown in this atlas, which is the entire point of it.
+ */
+function drawCycad(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const ox = X + W * 0.5, oy = Y + H * 0.985, ty = Y + H * 0.02;
+  const dark = 0x1d4529, mid = 0x2f6b39, lit = 0x6aab55;
+  // Rachis: a shallow S so the leaf arches instead of standing to attention.
+  const spine = (t) => [ox + Math.sin(t * 2.1) * W * 0.055, oy + (ty - oy) * t];
+  const teeth = 34;
+  for (let k = 1; k <= teeth; k++) {
+    const t = k / teeth;
+    const [bx, by] = spine(t);
+    // Longest at mid-leaf, collapsing to a point at the tip.
+    const tl = W * 0.34 * Math.pow(Math.sin(Math.PI * Math.min(1, t * 1.06)), 0.55);
+    for (const s of [-1, 1]) {
+      const sh = (s < 0 ? 0.15 : 0.55) + rand() * 0.3;
+      g.strokeStyle = sh < 0.5 ? mixHex(lit, mid, sh / 0.5)
+        : mixHex(mid, dark, Math.min(1, (sh - 0.5) / 0.5));
+      g.lineWidth = Math.max(1.6, W * 0.014);
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(bx, by);
+      // Leaflets comb backward toward the base, which is what makes a cycad
+      // read as a feather rather than as a fishbone.
+      g.lineTo(bx + s * tl, by + tl * 0.42);
+      g.stroke();
+    }
+  }
+  g.strokeStyle = mixHex(mid, dark, 0.4);
+  g.lineWidth = Math.max(2, W * 0.022);
+  g.beginPath();
+  for (let k = 0; k <= 16; k++) {
+    const [px, py] = spine(k / 16);
+    if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+  }
+  g.stroke();
+}
+
+/**
+ * ONE banana paddle — traveller's palm, bird of paradise, heliconia.
+ *
+ * Hinged at the bottom edge, blade running up the cell. The wind tears are not
+ * decoration: an untorn paddle is a green rectangle, and a green rectangle in
+ * a park is a billboard nobody believes.
+ */
+function drawPaddle(g, rect, seed) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const ox = X + W * 0.5, oy = Y + H * 0.99, top = Y + H * 0.015;
+  const base = PALETTE.TREE_CANOPY, dark = PALETTE.TREE_CANOPY_DARK, light = PALETTE.GRASS_LIGHT;
+  const rib = (t) => oy + (top - oy) * t;
+  // Petiole for the first fifth, then the blade opens.
+  const halfW = (t) => (t < 0.20 ? W * 0.035
+    : W * 0.42 * Math.pow(Math.sin(Math.PI * Math.min(1, (t - 0.18) / 0.86)), 0.62));
+
+  const gr = g.createLinearGradient(X, 0, X + W, 0);
+  gr.addColorStop(0, mixHex(base, dark, 0.55));
+  gr.addColorStop(0.38, mixHex(light, base, 0.35));
+  gr.addColorStop(1, mixHex(base, dark, 0.75));
+  g.fillStyle = gr;
+  g.beginPath();
+  for (let k = 0; k <= 24; k++) { const t = k / 24; g.lineTo(ox - halfW(t), rib(t)); }
+  for (let k = 24; k >= 0; k--) { const t = k / 24; g.lineTo(ox + halfW(t), rib(t)); }
+  g.closePath();
+  g.fill();
+
+  // Tears: cut clean back to the midrib, alternating sides at random spacing.
+  g.globalCompositeOperation = 'destination-out';
+  g.fillStyle = '#000';
+  for (let k = 0; k < 13; k++) {
+    const t = 0.24 + rand() * 0.72;
+    const s = rand() < 0.5 ? -1 : 1;
+    const w = W * (0.012 + rand() * 0.020);
+    const depth = halfW(t) * (0.45 + rand() * 0.55);
+    g.beginPath();
+    g.moveTo(ox + s * halfW(t), rib(t) - w);
+    g.lineTo(ox + s * halfW(t), rib(t) + w);
+    g.lineTo(ox + s * (halfW(t) - depth), rib(t) + w * 0.3);
+    g.closePath();
+    g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+
+  // Midrib and the lateral veins that make the tears look inevitable.
+  g.strokeStyle = cssOf(light, 0.55);
+  g.lineWidth = Math.max(2, W * 0.020);
+  g.beginPath(); g.moveTo(ox, oy); g.lineTo(ox, top); g.stroke();
+  g.lineWidth = Math.max(1, W * 0.007);
+  g.strokeStyle = cssOf(dark, 0.35);
+  for (let k = 0; k < 26; k++) {
+    const t = 0.20 + (k / 26) * 0.78;
+    for (const s of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(ox, rib(t));
+      g.lineTo(ox + s * halfW(t), rib(t) + H * 0.030);
+      g.stroke();
+    }
+  }
+}
+
+/**
+ * A flowering shrub mass — hibiscus, ixora, plumbago.
+ *
+ * drawShrub with blooms would have done, except that a hibiscus flower is
+ * 15 cm across on a 1.5 m bush: at that ratio the flowers have to be drawn as
+ * discrete discs sitting proud of the leaf mass, not as recoloured leaf dabs,
+ * or they average away into a muddy olive the moment the mip chain starts.
+ */
+function drawFlowerShrub(g, rect, seed, bloom) {
+  const [X, Y, W, H] = rect;
+  const rand = mulberry32(seed);
+  const base = PALETTE.TREE_CANOPY_DARK, light = PALETTE.HEDGE, dark = 0x1d4a2b;
+  const dome = (u) => Math.sin(Math.PI * (0.05 + u * 0.9));
+  for (let i = 0; i < 820; i++) {
+    const u = rand(), v = Math.pow(rand(), 0.7);
+    const px = X + W * (0.05 + u * 0.9);
+    const py = Y + H * (1.0 - v * (0.20 + dome(u) * 0.76));
+    const k = Math.max(0, Math.min(1, (1 - (py - Y) / H) * 1.1 + rand() * 0.32 - 0.14));
+    g.fillStyle = k > 0.5 ? mixHex(base, light, (k - 0.5) * 1.7) : mixHex(dark, base, k * 2);
+    const lr = W * (0.020 + rand() * 0.028);
+    g.beginPath();
+    g.ellipse(px, py, lr, lr * (0.6 + rand() * 0.5), rand() * 3.14, 0, 6.29);
+    g.fill();
+  }
+  for (let i = 0; i < 34; i++) {
+    const u = rand(), v = Math.pow(rand(), 0.5);
+    const px = X + W * (0.08 + u * 0.84);
+    const py = Y + H * (1.0 - v * (0.24 + dome(u) * 0.70));
+    const r = W * (0.032 + rand() * 0.020);
+    // Five overlapping petals round a pale eye — a trumpet flower seen face on.
+    g.fillStyle = mixHex(bloom, PALETTE.FLOWER_WHITE, rand() * 0.30);
+    for (let p = 0; p < 5; p++) {
+      const a = (p / 5) * 6.283 + rand() * 0.2;
+      g.beginPath();
+      g.ellipse(px + Math.cos(a) * r * 0.62, py + Math.sin(a) * r * 0.62,
+        r * 0.62, r * 0.52, a, 0, 6.29);
+      g.fill();
+    }
+    g.fillStyle = cssOf(PALETTE.FLOWER_YELLOW, 0.95);
+    g.beginPath(); g.ellipse(px, py, r * 0.24, r * 0.24, 0, 0, 6.29); g.fill();
+  }
+}
+
 /** Coconut cluster hanging under a crown. */
 function drawCoconuts(g, rect, seed) {
   const [X, Y, W, H] = rect;
@@ -712,13 +876,17 @@ const CUTOUT_CELLS = new Set([
   'frondA', 'frondB', 'frondC', 'frondD', 'fanA', 'shrubA', 'seagrape',
   'grassTuft', 'coconut', 'canopyA', 'canopyB', 'canopyPink', 'canopyYel',
   'canopyRed', 'canopyPurple', 'canopyOlive', 'croton', 'groundcov', 'agave',
+  'frondDead', 'cycad', 'paddle', 'hibiscus',
 ]);
 
 /** Cells whose colour the per-instance foliage tint is allowed to touch. */
 const TINTABLE_CELLS = new Set([...CUTOUT_CELLS, 'crownshaft', 'sw_leaf', 'sw_leafDark']);
 // A coconut is brown fruit hanging in a green crown; tinting it with the fronds
-// turns a ripe nut lime.
+// turns a ripe nut lime. A shed frond is the same problem: the skirt is the one
+// part of a sabal that is NOT the colour of its crown, and that contrast is the
+// whole reason it is there.
 TINTABLE_CELLS.delete('coconut');
+TINTABLE_CELLS.delete('frondDead');
 
 let _atlasTex = null;
 
@@ -752,6 +920,14 @@ function atlasTexture() {
   drawCroton(g, CELL.croton, 0x6ad219);
   drawGroundcover(g, CELL.groundcov, 0x18b3f0);
   drawAgave(g, CELL.agave, 0x3f77d1);
+
+  /* Third quadrant. The shed frond is deliberately painted from the DRY end of
+     the palette — straw over rust over dark wood — because a skirt that is
+     merely a darker green just reads as shadow. */
+  drawFrond(g, CELL.frondDead, 0x0d4b21, PALETTE.GRASS_DRY, PALETTE.RUST, PALETTE.WOOD_DARK, 0.30);
+  drawCycad(g, CELL.cycad, 0x5ac311);
+  drawPaddle(g, CELL.paddle, 0x2b7ff1);
+  drawFlowerShrub(g, CELL.hibiscus, 0x91d40b, PALETTE.CAR_RED);
 
   drawBark(g, CELL.barkRoyal, 'royal', 0x1a2b3c);
   drawBark(g, CELL.barkCoco, 'coco', 0x2b3c4d);
@@ -1487,15 +1663,45 @@ function makePalm(spec) {
   }
 
   /* The crown. Fronds alternate between two atlas cells so a single crown is
-     already a mix of sunlit and shaded blades. */
+     already a mix of sunlit and shaded blades.
+     ------------------------------------------------------------------------
+     THREE ASYMMETRIES, and they are the answer to "the palms all look the
+     same". Scale, rotation and tint vary a palm's SIZE and COLOUR, but a crown
+     built as an even ring of fronds has the same OUTLINE at every size and
+     every rotation, and outline is the thing the eye actually matches. So:
+       flag   the whole crown is combed toward one compass bearing — windward
+              fronds stand up and reach further, leeward ones hang. Every palm
+              on a seafront really does do this, and no two of ours do it in
+              the same direction.
+       gap    a sector with no fronds in it, where the crown has shed. Turns a
+              circle into a horseshoe.
+       spiral golden-angle placement instead of an even ring, which clusters
+              the fronds into two or three visual bunches per crown.
+     Together they mean two instances of the SAME variant, seen from the same
+     angle, still have different silhouettes. */
   const n = spec.fronds;
+  const flagK = spec.flag || 0;
+  const flagDir = spec.flagDir || 0;
+  const gapHalf = Math.min(0.72, spec.gap || 0);
+  const gapDir = spec.gapDir || 0;
+  const TAU = Math.PI * 2;
+  let placed = 0;
   for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2 + rng() * 0.35;
+    const a = spec.spiral ? i * 2.39996 + rng() * 0.22 : (i / n) * TAU + rng() * 0.35;
+    if (gapHalf > 0) {
+      // Signed angular distance from the bare sector, wrapped to (-PI, PI].
+      const d = Math.abs(((a - gapDir + Math.PI) % TAU + TAU) % TAU - Math.PI);
+      // Never strip the crown below seven blades — a palm with four fronds is
+      // not a windswept palm, it is a broken asset.
+      if (d < gapHalf && n - (i - placed) > 7) continue;
+    }
+    placed++;
+    const bias = flagK * Math.cos(a - flagDir);
     // Outer ring of fronds hangs low, inner ring points up: a real crown is a
     // shuttlecock, not a parasol.
     const inner = i % 3 === 0;
-    const len = spec.frondLen * (inner ? 0.72 : 1) * (0.86 + rng() * 0.3);
-    const pitch = inner ? 0.95 + rng() * 0.4 : spec.pitch + (rng() - 0.5) * 0.45;
+    const len = spec.frondLen * (inner ? 0.72 : 1) * (0.86 + rng() * 0.3) * (1 + bias * 0.24);
+    const pitch = (inner ? 0.95 + rng() * 0.4 : spec.pitch + (rng() - 0.5) * 0.45) + bias * 0.58;
     const cell = spec.cells[i % spec.cells.length];
     const f = frondGeo(len, len * spec.frondW, cell, {
       rise: inner ? 0.75 : spec.rise,
@@ -1508,6 +1714,27 @@ function makePalm(spec) {
     _m4.makeRotationY(a);
     f.applyMatrix4(_m4);
     f.translate(topX, crownY, topZ);
+    parts.push(f);
+  }
+
+  /* The skirt of shed fronds a sabal or a washingtonia carries under its crown.
+     Steeply NEGATIVE pitch, because +Z rotation lifts a frond and we want these
+     collapsed against the trunk, and short enough that the lowest tip stays far
+     above the contact band worldBuild measures. Dead-frond cells are excluded
+     from the tint set, so this stays straw against a green crown however the
+     instance is coloured. */
+  const skirtN = spec.skirt || 0;
+  for (let i = 0; i < skirtN; i++) {
+    const a = (i / skirtN) * TAU + rng() * 0.5;
+    const len = spec.frondLen * (0.34 + rng() * 0.16);
+    const f = frondGeo(len, len * Math.min(0.8, spec.frondW), 'frondDead', {
+      rise: 0.10, droop: 0.30, roll: 0.55 + rng() * 0.3,
+    });
+    _m4.makeRotationZ(-(0.95 + rng() * 0.40));
+    f.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    f.applyMatrix4(_m4);
+    f.translate(topX, crownY - spec.rTop * 0.4, topZ);
     parts.push(f);
   }
 
@@ -1555,6 +1782,133 @@ function uplight(geo, crownY) {
     // would switch from "picked by the hash" to "always on".
     return Math.min(0.92, shaft + crown);
   });
+  return geo;
+}
+
+/**
+ * MULTI-STEM CLUMPING PALM — areca, bamboo palm, a triple coconut.
+ *
+ * Worth its own builder rather than three instances of a single-stem palm for
+ * two separate reasons.
+ *
+ * SILHOUETTE. Every other palm in this file is one pole with one tuft, and no
+ * amount of scale, rotation or tint jitter changes that outline. A clump is
+ * three to five poles of DIFFERENT heights fanning out of one root, so it reads
+ * as a distinct plant from 60 m — which is what breaks a boulevard that is
+ * otherwise a row of the same shape.
+ *
+ * PHYSICS. The stems splay from a shared base, so the contact band stays the
+ * 40 cm the root ball actually occupies while the crowns spread three metres.
+ * Building it as three separate instances would instead give three separate
+ * consumables standing inside each other's spacing radius, and the audit would
+ * (rightly) call every clump in the city an overlapping pair.
+ */
+function makeClumpPalm(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const n = spec.stems;
+  let tallest = 0;
+  for (let i = 0; i < n; i++) {
+    // Stems are graded, not random: a clump has one leader and the rest step
+    // down from it, which is what stops it reading as a bundle of sticks.
+    const rank = i / Math.max(1, n - 1);
+    const h = spec.h * (1 - rank * spec.taper) * (0.92 + rng() * 0.16);
+    tallest = Math.max(tallest, h);
+    // Splay outward from the root, all in different compass directions.
+    const a = (i / n) * Math.PI * 2 + rng() * 0.7;
+    const lean = spec.splay * (0.45 + rng() * 0.9);
+    const bend = Math.cos(a) * lean, sway = Math.sin(a) * lean;
+    const rBot = spec.rBot * (0.85 + rng() * 0.3);
+    const stem = trunkGeo(h, rBot, rBot * 0.72, spec.bark, {
+      sides: 5, rings: 4, bend, sway, bulge: 0.05,
+    });
+    // Feet gather at the root ball; only the tops fan apart.
+    const fx = Math.cos(a) * spec.rBot * 1.15, fz = Math.sin(a) * spec.rBot * 1.15;
+    stem.translate(fx, 0, fz);
+    parts.push(stem);
+
+    const cx = fx + bend * h, cz = fz + sway * h * 0.9;
+    const fr = Math.max(4, Math.round(spec.fronds * (0.7 + rank * 0.1 + rng() * 0.4)));
+    for (let k = 0; k < fr; k++) {
+      const fa = (k / fr) * Math.PI * 2 + rng() * 0.4;
+      const len = spec.frondLen * h / spec.h * (0.82 + rng() * 0.36);
+      const f = frondGeo(len, len * spec.frondW, spec.cells[k % spec.cells.length], {
+        rise: 0.44, droop: 1.06, roll: 0.34 + rng() * 0.22,
+      });
+      _m4.makeRotationZ(spec.pitch + (rng() - 0.5) * 0.5);
+      f.applyMatrix4(_m4);
+      _m4.makeRotationY(fa);
+      f.applyMatrix4(_m4);
+      f.translate(cx, h, cz);
+      parts.push(f);
+    }
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  liftNormals(geo, 0.28);
+  windAttr(geo, (x, y) => Math.pow(Math.min(1, Math.max(0, y / tallest)), 1.7) * 1.05);
+  uplight(geo, tallest * 0.9);
+  return geo;
+}
+
+/**
+ * A stemless-to-short-trunked whorl: sago palm, traveller's palm, bird of
+ * paradise. Everything radiates from one hinge just above the ground.
+ *
+ * Distinct from `makeRosette` (which is crossed flat cards) because these need
+ * real leaves placed around a real axis — a sago's stiff radial comb and a
+ * traveller's flat two-ranked fan are both about WHERE the leaves point, and
+ * three crossed billboards cannot say that. `rank` collapses the whorl into a
+ * single plane, which is exactly what a traveller's palm does.
+ */
+function makeWhorl(spec) {
+  const rng = makeRNG(spec.seed);
+  const parts = [];
+  const trunkH = spec.trunkH || 0;
+  if (trunkH > 0.02) {
+    parts.push(trunkGeo(trunkH, spec.rBot, spec.rBot * 0.88, spec.bark || 'barkFib',
+      { sides: 6, rings: 2, bulge: 0.20 }));
+  }
+  const n = spec.leaves;
+  let top = trunkH;
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;
+    let a, pitch, len;
+    if (spec.rank) {
+      /* TWO-RANKED. Every leaf lies in ONE vertical plane, alternating left and
+         right, the inner pair upright and each successive pair laid further
+         over — a traveller's palm is a peacock's tail, and it only reads as one
+         if the leaves share a plane. Index order runs from the middle out, so
+         `u` is how far from the centre of the fan this leaf is. */
+      const pairs = Math.ceil(n / 2);
+      const u = Math.min(1, (Math.floor(i / 2) + 0.5) / pairs);
+      a = (i % 2 ? 0 : Math.PI) + (rng() - 0.5) * 0.24;
+      pitch = 0.30 + 1.14 * (1 - u) + (rng() - 0.5) * spec.pitchVar;
+      len = spec.len * (0.64 + 0.36 * (1 - u * 0.7)) * (0.90 + rng() * 0.22);
+    } else {
+      a = t * Math.PI * 2 + rng() * 0.3;
+      pitch = spec.pitch + (rng() - 0.5) * spec.pitchVar;
+      len = spec.len * (0.74 + 0.40 * Math.sin(Math.PI * t)) * (0.88 + rng() * 0.26);
+    }
+    const f = frondGeo(len, len * spec.wide, spec.cell, {
+      segs: 3, rise: spec.rise, droop: spec.droop, roll: 0.22 + rng() * 0.2,
+      alongV: true,
+    });
+    _m4.makeRotationZ(pitch);
+    f.applyMatrix4(_m4);
+    _m4.makeRotationY(a);
+    f.applyMatrix4(_m4);
+    f.translate(0, trunkH, 0);
+    parts.push(f);
+    top = Math.max(top, trunkH + len * Math.sin(Math.max(0, pitch)) * 0.9);
+  }
+  const geo = BufferGeometryUtils.mergeGeometries(parts, false);
+  radialNormals(geo, 0, trunkH + spec.len * 0.3, 0, 0.5);
+  liftNormals(geo, 0.30);
+  // Stiff. A sago barely moves and a banana paddle flaps; `flex` is the only
+  // thing separating the two here, and the contrast between a still plant and a
+  // swaying palm behind it is half of why either reads.
+  windAttr(geo, (x, y) => Math.pow(Math.min(1, y / Math.max(0.5, top)), 1.7) * spec.flex);
+  uplight(geo, Math.max(0.6, top * 0.7));
   return geo;
 }
 
@@ -2006,7 +2360,55 @@ function palmVariant(b, r) {
     rise: b.rise * (0.80 + r() * 0.46),
     droop: b.droop * (0.82 + r() * 0.40),
     coconuts: !!b.coconuts && r() < 0.72,
+    /* The crown asymmetries. Every variant rolls its own bearing for each, so
+       the shape of the crown — not just its size — differs variant to variant.
+       `flag` is always on and always somewhere different; the gap and the
+       spiral fire on a minority, because a city where every palm is visibly
+       storm-damaged is its own kind of uniform. */
+    flag: (b.flag ?? 0.42) * (0.25 + r() * 0.95),
+    flagDir: r() * 6.283,
+    gap: r() < 0.36 ? 0.28 + r() * 0.40 : 0,
+    gapDir: r() * 6.283,
+    spiral: r() < 0.42,
+    skirt: b.skirt ? Math.round(b.skirt * (0.55 + r() * 0.9)) : 0,
     cells,
+  });
+}
+
+/** Clumping palm: stem count is the variant's loudest choice. */
+function clumpVariant(b, r) {
+  return makeClumpPalm({
+    seed: b.seed * 31 + Math.floor(r() * 8192),
+    h: b.h * (0.80 + r() * 0.46),
+    stems: b.stems + Math.round((r() - 0.5) * 2.4),
+    taper: b.taper * (0.7 + r() * 0.7),
+    splay: b.splay * (0.6 + r() * 0.9),
+    rBot: b.rBot * (0.86 + r() * 0.3),
+    bark: b.bark,
+    fronds: b.fronds,
+    frondLen: b.h * b.crownF * (0.88 + r() * 0.28),
+    frondW: b.frondW * (0.86 + r() * 0.3),
+    pitch: b.pitch + (r() - 0.5) * 0.4,
+    cells: b.cells,
+  });
+}
+
+function whorlVariant(b, r) {
+  return makeWhorl({
+    seed: b.seed * 31 + Math.floor(r() * 8192),
+    trunkH: b.trunkH * (0.6 + r() * 0.9),
+    rBot: b.rBot * (0.85 + r() * 0.35),
+    bark: b.bark,
+    leaves: Math.max(5, b.leaves + Math.round((r() - 0.5) * (b.leafVar || 4))),
+    len: b.len * (0.82 + r() * 0.40),
+    wide: b.wide * (0.86 + r() * 0.30),
+    pitch: b.pitch + (r() - 0.5) * 0.42,
+    pitchVar: b.pitchVar,
+    rise: b.rise * (0.85 + r() * 0.34),
+    droop: b.droop * (0.82 + r() * 0.4),
+    rank: b.rank,
+    cell: b.cell,
+    flex: b.flex,
   });
 }
 
@@ -2031,10 +2433,15 @@ function treeVariant(b, r) {
 }
 
 function bushVariant(b, r) {
+  // `hVar` widens the height roll for the species that get planted in long
+  // runs. A hedge line whose units are all within +-19% of each other reads as
+  // one extruded box however many variants it has; at +-31% it reads as a
+  // hedge someone has been clipping for years.
+  const hv = b.hVar ?? 0.38;
   return makeBush({
     seed: b.seed * 31 + Math.floor(r() * 8192),
     w: b.w * (0.86 + r() * 0.30),
-    h: b.h * (0.82 + r() * 0.38),
+    h: b.h * (1.01 - hv * 0.5 + r() * hv),
     cell: b.cell,
     cards: b.cards,
     depth: b.depth ? b.depth * (0.85 + r() * 0.3) : 0,
@@ -2061,28 +2468,32 @@ const TINT_SETS = {
 
 const SPECIES = {
   royalA: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 1100, clear: 2.8, sep: 1.5,
-    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.55, contactMax: 1.9,
+    label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 1300, clear: 2.8, sep: 1.5,
+    debris: PALETTE.PALM_FROND, variants: 8, tints: 'palm', rBase: 0.55, contactMax: 1.9,
     make: palmVariant,
     base: {
       seed: 11, h: 13.0, rBot: 0.55, rTop: 0.42, bark: 'barkRoyal', crownshaft: true,
       lean: 0.028, bulge: 0.12, fronds: 13, frondVar: 5, crownF: 0.40, frondW: 0.50,
       pitch: 0.34, rise: 0.44, droop: 0.98, cells: ['frondA', 'frondB'], swap: 'frondC',
+      // A royal is a groomed street tree: it is combed by the wind but nobody
+      // lets it keep a skirt.
+      flag: 0.34,
     },
   },
   royalB: {
-    label: 'Royal Palm', tier: TIER.LARGE, h: 10.4, rad: 1.6, cap: 950, clear: 2.6, sep: 1.45,
-    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.50, contactMax: 1.8,
+    label: 'Royal Palm', tier: TIER.LARGE, h: 10.4, rad: 1.6, cap: 1100, clear: 2.6, sep: 1.45,
+    debris: PALETTE.PALM_FROND, variants: 7, tints: 'palm', rBase: 0.50, contactMax: 1.8,
     make: palmVariant,
     base: {
       seed: 23, h: 10.4, rBot: 0.50, rTop: 0.40, bark: 'barkRoyal', crownshaft: true,
       lean: 0.040, bulge: 0.16, fronds: 12, frondVar: 5, crownF: 0.44, frondW: 0.54,
       pitch: 0.42, rise: 0.48, droop: 1.02, cells: ['frondB', 'frondA'], swap: 'frondD',
+      flag: 0.38,
     },
   },
   queenPalm: {
-    label: 'Queen Palm', tier: TIER.LARGE, h: 11.2, rad: 1.6, cap: 800, clear: 2.6, sep: 1.4,
-    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.40, contactMax: 1.7,
+    label: 'Queen Palm', tier: TIER.LARGE, h: 11.2, rad: 1.6, cap: 900, clear: 2.6, sep: 1.4,
+    debris: PALETTE.PALM_FROND, variants: 6, tints: 'palm', rBase: 0.40, contactMax: 1.7,
     make: palmVariant,
     base: {
       seed: 29, h: 11.2, rBot: 0.40, rTop: 0.33, bark: 'barkQueen', crownshaft: false,
@@ -2090,48 +2501,76 @@ const SPECIES = {
       // The queen palm's signature: long, fine, plumose fronds hanging almost
       // vertically off a slender grey trunk.
       pitch: 0.06, rise: 0.34, droop: 1.28, cells: ['frondC', 'frondA'], swap: 'frondD',
+      flag: 0.46, skirt: 3,
     },
   },
   coconutA: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 10.6, rad: 1.7, cap: 950, clear: 2.7, sep: 1.5,
-    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.48, contactMax: 1.8,
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 10.6, rad: 1.7, cap: 1100, clear: 2.7, sep: 1.5,
+    debris: PALETTE.PALM_FROND, variants: 7, tints: 'palm', rBase: 0.48, contactMax: 1.8,
     make: palmVariant,
     base: {
       seed: 37, h: 10.6, rBot: 0.48, rTop: 0.34, bark: 'barkCoco', crownshaft: false,
       lean: 0.115, bulge: 0, fronds: 11, frondVar: 4, crownF: 0.46, frondW: 0.50,
       pitch: 0.10, rise: 0.40, droop: 1.10, coconuts: true,
       cells: ['frondB', 'frondA'], swap: 'frondD',
+      // A coconut on a seafront is the most obviously wind-combed tree there is.
+      flag: 0.62, skirt: 2,
     },
   },
   coconutB: {
-    label: 'Coconut Palm', tier: TIER.LARGE, h: 8.0, rad: 1.6, cap: 750, clear: 2.5, sep: 1.4,
-    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.46, contactMax: 1.7,
+    label: 'Coconut Palm', tier: TIER.LARGE, h: 8.0, rad: 1.6, cap: 800, clear: 2.5, sep: 1.4,
+    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.46, contactMax: 1.7,
     make: palmVariant,
     base: {
       seed: 41, h: 8.0, rBot: 0.46, rTop: 0.32, bark: 'barkCoco', crownshaft: false,
       lean: 0.165, bulge: 0, fronds: 10, frondVar: 4, crownF: 0.53, frondW: 0.56,
       pitch: -0.05, rise: 0.36, droop: 1.16, coconuts: true,
       cells: ['frondA', 'frondB'], swap: 'frondC',
+      flag: 0.70, skirt: 3,
     },
   },
   sabal: {
-    label: 'Sabal Palm', tier: TIER.LARGE, h: 8.4, rad: 1.5, cap: 950, clear: 2.4, sep: 1.35,
-    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.40, contactMax: 1.6,
+    label: 'Sabal Palm', tier: TIER.LARGE, h: 8.4, rad: 1.5, cap: 1100, clear: 2.4, sep: 1.35,
+    debris: PALETTE.PALM_FROND, variants: 6, tints: 'palm', rBase: 0.40, contactMax: 1.6,
     make: palmVariant,
     base: {
       seed: 53, h: 8.4, rBot: 0.40, rTop: 0.35, bark: 'barkFib', crownshaft: false,
       lean: 0.030, bulge: 0, fronds: 14, frondVar: 5, crownF: 0.37, frondW: 1.25,
       pitch: 0.34, rise: 0.58, droop: 0.80, cells: ['fanA'],
+      // The straw petticoat of shed fronds is the ONE thing that tells a sabal
+      // apart from every other palm on the street at 60 m.
+      flag: 0.30, skirt: 7,
     },
   },
+  /* Saw palmetto, not a tree.
+     This entry used to be a 3.6 m trunk with a 3 m fan on top of it, i.e. a
+     5.8 m palm — and every caller uses it as ground-level mass: the ring round
+     a piece of public art, the chunky band inside a plaza border. Four palms at
+     4.6 m radius around a 6 m sculpture simply hid the sculpture. A palmetto is
+     a clumping shrub with a stub of trunk, it is the commonest plant in south
+     Florida, and it is what those call sites were always asking for. */
   fanShort: {
-    label: 'Fan Palm', tier: TIER.MEDIUM, h: 3.6, rad: 1.7, cap: 900, clear: 2.0, sep: 0.9,
-    debris: PALETTE.PALM_FROND, variants: 4, tints: 'palm', rBase: 0.48, contactMax: 1.5,
+    label: 'Saw Palmetto', tier: TIER.SMALL, h: 2.1, rad: 1.5, cap: 1100, clear: 1.2, sep: 0.85,
+    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.34, contactMax: 1.2,
     make: palmVariant,
     base: {
-      seed: 67, h: 3.6, rBot: 0.48, rTop: 0.44, bark: 'barkFib', crownshaft: false,
-      lean: 0.010, bulge: 0, fronds: 15, frondVar: 5, crownF: 0.80, frondW: 1.30,
-      pitch: 0.18, rise: 0.52, droop: 0.84, cells: ['fanA'],
+      seed: 67, h: 1.15, rBot: 0.34, rTop: 0.30, bark: 'barkFib', crownshaft: false,
+      lean: 0.16, bulge: 0, fronds: 13, frondVar: 5, crownF: 1.15, frondW: 1.30,
+      // Pitched up and barely drooping, and a gentle flag. On a 1.1 m trunk the
+      // contact band is only ~40 cm off the ground, so a frond that sagged the
+      // way a coconut's does would land IN it and hand a waist-high shrub the
+      // pass radius of a car.
+      pitch: 0.42, rise: 0.60, droop: 0.62, cells: ['fanA'], flag: 0.35,
+    },
+  },
+  arecaClump: {
+    label: 'Areca Palm', tier: TIER.LARGE, h: 7.0, rad: 2.0, cap: 900, clear: 2.4, sep: 1.5,
+    debris: PALETTE.PALM_FROND, variants: 5, tints: 'palm', rBase: 0.36, contactMax: 1.5,
+    make: clumpVariant,
+    base: {
+      seed: 173, h: 6.6, stems: 5, taper: 0.40, splay: 0.085, rBot: 0.17,
+      bark: 'barkQueen', fronds: 8, crownF: 0.50, frondW: 0.42, pitch: 0.34,
+      cells: ['frondC', 'frondA', 'frondB'],
     },
   },
 
@@ -2225,22 +2664,54 @@ const SPECIES = {
     },
   },
 
+  /* 2,315 instances in the city, and it had TWO geometries. Nothing else in
+     this file is repeated a thousand times each, so the hedge run is where "a
+     row of identical assets" was literally true. Four variants and a wider roll
+     costs two extra pools and nothing per frame. */
   hedge: {
-    label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 3800, clear: 0.0, sep: 1.05,
-    debris: PALETTE.HEDGE, variants: 2, tints: 'shrub', contactMax: 2.1,
+    label: 'Hedge', tier: TIER.SMALL, h: 1.25, rad: 1.7, cap: 4200, clear: 0.0, sep: 1.05,
+    debris: PALETTE.HEDGE, variants: 4, tints: 'shrub', contactMax: 2.1,
     // 1.1 m deep: a clipped municipal hedge, not a topiary cube. See makeBush.
     make: bushVariant,
-    base: { seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2, depth: 1.1 },
+    base: { seed: 131, w: 3.3, h: 1.25, cell: 'shrubA', cards: 2, depth: 1.1, hVar: 0.62 },
   },
   shrub: {
     label: 'Shrub', tier: TIER.SMALL, h: 1.5, rad: 0.95, cap: 2800, clear: 0.7, sep: 0.6,
-    debris: PALETTE.HEDGE, variants: 3, tints: 'shrub', contactMax: 1.6,
+    debris: PALETTE.HEDGE, variants: 4, tints: 'shrub', contactMax: 1.6,
     make: bushVariant,
     base: { seed: 137, w: 1.9, h: 1.5, cell: 'shrubA', cards: 3 },
   },
+  hibiscus: {
+    label: 'Hibiscus', tier: TIER.SMALL, h: 1.7, rad: 1.0, cap: 2000, clear: 0.7, sep: 0.62,
+    debris: PALETTE.CAR_RED, variants: 3, tints: 'none', contactMax: 1.7,
+    // Like the croton, the cell already carries its own colour — a tint
+    // multiplier would only wash the flowers back toward the leaves.
+    make: bushVariant,
+    base: { seed: 191, w: 2.0, h: 1.7, cell: 'hibiscus', cards: 3 },
+  },
+  sago: {
+    label: 'Sago Palm', tier: TIER.SMALL, h: 1.1, rad: 0.9, cap: 1600, clear: 0.7, sep: 0.6,
+    debris: PALETTE.TREE_CANOPY_DARK, variants: 3, tints: 'none', rBase: 0.30, contactMax: 1.2,
+    make: whorlVariant,
+    base: {
+      seed: 179, trunkH: 0.36, rBot: 0.30, bark: 'barkFib', leaves: 15, leafVar: 5,
+      len: 1.30, wide: 0.30, pitch: 0.46, pitchVar: 0.34, rise: 0.46, droop: 0.52,
+      rank: 0, cell: 'cycad', flex: 0.09,
+    },
+  },
+  traveller: {
+    label: "Traveller's Palm", tier: TIER.MEDIUM, h: 4.0, rad: 1.6, cap: 700, clear: 1.8, sep: 1.05,
+    debris: PALETTE.TREE_CANOPY, variants: 3, tints: 'canopy', rBase: 0.26, contactMax: 1.4,
+    make: whorlVariant,
+    base: {
+      seed: 181, trunkH: 1.00, rBot: 0.26, bark: 'barkFib', leaves: 9, leafVar: 3,
+      len: 3.10, wide: 0.34, pitch: 1.05, pitchVar: 0.26, rise: 0.62, droop: 0.40,
+      rank: 1, cell: 'paddle', flex: 0.62,
+    },
+  },
   croton: {
-    label: 'Croton', tier: TIER.SMALL, h: 1.35, rad: 0.9, cap: 2000, clear: 0.6, sep: 0.58,
-    debris: PALETTE.FLOWER_ORANGE, variants: 3, tints: 'none', contactMax: 1.5,
+    label: 'Croton', tier: TIER.SMALL, h: 1.35, rad: 0.9, cap: 2400, clear: 0.6, sep: 0.58,
+    debris: PALETTE.FLOWER_ORANGE, variants: 4, tints: 'none', contactMax: 1.5,
     // No tint set: the whole point of a croton is that the atlas cell is
     // already five colours, and multiplying a variegated leaf just greys it.
     make: bushVariant,
@@ -2341,10 +2812,25 @@ const SPECIES = {
   },
 };
 
-const PALMS = ['royalA', 'royalB', 'queenPalm', 'coconutA', 'coconutB', 'sabal', 'fanShort'];
+const PALMS = ['royalA', 'royalB', 'queenPalm', 'coconutA', 'coconutB', 'sabal',
+  'fanShort', 'arecaClump'];
 const SHADE = ['banyan', 'liveOak', 'mahogany', 'tabebuia', 'poinciana', 'jacaranda', 'bougain'];
 /** Everything that reads as a tree from 40 m — used for stats only. */
-const CANOPY = [...SHADE, 'seagrapeT', 'mangrove'];
+const CANOPY = [...SHADE, 'seagrapeT', 'mangrove', 'traveller'];
+
+/**
+ * Knee-to-chest planting, in rough order of how loud it is.
+ *
+ * Kept as one list because half a dozen call sites were each carrying their own
+ * hand-written weighted mix of the same four species, which is how a park, a
+ * plaza border and a forecourt all ended up with the same ground layer. Drawing
+ * from one table with per-site weights keeps them different from each other and
+ * makes adding a species a one-line change instead of a six-line one.
+ */
+const UNDER = [
+  ['shrub', 20], ['ornGrass', 16], ['croton', 14], ['sago', 11], ['hibiscus', 11],
+  ['agave', 9], ['fanShort', 8], ['groundcover', 7], ['traveller', 4],
+];
 
 /* ======================================================================== */
 /*  MERGE BUCKETS                                                           */
@@ -2929,9 +3415,14 @@ function buildMedians(ctx) {
         if (mid > z1) continue;
         for (const s of [-1, 1]) {
           const roll = rng();
-          const under = roll < 0.50 ? (rng.chance(0.5) ? 'flowerPink' : 'flowerYellow')
-            : roll < 0.68 ? 'croton'
-            : roll < 0.84 ? 'ornGrass' : 'groundcover';
+          // Sago and hibiscus at 30-40 cm and 1.7 m give the ribbon two heights
+          // instead of one, which is the difference between a planted median
+          // and a strip of coloured carpet.
+          const under = roll < 0.42 ? (rng.chance(0.5) ? 'flowerPink' : 'flowerYellow')
+            : roll < 0.56 ? 'croton'
+            : roll < 0.66 ? 'sago'
+            : roll < 0.76 ? 'hibiscus'
+            : roll < 0.88 ? 'ornGrass' : 'groundcover';
           plant(ctx, under, lane(s), mid, rng() * 6.283, 0.75 + rng() * 0.45,
             { y: -0.012, clear: 0.4, island: true, force: true, tintIndex: step });
         }
@@ -2981,14 +3472,18 @@ function buildStreetTrees(ctx, B, b, rng) {
        as noise. */
     const palmy = grand ? rng.chance(0.82) : rng.chance(0.42);
     const key = palmy
-      ? rng.weighted([['royalA', 26], ['royalB', 20], ['queenPalm', 16],
-        ['coconutA', 16], ['sabal', 14], ['coconutB', 8]])
+      ? rng.weighted([['royalA', 24], ['royalB', 18], ['queenPalm', 15],
+        ['coconutA', 15], ['sabal', 13], ['arecaClump', 8], ['coconutB', 7]])
       : rng.weighted([['liveOak', 24], ['banyan', 12], ['tabebuia', 18],
         ['poinciana', 16], ['jacaranda', 12], ['mahogany', 10], ['bougain', 8]]);
+    // The accent is not "a smaller palm" — a 2 m palmetto standing one in six
+    // down a line of 13 m royals reads as a gap in the line, not as variety.
+    // It has to be another TREE, differing in crown rather than in height.
     const accent = palmy
-      ? rng.weighted([['sabal', 30], ['queenPalm', 26], ['coconutA', 24], ['fanShort', 20]])
-      : rng.weighted([['tabebuia', 26], ['poinciana', 24], ['jacaranda', 22],
-        ['bougain', 16], ['liveOak', 12]]);
+      ? rng.weighted([['sabal', 26], ['queenPalm', 24], ['coconutA', 22],
+        ['arecaClump', 18], ['royalB', 10]])
+      : rng.weighted([['tabebuia', 24], ['poinciana', 22], ['jacaranda', 20],
+        ['bougain', 14], ['liveOak', 10], ['traveller', 10]]);
     const accentAt = 2 + rng.int(0, 3);
 
     for (let i = 0; i <= n; i++) {
@@ -3016,9 +3511,7 @@ function buildStreetTrees(ctx, B, b, rng) {
       // collar of grass there quietly deletes one hedge unit per street tree.
       if (rng.chance(0.6)) {
         const s = rng.sign();
-        const u = rng();
-        plant(ctx, u < 0.42 ? 'ornGrass' : u < 0.70 ? 'shrub'
-          : u < 0.88 ? 'croton' : 'agave',
+        plant(ctx, rng.weighted(UNDER),
           px + ax * s * 1.5, pz + az * s * 1.5,
           rng() * 6.283, 0.7 + rng() * 0.4, { clear: 0.35, force: true, tintIndex: i });
       }
@@ -3102,11 +3595,14 @@ function parkBlock(ctx, B, b, rng) {
   const hasLoop = Math.min(b.w, b.d) > 20;
   /** Lamp stations along the walk, filled in after the hero feature. */
   const lampSites = [];
+  /** The walking loop, kept in scope so the bedding below can stay off it. */
+  const loop = { x0: x0 + pin, x1: x1 - pin, z0: z0 + pin, z1: z1 - pin, bow: 0 };
   if (hasLoop) {
-    const px0 = x0 + pin, px1 = x1 - pin, pz0 = z0 + pin, pz1 = z1 - pin;
+    const px0 = loop.x0, px1 = loop.x1, pz0 = loop.z0, pz1 = loop.z1;
     // A slightly bowed loop reads as a designed park, an exact rectangle reads
     // as a spreadsheet.
     const bow = Math.min(2.2, Math.min(hw, hd) * 0.14);
+    loop.bow = bow;
     B.add('path', ribbon([
       { x: px0, z: pz0 }, { x: (px0 + px1) / 2, z: pz0 - bow }, { x: px1, z: pz0 },
       { x: px1 + bow, z: (pz0 + pz1) / 2 }, { x: px1, z: pz1 },
@@ -3187,7 +3683,32 @@ function parkBlock(ctx, B, b, rng) {
   // BEFORE the beds and the canopy scatter: the feature needs 5-9 m of clear
   // ground, and whatever runs first wins the occupancy grid. Running it last is
   // how every bandshell, court and pond in the city ended up rejected.
-  parkFeature(ctx, B, b, rng, y);
+  const keep = parkFeature(ctx, B, b, rng, y);
+
+  /* Where bedding may NOT go. Two things and no others: the hero feature's own
+     surface, and the walking surface.
+     This replaces `ctx.isFree` for everything soft below. Inside a planted park
+     the occupancy grid reads "claimed" essentially everywhere — see the note on
+     parkFeature — so testing against it refused almost every flower in the
+     city. What a bloom clump actually has to avoid is a pond and a footpath;
+     standing under the edge of a canopy is not a fault, it is planting. */
+  const pathHalf = pw * 0.5 + 0.75;
+  const inKeep = (px, pz) => {
+    for (const k of keep) {
+      const dx = px - k.x, dz = pz - k.z;
+      if (dx * dx + dz * dz < k.r * k.r) return true;
+    }
+    if (!hasLoop) return Math.abs(pz - b.z) < pathHalf && px > x0 && px < x1;
+    // Signed distance to the loop RECTANGLE's boundary; the ring is a band of
+    // width pw either side of it, so |sd| is the test, not sd.
+    const dxo = Math.max(loop.x0 - px, px - loop.x1);
+    const dzo = Math.max(loop.z0 - pz, pz - loop.z1);
+    const ax = Math.max(dxo, 0), az = Math.max(dzo, 0);
+    const sd = Math.hypot(ax, az) + Math.min(Math.max(dxo, dzo), 0);
+    // `bow` bulges the ribbon outward at the middle of each leg, so the band
+    // has to be that much wider than the ribbon itself.
+    return Math.abs(sd) < pathHalf + loop.bow;
+  };
 
   /* --- path lighting ---------------------------------------------------- */
   // After the hero feature, so a bandshell or a pond has already claimed the
@@ -3246,11 +3767,15 @@ function parkBlock(ctx, B, b, rng) {
     const rx = Math.max(0, hw - keepIn - bw * 0.5);
     const rz = Math.max(0, hd - keepIn - bd * 0.5);
     let bx = 0, bz = 0, ok = false;
-    for (let t = 0; t < 10 && !ok; t++) {
+    for (let t = 0; t < 12 && !ok; t++) {
       bx = b.x + (rng() * 2 - 1) * rx;
       bz = b.z + (rng() * 2 - 1) * rz;
       if (!hasLoop && Math.abs(bz - b.z) < pw * 0.5 + 0.8 + bd * 0.5) continue;
-      ok = ctx.isFree(bx, bz, Math.min(bw, bd) * 0.5)
+      // Corners as well as the centre: a 7 x 5 m kerbed bed half on the pond
+      // is worse than no bed, and the centre alone does not catch that.
+      ok = !inKeep(bx, bz) && !inKeep(bx - bw / 2, bz - bd / 2)
+        && !inKeep(bx + bw / 2, bz - bd / 2) && !inKeep(bx - bw / 2, bz + bd / 2)
+        && !inKeep(bx + bw / 2, bz + bd / 2)
         && !ctx.layout.isWater(bx, bz) && !inBuilding(bx, bz);
     }
     if (!ok) continue;
@@ -3261,7 +3786,11 @@ function parkBlock(ctx, B, b, rng) {
     // 3.5 cm above the turf inside the same edging, so the bed read as a shallow
     // pit with the flowers at the bottom of it, and every bloom was planted a
     // further 5 cm below the soil it was supposed to be growing in.
-    const soil = 0.15;
+    // 11 cm of soil inside a 22 cm edging, and the plants set 2 cm into it.
+    // It was 15 cm proud with the plants sitting on top, which put their bases
+    // 32 cm above grade — past the 28 cm the placement audit allows before it
+    // calls a prop floating, and it looked it.
+    const soil = 0.11;
     B.add('mulch', tile(bw, bd, bx, bz, y + soil, 3));
     B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz - bd / 2, 1));
     B.add('kerb', box(bw + 0.4, 0.22, 0.22, bx, y + 0.11, bz + bd / 2, 1));
@@ -3278,7 +3807,7 @@ function parkBlock(ctx, B, b, rng) {
         plant(ctx, key,
           bx - bw / 2 + (cx + 0.5) * (bw / cols),
           bz - bd / 2 + (cz + 0.5) * (bd / rows),
-          rng() * 6.283, 0.75 + rng() * 0.35, { clear: 0, y: 0.015 + soil });
+          rng() * 6.283, 0.75 + rng() * 0.35, { clear: 0, y: 0.015 + soil - 0.02 });
       }
     }
   }
@@ -3294,23 +3823,22 @@ function parkBlock(ctx, B, b, rng) {
    * ellipse is how bedding is actually planted, and it survives anywhere a
    * single clump fits.
    *
-   * Test each CLUMP against a single occupancy cell rather than the drift
-   * against `isFree(centre, r)`. `isFree` rounds any non-zero radius up to a
-   * whole 3 m cell in every direction, so it answers "is this 9 m square
-   * empty?" no matter how small the thing asking is — which for a 1 m bloom
-   * clump in a planted park is almost always no. Per-clump, the drift simply
-   * frays around whatever is already there, which is what a drift does.
-   * `clear: 0` for the mirror-image reason: a clump that CLAIMED ground would
-   * blanket that same 9 m square and refuse the other five clumps of its own
-   * drift. Spacing inside the drift is the private `sep` set's job.
+   * Test each CLUMP, and test it against `inKeep` — the pond, the court, the
+   * apron, the footpath — rather than against the shared occupancy grid. The
+   * grid cannot answer this: it rounds any radius up to whole 3 m cells, so one
+   * park lamp claims 81 m² and a grove of a hundred trees claims the parcel,
+   * and the whole city ended up with 185 flowers in it. `clear: 0` for the
+   * mirror-image reason: a clump that CLAIMED ground would blanket a 9 m square
+   * and refuse the other five clumps of its own drift. Spacing inside the drift
+   * is the private `sep` set's job.
    */
-  const driftN = Math.max(2, Math.round(b.area / 620));
+  const driftN = Math.max(3, Math.round(b.area / 420));
   for (let i = 0; i < driftN; i++) {
     // A drift is ONE plant repeated — mixing species inside it turns a designed
     // sweep of colour into a jumble. Crotons drift too: they read as a mass of
     // orange at a distance where individual leaves have long since minified out.
-    const key = rng.weighted([['flowerPink', 34], ['flowerYellow', 34],
-      ['croton', 18], ['groundcover', 14]]);
+    const key = rng.weighted([['flowerPink', 30], ['flowerYellow', 30],
+      ['croton', 15], ['hibiscus', 13], ['groundcover', 12]]);
     const dx = b.x + (rng() - 0.5) * b.w * 0.80;
     const dz = b.z + (rng() - 0.5) * b.d * 0.80;
     const a = rng() * 3.14, ra = 2.8 + rng() * 2.6, rb = 1.9 + rng() * 1.0;
@@ -3321,7 +3849,7 @@ function parkBlock(ctx, B, b, rng) {
       const v = Math.sin(t) * rb * (0.6 + rng() * 0.4);
       const px = dx + u * Math.cos(a) - v * Math.sin(a);
       const pz = dz + u * Math.sin(a) + v * Math.cos(a);
-      if (!ctx.isFree(px, pz, 0)) continue;
+      if (inKeep(px, pz)) continue;
       plant(ctx, key, px, pz, rng() * 6.283, 0.72 + rng() * 0.3,
         { clear: 0, tintIndex: i });
     }
@@ -3336,11 +3864,12 @@ function parkBlock(ctx, B, b, rng) {
    * own species, and cluster around them with a sqrt falloff (uniform in area,
    * so the grove is dense at the middle and frays at the edge).
    */
-  const coastal = () => rng.weighted([['royalA', 18], ['coconutA', 18], ['seagrapeT', 22],
-    ['sabal', 13], ['banyan', 11], ['queenPalm', 10], ['poinciana', 8]]);
-  const inland = () => rng.weighted([['banyan', 15], ['liveOak', 17], ['royalA', 12],
-    ['royalB', 9], ['tabebuia', 11], ['poinciana', 11], ['jacaranda', 9],
-    ['mahogany', 8], ['bougain', 5], ['sabal', 3]]);
+  const coastal = () => rng.weighted([['royalA', 16], ['coconutA', 16], ['seagrapeT', 20],
+    ['sabal', 12], ['banyan', 10], ['queenPalm', 9], ['arecaClump', 8],
+    ['traveller', 5], ['poinciana', 7]]);
+  const inland = () => rng.weighted([['banyan', 14], ['liveOak', 16], ['royalA', 11],
+    ['royalB', 8], ['tabebuia', 10], ['poinciana', 10], ['jacaranda', 8],
+    ['mahogany', 7], ['arecaClump', 7], ['traveller', 4], ['bougain', 4], ['sabal', 3]]);
   const speciesFor = b.bayfront ? coastal : inland;
 
   const treeN = Math.max(7, Math.round(b.area / 40));
@@ -3372,13 +3901,16 @@ function parkBlock(ctx, B, b, rng) {
      under the canopy edge, not marooned in the middle of the mown lawn.
      Five things in the mix rather than two — a park whose entire ground layer
      is one shrub and one grass is a green carpet with trees standing on it. */
-  const shrubN = Math.max(4, Math.round(b.area / 96));
+  const shrubN = Math.max(5, Math.round(b.area / 78));
   for (let i = 0; i < shrubN; i++) {
-    const u = rng();
-    plant(ctx, u < 0.38 ? 'shrub' : u < 0.62 ? 'ornGrass' : u < 0.78 ? 'croton'
-      : u < 0.92 ? 'groundcover' : 'agave',
-      b.x + (rng() - 0.5) * b.w * 0.88, b.z + (rng() - 0.5) * b.d * 0.88,
-      rng() * 6.283, 0.8 + rng() * 0.45, { tintIndex: i });
+    const sx = b.x + (rng() - 0.5) * b.w * 0.88;
+    const sz = b.z + (rng() - 0.5) * b.d * 0.88;
+    if (inKeep(sx, sz)) continue;
+    // `clear: 0` and force: same argument as the drifts. The understorey used
+    // to read the occupancy grid and therefore mostly landed on the two or
+    // three cells a park had left, in a clump, at the edge.
+    plant(ctx, rng.weighted(UNDER), sx, sz,
+      rng() * 6.283, 0.8 + rng() * 0.45, { clear: 0, force: true, tintIndex: i });
   }
 
   blockShoreline(ctx, b, rng);
@@ -3393,12 +3925,27 @@ function parkBlock(ctx, B, b, rng) {
  */
 const DECK = 0.07;
 
-/** The thing that makes a given park memorable. Sized to the parcel. */
+/**
+ * The thing that makes a given park memorable. Sized to the parcel.
+ *
+ * Returns the KEEP-OUT discs it wants respected, in world space.
+ *
+ * It already claims those in the shared occupancy grid, but inside a park that
+ * grid is useless as a query: `occupy` rounds any radius up to whole 3 m cells
+ * in every direction, so a single park lamp with a 0.8 m clearance blankets
+ * 81 m² and a grove of a hundred trees blankets the entire parcel. Every
+ * subsequent `isFree` therefore answers "no" everywhere, which is why the city
+ * had 185 flowers in it. The bedding needs a test that means "not in the pond,
+ * not on the court" and nothing more, and only this function knows where those
+ * are.
+ */
 function parkFeature(ctx, B, b, rng, y) {
   const small = Math.min(b.w, b.d);
   const cx = b.x + (rng() - 0.5) * b.w * 0.16;
   const cz = b.z + (rng() - 0.5) * b.d * 0.16;
   const roll = rng();
+  /** @type {{x:number,z:number,r:number}[]} */
+  const keep = [];
 
   if (small > 30 && b.area > 1500 && roll < 0.30) {
     /* Pond with a fountain in it. */
@@ -3406,6 +3953,7 @@ function parkFeature(ctx, B, b, rng, y) {
     B.add('pond', disc(pr, 22, cx, y + 0.04, cz, null));
     B.add('kerb', ringWall(pr, pr + 0.5, 0.34, y, 22, 'stoneTex', cx, cz));
     ctx.occupy(cx, cz, pr + 1);
+    keep.push({ x: cx, z: cz, r: pr + 1.2 });
     plant(ctx, 'fountainL', cx, cz, rng() * 6.283, 0.9 + rng() * 0.25, { clear: 0, y: 0.05 });
     for (let i = 0; i < 10; i++) {
       const a = rng() * 6.283, d = pr + 2.2 + rng() * 3;
@@ -3420,6 +3968,7 @@ function parkFeature(ctx, B, b, rng, y) {
     const cw = Math.min(26, b.w * 0.66), cd = Math.min(15, b.d * 0.66);
     court(B, cx, cz, Math.max(cw, cd), Math.min(cw, cd), y + 0.055, kind, rot);
     ctx.occupy(cx, cz, Math.max(cw, cd) * 0.5);
+    keep.push({ x: cx, z: cz, r: Math.max(cw, cd) * 0.5 + 0.8 });
     if (kind === 'hard') {
       // Just INSIDE the baseline. Outside it the post stands on turf while
       // claiming the court's height, which floats it 5.5 cm; inside, it is on
@@ -3442,6 +3991,7 @@ function parkFeature(ctx, B, b, rng, y) {
     B.add('kerb', box(0.3, 0.26, pd, cx - pw / 2, y + 0.13, cz, 1));
     B.add('kerb', box(0.3, 0.26, pd, cx + pw / 2, y + 0.13, cz, 1));
     ctx.occupy(cx, cz, Math.max(pw, pd) * 0.5);
+    keep.push({ x: cx, z: cz, r: Math.max(pw, pd) * 0.5 + 0.8 });
     plant(ctx, 'playground', cx + 1.2, cz, rng.chance(0.5) ? 0 : Math.PI, 1,
       { clear: 0, y: DECK });
     stats.features++;
@@ -3459,6 +4009,8 @@ function parkFeature(ctx, B, b, rng, y) {
     // growing out of the seating.
     claimBox(ctx, cx, cz + b.d * 0.02 + deepest / 2, 9 * 1.5 + 12, deepest + 2.4, 1.6);
     ctx.occupy(cx, cz, Math.min(b.w, b.d) * 0.40);
+    keep.push({ x: cx, z: cz - b.d * 0.24, r: 9.5 });
+    keep.push({ x: cx, z: cz + b.d * 0.02 + deepest / 2, r: 13.5 });
     stats.features++;
   } else if (roll < 0.88) {
     /* A small fountain on a paved apron, ringed with planters and a pergola. */
@@ -3468,6 +4020,7 @@ function parkFeature(ctx, B, b, rng, y) {
     B.add('plazaAccent', tile(aw, 1.6, cx, cz + ad / 2 - 0.8, y + 0.07, 2));
     plant(ctx, 'fountainS', cx, cz, rng() * 6.283, 1.0 + rng() * 0.3, { clear: 0, y: DECK });
     ctx.occupy(cx, cz, 4.0);
+    keep.push({ x: cx, z: cz, r: Math.max(aw, ad) * 0.5 + 0.6 });
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * 6.283 + 0.7;
       plant(ctx, 'planterS', cx + Math.cos(a) * 5.6, cz + Math.sin(a) * 5.6, a, 1,
@@ -3482,6 +4035,7 @@ function parkFeature(ctx, B, b, rng, y) {
     /* Public art on a plinth, ringed with paving. */
     B.add('plazaInlay', disc(5.2, 16, cx, y + 0.055, cz, null));
     B.add('plazaAccent', disc(6.0, 16, cx, y + 0.05, cz, null));
+    keep.push({ x: cx, z: cz, r: 6.4 });
     placeSculpture(ctx, cx, cz, rng, true, DECK);
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * 6.283 + 0.4;
@@ -3490,6 +4044,7 @@ function parkFeature(ctx, B, b, rng, y) {
     }
     stats.features++;
   }
+  return keep;
 }
 
 /* --------------------------------------------------------------- plazas --- */
@@ -3637,12 +4192,10 @@ function plazaBlock(ctx, B, b, rng) {
       plant(ctx, rng.weighted([['liveOak', 30], ['jacaranda', 22], ['poinciana', 20],
         ['bougain', 16], ['tabebuia', 12]]), gx, gz,
       rng() * 6.283, 0.8 + rng() * 0.3, { clear: 1.6, y: 0.06 });
-      for (let k = 0; k < 4; k++) {
-        const u = rng();
-        plant(ctx, u < 0.34 ? 'shrub' : u < 0.58 ? 'ornGrass'
-          : u < 0.78 ? 'croton' : u < 0.9 ? 'agave' : 'groundcover',
-        gx + (rng() - 0.5) * gw * 0.7, gz + (rng() - 0.5) * gd * 0.7,
-        rng() * 6.283, 0.75 + rng() * 0.4, { clear: 0.7, y: 0.06, tintIndex: k });
+      for (let k = 0; k < 5; k++) {
+        plant(ctx, rng.weighted(UNDER),
+          gx + (rng() - 0.5) * gw * 0.7, gz + (rng() - 0.5) * gd * 0.7,
+          rng() * 6.283, 0.75 + rng() * 0.4, { clear: 0.7, y: 0.06, tintIndex: k });
       }
     }
   }
@@ -3653,7 +4206,8 @@ function plazaBlock(ctx, B, b, rng) {
   const off = (alongX ? hd : hw) * 0.62;
   if (runLen > 12) {
     const n = Math.max(2, Math.round(runLen / 8.5));
-    const key = rng.weighted([['royalA', 40], ['queenPalm', 26], ['sabal', 22], ['royalB', 12]]);
+    const key = rng.weighted([['royalA', 34], ['queenPalm', 24], ['sabal', 20],
+      ['arecaClump', 12], ['royalB', 10]]);
     for (let s = -1; s <= 1; s += 2) {
       for (let i = 0; i <= n; i++) {
         const t = -runLen / 2 + (runLen / n) * i;
@@ -3695,13 +4249,13 @@ function plazaBlock(ctx, B, b, rng) {
      with agave and croton threaded in: three completely different silhouettes
      at knee-to-waist height is what keeps a big paved square from reading as
      one texture with dots on it. */
-  const fn = Math.max(2, Math.round((b.w + b.d) / 18));
+  const fn = Math.max(3, Math.round((b.w + b.d) / 14));
   for (let i = 0; i < fn; i++) {
     const a = (i / fn) * 6.283 + 0.5;
-    const u = rng();
-    plant(ctx, u < 0.52 ? 'fanShort' : u < 0.76 ? 'agave' : 'croton',
-      b.x + Math.cos(a) * hw * 0.55, b.z + Math.sin(a) * hd * 0.55,
-      rng() * 6.283, 0.9 + rng() * 0.3, { clear: 1.5, force: true, tintIndex: i });
+    plant(ctx, rng.weighted([['fanShort', 26], ['sago', 20], ['agave', 18],
+      ['croton', 16], ['hibiscus', 12], ['traveller', 8]]),
+    b.x + Math.cos(a) * hw * 0.55, b.z + Math.sin(a) * hd * 0.55,
+    rng() * 6.283, 0.9 + rng() * 0.3, { clear: 1.2, force: true, tintIndex: i });
   }
 
   if (rng.chance(0.5) && small > 20) {
@@ -3849,8 +4403,8 @@ function waterfrontBlock(ctx, B, b, rng) {
   const n = Math.max(1, Math.round((hd * 2) / 8));
   for (let i = 0; i <= n; i++) {
     const pz = b.z - hd + (hd * 2 / n) * i;
-    const key = rng.weighted([['royalA', 28], ['coconutA', 24], ['royalB', 16],
-      ['queenPalm', 16], ['sabal', 16]]);
+    const key = rng.weighted([['royalA', 25], ['coconutA', 22], ['royalB', 14],
+      ['queenPalm', 14], ['sabal', 14], ['arecaClump', 11]]);
     if (plant(ctx, key, walkX, pz, rng() * 6.283, 0.88 + rng() * 0.34,
       { force: true, tintIndex: i })) {
       B.add('plazaInlay', disc(1.2, 8, walkX, y + 0.045, pz, null));
@@ -3877,8 +4431,8 @@ function waterfrontBlock(ctx, B, b, rng) {
   const en = Math.max(2, Math.round((hd * 2) / 4.4));
   for (let i = 0; i < en; i++) {
     const pz = b.z - hd + (hd * 2 / en) * (i + 0.5);
-    plant(ctx, rng.weighted([['seagrapeT', 32], ['mangrove', 22], ['shrub', 16],
-      ['ornGrass', 12], ['croton', 10], ['agave', 8]]),
+    plant(ctx, rng.weighted([['seagrapeT', 28], ['mangrove', 19], ['shrub', 13],
+      ['hibiscus', 10], ['ornGrass', 10], ['croton', 8], ['agave', 7], ['sago', 5]]),
     edgeX + (rng() - 0.5) * 2.0, pz, rng() * 6.283, 0.85 + rng() * 0.4,
     { tintIndex: i, force: true });
   }
@@ -3949,11 +4503,9 @@ function builtBlock(ctx, B, b, rng) {
         plantOut(ctx, 'hedge', px, pz, -nx, -nz, rot, 0.85 + rng() * 0.2,
           { clear: 1.2, tintIndex: i, force: true }, 2, 0.5);
       } else {
-        const u = rng();
-        plantOut(ctx, u < 0.36 ? 'shrub' : u < 0.62 ? 'ornGrass'
-          : u < 0.84 ? 'croton' : 'agave', px, pz, -nx, -nz,
-        rng() * 6.283, 0.8 + rng() * 0.4,
-        { clear: 1.0, tintIndex: i, force: true }, 2, 0.5);
+        plantOut(ctx, rng.weighted(UNDER), px, pz, -nx, -nz,
+          rng() * 6.283, 0.8 + rng() * 0.4,
+          { clear: 1.0, tintIndex: i, force: true }, 2, 0.5);
       }
     }
   }
@@ -3977,16 +4529,16 @@ function builtBlock(ctx, B, b, rng) {
     const yx = b.x + (rng() - 0.5) * b.w * 0.92;
     const yz = b.z + (rng() - 0.5) * b.d * 0.92;
     if (!openYard(yx, yz, 2.6)) continue;
-    const key = rng.weighted([['liveOak', 16], ['mahogany', 14], ['sabal', 14],
-      ['queenPalm', 13], ['royalB', 12], ['poinciana', 10], ['jacaranda', 8],
-      ['coconutB', 7], ['banyan', 6]]);
+    const key = rng.weighted([['liveOak', 15], ['mahogany', 13], ['sabal', 13],
+      ['queenPalm', 12], ['royalB', 11], ['arecaClump', 10], ['poinciana', 9],
+      ['jacaranda', 7], ['coconutB', 6], ['banyan', 4]]);
     if (plant(ctx, key, yx, yz, rng() * 6.283, 0.82 + rng() * 0.34,
       { force: true, clear: 2.4, tintIndex: i })) {
       treePit(B, yx, yz, 1.0, ctx.Y_WALK + 0.02);
     } else {
       // No room for a canopy is not a reason for bare tarmac — a shrub mass
       // fits in a metre and still breaks the slab up.
-      plant(ctx, rng.chance(0.5) ? 'shrub' : 'croton', yx, yz,
+      plant(ctx, rng.weighted(UNDER), yx, yz,
         rng() * 6.283, 0.8 + rng() * 0.4, { force: true, clear: 1.0, tintIndex: i });
     }
   }
@@ -4007,15 +4559,26 @@ function builtBlock(ctx, B, b, rng) {
   const runL = (along ? b.w : b.d) - 6;
   if (runL < 8) return;
   const en = Math.max(2, Math.round(runL / 6.5));
+  /* The row sat 2.0 m in from the parcel line and was refused almost outright:
+     `buildStreetTrees` runs first and plants its line at an inset of 1.75-2.35,
+     so on any lot whose seaward side is also a frontage the two rows want the
+     same strip and the spacing set — correctly — keeps the one that got there
+     first. The audit found 19 sea grapes in the whole city, on a coastline this
+     row exists to hold together. Marching INWARD instead of insisting on one
+     depth puts the scrub behind the street trees, which is where a seawall
+     planting belongs anyway. */
+  const inx = along ? 0 : (seaward === 'e' ? -1 : 1);
+  const inz = along ? (seaward === 's' ? -1 : 1) : 0;
   for (let i = 0; i <= en; i++) {
     const t = -runL / 2 + (runL / en) * i;
     const off = (along ? b.d : b.w) / 2 - 2.0;
     const ex = along ? b.x + t : b.x + (seaward === 'e' ? off : -off);
     const ez = along ? b.z + (seaward === 's' ? off : -off) : b.z + t;
-    const key = rng.weighted([['seagrapeT', 26], ['coconutA', 18], ['royalB', 14],
-      ['queenPalm', 10], ['shrub', 14], ['ornGrass', 10], ['croton', 8]]);
-    plant(ctx, key, ex, ez, rng() * 6.283, 0.85 + rng() * 0.35,
-      { clear: 1.2, force: true, tintIndex: i });
+    const key = rng.weighted([['seagrapeT', 26], ['coconutA', 16], ['royalB', 12],
+      ['queenPalm', 8], ['shrub', 12], ['hibiscus', 9], ['ornGrass', 9],
+      ['croton', 8]]);
+    plantOut(ctx, key, ex, ez, inx, inz, rng() * 6.283, 0.85 + rng() * 0.35,
+      { clear: 1.2, force: true, tintIndex: i }, 3, 1.4);
   }
 }
 

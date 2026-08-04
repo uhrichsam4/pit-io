@@ -119,13 +119,23 @@ export const PALETTE = {
   /* ======================================================================
    * GROUND — asphalt must be a WARM mid-grey. Never blue. Ever.
    * ==================================================================== */
-  // r:b 1.10. Warm GREY, not brown: the key light is already warm (0xfff2da,
+  // r:b 1.12. Warm GREY, not brown: the key light is already warm (0xfff2da,
   // r:b 1.18) and the grade tints highlights warmer still, so a road authored
-  // much past 1.1 renders as packed dirt. Authored below 1.0 renders as navy.
-  ASPHALT: 0x7b7770,
-  ASPHALT_LIGHT: 0x928c82,  // sun-bleached lanes, older wearing course
-  ASPHALT_DARK: 0x5e5a54,   // fresh overlay, shadowed lanes
-  ASPHALT_PATCH: 0x6b6459,  // rectangular utility-cut repairs
+  // much past 1.15 renders as packed dirt. Authored below 1.0 renders as navy.
+  //
+  // MEASURED, and darker than it reads as a swatch. At 0x7b7770 the rendered
+  // carriageway landed at ~0.63 screen luminance against a ~0.70 sidewalk: the
+  // two surfaces were four percent apart and the whole frame read as one
+  // continuous warm plane with markings floating on it — rubric category 1
+  // (first-glance readability) failing outright. The road has to be the DARK
+  // element the pale paving and the pastel facades sit against. Everything that
+  // lightens the wearing course (tyre polish, the macro band, the sun-bleach
+  // tint) was pulled back in step, so this is a real value change, not a
+  // brightness swap.
+  ASPHALT: 0x6c6860,
+  ASPHALT_LIGHT: 0x857f74,  // sun-bleached lanes, older wearing course
+  ASPHALT_DARK: 0x54504a,   // fresh overlay, shadowed lanes
+  ASPHALT_PATCH: 0x5f5950,  // rectangular utility-cut repairs
   TAR_SEAM: 0x413b34,       // crack sealant — warm near-black, glossy
   OIL_STAIN: 0x4a443c,
 
@@ -157,6 +167,12 @@ export const PALETTE = {
   GRASS_DARK: 0x3d7f3e,
   GRASS_LIGHT: 0x84c268,
   GRASS_DRY: 0xa9ae60,
+  // Where the turf has actually been walked off: desire paths across a lawn,
+  // the bald ring under a tree, the strip beside a bench. Read by the
+  // world-space breakup in materials.js, which is why it is a WORN colour and
+  // not a soil colour — you are still seeing thin grass over dust, not bare
+  // earth. Bare earth is DIRT below.
+  GRASS_WORN: 0x9c8f61,
   HEDGE: 0x489344,
   HEDGE_LIGHT: 0x67b158,
   MULCH: 0x6f5340,

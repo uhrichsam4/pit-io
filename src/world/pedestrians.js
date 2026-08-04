@@ -218,6 +218,7 @@ const AT = {
   BOOM_MIC: 4,  // the blimp on the end of that pole
   PANEL: 5,     // reflector / clapper held up in front of the chest
   DRUM: 6,      // bucket drum between the knees
+  SEAT: 7,      // the crate they are sitting ON, standing on the ground
 };
 
 /* ============================================================= geometry === */
@@ -1231,12 +1232,24 @@ function placeGatherings(ctx, rng, paths, agents, yWalk, cap) {
         // Everyone in a knot faces roughly its centre — that inward focus is
         // what makes a cluster read as a conversation and not as a queue.
         a.yaw = Math.atan2(cx - x, cz - z) + (r() - 0.5) * 0.7;
-        const sitChance = isGreen ? 0.46 : isCafe ? 0.48 : 0.24;
-        if (r.chance(sitChance) && arch.key !== 'jogger' && !arch.board) {
+        // A SEAT HAS TO EXIST. This placer invents its own sitters, so the only
+        // honest place to put one is a surface that is already there: the lawn,
+        // or the paving of the promenade. Sitting at bench height on bare
+        // pavement puts the hips 52 cm up with nothing underneath — the
+        // "floating prop" automatic failure with a person in it. Real benches
+        // and cafe chairs are filled by placeSeated, which reads the furniture
+        // props.js actually built.
+        const groundSit = isGreen || isProm;
+        if (groundSit && r.chance(isGreen ? 0.46 : 0.24)
+            && arch.key !== 'jogger' && !arch.board) {
           a.mode = MODE.SIT;
-          a.hipY = isGreen && r.chance(0.55) ? 0.30 : 0.52;
-          a.sitSprawl = a.hipY < 0.4;
+          // Solved, not guessed: with the sprawl pose the heel sits
+          // 0.293 below the hip joint, so this is the hip height that puts the
+          // shoe on the ground for every body scale.
+          a.hipY = 0.288 + r() * 0.020;
+          a.sitSprawl = true;
           a.lean = 0.10 + r() * 0.18;
+          a.seatYaw = a.yaw;
         } else {
           a.mode = MODE.IDLE;
           a.lean = 0.01 + r() * 0.04;
@@ -1494,6 +1507,9 @@ function placeSeated(ctx, rng, furniture, agents, cap) {
     s.taken = true;
     a.x = s.x; a.z = s.z; a.y = s.y;
     a.yaw = s.yaw + (rng() - 0.5) * 0.34;
+    // The direction the SEAT points. A sitter's body is bolted to it; only the
+    // shoulders and head are allowed to turn. See stepSit.
+    a.seatYaw = a.yaw;
     a.mode = MODE.SIT;
     a.role = s.kind === 'chair' ? 'diner' : 'sitter';
     // hipY is measured from the SOLE and then scaled by the agent's height, so
@@ -1547,7 +1563,8 @@ function placeTerraceLife(ctx, rng, furniture, agents, cap) {
     // where the door would be on a terrace this shape.
     const ang = rng() * Math.PI * 2;
     const px = cl.x + Math.cos(ang) * 2.6, pz = cl.z + Math.sin(ang) * 2.6;
-    if (!layout.isWater(px, pz) && !layout.isRoad(px, pz)) {
+    const doorOK = !layout.isWater(px, pz) && !layout.isRoad(px, pz);
+    if (doorOK) {
       route.push({ x: px, z: pz, wait: 2.2 + rng() * 3.4 });
     }
     if (route.length >= 2) {
@@ -1586,6 +1603,59 @@ function placeTerraceLife(ctx, rng, furniture, agents, cap) {
         const prev = agents[agents.length - 2];
         if (prev.mode === MODE.IDLE) { prev.chatPartner = a; a.chatPartner = prev; }
       }
+    }
+
+    if (!doorOK) continue;
+
+    /* --- the queue at the counter ---------------------------------------- */
+    // The line runs back from the door ACROSS the terrace's outward direction,
+    // so it hugs the frontage instead of walking out into the tables. Every
+    // slot is a fixed point checked against the ground before anyone is put on
+    // it, so a queue can never end up in the carriageway.
+    const qux = -Math.sin(ang), quz = Math.cos(ang);   // perpendicular to the door normal
+    const qLen = rng.weighted([[0, 26], [1, 26], [2, 26], [3, 22]]);
+    for (let k = 0; k < qLen && spent < cap; k++) {
+      const qx = px + qux * (0.95 + k * 0.78);
+      const qz = pz + quz * (0.95 + k * 0.78);
+      if (layout.isWater(qx, qz) || layout.isRoad(qx, qz)) break;
+      const a = makeAgent(rng, pickArchetype(rng, false));
+      a.x = qx; a.z = qz; a.y = cl.y;
+      a.yaw = Math.atan2(px - qx, pz - qz);
+      a.mode = MODE.IDLE;
+      a.role = 'queuer';         // hands-in-front, shuffling stance
+      a.lean = 0.01 + rng() * 0.04;
+      a.idleSeed = rng() * 100;
+      if (rng.chance(0.34)) addItem(a, AT.HAND_R, 0.078, 0.150, 0.019, rng.pick(PHONE_COLORS), 0.55);
+      agents.push(a);
+      spent++;
+    }
+
+    /* --- coming and going through the door -------------------------------- */
+    // Two waypoints and a long dwell at each: the walk to the door, the pause
+    // in it, the walk back out to the pavement. It reuses the server's route
+    // loop because "someone repeatedly moving between two spots" is exactly
+    // what that already is — the only difference is where and how long.
+    const patrons = rng.weighted([[0, 34], [1, 40], [2, 26]]);
+    for (let k = 0; k < patrons && spent < cap; k++) {
+      const away = 3.6 + rng() * 2.4;
+      const side = (rng() - 0.5) * 3.0;
+      const ox = px + Math.cos(ang) * away + qux * side;
+      const oz = pz + Math.sin(ang) * away + quz * side;
+      if (layout.isWater(ox, oz) || layout.isRoad(ox, oz)) continue;
+      const a = makeAgent(rng, pickArchetype(rng, false));
+      a.mode = MODE.SERVE;
+      a.role = 'patron';
+      a.route = [
+        // At the door: standing in it, i.e. arriving or on their way out.
+        { x: px + qux * -0.55, z: pz + quz * -0.55, wait: 5 + rng() * 9 },
+        { x: ox, z: oz, wait: 4 + rng() * 8 },
+      ];
+      a.routeI = rng.chance(0.5) ? 0 : 1;
+      a.wait = rng() * 5;
+      a.x = a.route[a.routeI].x; a.z = a.route[a.routeI].z; a.y = cl.y;
+      a.tx = a.x; a.tz = a.z;
+      agents.push(a);
+      spent++;
     }
   }
 }
@@ -2031,8 +2101,15 @@ function placeBuskers(ctx, rng, paths, agents, yWalk, cap) {
       a.mode = MODE.SIT;
       a.hipY = 0.44 / a.size;
       a.sitSprawl = false;
+      a.seatYaw = a.yaw;
       a.lean = 0.16;
       addItem(a, AT.DRUM, 0.34, 0.42, 0.34, r.pick([PALETTE.BIN_BLUE, PALETTE.BIN_GREY, PALETTE.CAR_WHITE]), 0);
+      // The crate they are sitting ON. Without it a bucket drummer's hips hang
+      // 44 cm above the pavement with nothing underneath. Item geometry is
+      // scaled by the body, so world metres are divided back out here.
+      addItem(a, AT.SEAT, 0.42 / a.size, 0.415 / a.size, 0.38 / a.size,
+        r.pick([PALETTE.WOOD_DECK, PALETTE.BIN_GREY, PALETTE.WOOD_DARK]), 0, 0.4,
+        0.2075 / a.size);
     } else {
       a.mode = MODE.FILM;              // stands and performs; same pose family
       a.role = 'singer';
@@ -2342,6 +2419,7 @@ function updateCrowd(st, dt) {
       case MODE.WAIT: stepWait(st, a, sdt); break;
       case MODE.CROSS: stepCross(st, a, sdt); break;
       case MODE.CYCLE: stepCycle(st, a, sdt); break;
+      case MODE.SIT: stepSit(st, a, sdt); break;
       case MODE.FLEE: stepFlee(st, a, sdt); break;
       case MODE.RETURN: stepReturn(st, a, sdt); break;
       case MODE.GAZE: stepGaze(st, a, sdt); break;
@@ -2471,6 +2549,9 @@ function reviveAgent(st, a) {
     a.mode = m;
     a.x = a.homeX; a.z = a.homeZ; a.y = a.homeY; a.yaw = a.homeYaw;
     if (m === MODE.SERVE) { a.routeI = 0; a.wait = 0; }
+    // Back on the same bench, facing the same way, not still twisted round from
+    // whatever they were looking at when the ground went.
+    if (m === MODE.SIT) { a.seatYaw = a.homeYaw; a.sitTurn = 0; a.headTurn = 0; }
   }
   a.phase = st.rng() * Math.PI * 2;
 }
@@ -2795,6 +2876,43 @@ function stepIdle(st, a, dt) {
   }
 }
 
+/**
+ * Sitting.
+ *
+ * This used to fall through to stepIdle, and stepIdle turns the whole body to
+ * face whoever you are talking to. On a bench that is a 90-degree swivel: two
+ * people paired into a conversation both rotated square to each other and ended
+ * up sitting sideways across the slats with their legs through the armrest.
+ *
+ * A seat does not turn. So the BODY is pinned to the seat's own direction and
+ * only the shoulders and the head are allowed to move — which is what a person
+ * on a bench actually does, and reads as attention rather than as a lazy susan.
+ */
+const SIT_TWIST = 0.42;     // shoulders, radians off the seat direction
+const SIT_HEAD = 0.60;      // and the head can add this much again
+function stepSit(st, a, dt) {
+  a.curSpeed = 0;
+  advancePhase(a, 0);
+  const base = a.seatYaw ?? a.yaw;
+  // Ease back onto the seat line — this also un-swivels anyone whose yaw was
+  // left pointing somewhere else by a flee-and-return.
+  turnTo(a, base + Math.sin((st.time + a.idleSeed) * 0.31) * 0.03, dt, 1.6);
+
+  let want = 0;
+  const p = a.chatPartner;
+  if (p && !p.dead) {
+    want = Math.atan2(p.x - a.x, p.z - a.z) - base;
+    while (want > Math.PI) want -= Math.PI * 2;
+    while (want < -Math.PI) want += Math.PI * 2;
+  }
+  const tw = want < -SIT_TWIST ? -SIT_TWIST : want > SIT_TWIST ? SIT_TWIST : want;
+  const rest = want - tw;
+  const hd = rest < -SIT_HEAD ? -SIT_HEAD : rest > SIT_HEAD ? SIT_HEAD : rest;
+  const k = Math.min(1, dt * 3);
+  a.sitTurn = (a.sitTurn || 0) + (tw - (a.sitTurn || 0)) * k;
+  a.headTurn = (a.headTurn || 0) + (hd - (a.headTurn || 0)) * k;
+}
+
 /* ------------------------------------------- the behaviours added this pass */
 
 /** Stopped on the pavement, head back at the skyline. Tourists do this a lot. */
@@ -2863,7 +2981,18 @@ function stepServe(st, a, dt) {
  */
 function stepEscort(st, a, dt) {
   const ad = a.escort;
-  if (!ad || ad.dead || ad.held) { a.mode = MODE.IDLE; return; }
+  if (!ad) { a.mode = MODE.IDLE; return; }
+  // Their adult is in the pit, or below the world waiting on the respawner.
+  // STAY IN ESCORT and stand still: dropping to IDLE stranded the child on the
+  // pavement for the rest of the match, because nothing ever put them back in
+  // the family — one swallow near a park and the city filled up with lone
+  // toddlers standing in the road.
+  if (ad.dead || ad.held) {
+    a.curSpeed = 0;
+    advancePhase(a, 0);
+    turnTo(a, Math.atan2(ad.x - a.x, ad.z - a.z), dt, 1.5);
+    return;
+  }
   const cs = Math.cos(ad.yaw), sn = Math.sin(ad.yaw);
   const off = a.escortSide * a.escortOff;
   const tx = ad.x + cs * off - sn * a.escortBack;
@@ -3028,15 +3157,32 @@ function poseAgent(st, a, i) {
   let thighL, thighR, shinL, shinR, armL, armR, hip, lean, twist;
   /** Extra head pitch on top of the lean. Negative looks up. */
   let headExtra = 0;
+  /** Extra head YAW, for looking at someone you are not squared up to. */
+  let headTurn = 0;
 
   if (a.mode === MODE.SIT) {
     hip = a.hipY;
     const spread = a.sitSprawl ? -1.50 : -1.34;
     thighL = spread - 0.05; thighR = spread + 0.05;
-    shinL = a.sitSprawl ? -0.95 : 0.06;
-    shinR = a.sitSprawl ? -1.02 : -0.02;
+    if (a.sitSprawl) {
+      shinL = -0.95; shinR = -1.02;
+    } else {
+      // SOLVE the shin angle from the seat height instead of authoring it.
+      // Seats in this city run 0.46-0.56 m and bodies scale 0.885-1.06, so a
+      // fixed pose puts a tall person's shoes 7 cm through the pavement and a
+      // short person's 2 cm above it. Dropping a perpendicular from the knee
+      // to the ground makes every sitter's sole land on the ground for free,
+      // and a seat too high to reach correctly leaves the feet dangling.
+      const knee = 0.42 * Math.cos(spread);
+      const reach = (hip - knee) / 0.463;      // 0.463 = shin + shoe sole
+      const bend = reach >= 1 ? 0 : Math.acos(Math.max(-1, reach));
+      shinL = bend + 0.04; shinR = bend - 0.05;
+    }
     lean = a.lean + Math.sin(st.time * 0.6 + a.idleSeed) * 0.02;
-    twist = Math.sin(st.time * 0.33 + a.idleSeed) * 0.10;
+    // A sitter cannot swivel: the bench does not turn. `sitTurn` is a
+    // shoulder twist off the seat's own direction, clamped in stepSit.
+    twist = Math.sin(st.time * 0.33 + a.idleSeed) * 0.10 + (a.sitTurn || 0);
+    headTurn = a.headTurn || 0;
     armL = -0.55; armR = -0.50;
     if (a.role === 'drummer') {
       // Both hands beating the bucket, out of phase.
@@ -3130,6 +3276,16 @@ function poseAgent(st, a, i) {
       case 'valet':
         armL = -0.34; armR = -0.10 - Math.max(0, Math.sin(t * 0.9)) * 0.5;
         break;
+      case 'queuer': {
+        // A queue reads by its STILLNESS. The default idle gestures, which made
+        // a line at a door look like a party. Hands low and in front — or the
+        // phone up, because that is what half a queue is really doing.
+        const onPhone = !!a.items;
+        armL = onPhone ? -1.02 + Math.sin(t * 0.4) * 0.03 : -0.26 + shift * 0.04;
+        armR = -0.22 - shift * 0.04;
+        headExtra = onPhone ? 0.30 : 0.02;
+        break;
+      }
       case 'onlooker': case 'audience':
         headExtra = -0.06;
         break;
@@ -3219,7 +3375,7 @@ function poseAgent(st, a, i) {
   const shZ = SHOULDER_Y * sl;
 
   const headSwing = lean * 0.35 + headExtra + (a.mode === MODE.FLEE ? -0.18 : 0);
-  const headYaw = yaw + twist * 0.5 + Math.sin(st.time * 0.4 + a.idleSeed) * 0.09;
+  const headYaw = yaw + twist * 0.5 + headTurn + Math.sin(st.time * 0.4 + a.idleSeed) * 0.09;
   poseInto(P.head.instanceMatrix.array, i, px, py, pz, headYaw, s, 0, neckY, neckZ, headSwing, 1, 1, 1);
   poseInto(
     P.hair.instanceMatrix.array, i, px, py, pz, headYaw, s,
@@ -3343,6 +3499,12 @@ function poseItems(st, a, hip, shY, shZ, armL, armR, lean, twist, yaw, px, py, p
       case AT.DRUM:
         // Standing on the ground between the knees, not floating at hip height.
         ly = 0.24; lz = 0.36;
+        break;
+      case AT.SEAT:
+        // The crate under a busker. Authored in WORLD metres at build time and
+        // divided by the body scale there, because this is the one item whose
+        // height has to match the ground rather than the person.
+        ly = it.dy; lz = -0.055;
         break;
       default: break;
     }

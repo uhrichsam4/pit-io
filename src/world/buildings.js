@@ -58,6 +58,44 @@ const GLASS_TINTS = [
   P.GLASS_BRONZE, P.GLASS_SMOKE,
 ];
 
+/**
+ * Ground-floor palettes, drawn per building from the block seed.
+ *
+ * Every glass tower in Brickell used to call podium() with no colour options at
+ * all, so all thirty-four of them wore the same precast wall, the same warm
+ * cornice and the same chrome canopy — on the one part of a tower the player
+ * ever drives past. Grouped rather than rolled surface by surface, because a
+ * random wall against a random cornice reads as a bug, not as variety.
+ */
+const BASE_PALETTES = [
+  [{ wall: P.PRECAST, band: P.CONCRETE_WARM, pier: P.CONCRETE, canopy: P.CHROME, planter: P.PLANTER }, 15],
+  [{ wall: P.STUCCO_WHITE, band: P.CONCRETE_WARM, pier: P.MULLION, canopy: P.CHROME, planter: P.PLANTER }, 13],
+  [{ wall: P.STUCCO_SAND, band: P.STUCCO_CREAM, pier: P.STUCCO_WHITE, canopy: P.FABRIC_SUN, planter: P.PLANTER_DARK }, 12],
+  [{ wall: P.CONCRETE_DARK, band: P.PRECAST, pier: P.STEEL_DARK, canopy: P.STEEL, planter: P.PLANTER_DARK }, 11],
+  [{ wall: P.STUCCO_SKY, band: P.STUCCO_WHITE, pier: P.MULLION, canopy: P.FABRIC_SKY, planter: P.PLANTER }, 9],
+  [{ wall: P.WOOD_DARK, band: P.CONCRETE_WARM, pier: P.STUCCO_WHITE, canopy: P.TEAK, planter: P.PLANTER_DARK }, 9],
+  [{ wall: P.STUCCO_MINT, band: P.STUCCO_WHITE, pier: P.CONCRETE_WARM, canopy: P.FABRIC_AQUA, planter: P.PLANTER }, 8],
+  [{ wall: P.STUCCO_CORAL, band: P.STUCCO_CREAM, pier: P.STUCCO_WHITE, canopy: P.FABRIC_CORAL, planter: P.PLANTER }, 8],
+  [{ wall: P.TERRACOTTA, band: P.STUCCO_CREAM, pier: P.STUCCO_SAND, canopy: P.FABRIC_SUN, planter: P.PLANTER }, 7],
+  [{ wall: P.BRICK, band: P.STUCCO_CREAM, pier: P.BRICK_LIGHT, canopy: P.FABRIC_CORAL, planter: P.PLANTER_DARK }, 6],
+];
+const BASE_PAL_DEFAULT = BASE_PALETTES[0][0];
+
+/**
+ * Architectural trim: fins, mullion bands, spandrel courses, corner columns.
+ *
+ * The shaft used to pick between exactly two of these, which made the second
+ * variety axis after the plan shape nearly binary. Real curtain wall is trimmed
+ * in anodised white, bronze-grey, warm precast or bare concrete depending on
+ * the decade it was built in, and reading those apart at 300 m is most of what
+ * tells two glass towers apart at all.
+ */
+const ACCENT_TRIM = [
+  [P.MULLION, 16], [P.CONCRETE, 13], [P.PRECAST, 12], [P.STUCCO_WHITE, 12],
+  [P.CONCRETE_WARM, 11], [P.ALUMINIUM, 9], [P.MULLION_DARK, 8],
+  [P.STEEL_DARK, 7], [P.STUCCO_SAND, 6], [P.CONCRETE_DARK, 6],
+];
+
 /* ========================================================== colour ====== */
 
 const s2l = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
@@ -190,6 +228,17 @@ function planBounds(p) {
     if (q[1] < z0) z0 = q[1]; if (q[1] > z1) z1 = q[1];
   }
   return { x0, x1, z0, z1, w: x1 - x0, d: z1 - z0, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2 };
+}
+
+/** Perimeter length. Drives how many piers/fins a face gets, so the rhythm is
+ *  metric (one pier every 6-7 m) instead of a fixed count on every plan. */
+function planPerimeter(p) {
+  let t = 0;
+  for (let i = 0; i < p.length; i++) {
+    const a = p[i], b = p[(i + 1) % p.length];
+    t += Math.hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  return t;
 }
 
 /* --- plan archetypes. All wound clockwise seen from above (outward faces). */
@@ -1067,6 +1116,108 @@ function chiller(B, x, y, z, rot, s, r) {
   }
 }
 
+/**
+ * Tilted PV array on rails.
+ *
+ * Worth its triangles because nothing else on a roof looks like it: a dark,
+ * ordered rectangle among pale lumpy machinery, which is exactly the kind of
+ * mark that survives being 200 m from the lens and stops one roof reading as
+ * the same grey speckle as the next.
+ */
+function solarArray(B, x, y, z, w, d, rot) {
+  const rows = Math.max(2, Math.min(4, Math.round(d / 1.5)));
+  const rails = [], panes = [];
+  for (let i = 0; i < rows; i++) {
+    const oz = -d / 2 + (i + 0.5) * (d / rows);
+    rails.push(box(w, 0.26, 0.14, 0, 0, oz - 0.42, 2));
+    rails.push(box(w, 0.62, 0.14, 0, 0, oz + 0.42, 2));
+    const g = box(w, 0.08, 1.15, 0, 0, 0, 2);
+    g.rotateX(-0.38);
+    g.translate(0, 0.52, oz);
+    panes.push(g);
+  }
+  const rg = BufferGeometryUtils.mergeGeometries(rails, false);
+  rg.rotateY(rot); rg.translate(x, y, z);
+  B.trim(rg, P.STEEL_DARK);
+  const pg = BufferGeometryUtils.mergeGeometries(panes, false);
+  pg.rotateY(rot); pg.translate(x, y, z);
+  B.trim(pg, P.SPANDREL);
+}
+
+/** Induced-draught cooling tower: louvred casing, fan cowl, guard ring. Taller
+ *  than a chiller, so it is what gives a roof a second silhouette. */
+function coolingTower(B, x, y, z, s, r) {
+  const w = 3.2 * s, d = 2.5 * s, h = 3.0 * s;
+  B.trim(box(w, h, d, x, y, z, 3), P.PRECAST);
+  for (let i = 0; i < 4; i++) {
+    B.trim(box(w + 0.14, 0.14 * s, d + 0.14, x, y + h * (0.22 + i * 0.17), z, 2), P.STEEL_DARK);
+  }
+  const rr = Math.min(w, d) * 0.42;
+  B.trim(cyl(rr, 0.62 * s, 12, x, y + h, z), P.VENT_METAL);
+  B.trim(cyl(rr * 1.1, 0.12 * s, 12, x, y + h + 0.62 * s, z), P.STEEL);
+  if (r() < 0.5) B.trim(box(0.22 * s, 1.4 * s, 0.22 * s, x + w * 0.4, y + h, z, 2), P.VENT_METAL);
+}
+
+/** Raised glazed monitors. A low commercial roof reads as a shed, not a slab. */
+function skylightRun(B, x, y, z, len, rot, hex) {
+  const n = Math.max(2, Math.min(4, Math.round(len / 2.6)));
+  const kerbs = [], glz = [];
+  for (let i = 0; i < n; i++) {
+    const ox = -len / 2 + (i + 0.5) * (len / n);
+    kerbs.push(box(1.9, 0.3, 1.6, ox, 0, 0, 2));
+    const a = box(1.85, 0.1, 1.0, 0, 0, 0, 2); a.rotateX(0.44); a.translate(ox, 0.52, -0.4);
+    const b = box(1.85, 0.1, 1.0, 0, 0, 0, 2); b.rotateX(-0.44); b.translate(ox, 0.52, 0.4);
+    glz.push(a, b);
+  }
+  const kg = BufferGeometryUtils.mergeGeometries(kerbs, false);
+  kg.rotateY(rot); kg.translate(x, y, z);
+  B.trim(kg, P.CONCRETE_DARK);
+  const gg = BufferGeometryUtils.mergeGeometries(glz, false);
+  gg.rotateY(rot); gg.translate(x, y, z);
+  B.trim(gg, hex || P.GLASS_SKY);
+}
+
+/** A run of planters. The cheapest possible roof garden, and the only green on
+ *  a roof that the 3/4 camera can actually pick out. */
+function planterRun(B, x, y, z, len, rot, hex) {
+  const n = Math.max(2, Math.min(5, Math.round(len / 2.2)));
+  const tubs = [], green = [];
+  for (let i = 0; i < n; i++) {
+    const ox = -len / 2 + (i + 0.5) * (len / n);
+    tubs.push(box(1.55, 0.62, 0.95, ox, 0, 0, 2));
+    green.push(box(1.3, 0.46, 0.72, ox, 0.62, 0, 2));
+  }
+  const t = BufferGeometryUtils.mergeGeometries(tubs, false);
+  t.rotateY(rot); t.translate(x, y, z);
+  B.trim(t, hex);
+  const g = BufferGeometryUtils.mergeGeometries(green, false);
+  g.rotateY(rot); g.translate(x, y, z);
+  B.trim(g, P.HEDGE);
+}
+
+/**
+ * Rooftop hoarding on a steel frame.
+ *
+ * The loudest thing a low roof can wear, and after dark it is what stops the
+ * downtown block between the towers going black. The face is `lit`, so it costs
+ * no mesh of its own on any building that already carries signage.
+ */
+function billboard(B, x, y, z, w, h, rot, hex, r) {
+  const legH = 1.4 + r() * 1.8;
+  const frame = BufferGeometryUtils.mergeGeometries([
+    box(0.32, legH + h, 0.32, -(w / 2 - 0.5), 0, 0, 2),
+    box(0.32, legH + h, 0.32, (w / 2 - 0.5), 0, 0, 2),
+    box(w, 0.24, 0.5, 0, legH - 0.24, 0, 3),
+    box(w, 0.24, 0.5, 0, legH + h, 0, 3),
+    box(w * 0.9, 0.14, 0.14, 0, legH - 0.55, 0.75, 2),   // flood gantry
+  ], false);
+  frame.rotateY(rot); frame.translate(x, y, z);
+  B.trim(frame, P.STEEL_DARK);
+  const face = box(w - 0.55, h - 0.3, 0.16, 0, legH + 0.15, 0.2, 3);
+  face.rotateY(rot); face.translate(x, y, z);
+  B.lit(face, hex);
+}
+
 /** Sedum tray / gravel-ballast patch. Breaks a bald roof into fields. */
 function roofPatch(B, x, y, z, w, d, hex) {
   B.trim(box(w, 0.12, d, x, y, z, 3), hex);
@@ -1102,7 +1253,7 @@ function roofScape(B, plan, y, r, o = {}) {
 
   const inner = offsetPlan(plan, -2.4);
   const spots = [];
-  const tries = Math.min(14, 3 + Math.round(area / 70));
+  const tries = Math.min(20, 3 + Math.round(area / 62));
   for (let i = 0; i < tries * 4 && spots.length < tries; i++) {
     const x = bb.cx + (r() - 0.5) * bb.w * 0.84;
     const z = bb.cz + (r() - 0.5) * bb.d * 0.84;
@@ -1110,7 +1261,7 @@ function roofScape(B, plan, y, r, o = {}) {
     // A podium roof has a tower growing out of it; plant must dodge the shaft.
     if (o.avoid && inPlan(o.avoid, x, z)) continue;
     let ok = true;
-    for (const s of spots) if (Math.hypot(s[0] - x, s[1] - z) < 4.4) { ok = false; break; }
+    for (const s of spots) if (Math.hypot(s[0] - x, s[1] - z) < 4.1) { ok = false; break; }
     if (ok) spots.push([x, z]);
   }
   // Plant lines up with the building, not with the random number generator:
@@ -1142,24 +1293,35 @@ function roofScape(B, plan, y, r, o = {}) {
   for (; i < spots.length; i++) {
     const s = spots[i];
     const roll = r();
-    if (roll < 0.34) acPack(B, s[0], y + 0.05, s[1], rot, 0.9 + r() * 0.5, r);
-    else if (roll < 0.46) {
+    if (roll < 0.22) acPack(B, s[0], y + 0.05, s[1], rot, 0.9 + r() * 0.5, r);
+    else if (roll < 0.31) {
       roofPatch(B, s[0], y + 0.05, s[1], 3.0 + r() * 2.4, 2.4 + r() * 1.8,
         r.chance(0.45) ? P.HEDGE : P.GRAVEL);
-    } else if (roll < 0.58) ventStack(B, s[0], y + 0.05, s[1], 0.9 + r() * 0.7);
+    } else if (roll < 0.39) ventStack(B, s[0], y + 0.05, s[1], 0.9 + r() * 0.7);
     // Spots are only guaranteed 2.4 m inside the parapet, and a duct is drawn
     // about its centre — an unclamped 5.5 m run reached past the roof edge and
     // out over the lot line, which on a split block is the neighbour's air.
-    else if (roll < 0.70) ductRun(B, s[0], y + 0.05, s[1], 2.5 + r() * 1.5, rot, 1.3);
-    else if (roll < 0.80) dish(B, s[0], y + 0.05, s[1], 0.8 + r() * 0.6);
-    else if (roll < 0.92) B.trim(box(2.0 + r() * 1.4, 0.7, 1.5 + r(), s[0], y + 0.05, s[1], 3), P.ROOF_MEMBRANE);
+    else if (roll < 0.47) ductRun(B, s[0], y + 0.05, s[1], 2.5 + r() * 1.5, rot, 1.3);
+    else if (roll < 0.53) dish(B, s[0], y + 0.05, s[1], 0.8 + r() * 0.6);
+    else if (roll < 0.64) solarArray(B, s[0], y + 0.05, s[1], 2.6 + r() * 2.0, 2.2 + r() * 1.4, rot);
+    else if (roll < 0.72) coolingTower(B, s[0], y + 0.05, s[1], 0.7 + r() * 0.4, r);
+    else if (roll < 0.80) skylightRun(B, s[0], y + 0.05, s[1], 2.6 + r() * 2.0, rot, P.GLASS_SKY);
+    else if (roll < 0.88) planterRun(B, s[0], y + 0.05, s[1], 2.4 + r() * 2.0, rot, o.parapetHex || P.PLANTER);
+    else if (roll < 0.95) B.trim(box(2.0 + r() * 1.4, 0.7, 1.5 + r(), s[0], y + 0.05, s[1], 3), P.ROOF_MEMBRANE);
     else acUnit(B, s[0], y + 0.05, s[1], 1.1 + r() * 0.6, r);
   }
 
-  // A name on the roof. Only worth it on something big enough to carry it.
+  // A name on the roof. Only worth it on something big enough to carry it, and
+  // a hoarding some of the time — a city where every roof sign is the same
+  // channel-letter rack is the same repeat one level up.
   if (o.sign && bb.w > 15) {
-    channelSign(B, bb.cx, y + ph + 1.4, bb.cz + bb.d * 0.30,
-      Math.min(bb.w * 0.62, 22), 2.4 + r() * 1.4, 0, r, B.neon);
+    if (r.chance(0.34) && bb.d > 9) {
+      billboard(B, bb.cx, y + ph - 0.2, bb.cz + bb.d * 0.24,
+        Math.min(bb.w * 0.66, 18), 3.0 + r() * 2.4, 0, B.neon, r);
+    } else {
+      channelSign(B, bb.cx, y + ph + 1.4, bb.cz + bb.d * 0.30,
+        Math.min(bb.w * 0.62, 22), 2.4 + r() * 1.4, 0, r, B.neon);
+    }
   }
 }
 
@@ -1181,6 +1343,10 @@ function podium(B, plan, h, r, glassMat, opts = {}) {
   const bb = planBounds(plan);
   const head = Math.min(h - 1.6, 5.8);
   const inner = offsetPlan(plan, -0.45);
+  const pal = opts.pal || BASE_PAL_DEFAULT;
+  const pierHex = opts.pierHex || pal.pier;
+  const bandHex = opts.bandHex || pal.band;
+  const neon = opts.neon || B.neon;
 
   B.trim(loft([{ p: plan, y: 0 }, { p: plan, y: 0.55 }], { uScale: 5, vScale: 5 }), P.CONCRETE_DARK);
   if (glassMat) {
@@ -1189,52 +1355,133 @@ function podium(B, plan, h, r, glassMat, opts = {}) {
     B.trim(loft([{ p: inner, y: 0.55 }, { p: inner, y: head }], { uScale: 4, vScale: 4 }), P.SPANDREL);
   }
   // Piers, on a real 6-8 m rhythm, standing proud of the glass line.
-  const per = [];
-  for (let i = 0; i < plan.length; i++) {
-    const a = plan[i], b = plan[(i + 1) % plan.length];
-    per.push(Math.hypot(b[0] - a[0], b[1] - a[1]));
-  }
-  const total = per.reduce((x, y) => x + y, 0);
-  const nP = Math.max(6, Math.min(20, Math.round(total / 7)));
-  fins(B, plan, 0.55, head + 0.5, nP, 0.85, opts.pierHex || P.CONCRETE);
+  const nP = Math.max(6, Math.min(20, Math.round(planPerimeter(plan) / 7)));
+  fins(B, plan, 0.55, head + 0.5, nP, 0.85, pierHex);
   // Head beam + the wall above it.
-  B.trim(slabGeo(plan, head, 0.75, 0.55), opts.bandHex || P.CONCRETE_WARM);
+  B.trim(slabGeo(plan, head, 0.75, 0.55), bandHex);
   if (h > head + 1.4) {
-    B.trim(loft([{ p: plan, y: head + 0.75 }, { p: plan, y: h }], { uScale: 5, vScale: 5 }), opts.wallHex || P.PRECAST);
+    B.trim(loft([{ p: plan, y: head + 0.75 }, { p: plan, y: h }], { uScale: 5, vScale: 5 }), opts.wallHex || pal.wall);
     // Reveals so the upper podium is not a blank slab either.
     for (let yy = head + 3.4; yy < h - 0.8; yy += 3.4) {
       B.trim(slabGeo(plan, yy, 0.28, 0.28), P.CONCRETE_DARK);
     }
   }
-  B.trim(slabGeo(plan, h - 0.55, 0.62, 0.95), opts.bandHex || P.CONCRETE_WARM);
-  const cw = Math.min(bb.w * 0.5, 13);
-  canopy(B, cw, head - 0.6, bb.z1, 3.0, opts.canopyHex || P.CHROME);
+  B.trim(slabGeo(plan, h - 0.55, 0.62, 0.8), bandHex);
 
   /* --- what the player actually drives past ----------------------------- */
+  const cw = Math.min(bb.w * 0.5, 13);
+  const cProj = opts.canopyProj ?? 2.4;
+  canopy(B, cw, head - 0.6, bb.z1, cProj, opts.canopyHex || pal.canopy);
+  // Entrance portal: piers and a lintel standing proud of a dark reveal, so the
+  // base has a middle and the building has a front door. A run of shopfront
+  // glazing with no break in it is what made every podium read as a plinth.
+  const ew = Math.min(bb.w * 0.30, cw * 0.82);
+  for (const sx of [-1, 1]) {
+    B.trim(box(0.9, head + 1.4, 0.8, sx * (ew / 2 + 0.45), 0, bb.z1 + 0.28, 2), pierHex);
+  }
+  B.trim(box(ew + 1.8, 1.1, 0.8, 0, head + 0.3, bb.z1 + 0.28, 3), pierHex);
+  B.trim(box(ew, head + 0.3, 0.5, 0, 0, bb.z1 - 0.06, 3), P.SPANDREL);
+  // Soffit cove tucked under the canopy. A lit underside is what actually puts
+  // light on the pavement at night; the fascia band above only lights itself.
+  B.lit(box(cw * 0.76, 0.2, cProj * 0.55, 0, head - 0.79, bb.z1 + cProj * 0.52, 3), neon);
+  // The building's name over its own door. It is what the player reads at
+  // street level, and at 200 m it is still a lit bar on the podium.
+  if (bb.w > 22 && h > head + 4.0) {
+    channelSign(B, 0, head + 1.6, bb.z1 + 0.55, Math.min(bb.w * 0.4, 13),
+      Math.min(h - head - 2.4, 1.5 + r() * 0.7), 0, r, neon, false);
+  }
   // Lit fascia over the shopfront: the band that makes a podium read as retail
   // rather than as a plinth, and the thing that carries the block at night.
   if (opts.sign !== false) {
     B.lit(loft([
-      { p: offsetPlan(plan, 0.62), y: head + 0.05 },
-      { p: offsetPlan(plan, 0.62), y: head + 0.62 },
-    ], {}), opts.neon || B.neon);
+      { p: offsetPlan(plan, 0.5), y: head + 0.05 },
+      { p: offsetPlan(plan, 0.5), y: head + 0.62 },
+    ], {}), neon);
+  }
+  // Awnings down the rest of the frontage. A podium is shops, and one canopy
+  // over the lobby door is not what says so from the pavement.
+  if (opts.awnings !== false && bb.w > 20) {
+    const n = Math.min(4, Math.floor(bb.w / 11));
+    const aw = Math.min((bb.w * 0.86) / (n + 1) - 1.0, 6.5);
+    for (let i = 0; i < n && aw > 2.4; i++) {
+      const ax = -bb.w * 0.43 + (bb.w * 0.86) * (i + 0.5) / n;
+      if (Math.abs(ax) < cw * 0.62 + aw * 0.5) continue;
+      awning(B, aw, head - 1.5, bb.z1, 1.5, 0.5, r.pick(FABRIC_COLORS), ax);
+    }
   }
   // Planters flanking the entrance, and the street number beside the door.
   const px = cw / 2 + 1.6;
   for (const sx of [-1, 1]) {
     if (px > bb.w * 0.46) break;
-    B.trim(box(2.2, 0.85, 1.1, sx * px, 0, bb.z1 - 0.6, 2), opts.planterHex || P.PLANTER);
+    B.trim(box(2.2, 0.85, 1.1, sx * px, 0, bb.z1 - 0.6, 2), opts.planterHex || pal.planter);
     B.trim(box(1.9, 0.34, 0.85, sx * px, 0.85, bb.z1 - 0.6, 2), P.HEDGE);
   }
   addressPlate(B, -cw / 2 - 0.9, 3.1, bb.z1, P.SIGN_DARK);
   return head;
 }
 
-/** Entrance canopy hung off the +z (street) face. */
+/**
+ * Entrance canopy hung off the +z (street) face.
+ *
+ * The stays are tension rods raking back UP to the wall. The first version hung
+ * two 1.1 m stubs below the slab that stopped in mid-air — floating geometry in
+ * every frame the camera got near a pavement, which is an automatic review
+ * failure and was on several hundred buildings.
+ */
 function canopy(B, w, y, zFace, proj, hex) {
   B.trim(box(w, 0.34, proj, 0, y, zFace + proj / 2, 3), hex);
-  B.trim(box(0.16, 1.1, 0.16, -w / 2 + 0.5, y - 1.1, zFace + proj - 0.4, 2), P.STEEL);
-  B.trim(box(0.16, 1.1, 0.16, w / 2 - 0.5, y - 1.1, zFace + proj - 0.4, 2), P.STEEL);
+  const reach = Math.max(0.4, proj - 0.3), rise = 1.5;
+  const L = Math.hypot(reach, rise);
+  for (const sx of [-1, 1]) {
+    const g = box(0.12, L, 0.12, 0, 0, 0, 2);
+    g.rotateX(-Math.atan2(reach, rise));
+    g.translate(sx * (w / 2 - 0.45), y + 0.34, zFace + reach);
+    B.trim(g, P.STEEL);
+  }
+}
+
+/**
+ * Ground floor for a shaft that has no retail podium.
+ *
+ * Nineteen of Brickell's thirty-four towers had none: the curtain wall ran
+ * straight into the pavement, so the part of the building the player actually
+ * drives past was a blank mirrored wall with no door, no canopy, no planting
+ * and nothing lit after dark. Every real tower has a double-height lobby, and
+ * it also gives the shaft the shadow line it needs where it meets the ground.
+ *
+ * Sized off the SHAFT plan, not the lot, so it can never be the piece that puts
+ * the building over its own lot line.
+ */
+function towerBase(B, plan, r, pal, neon) {
+  const h = 6.4 + r() * 2.8;
+  const out = offsetPlan(plan, 1.0 + r() * 0.5);
+  const ob = planBounds(out);
+  B.trim(loft([{ p: out, y: 0 }, { p: out, y: 0.45 }], { uScale: 5, vScale: 5 }), P.CONCRETE_DARK);
+  B.trim(loft([{ p: offsetPlan(out, -0.6), y: 0.45 }, { p: offsetPlan(out, -0.6), y: h }],
+    { uScale: 4, vScale: 4 }), P.SPANDREL);
+  fins(B, out, 0.45, h + 0.3, Math.max(6, Math.min(18, Math.round(planPerimeter(out) / 6.5))),
+    0.75, pal.pier);
+  B.trim(slabGeo(out, h, 0.72, 0.6), pal.band);
+  B.lit(loft([{ p: offsetPlan(out, 0.5), y: h + 0.08 }, { p: offsetPlan(out, 0.5), y: h + 0.56 }], {}), neon);
+
+  const cw = Math.min(ob.w * 0.42, 10);
+  const proj = 1.9 + r() * 0.5;
+  canopy(B, cw, h - 1.5, ob.z1, proj, pal.canopy);
+  B.lit(box(cw * 0.76, 0.2, proj * 0.55, 0, h - 1.69, ob.z1 + proj * 0.52, 3), neon);
+  const ew = Math.min(ob.w * 0.30, cw * 0.85);
+  for (const sx of [-1, 1]) {
+    B.trim(box(0.8, h + 0.9, 0.7, sx * (ew / 2 + 0.4), 0, ob.z1 + 0.24, 2), pal.pier);
+  }
+  B.trim(box(ew + 1.6, 0.9, 0.7, 0, h + 0.2, ob.z1 + 0.24, 3), pal.pier);
+  B.trim(box(ew, h + 0.2, 0.5, 0, 0, ob.z1 - 0.06, 3), P.SPANDREL);
+  for (const sx of [-1, 1]) {
+    const px = cw / 2 + 1.5;
+    if (px + 1.1 > ob.w * 0.5) break;
+    B.trim(box(2.0, 0.8, 1.0, sx * px, 0, ob.z1 - 0.6, 2), pal.planter);
+    B.trim(box(1.7, 0.32, 0.78, sx * px, 0.8, ob.z1 - 0.6, 2), P.HEDGE);
+  }
+  addressPlate(B, -cw / 2 - 1.0, 3.0, ob.z1, P.SIGN_DARK);
+  return h;
 }
 
 /**
@@ -1309,9 +1556,53 @@ const PLAN_MENU = [
 ];
 
 const CROWN_MENU = [
-  ['step', 15], ['taper', 10], ['plant', 14], ['blade', 8], ['dome', 9],
-  ['spire', 10], ['fins', 9], ['hat', 8], ['lantern', 8], ['ring', 9],
+  ['step', 13], ['taper', 9], ['plant', 12], ['blade', 7], ['dome', 8],
+  ['spire', 9], ['fins', 8], ['hat', 7], ['lantern', 7], ['ring', 8],
+  ['slant', 12], ['sky', 10],
 ];
+
+/**
+ * A top sliced by an inclined plane.
+ *
+ * Every other crown in the menu finishes horizontal, and a skyline of
+ * horizontal tops is a skyline of steps. One raking plane is the strongest
+ * silhouette move available here and it costs one loft's worth of triangles.
+ * `dir` is a unit direction in plan; the roof is lowest on the -dir side.
+ */
+function slantTop(plan, y, rise, dirX, dirZ) {
+  const n = plan.length;
+  const bb = planBounds(plan);
+  const span = Math.max(1, Math.abs(dirX) * bb.w + Math.abs(dirZ) * bb.d);
+  const hOf = (q) => y + 1.2 + rise * (0.5 + ((q[0] - bb.cx) * dirX + (q[1] - bb.cz) * dirZ) / span);
+  const pos = [], nor = [], uv = [], idx = [];
+  let b = 0;
+  for (let i = 0; i < n; i++) {
+    const a = plan[i], c = plan[(i + 1) % n];
+    const nn = edgeN(a, c);
+    const ha = hOf(a), hc = hOf(c);
+    pos.push(a[0], y, a[1], c[0], y, c[1], c[0], hc, c[1], a[0], ha, a[1]);
+    for (let k = 0; k < 4; k++) nor.push(nn[0], 0, nn[1]);
+    uv.push(0, y / 4, 1, y / 4, 1, hc / 4, 0, ha / 4);
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    b += 4;
+  }
+  // Cap, given the plane's own normal so it shades as one raking surface.
+  const gx = (rise * dirX) / span, gz = (rise * dirZ) / span;
+  const L = Math.hypot(gx, 1, gz);
+  for (let i = 0; i < n; i++) {
+    const q = plan[i];
+    pos.push(q[0], hOf(q), q[1]);
+    nor.push(-gx / L, 1 / L, -gz / L);
+    uv.push(q[0] / 4, q[1] / 4);
+  }
+  for (let i = 1; i < n - 1; i++) idx.push(b, b + i, b + i + 1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
 
 /**
  * Crown the shaft. Every tower gets a top, because a flat-topped shaft is the
@@ -1420,6 +1711,44 @@ function crown(B, plan, y, r, opt = {}) {
     ], { capTop: true }), r.chance(0.5) ? P.TERRACOTTA : P.ROOF_DARK);
     if (lit) litBand(B, plan, y - 0.9, 0.7, 0.3, litHex);
     top = y + 0.6 + h;
+  } else if (kind === 'slant') {
+    /* Raked top. The one crown that changes the outline of the whole tower
+       rather than adding a hat to it. */
+    B.trim(parapetGeo(plan, y, 0.9, 0.42), P.PARAPET);
+    const rise = Math.max(5, Math.min(30, m * 0.55 + r() * 14));
+    const a = r() * Math.PI * 2;
+    const p2 = insetPlan(plan, Math.max(0.4, m * 0.05));
+    B.trim(slantTop(p2, y + 0.9, rise, Math.cos(a), Math.sin(a)),
+      r.chance(0.5) ? P.PRECAST : P.CONCRETE);
+    if (lit) litBand(B, plan, y + 0.1, 0.7, 0.24, litHex);
+    top = y + 2.1 + rise;
+  } else if (kind === 'sky') {
+    /* Open top floor under a deep roof plate — the Miami sky terrace. It is the
+       one crown that puts life on a tower instead of machinery, and from the
+       3/4 camera it is the only one you can see INTO. */
+    B.trim(parapetGeo(plan, y, 1.05, 0.4), P.PARAPET);
+    const deck = offsetPlan(plan, -0.8);
+    B.trim(loft([{ p: deck, y: y + 0.12 }], { capTop: true, uScale: 2.6 }), P.WOOD_DECK);
+    const ch = 4.0 + r() * 1.5;
+    cornerColumns(B, insetPlan(plan, Math.max(0.6, m * 0.14)), y + 0.12, y + ch,
+      Math.max(0.5, m * 0.06), P.CONCRETE);
+    if (bb.w > 21 && bb.d > 17) {
+      rooftopPool(B, cx, y + 0.12, cz, Math.min(9, bb.w * 0.30), Math.min(5.5, bb.d * 0.22), r);
+    } else {
+      pergola(B, cx, y + 0.12, cz + bb.d * 0.16, Math.min(bb.w * 0.52, 6), Math.min(bb.d * 0.34, 3), P.WOOD_DARK);
+      roofBar(B, cx, y + 0.12, cz - bb.d * 0.26, Math.min(bb.w * 0.5, 5), 0, P.WOOD_DARK, r);
+      for (let i = 0; i < 2; i++) {
+        parasol(B, cx + (i ? 1 : -1) * bb.w * 0.28, y + 0.12, cz + bb.d * 0.02,
+          r.pick(FABRIC_COLORS), 0.8);
+      }
+    }
+    B.trim(slabGeo(plan, y + ch, 0.85, Math.min(2.4, m * 0.11)), P.CONCRETE_WARM);
+    if (lit) litBand(B, plan, y + ch - 0.5, 0.45, Math.min(2.2, m * 0.10), litHex);
+    // Mechanical still has to go somewhere: a low penthouse behind the terrace.
+    const mp = movePlan(rectPlan(Math.min(bb.w * 0.34, 9), Math.min(bb.d * 0.32, 7), 0.8),
+      cx, cz + bb.d * 0.24);
+    B.trim(loft([{ p: mp, y: y + ch + 0.85 }, { p: mp, y: y + ch + 4.0 }], { capTop: true }), P.CONCRETE_DARK);
+    top = y + ch + 4.2;
   } else if (kind === 'lantern') {
     /* Open steel frame with a glowing box in it — the classic Miami beacon. */
     B.trim(parapetGeo(plan, y, 1.2, 0.45), P.PARAPET);
@@ -1525,8 +1854,16 @@ function tower(ctx, B, r, w, d, h, o = {}) {
   const resi = facade === 'resi';
   const shift = o.shift || 0;
   const mv = (p) => (shift ? movePlan(p, shift, 0) : p);
+  const pal = o.pal || r.weighted(BASE_PALETTES);
 
-  /* --- podium ---------------------------------------------------------- */
+  /* --- shaft plan, drawn first: the ground floor is built around it ------ */
+  const kind = o.planKind || r.weighted(PLAN_MENU);
+  const twist = !o.noTwist && r.chance(0.18) ? (r() < 0.5 ? -1 : 1) * (0.10 + r() * 0.16) : 0;
+  const smooth = kind === 'ellipse' || kind === 'bow' || kind === 'lens';
+  const phase = r();
+  const plan0 = mv(shaftPlan(r, w, d, kind, phase));
+
+  /* --- podium, or at minimum a lobby ----------------------------------- */
   let baseTop = 0;
   if (podH > 2) {
     // Never wider than the parcel: the podium is the piece that actually meets
@@ -1535,20 +1872,20 @@ function tower(ctx, B, r, w, d, h, o = {}) {
     const pw = Math.min(w * 1.10, o.lotW ?? w * 1.10);
     const pd = Math.min(d * 1.10, o.lotD ?? d * 1.10);
     const pp = rectPlan(pw, pd, Math.min(pw, pd) * 0.09);
-    podium(B, pp, podH, r, cm, { sign: o.sign, neon: B.neon });
+    // A masonry podium under a glass shaft is a real Brickell type and it is
+    // also the only thing that stops the base of every tower being the same
+    // band of curtain wall as the shaft above it.
+    podium(B, pp, podH, r, r.chance(0.72) ? cm : null, { sign: o.sign, neon: B.neon, pal });
     roofScape(B, offsetPlan(pp, -1.6), podH + 0.05, r, {
-      tank: false, parapetH: 1.0, pool: r.chance(0.30),
+      tank: false, parapetH: 1.0, pool: r.chance(0.34),
       avoid: offsetPlan(mv(rectPlan(w, d, 0)), 2.5),
     });
     baseTop = podH;
+  } else {
+    towerBase(B, plan0, r, pal, B.neon);
   }
 
   /* --- shaft ----------------------------------------------------------- */
-  const kind = o.planKind || r.weighted(PLAN_MENU);
-  const twist = !o.noTwist && r.chance(0.18) ? (r() < 0.5 ? -1 : 1) * (0.10 + r() * 0.16) : 0;
-  const smooth = kind === 'ellipse' || kind === 'bow' || kind === 'lens';
-  const phase = r();
-
   // Setback count is a massing decision, not a height lookup: a 60 m tower that
   // steps twice and a 160 m tower that runs straight are both real buildings,
   // and drawing the count from the height is exactly what made every tall
@@ -1556,11 +1893,15 @@ function tower(ctx, B, r, w, d, h, o = {}) {
   const maxSect = 1 + (h > 62 ? 1 : 0) + (h > 120 ? 1 : 0);
   const sections = o.sections ?? Math.max(1, Math.min(maxSect, r.weighted([[1, 30], [2, 40], [3, 30]])));
   let y = baseTop, pw = w, pd = d;
-  let plan = mv(shaftPlan(r, pw, pd, kind, phase));
+  let plan = plan0;
   const shaftTop = h;
   const railHex = r.pick([P.GLASS_SKY, P.ALUMINIUM, P.MULLION, P.GLASS_AQUA]);
   const balMode = r.weighted(BALCONY_MODES);
-  const finHex = r.chance(0.5) ? P.MULLION : P.CONCRETE;
+  const finHex = r.weighted(ACCENT_TRIM);
+  // The horizontal courses read at a different distance from the fins, so they
+  // are a separate draw from the same table — two towers that share a plan and
+  // a facade language still differ in the pair.
+  const slabHex = r.weighted(ACCENT_TRIM);
 
   for (let s = 0; s < sections; s++) {
     const isLast = s === sections - 1;
@@ -1586,40 +1927,40 @@ function tower(ctx, B, r, w, d, h, o = {}) {
     switch (facade) {
       case 'resi':
         balconyStack(B, fp, y + 3.4, segTop, STOREY * (r.chance(0.55) ? 1 : 2),
-          1.25, P.CONCRETE_WARM, railHex, balMode);
+          1.25, slabHex, railHex, balMode);
         break;
       case 'band':
         for (let yy = y + STOREY; yy < segTop - 2; yy += STOREY) {
-          B.trim(slabGeo(plan, yy, 0.42, 0.42), P.CONCRETE_WARM);
+          B.trim(slabGeo(plan, yy, 0.42, 0.42), slabHex);
         }
-        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.09, P.PRECAST);
+        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.09, finHex);
         break;
       case 'grid':
         fins(B, plan, y + 1, segTop, 10 + Math.round(r() * 8), 0.5, finHex);
         for (let yy = y + STOREY * 2; yy < segTop - 2; yy += STOREY * 2) {
-          B.trim(slabGeo(plan, yy, 0.3, 0.36), P.CONCRETE_WARM);
+          B.trim(slabGeo(plan, yy, 0.3, 0.36), slabHex);
         }
         break;
       case 'sleek':
-        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.075, P.MULLION);
+        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.075, finHex);
         for (let yy = y + STOREY * 6; yy < segTop - 2; yy += STOREY * 6) {
-          B.trim(slabGeo(plan, yy, 0.5, 0.3), P.CONCRETE_WARM);
+          B.trim(slabGeo(plan, yy, 0.5, 0.3), slabHex);
         }
         break;
       case 'brise':
-        briseSoleil(B, plan, y + STOREY, segTop, STOREY * 1.5, 0.9, P.MULLION);
-        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.085, P.PRECAST);
+        briseSoleil(B, plan, y + STOREY, segTop, STOREY * 1.5, 0.9, finHex);
+        cornerColumns(B, plan, y, segTop, Math.min(pw, pd) * 0.085, slabHex);
         break;
       default:
         fins(B, plan, y + 1, segTop, 8 + Math.round(r() * 6), 0.55, finHex);
         for (let yy = y + STOREY * 4; yy < segTop - 2; yy += STOREY * 4) {
-          B.trim(slabGeo(plan, yy, 0.34, 0.34), P.CONCRETE_WARM);
+          B.trim(slabGeo(plan, yy, 0.34, 0.34), slabHex);
         }
     }
 
     // Setback: the terrace roof it creates is prime 3/4-camera real estate.
     if (!isLast) {
-      B.trim(slabGeo(plan, segTop, 0.5, 1.1), P.CONCRETE_WARM);
+      B.trim(slabGeo(plan, segTop, 0.5, 1.1), slabHex);
       pw *= 0.78 + r() * 0.14; pd *= 0.78 + r() * 0.14;
       const next = mv(shaftPlan(r, pw, pd, kind, phase));
       roofScape(B, offsetPlan(plan, 0.6), segTop + 0.5, r, {
@@ -1629,6 +1970,17 @@ function tower(ctx, B, r, w, d, h, o = {}) {
       plan = next;
     }
     y = segTop;
+  }
+
+  // The name down the corner. Every hotel and half the condos in Brickell wear
+  // one, and after dark it is what makes a tower an address instead of a lit
+  // grid. Kept clear of the crown and the base so it reads as a blade.
+  if (o.lit && r.chance(0.45)) {
+    const b0 = planBounds(plan0);
+    const y0 = Math.max(baseTop + 4, 10);
+    if (y - 10 > y0 + 14) {
+      neonBlade(B, b0.x1 - 0.5, b0.cz, y0, y - 10, Math.PI / 2, B.neon, 1.0 + r() * 0.5);
+    }
   }
 
   const capPlan = rotPlan(plan, twist * y / 60);
@@ -1644,27 +1996,12 @@ function tower(ctx, B, r, w, d, h, o = {}) {
  * the only thing that stops the skyline being a comb of identical teal shafts.
  */
 function resiTower(ctx, B, r, w, d, h, o = {}) {
-  const cham = Math.min(w, d) * (r.chance(0.4) ? 0.22 : 0.13);
   const uS = B.sk.uScale, vS = B.sk.vScale;
   const podH = o.podiumH || 0;
   const shift = o.shift || 0;
   const mv = (p) => (shift ? movePlan(p, shift, 0) : p);
+  const pal = o.pal || r.weighted(BASE_PALETTES);
   let y = 0;
-
-  if (podH > 2) {
-    const pw = Math.min(w * 1.12, o.lotW ?? w * 1.12);
-    const pd = Math.min(d * 1.12, o.lotD ?? d * 1.12);
-    const pp = rectPlan(pw, pd, Math.min(pw, pd) * 0.11);
-    podium(B, pp, podH, r, null, {
-      wallHex: o.trimHex || P.STUCCO_WHITE, canopyHex: r.pick(FABRIC_COLORS),
-      pierHex: o.trimHex || P.STUCCO_WHITE, neon: B.neon,
-    });
-    roofScape(B, offsetPlan(pp, -1.8), podH + 0.05, r, {
-      tank: false, parapetH: 1.0, pool: r.chance(0.55),
-      avoid: offsetPlan(mv(rectPlan(w, d, 0)), 2.6),
-    });
-    y = podH;
-  }
 
   const maxSect = h > 110 ? 3 : h > 58 ? 2 : 1;
   const sections = Math.max(1, Math.min(maxSect, r.weighted([[1, 34], [2, 40], [3, 26]])));
@@ -1673,18 +2010,69 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
     ['bow', 10], ['hex', 8], ['wedge', 8], ['cut', 6],
   ]);
   const phase = r();
-  let plan = mv(shaftPlan(r, w, d, kind, phase));
+  const plan0 = mv(shaftPlan(r, w, d, kind, phase));
+
+  if (podH > 2) {
+    const pw = Math.min(w * 1.12, o.lotW ?? w * 1.12);
+    const pd = Math.min(d * 1.12, o.lotD ?? d * 1.12);
+    const pp = rectPlan(pw, pd, Math.min(pw, pd) * 0.11);
+    podium(B, pp, podH, r, null, {
+      wallHex: o.trimHex || pal.wall, canopyHex: r.pick(FABRIC_COLORS),
+      pierHex: o.trimHex || pal.pier, neon: B.neon, pal,
+    });
+    roofScape(B, offsetPlan(pp, -1.8), podH + 0.05, r, {
+      tank: false, parapetH: 1.0, pool: r.chance(0.55),
+      avoid: offsetPlan(mv(rectPlan(w, d, 0)), 2.6),
+    });
+    y = podH;
+  } else {
+    towerBase(B, plan0, r, pal, B.neon);
+  }
+
+  let plan = plan0;
   const trim = o.trimHex || P.STUCCO_WHITE;
   const rail = r.pick([P.GLASS_SKY, P.ALUMINIUM, P.STUCCO_WHITE, P.GLASS_AQUA, P.MULLION]);
   const step = STOREY * (h > 55 ? 2 : 1);
   const mode = r.weighted(BALCONY_MODES);
+  /*
+   * Facade language, drawn once per building.
+   *
+   * Four Brickell condos in a row all wore a projecting balcony slab on every
+   * other floor, the same depth, the same rail — the same asset recoloured,
+   * which is exactly what this module exists to prevent. A recessed loggia and
+   * a continuous ribbon slab are the two other ways a Miami condo is actually
+   * built, and they read completely differently at skyline distance: one is a
+   * grid of shadow, one is a stack of white lines, one is a comb.
+   */
+  const lang = o.resiFacade || r.weighted([['balcony', 40], ['loggia', 24], ['ribbon', 22], ['deep', 14]]);
+  const proj = 0.85 + r() * 0.65;
   let pw = w, pd = d;
   for (let sct = 0; sct < sections; sct++) {
     const last = sct === sections - 1;
     const want = last ? h : y + (h - podH) * (0.30 + r() * 0.14);
     const segTop = Math.min(h - 2, Math.max(y + 14, want));
     B.face(loft([{ p: plan, y }, { p: plan, y: segTop }], { uScale: uS, vScale: vS, capTop: false }));
-    balconyStack(B, plan, y + STOREY, segTop, step, 1.05, trim, rail, mode);
+    if (lang === 'loggia') {
+      // Recessed balconies: a dark reveal with a rail across it, so the facade
+      // is a grid of holes rather than a stack of shelves.
+      for (let yy = y + STOREY; yy < segTop - 1; yy += step) {
+        B.trim(loft([{ p: offsetPlan(plan, -0.4), y: yy }, { p: offsetPlan(plan, -0.4), y: yy + step * 0.62 }],
+          { uScale: 4, vScale: 4 }), P.SPANDREL);
+        B.trim(parapetGeo(plan, yy, 1.0, 0.13), rail);
+      }
+      fins(B, plan, y, segTop, Math.max(4, Math.round(planPerimeter(plan) / 9)), 0.7, trim);
+    } else if (lang === 'ribbon') {
+      // Continuous floor slabs with the rail flush on the edge — the smooth
+      // white-line condo. No projection at all, so its silhouette is a prism
+      // and the detail is all in the banding.
+      for (let yy = y + STOREY; yy < segTop - 1; yy += STOREY) {
+        B.trim(slabGeo(plan, yy - 0.18, 0.4, 0.34), trim);
+        B.trim(parapetGeo(offsetPlan(plan, 0.34), yy + 0.22, 0.95, 0.1), rail);
+      }
+    } else {
+      balconyStack(B, plan, y + STOREY, segTop, lang === 'deep' ? STOREY : step,
+        lang === 'deep' ? proj * 1.6 : proj, trim, rail, mode);
+    }
     if (r.chance(0.35)) fins(B, plan, y, segTop, 4, 0.85, trim);
     if (!last) {
       B.trim(slabGeo(plan, segTop, 0.55, 1.5), trim);
@@ -1707,8 +2095,8 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
   return crown(B, plan, y, r, {
     lit: o.lit, helipad: o.helipad, mast: o.mast,
     kind: o.crownKind || r.weighted([
-      ['plant', 16], ['step', 16], ['taper', 10], ['dome', 16],
-      ['hat', 12], ['ring', 12], ['spire', 10], ['lantern', 8],
+      ['plant', 14], ['step', 14], ['taper', 9], ['dome', 14], ['sky', 14],
+      ['hat', 11], ['ring', 10], ['spire', 9], ['lantern', 7], ['slant', 8],
     ]),
   });
 }
@@ -1738,7 +2126,7 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
     ['ellipse', 6], ['bow', 8]]);
   let plan = deco ? rectPlan(pw, pd, cham) : shaftPlan(r, pw, pd, mk, r());
   const uS = B.sk.uScale, vS = B.sk.vScale;
-  const trim = o.trimHex || (r.chance(0.6) ? P.STUCCO_WHITE : P.CONCRETE_WARM);
+  const trim = o.trimHex || r.weighted(RENDER_TRIM);
 
   const steps = h > 26 ? (deco ? r.int(2, 3) : r.int(1, 2)) : 1;
   let y = 0;
@@ -1838,8 +2226,12 @@ function midrise(ctx, B, r, w, d, h, o = {}) {
 const AWN_V0 = 1 - 0.26, AWN_V1 = 1 - 0.175;
 const SIGN_V0 = 1 - 0.17, SIGN_V1 = 1 - 0.055;
 
-/** Striped awning that borrows the shopfront texture's own awning band. */
-function awning(B, w, y, zFace, proj, drop, hex) {
+/**
+ * Striped awning that borrows the shopfront texture's own awning band.
+ * `x` places it along the frontage, so a wide podium can carry a run of them
+ * instead of one lonely canopy over the lobby door.
+ */
+function awning(B, w, y, zFace, proj, drop, hex, x = 0) {
   if (!B.sk.awn) {
     // No striped band in this texture — model a plain fabric canopy instead.
     // Sloped about its own centre, then moved to the facade. Rotating it after
@@ -1848,9 +2240,9 @@ function awning(B, w, y, zFace, proj, drop, hex) {
     // valance it is supposed to be attached to.
     const g = box(w, 0.22, Math.hypot(proj, drop), 0, -0.11, 0, 3);
     g.rotateX(Math.atan2(drop, proj));
-    g.translate(0, y - drop / 2, zFace + proj / 2);
+    g.translate(x, y - drop / 2, zFace + proj / 2);
     B.trim(g, hex || P.FABRIC_CORAL);
-    B.trim(box(w, 0.5, 0.16, 0, y - drop - 0.5, zFace + proj, 3), hex || P.FABRIC_CORAL);
+    B.trim(box(w, 0.5, 0.16, x, y - drop - 0.5, zFace + proj, 3), hex || P.FABRIC_CORAL);
     return;
   }
   const pos = [], nor = [], uv = [], idx = [];
@@ -1885,6 +2277,7 @@ function awning(B, w, y, zFace, proj, drop, hex) {
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
+  if (x) g.translate(x, 0, 0);
   B.band(g);
 }
 
@@ -2621,9 +3014,17 @@ function place(lot, side) {
  * few times across Brickell instead of on every third block.
  */
 const TOWER_PASTELS = [
-  [P.STUCCO_WHITE, 18], [P.STUCCO_CREAM, 16], [P.STUCCO_SAND, 12],
-  [P.STUCCO_SKY, 12], [P.STUCCO_PEACH, 11], [P.STUCCO_MINT, 10],
-  [P.STUCCO_AQUA, 9], [P.STUCCO_CORAL, 6], [P.STUCCO_PINK, 4], [P.STUCCO_LILAC, 4],
+  [P.STUCCO_WHITE, 13], [P.STUCCO_CREAM, 12], [P.STUCCO_SAND, 11],
+  [P.STUCCO_SKY, 12], [P.STUCCO_PEACH, 12], [P.STUCCO_MINT, 11],
+  [P.STUCCO_AQUA, 10], [P.STUCCO_CORAL, 9], [P.STUCCO_PINK, 7],
+  [P.STUCCO_LILAC, 6], [P.STUCCO_BUTTER, 7],
+];
+
+/** Cornices, string courses, balcony slabs and piers on painted render. */
+const RENDER_TRIM = [
+  [P.STUCCO_WHITE, 22], [P.CONCRETE_WARM, 18], [P.CONCRETE, 12],
+  [P.PRECAST, 11], [P.STUCCO_CREAM, 11], [P.STUCCO_SAND, 9],
+  [P.MULLION, 8], [P.TERRACOTTA, 5],
 ];
 const STUCCO_SET = [
   P.STUCCO_PINK, P.STUCCO_CORAL, P.STUCCO_CREAM, P.STUCCO_LILAC,
@@ -2793,6 +3194,12 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
   const podH = b.hasPodium ? Math.max(7, b.podiumH) : (r.chance(0.55) ? 6 + r() * 6 : 0);
   const neon = r.pick(NEON_SET);
   const litIt = isLandmark || hCap > 140 || r.chance(0.42);
+  // One base palette per building, shared by the podium, the lobby and the
+  // wing, so a tower's ground floor reads as one piece of architecture.
+  const pal = r.weighted(BASE_PALETTES);
+  // Chosen here, not inside tower(): the wing is glazed off the SAME curtain
+  // wall as the shaft, and a Build can only carry one glass material.
+  const gTint = r.pick(GLASS_TINTS);
 
   /* A lower wing beside the shaft. Combined the two masses still fill the
      parcel, so the measured footprint stays centred on the parcel — see the
@@ -2803,7 +3210,10 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
   if (wing) {
     wingSide = r.chance(0.5) ? 1 : -1;
     wingW = pl.lw * 0.30;
-    sw = Math.min(sw, pl.lw * fill - wingW - 1.5);
+    // 3.4 m, not 1.5: the shaft now grows a lobby up to 1.5 m past its own plan
+    // and the wing grows a ground floor of its own, so a party gap the width of
+    // one of them put the two bases inside each other.
+    sw = Math.min(sw, pl.lw * fill - wingW - 3.4);
     shift = -wingSide * (pl.lw * fill / 2 - sw / 2);
   }
 
@@ -2812,10 +3222,10 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
     const MB = new Build(stuccoSkin(hex), neon);
     if (wing) {
       wingBlock(MB, r, wingSide * (pl.lw * fill / 2 - wingW / 2), wingW, sd * 0.94,
-        hCap * (0.22 + r() * 0.18), P.STUCCO_WHITE);
+        hCap * (0.22 + r() * 0.18), P.STUCCO_WHITE, null, pal);
     }
     const mt = resiTower(ctx, MB, r, sw, sd, hCap, {
-      podiumH: wing ? 0 : podH, lit: litIt, shift,
+      podiumH: wing ? 0 : podH, lit: litIt, shift, pal,
       lotW: pl.lw, lotD: pl.ld,
       trimHex: r.chance(0.45) ? P.STUCCO_WHITE : P.CONCRETE_WARM,
       helipad: hCap > 130 && r.chance(0.4),
@@ -2835,9 +3245,9 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
     // Two shafts on one shared podium: one consumable, two silhouettes.
     const tw = pl.lw * 0.42, td = Math.min(pl.ld * 0.86, tw * 1.15);
     const pp = rectPlan(pl.lw, pl.ld, Math.min(pl.lw, pl.ld) * 0.09);
-    const gt = r.pick(GLASS_TINTS);
+    const gt = gTint;
     B.glassMat = curtainMat(gt);
-    podium(B, pp, podH || 10, r, curtainMat(gt), { neon });
+    podium(B, pp, podH || 10, r, curtainMat(gt), { neon, pal });
     roofScape(B, offsetPlan(pp, -1.8), (podH || 10) + 0.05, r, {
       tank: false, parapetH: 1.0, avoid: rectPlan(pl.lw * 0.9, pl.ld * 0.9, 0),
     });
@@ -2858,11 +3268,11 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
   } else {
     if (wing) {
       wingBlock(B, r, wingSide * (pl.lw * fill / 2 - wingW / 2), wingW, sd * 0.94,
-        hCap * (0.20 + r() * 0.16), P.PRECAST);
+        hCap * (0.20 + r() * 0.16), r.weighted(ACCENT_TRIM), curtainMat(gTint), pal);
     }
     top = tower(ctx, B, r, sw, sd, hCap, {
       podium: !wing && podH > 2, podiumH: wing ? 0 : podH,
-      lit: litIt, shift, lotW: pl.lw, lotD: pl.ld,
+      lit: litIt, shift, lotW: pl.lw, lotD: pl.ld, pal, glassTint: gTint,
       helipad: hCap > 130 && r.chance(0.55),
     });
   }
@@ -2880,16 +3290,48 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
  * The lower wing that sits beside a shaft. Same building, same consumable —
  * this is massing, not a second structure — but it turns a single extruded
  * prism into something with a shoulder, which is what most real towers have.
+ *
+ * WHY IT IS NOT A `trim` VOLUME ANY MORE.
+ * Trim geometry pins its UVs to one flat texel — that is the whole reason a
+ * coloured cornice costs no extra draw call, and it is also why a wall built
+ * that way can never have a window in it. A 60-90 m wing made of trim was a
+ * literally featureless pale prism standing beside its tower: art-bible
+ * anti-pattern #3, and the loudest defect in the Brickell skyline frame. A
+ * glass tower's wing is now glazed off the shaft's own curtain wall, which is
+ * free because that mesh already exists; a masonry tower's wing is `face`, so
+ * it gets the punched windows its stucco skin already paints.
  */
-function wingBlock(B, rng, x, w, d, h, hex) {
+function wingBlock(B, rng, x, w, d, h, hex, glassMat, pal) {
   const plan = movePlan(rectPlan(w, d, Math.min(w, d) * 0.14), x, 0);
-  B.trim(loft([{ p: plan, y: 0 }, { p: plan, y: h }], { uScale: 5, vScale: 5 }), hex);
-  for (let yy = STOREY * 2; yy < h - 1; yy += STOREY * 2) {
-    B.trim(slabGeo(plan, yy, 0.3, 0.34), P.CONCRETE_WARM);
+  const bb = planBounds(plan);
+  const base = Math.min(6.0, h * 0.24);
+  const p = pal || BASE_PAL_DEFAULT;
+
+  /* Ground floor. The wing meets the pavement as much as the shaft does. */
+  B.trim(loft([{ p: plan, y: 0 }, { p: plan, y: 0.45 }], { uScale: 5, vScale: 5 }), P.CONCRETE_DARK);
+  B.trim(loft([{ p: offsetPlan(plan, -0.5), y: 0.45 }, { p: offsetPlan(plan, -0.5), y: base }],
+    { uScale: 4, vScale: 4 }), P.SPANDREL);
+  fins(B, plan, 0.45, base + 0.3, Math.max(5, Math.round(planPerimeter(plan) / 7)), 0.7, p.pier);
+  B.trim(slabGeo(plan, base, 0.55, 0.55), p.band);
+  if (w > 9) awning(B, Math.min(w * 0.5, 7), base - 1.3, bb.z1, 1.5, 0.5, p.canopy, x);
+
+  /* Shaft. */
+  if (glassMat) {
+    B.gl(loft([{ p: offsetPlan(plan, -0.32), y: base + 0.55 }, { p: offsetPlan(plan, -0.32), y: h }],
+      { uScale: CW_U, vScale: CW_V }), glassMat);
+    for (let yy = base + STOREY; yy < h - 1; yy += STOREY) {
+      B.trim(slabGeo(plan, yy, 0.34, 0.28), P.CONCRETE_WARM);
+    }
+    fins(B, plan, base + 0.55, h, Math.max(6, Math.round(planPerimeter(plan) / 5.5)), 0.42, hex);
+  } else {
+    B.face(loft([{ p: plan, y: base + 0.55 }, { p: plan, y: h }],
+      { uScale: B.sk.uScale, vScale: B.sk.vScale, capTop: false }));
+    balconyStack(B, plan, base + STOREY, h - 1, STOREY * 2, 0.9, hex, P.GLASS_SKY,
+      rng.weighted(BALCONY_MODES));
   }
   B.trim(slabGeo(plan, h, 0.5, 0.7), P.CONCRETE_WARM);
   roofScape(B, offsetPlan(plan, 0.2), h + 0.5, rng, {
-    tank: false, parapetH: 1.0, pool: rng.chance(0.4), sign: rng.chance(0.35),
+    tank: false, parapetH: 1.0, pool: rng.chance(0.5), sign: rng.chance(0.4),
   });
 }
 

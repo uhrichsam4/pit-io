@@ -57,6 +57,7 @@
 import * as THREE from 'three';
 import { WORLD, PALETTE } from '../config.js';
 import { Textures, ground, solid } from '../core/materials.js';
+import { applyHoleCut } from '../render/groundShader.js';
 import { makeRNG } from '../core/rng.js';
 import { ROAD_CLASS, ZONE } from './cityLayout.js';
 import { RoadNetwork, LANE_W } from './roadNetwork.js';
@@ -69,6 +70,15 @@ const Y_ALLEY = -0.010;
 const Y_DIAG = -0.006;
 const Y_ROAD = 0.0;
 const Y_PATCH = 0.008;
+/**
+ * Crack sealant. Module scope, not beside the seam builder that reads it:
+ * saw-cut repair borders are drawn from the carriageway pass, which runs
+ * BEFORE the sealant pass, and a `const` referenced above its own line is a
+ * temporal-dead-zone throw rather than a hoist. That failure takes out
+ * buildStreets, and buildStreets is the one module worldBuild does not wrap in
+ * a try/catch — so the whole city fails to build.
+ */
+const Y_SEAM = Y_PATCH + 0.003;
 const Y_TINT = 0.010;
 const Y_MARK = 0.018;
 const Y_IRON = 0.024;
@@ -165,6 +175,22 @@ class Surf {
   constructor(uvUnit = 4) {
     this.uv = uvUnit;
     this.p = []; this.n = []; this.t = []; this.c = [];
+    /**
+     * PER-EMITTER UV PHASE — the cure for a countable repeat.
+     *
+     * World-space UVs are what let one road be cut into 300 pieces and still
+     * look continuous, but they also lock the whole city to ONE texture phase:
+     * the paving map repeats every `uv` metres from the world origin, on every
+     * block, forever, and from the game camera you can count the period across
+     * a long frontage. Blocks are separated by carriageway, so there is no
+     * continuity between them to protect — which means each one can be given
+     * its own phase and its own bond direction for free.
+     *
+     * Set these immediately before emitting a block and reset them after.
+     */
+    this.uOff = 0;
+    this.vOff = 0;
+    this.uvSwap = false;
   }
 
   _v(x, y, z, nx, ny, nz, u, v, col) {
@@ -194,8 +220,10 @@ class Surf {
     nx /= L; ny /= L; nz /= L;
     const s = 1 / this.uv;
     for (const q of [a, b, c]) {
-      const u = wall ? (q[0] + q[2]) * s : q[0] * s;
-      const v = wall ? q[1] * s : q[2] * s;
+      let u, v;
+      if (wall) { u = (q[0] + q[2]) * s; v = q[1] * s; }
+      else if (this.uvSwap) { u = (q[2] + this.uOff) * s; v = (q[0] + this.vOff) * s; }
+      else { u = (q[0] + this.uOff) * s; v = (q[2] + this.vOff) * s; }
       this._v(q[0], q[1], q[2], nx, ny, nz, u, v, col);
     }
   }
@@ -381,15 +409,33 @@ export function buildStreets(ctx) {
     return [_lc.r * k, _lc.g * k, _lc.b * k];
   };
 
-  const C_TACTILE = [lin(0xc4552f), lin(PALETTE.CURB_PAINT), lin(0xb8603a)];
+  /**
+   * Detectable-warning pads. YELLOW-dominant, and that is a readability
+   * decision rather than a regional one.
+   *
+   * These used to be terracotta — the same family as the bus-lane bed, which
+   * is itself asphalt lerped toward TERRACOTTA. Side by side on one frame the
+   * pedestrian warning surface and a traffic lane were the same colour, so
+   * neither meant anything. Safety yellow is what Miami actually uses on most
+   * of its newer ramps, it is already in the palette's accent set, and it is
+   * the only warm hue on the footway that cannot be confused with a lane.
+   * One brick variant is kept so a crossroads is still never four identical
+   * corners.
+   */
+  const C_TACTILE = [lin(0xd9a534), lin(PALETTE.CURB_PAINT), lin(0xc06038)];
   const C_APRON = lin(PALETTE.CONCRETE_DARK, 0.92);
   const C_BAY_BLUE = lin(0x2f6fbf);
   const C_CYCLE = lin(0x3f7f5c);
   const C_KERB_PAINT = lin(PALETTE.CURB_PAINT);
+  /** EV charging bay bed. Green is the one bay colour nobody reads as blue. */
+  const C_EV = lin(0x2f7a52);
+  /** The dark of an open kerb-inlet throat. Not black — it catches sky. */
+  const C_INLET = lin(0x2b2924);
 
   const stat = {
     crossBars: 0, ramps: 0, manholes: 0, arrows: 0, medianM: 0, bridges: 0,
     xovers: 0, bays: 0, loading: 0, accessible: 0, seams: 0, cycleM: 0,
+    ev: 0, inlets: 0,
   };
 
   /**
@@ -800,6 +846,7 @@ export function buildStreets(ctx) {
       else if (t - a < 8.5 || b - (t + 6.6) < 8.5) kind = 'clear';
       else if (h < 0.055) kind = 'accessible';
       else if (h < 0.145) { kind = 'loading'; hold = 1; }
+      else if (h < 0.185) kind = 'ev';
 
       // Bay tick: a stub off the bay line at every 6.6 m division.
       if (kind !== 'clear') {
@@ -819,7 +866,38 @@ export function buildStreets(ctx) {
         for (const e of [t + 0.15, t + 13.05]) {
           bandRun(r, s, e - 0.13, e + 0.13, bayLine + 0.1, kerbO + 0.16, Y_MARK, yellow, 1.0);
         }
+        /* Diagonal hatch across the whole zone. The brackets alone say "bay";
+           the hatch is what says "and you may not park in it" — and from the
+           game camera it is the only kerbside marking other than the blue
+           accessible bed that reads as a FIELD rather than as a line, which is
+           precisely why it survives at gameplay distance. */
+        const zw = kerbO - bayLine - 0.1;
+        for (let f = 0.9; f < 13.2; f += 2.2) {
+          const run = Math.min(zw, 13.2 - f);
+          if (run < 0.5) continue;
+          const q = (dt, dof) => {
+            const [qx, qz] = roadPt(r, s, t + dt, bayLine + 0.1 + dof);
+            return [qx, Y_MARK, qz];
+          };
+          yellow.quadUp(q(f, 0), q(f + run, run), q(f + run + 0.22, run), q(f + 0.22, 0), 0.86);
+        }
         stat.loading++;
+      }
+      if (kind === 'ev') {
+        /* EV bay. Green bed plus a chunky plug glyph — two blobs and a stem,
+           because at the width of one parking bay a literal socket outline is
+           three pixels of noise. */
+        bandRun(r, s, t + 0.45, t + 6.15, bayLine + 0.18, r.half - 0.44,
+          Y_MARK - 0.002, flat, C_EV);
+        const [gx, gz] = roadPt(r, s, t + 3.3, (bayLine + r.half) / 2);
+        const k = Math.min(1.5, P.park * 0.6);
+        const F = frame(gx, gz, rot);
+        const G = (u, v) => F(u * k, v * k);
+        pBar(G, -0.30, 0.46, -0.44, 0.44, white, 1.0);        // body
+        pBar(G, 0.46, 0.70, -0.16, 0.16, white, 1.0);         // nose
+        for (const sg of [-1, 1]) pBar(G, -0.74, -0.30, sg * 0.10, sg * 0.34, white, 1.0);
+        pBar(G, -0.98, -0.74, -0.06, 0.06, white, 1.0);       // lead
+        stat.ev++;
       }
       if (kind === 'accessible') {
         bandRun(r, s, t + 0.45, t + 6.15, bayLine + 0.18, r.half - 0.44,
@@ -841,10 +919,19 @@ export function buildStreets(ctx) {
     const runs = paintRuns(r);
     for (const [a, b] of runs) {
       if (b - a < 3) continue;
+      /* DASH RHYTHM IS PER ROAD CLASS, and it is the cheapest cue there is for
+         "this is a bigger road". Real practice scales the cycle with design
+         speed — a residential street runs a short, tight broken line and an
+         arterial runs a long stride with a long gap. One city-wide 3/6 rhythm
+         made every road in Miami feel like the same road. */
+      const dash = r.cls === STREET ? [0.20, 2.2, 3.6]
+        : r.cls === AVENUE ? [0.22, 3.0, 6.0]
+          : [0.26, 3.8, 8.4];
+
       for (const s of [-1, 1]) {
         // Lane dividers inside one direction: white, dashed.
         for (let k = 1; k < P.lanes; k++) {
-          dashRun(r, r.pos + s * (P.inner + k * LANE_W), a, b, 0.22, 3.0, 6.0, white, 1.0);
+          dashRun(r, r.pos + s * (P.inner + k * LANE_W), a, b, dash[0], dash[1], dash[2], white, 1.0);
         }
         // Bus lane: solid white edge (the bed itself is laid separately so it
         // can run continuously through the crossing approach).
@@ -893,7 +980,9 @@ export function buildStreets(ctx) {
       // one gets no paint down the middle.
       if (!r.median) {
         if (r.cls === STREET) {
-          dashRun(r, r.pos, a, b, 0.20, 3.0, 5.0, yellow, 1.0);
+          // Slightly longer stride than the white lane line beside it: two
+          // broken lines at the identical rhythm read as one pattern.
+          dashRun(r, r.pos, a, b, 0.20, dash[1] * 1.25, dash[2] * 1.35, yellow, 1.0);
         } else {
           solidRun(r, r.pos - 0.26, a, b, 0.20, yellow, 1.0);
           solidRun(r, r.pos + 0.26, a, b, 0.20, yellow, 1.0);
@@ -908,15 +997,25 @@ export function buildStreets(ctx) {
       for (let t = a + 20; t < b - 20; t += 95 + fade(t, r.pos) * 130) {
         const w = 1.3 + fade(t, 3) * 1.9;
         const tone = fade(t, 11) > 0.9 ? 1.09 : 0.91;
-        if (r.axis === 'x') patch.rect(r.pos - r.half + 0.4, r.pos + r.half - 0.4, t, t + w, Y_PATCH, tone);
-        else patch.rect(t, t + w, r.pos - r.half + 0.4, r.pos + r.half - 0.4, Y_PATCH, tone);
+        const lo = r.pos - r.half + 0.4, hi = r.pos + r.half - 0.4;
+        if (r.axis === 'x') patch.rect(lo, hi, t, t + w, Y_PATCH, tone);
+        else patch.rect(t, t + w, lo, hi, Y_PATCH, tone);
+        /* A resurfaced band is a trench that was dug, backfilled and sealed:
+           the two long joints are the whole reason you can see it. Only the
+           long sides — the short ends die into the kerb. */
+        const col = 1.20 + fade(t, 17) * 0.38;
+        if (r.axis === 'x') {
+          seam(lo, t, 1, 0, hi - lo, 0.12, t * 5.1, col);
+          seam(lo, t + w, 1, 0, hi - lo, 0.12, t * 5.1 + 9, col);
+        } else {
+          seam(t, lo, 0, 1, hi - lo, 0.12, t * 5.1, col);
+          seam(t + w, lo, 0, 1, hi - lo, 0.12, t * 5.1 + 9, col);
+        }
       }
     }
   }
 
   /* --- crack sealant ----------------------------------------------------- */
-
-  const Y_SEAM = Y_PATCH + 0.003;
 
   /**
    * One run of sealant. A wandering polyline of quads, because the whole point
@@ -926,8 +1025,13 @@ export function buildStreets(ctx) {
    */
   function seam(ax, az, dx, dz, len, wobble, seed, col) {
     const nx = -dz, nz = dx;
-    const segs = Math.max(2, Math.round(len / 3.2));
-    const hw = 0.045 + h01(seed, 7.3) * 0.05;
+    /* 1.5 m stations, not 3.2. At 3.2 m a 20 m crack is six near-collinear
+       quads and reads as a ruled pencil line drawn across the asphalt — which
+       is exactly what it looked like in the gameplay framing. The wander has
+       to change direction several times inside one car length before the eye
+       accepts it as a crack rather than a stroke. */
+    const segs = Math.max(3, Math.round(len / 1.5));
+    const hw = 0.055 + h01(seed, 7.3) * 0.055;
     let px = ax, pz = az;
     for (let i = 1; i <= segs; i++) {
       const t = (i / segs) * len;
@@ -943,6 +1047,23 @@ export function buildStreets(ctx) {
       px = cx; pz = cz;
     }
     stat.seams++;
+  }
+
+  /**
+   * The sealed perimeter of a saw-cut utility repair.
+   *
+   * Four straight sealant runs with a fresh wobble seed each, so the corners
+   * overshoot each other the way a hand-poured seal actually does. This is the
+   * cheapest legible detail on the whole carriageway: it turns an invisible
+   * tonal rectangle into an unmistakable patch.
+   */
+  function cutBorder(cx, cz, w, d, seed) {
+    const x0 = cx - w / 2, x1 = cx + w / 2, z0 = cz - d / 2, z1 = cz + d / 2;
+    const col = 1.22 + h01(seed, 5.5) * 0.36;
+    seam(x0, z0, 1, 0, w, 0.10, seed + 1.1, col);
+    seam(x0, z1, 1, 0, w, 0.10, seed + 2.3, col);
+    seam(x0, z0, 0, 1, d, 0.10, seed + 3.7, col);
+    seam(x1, z0, 0, 1, d, 0.10, seed + 4.9, col);
   }
 
   /**
@@ -965,8 +1086,13 @@ export function buildStreets(ctx) {
         if (L < 2) continue;
         const [sx, sz] = toWorld(t, oA);
         if (layout.isWater(sx, sz)) continue;
-        seam(sx, sz, dAcross[0], dAcross[1], L, 0.5, t * 7.1 + r.pos,
-          0.86 + h01(t, 1.1) * 0.3);
+        /* TAR_SEAM is a warm near-black. Multiplied at 0.86 it landed at about
+           half the road's value, which from the gameplay camera is a hard black
+           line — the loudest thing on an otherwise empty carriageway. Real
+           sealant is a band of dull dark brown that has picked up road dust,
+           so it wants to sit one step under the asphalt, not five. */
+        seam(sx, sz, dAcross[0], dAcross[1], L, 0.85, t * 7.1 + r.pos,
+          1.28 + h01(t, 1.1) * 0.42);
       }
       for (const s of [-1, 1]) {
         for (let k = 1; k <= P.lanes; k++) {
@@ -976,8 +1102,8 @@ export function buildStreets(ctx) {
             const L = Math.min(10 + h01(t, o + 3) * 30, b - t - 3);
             const [sx, sz] = toWorld(t, o + (h01(t, o + 9) - 0.5) * 0.5);
             if (layout.isWater(sx, sz)) continue;
-            seam(sx, sz, dAlong[0], dAlong[1], L, 0.26, t * 3.7 + o,
-              0.86 + h01(t, 2.6) * 0.3);
+            seam(sx, sz, dAlong[0], dAlong[1], L, 0.42, t * 3.7 + o,
+              1.24 + h01(t, 2.6) * 0.42);
           }
         }
       }
@@ -1067,14 +1193,20 @@ export function buildStreets(ctx) {
     }
 
     /* Junction wear: real intersections are a patchwork of utility cuts and
-       overlay, and the polish where every tyre in the city turns. Kept inside
-       +-10% albedo so it reads as surface history, not dirt. */
+       overlay, and the polish where every tyre in the city turns.
+       The tone alone is worth almost nothing — +-13% albedo on a mottled
+       asphalt map is inside the map's own noise, which is why a 40 m junction
+       box read as one bare grey field in the gameplay framing. What makes a
+       repair read is its EDGE: a utility cut is saw-cut square and then sealed
+       all the way round, so it is a rectangle with a dark border. Draw the
+       border and a 5% tonal shift is suddenly legible. */
     const jr = makeRNG((ix.id * 2654435761) >>> 0);
     for (let i = 0; i < 4; i++) {
       const w = ix.halfX * (0.28 + jr() * 0.58), d = ix.halfZ * (0.28 + jr() * 0.58);
       const cx = ix.x + (jr() - 0.5) * (ix.halfX * 2 - w);
       const cz = ix.z + (jr() - 0.5) * (ix.halfZ * 2 - d);
       patch.rect(cx - w / 2, cx + w / 2, cz - d / 2, cz + d / 2, Y_PATCH, 0.875 + jr() * 0.26);
+      if (jr() < 0.7) cutBorder(cx, cz, w, d, ix.id * 31.7 + i);
     }
     // Oil shadow at the stop line. An octagon, because a rectangle of stain
     // announces itself as a decal.
@@ -1086,13 +1218,17 @@ export function buildStreets(ctx) {
     }
     patch.polyY(oct, Y_PATCH + 0.001, 0.90);
 
-    // A junction is the most cut, patched and resealed asphalt in any city.
-    for (let i = 0; i < 2; i++) {
+    /* A junction is the most cut, patched and resealed asphalt in any city.
+       Kept SHORT: a crack the full width of the box is a ruled line across the
+       one surface the player looks at all game. Three short ones scattered
+       read as damage; one long one reads as a scratch on the lens. */
+    for (let i = 0; i < 3; i++) {
       const ang = jr() * Math.PI * 2;
-      const L = Math.min(ix.halfX, ix.halfZ) * (0.9 + jr() * 1.1);
-      const sx = ix.x + (jr() - 0.5) * ix.halfX;
-      const sz = ix.z + (jr() - 0.5) * ix.halfZ;
-      seam(sx, sz, Math.cos(ang), Math.sin(ang), L, 0.6, ix.id * 13.7 + i, 0.92);
+      const L = Math.min(ix.halfX, ix.halfZ) * (0.35 + jr() * 0.55);
+      const sx = ix.x + (jr() - 0.5) * ix.halfX * 1.5;
+      const sz = ix.z + (jr() - 0.5) * ix.halfZ * 1.5;
+      seam(sx, sz, Math.cos(ang), Math.sin(ang), L, 0.9, ix.id * 13.7 + i,
+        1.26 + jr() * 0.4);
     }
 
     // Keep-clear box: only where two boulevards meet, or it becomes wallpaper.
@@ -1107,9 +1243,18 @@ export function buildStreets(ctx) {
        the same y with the same polygon offset, so anywhere they cross is a
        guaranteed z-fight. Two markings that both mean "cross here carefully"
        is also one too many. */
-    if (!boxed && (rx.cls === BOULEVARD || rz.cls === BOULEVARD)) {
-      const major = rx.cls === BOULEVARD ? rx : rz;
-      const P = lanePlan(major);
+    /* Widened from BOULEVARD-only to "the multi-lane road through", which is
+       every AVENUE too. An avenue carries the same four lanes a boulevard
+       does, and leaving its junctions unguided is what left the default
+       gameplay framing looking at forty metres of untouched grey. Streets are
+       still excluded: one lane each way has nothing to guide. */
+    const guided = rx.cls !== STREET || rz.cls !== STREET;
+    if (!boxed && guided) {
+      // The road with more lanes owns the box; a tie goes to the wider one.
+      const px = lanePlan(rx), pz = lanePlan(rz);
+      const useX = px.lanes !== pz.lanes ? px.lanes > pz.lanes : rx.half >= rz.half;
+      const major = useX ? rx : rz;
+      const P = useX ? px : pz;
       const alongX = major.axis === 'x';
       const t0 = alongX ? ix.z - ix.halfZ : ix.x - ix.halfX;
       const t1 = alongX ? ix.z + ix.halfZ : ix.x + ix.halfX;
@@ -1125,12 +1270,36 @@ export function buildStreets(ctx) {
       }
     }
 
-    // Ironwork clusters at the corners plus a manhole in the middle.
-    manhole(ix.x + (jr() - 0.5) * ix.halfX, ix.z + (jr() - 0.5) * ix.halfZ, 0.62);
+    /* Ironwork. Every service in the city crosses here, so a junction carries
+       far more lids than a mid-block run — and a scatter of hard dark discs is
+       most of what stops the box reading as a poured slab. */
+    const nLid = 2 + (jr() < 0.6 ? 1 : 0);
+    for (let i = 0; i < nLid; i++) {
+      manhole(
+        ix.x + (jr() - 0.5) * ix.halfX * 1.55,
+        ix.z + (jr() - 0.5) * ix.halfZ * 1.55,
+        0.52 + jr() * 0.20, jr() * 6.28
+      );
+    }
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        gully(ix.x + sx * (ix.halfX - 0.5), ix.z + sz * (ix.halfZ + 2.2), sx > 0 ? 'x' : 'x');
-        gully(ix.x + sx * (ix.halfX + 2.2), ix.z + sz * (ix.halfZ - 0.5), 'z');
+        /* A gully grate is laid ALONG the gutter it drains, and the gutter
+           runs the way its own road runs. rx is the north/south road (constant
+           x, travelling in z) so a grate in its channel is long in z; rz is
+           east/west, so its grates are long in x. These two were swapped, and
+           one of them was picked by a `sx > 0 ? 'x' : 'x'` that could only ever
+           return one answer. */
+        gully(ix.x + sx * (ix.halfX - 0.5), ix.z + sz * (ix.halfZ + 2.2), 'z');
+        gully(ix.x + sx * (ix.halfX + 2.2), ix.z + sz * (ix.halfZ - 0.5), 'x');
+        // A drawpit beside each gully — the chamber the gully actually drains
+        // into. Small, square, and never the same size as its neighbour.
+        // Set back past the zebra AND the hold line: the ironwork layer wins
+        // the depth test against paint, so a lid dropped inside the crossing
+        // would punch a grey hole through a zebra bar.
+        if (jr() < 0.5) {
+          vaultLid(ix.x + sx * (ix.halfX - 0.6), ix.z + sz * (ix.halfZ + 6.2 + jr() * 2),
+            0.32 + jr() * 0.14, false, Y_IRON);
+        }
       }
     }
 
@@ -1417,9 +1586,42 @@ export function buildStreets(ctx) {
     const tactileCol = C_TACTILE[(b.seed >> 5) % C_TACTILE.length];
     const bs = makeRNG((b.seed ^ 0x9e37) >>> 0);
 
-    // Interior slab (building pad / plaza floor). Kept a shade warmer than the
-    // walking band so the frontage still reads as a footway from the air.
-    walk.rect(x0 + sw, x1 - sw, z0 + sw, z1 - sw, Y_WALK, tone * 0.985);
+    /* ...and a fourth, which is the one that actually kills the period: the
+       block's own UV PHASE. Tone and joint pitch vary what the paving looks
+       like; they cannot move where its 4.8 m repeat lands, so every block in
+       the city still broke joint at the same world coordinates and a long
+       frontage still had a countable beat. Blocks never touch — there is a
+       carriageway between any two of them — so each can be given an arbitrary
+       phase, and every fourth one can have its courses turned through 90 deg,
+       for the cost of two floats.
+
+       Phased off the block seed directly rather than off `bs`: drawing from
+       that generator here would shift every crossover, service patch and
+       loading kerb in the city, and those placements are already tuned. */
+    walk.uOff = h01(b.seed * 0.017, 3.1) * 4.8;
+    walk.vOff = h01(b.seed * 0.023, 7.9) * 4.8;
+    walk.uvSwap = h01(b.seed * 0.031, 1.7) < 0.42;
+
+    /* Interior slab (building pad / plaza floor), laid in BAYS rather than as
+       one quad. Where a building covers it this is invisible; where it does
+       not — a setback, a forecourt, a plaza — it was the largest single flat
+       colour anywhere in the game, tens of metres of one exact value. Real
+       paving of that size is poured or laid in bays with a movement joint
+       between them, and a few percent of tone between bays is enough to give
+       the eye something to hold on to. */
+    {
+      const px0 = x0 + sw, px1 = x1 - sw, pz0 = z0 + sw, pz1 = z1 - sw;
+      const BAY = 9.0;
+      const nx = Math.max(1, Math.round((px1 - px0) / BAY));
+      const nz = Math.max(1, Math.round((pz1 - pz0) / BAY));
+      const dx = (px1 - px0) / nx, dz = (pz1 - pz0) / nz;
+      for (let i = 0; i < nx; i++) {
+        for (let j = 0; j < nz; j++) {
+          walk.rect(px0 + i * dx, px0 + (i + 1) * dx, pz0 + j * dz, pz0 + (j + 1) * dz,
+            Y_WALK, tone * (0.955 + h01(b.seed + i * 3.7, j * 5.3) * 0.062));
+        }
+      }
+    }
 
     const edges = [
       { key: 'n', road: b.edges.n, len: b.w, corner0: [x0, z0], corner1: [x1, z0] },
@@ -1556,11 +1758,17 @@ export function buildStreets(ctx) {
     const br = makeRNG((b.seed ^ 0x2f11) >>> 0);
     for (const e of edges) {
       if (!e.road) continue;
+      // The dropped-kerb windows this edge already carries. An inlet cut into
+      // a kerb that is not there would hang in the air over a ramp.
+      const dropped = (holesFor.find((h) => h.e === e) || { holes: [] }).holes;
       const n = Math.max(1, Math.floor(e.len / 26));
       for (let i = 0; i < n; i++) {
         const s = (i + 0.5) * (e.len / n) + (br() - 0.5) * 5;
         const [gx, gz] = edgePoint(e, s, -0.2, x0, x1, z0, z1);
         gully(gx, gz, e.key === 'n' || e.key === 's' ? 'x' : 'z');
+        if (!dropped.some(([ha, hc]) => s > ha - 0.5 && s < hc + 0.5)) {
+          kerbInlet(e, s, x0, x1, z0, z1);
+        }
       }
       if (br.chance(0.55)) {
         const s = br.range(3, Math.max(3.5, e.len - 3));
@@ -1582,6 +1790,35 @@ export function buildStreets(ctx) {
         valveCap(px, pz, br.range(0.11, 0.17));
       }
     }
+
+    // The sweep and every flat thing hung off it are done; hand the mesh back
+    // in its default phase so the medians below are not laid at this block's.
+    walk.uOff = 0; walk.vOff = 0; walk.uvSwap = false;
+  }
+
+  /**
+   * The mouth of a kerb inlet: the opening cut through the kerb face where the
+   * gutter actually drains.
+   *
+   * This is the only hole in a kilometre of kerb, and from street level it is
+   * what proves the kerb is a PROFILE and not a painted strip — the grate in
+   * the channel alone reads as a decal lying next to a ramp. It is a quad
+   * standing 18 mm proud of the real face so it can never tie with it on
+   * depth; the winding below yields an outward normal on all four block edges
+   * (checked against each: n/e/s/w), which matters because getting it backwards
+   * back-face-culls the whole thing into invisibility rather than erroring.
+   */
+  function kerbInlet(e, s, x0, x1, z0, z1) {
+    const HW = 0.31, PROUD = 0.018;
+    const s0 = Math.max(0.6, s - HW), s1 = Math.min(e.len - 0.6, s + HW);
+    if (s1 - s0 < 0.2) return;
+    const p = (ss, oo) => edgePoint(e, ss, oo, x0, x1, z0, z1);
+    const oLo = PROFILE[2].o - PROUD, oHi = PROFILE[4].o - PROUD;
+    const yLo = PROFILE[2].y + 0.014, yHi = PROFILE[4].y - 0.020;
+    const A = p(s0, oLo), B = p(s0, oHi), C = p(s1, oHi), D = p(s1, oLo);
+    flat.quad([A[0], yLo, A[1]], [B[0], yHi, B[1]],
+      [C[0], yHi, C[1]], [D[0], yLo, D[1]], C_INLET, true);
+    stat.inlets++;
   }
 
   /** World point on a block edge at distance `s` from corner0, inset `o`. */
@@ -1884,50 +2121,103 @@ export function buildStreets(ctx) {
 
   /* ==================================================== 7. ironwork === */
 
-  function manhole(x, z, r) {
-    const n = 10;
-    const pts = [];
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      pts.push([x + Math.cos(a) * r, z + Math.sin(a) * r]);
+  /**
+   * Cast-iron manhole.
+   *
+   * The value is the entire point. ROOF_TAR at a 1.0 multiplier is the same
+   * luminance as the asphalt around it, so the old lid was invisible in the
+   * one frame the game is actually played in — a dark disc you could only find
+   * if you knew where to look. Iron in a road is genuinely much darker than
+   * the wearing course, and the frame it sits in is a bright ring of fresh
+   * bedding mortar. Dark centre, bright collar: two hard value steps in
+   * 60 cm, which is what survives being twelve pixels across.
+   */
+  function manhole(x, z, r, seed = 0) {
+    const n = 12;
+    const ring = (rad, y, col) => {
+      const pts = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + seed;
+        pts.push([x + Math.cos(a) * rad, z + Math.sin(a) * rad]);
+      }
+      iron.polyY(pts, y, col);
+    };
+    ring(r * 1.24, Y_IRON, 1.32);            // bedding collar, bright
+    ring(r, Y_IRON + 0.002, 0.48);           // the lid itself, dark iron
+    ring(r * 0.66, Y_IRON + 0.004, 0.62);    // cast centre boss
+    // Two pick holes. Tiny, but they are what stops the lid reading as a dot.
+    for (const s of [-1, 1]) {
+      const a = seed + 0.7;
+      const px = x + Math.cos(a) * r * 0.40 * s, pz = z + Math.sin(a) * r * 0.40 * s;
+      iron.rect(px - 0.055, px + 0.055, pz - 0.055, pz + 0.055, Y_IRON + 0.006, 0.30);
     }
-    iron.polyY(pts, Y_IRON, 1.0);
-    // Rim, a shade darker, so the lid reads as a disc set into the road.
-    const pts2 = [];
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
-      pts2.push([x + Math.cos(a) * (r * 0.72), z + Math.sin(a) * (r * 0.72)]);
-    }
-    iron.polyY(pts2, Y_IRON + 0.002, 0.84);
     stat.manholes++;
   }
 
+  /**
+   * Kerb-inlet grate. `axis` is the direction the GUTTER runs, which is the
+   * direction the grate is long in — a grate laid across its own channel would
+   * be a kerb you cannot drain past.
+   *
+   * Five bars, not three: at 0.72 m long the bar pitch is what identifies the
+   * object at a glance, and three bars over a 0.38 m width reads as a smudge.
+   */
   function gully(x, z, axis) {
-    const w = axis === 'x' ? 0.72 : 0.38;
-    const d = axis === 'x' ? 0.38 : 0.72;
-    iron.rect(x - w / 2, x + w / 2, z - d / 2, z + d / 2, Y_IRON, 0.68);
-    // three grate bars
-    for (let i = -1; i <= 1; i++) {
-      if (axis === 'x') iron.rect(x - w / 2 + 0.06, x + w / 2 - 0.06, z + i * 0.1 - 0.025, z + i * 0.1 + 0.025, Y_IRON + 0.002, 0.42);
-      else iron.rect(x + i * 0.1 - 0.025, x + i * 0.1 + 0.025, z - d / 2 + 0.06, z + d / 2 - 0.06, Y_IRON + 0.002, 0.42);
+    const alongX = axis === 'x';
+    const w = alongX ? 0.78 : 0.40;
+    const d = alongX ? 0.40 : 0.78;
+    iron.rect(x - w / 2, x + w / 2, z - d / 2, z + d / 2, Y_IRON, 0.86);   // frame
+    iron.rect(x - w / 2 + 0.05, x + w / 2 - 0.05, z - d / 2 + 0.05, z + d / 2 - 0.05,
+      Y_IRON + 0.002, 0.34);                                              // the void
+    for (let i = -2; i <= 2; i++) {
+      const o = i * 0.135;
+      if (alongX) {
+        iron.rect(x + o - 0.028, x + o + 0.028, z - d / 2 + 0.05, z + d / 2 - 0.05,
+          Y_IRON + 0.004, 0.74);
+      } else {
+        iron.rect(x - w / 2 + 0.05, x + w / 2 - 0.05, z + o - 0.028, z + o + 0.028,
+          Y_IRON + 0.004, 0.74);
+      }
     }
   }
 
+  /** Rectangular access cover with a raised frame and a cast diamond field. */
   function serviceLid(x, z, alongX) {
     const w = alongX ? 0.92 : 0.58;
     const d = alongX ? 0.58 : 0.92;
-    iron.rect(x - w / 2, x + w / 2, z - d / 2, z + d / 2, Y_WALK + 0.006, 0.78);
-    iron.rect(x - w / 2 + 0.08, x + w / 2 - 0.08, z - d / 2 + 0.08, z + d / 2 - 0.08, Y_WALK + 0.008, 0.90);
+    const y = Y_WALK + 0.006;
+    iron.rect(x - w / 2, x + w / 2, z - d / 2, z + d / 2, y, 0.70);
+    iron.rect(x - w / 2 + 0.08, x + w / 2 - 0.08, z - d / 2 + 0.08, z + d / 2 - 0.08,
+      y + 0.002, 0.92);
+    // Two lifting keyways, which is what says "lid" rather than "grey rectangle".
+    for (const s of [-1, 1]) {
+      const kx = alongX ? x + s * (w / 2 - 0.14) : x;
+      const kz = alongX ? z : z + s * (d / 2 - 0.14);
+      iron.rect(kx - 0.06, kx + 0.06, kz - 0.06, kz + 0.06, y + 0.004, 0.52);
+    }
   }
 
-  /** Square draw-pit lid with a cast rib across it — telecoms, power. */
-  function vaultLid(x, z, r, alongX) {
+  /**
+   * Square draw-pit lid with cast ribs across it — telecoms, power.
+   * `y` defaults to the footway but the junction pass drops them in the road,
+   * where the same albedo would vanish into the asphalt, so the tone is keyed
+   * off the surface it lands on.
+   */
+  function vaultLid(x, z, r, alongX, y = Y_WALK + 0.006) {
     const w = alongX ? r : r * 0.78;
     const d = alongX ? r * 0.78 : r;
-    iron.rect(x - w, x + w, z - d, z + d, Y_WALK + 0.006, 0.72);
-    iron.rect(x - w + 0.07, x + w - 0.07, z - d + 0.07, z + d - 0.07, Y_WALK + 0.008, 0.86);
-    if (alongX) iron.rect(x - w + 0.07, x + w - 0.07, z - 0.03, z + 0.03, Y_WALK + 0.010, 0.62);
-    else iron.rect(x - 0.03, x + 0.03, z - d + 0.07, z + d - 0.07, Y_WALK + 0.010, 0.62);
+    const k = y < Y_WALK ? 0.62 : 1.0;
+    iron.rect(x - w, x + w, z - d, z + d, y, 0.72 * k);
+    iron.rect(x - w + 0.07, x + w - 0.07, z - d + 0.07, z + d - 0.07, y + 0.002, 0.90 * k);
+    for (const o of [-0.5, 0.5]) {
+      if (alongX) {
+        const cz = z + o * (d - 0.14) * 0.7;
+        iron.rect(x - w + 0.07, x + w - 0.07, cz - 0.03, cz + 0.03, y + 0.004, 0.58 * k);
+      } else {
+        const cx = x + o * (w - 0.14) * 0.7;
+        iron.rect(cx - 0.03, cx + 0.03, z - d + 0.07, z + d - 0.07, y + 0.004, 0.58 * k);
+      }
+    }
   }
 
   /** Small round stop-tap / gas cap. Cheap, and there are thousands in a city. */
@@ -2120,8 +2410,15 @@ export function buildStreets(ctx) {
   // asphalt, so it reads as a tinted lane rather than a red carpet. Flat albedo
   // (paint IS flat) with the road's own normal map so the relief carries
   // straight through and the lane still looks like tarmac.
+  /* 0.27, down from 0.34. At a third of the way to TERRACOTTA the bed came out
+     salmon, and it landed in the same hue family as the detectable-warning
+     pads on the footway six metres away — so a traffic lane and a pedestrian
+     warning surface read as the same material. It also stopped reading as
+     tinted tarmac and started reading as brick paving, which is the opposite
+     of what a bus lane is. Backed off until the asphalt underneath is clearly
+     still asphalt. */
   const busColor = new THREE.Color(PALETTE.ASPHALT)
-    .lerp(new THREE.Color(PALETTE.TERRACOTTA), 0.34);
+    .lerp(new THREE.Color(PALETTE.TERRACOTTA), 0.27);
   const matBus = layer({
     color: busColor,
     normalMap: asphaltNormal,
@@ -2164,9 +2461,16 @@ export function buildStreets(ctx) {
     color: PALETTE.ROOF_TAR, roughness: 0.62, metalness: 0.25, vertexColors: true,
   }, 7), 'road-ironwork');
 
-  const hedgeMesh = addMesh(group, hedge, solid({
-    color: PALETTE.HEDGE, roughness: 0.9, vertexColors: true,
-  }), 'median-hedge');
+  /* HOLE-CUT ON THE HEDGE, and it is not decoration.
+     The median hedge is one long mesh standing on the median. When a hole eats
+     Brickell Ave the ground under it goes and the hedge — a `solid()` material,
+     never patched — stayed hanging in the air over the void. Everything at
+     ground level in this file has to be cut, whether or not it is flat. Named
+     so `solid()`'s parameter cache cannot hand this patched instance to
+     nature.js, which asks for the same hedge colour. */
+  const hedgeMesh = addMesh(group, hedge, applyHoleCut(solid({
+    color: PALETTE.HEDGE, roughness: 0.9, vertexColors: true, name: 'streets-hedge',
+  })), 'median-hedge');
   if (hedgeMesh) hedgeMesh.castShadow = true;
 
   const structMesh = addMesh(group, struct, ground({
@@ -2174,9 +2478,12 @@ export function buildStreets(ctx) {
   }), 'bridges-bulkheads');
   if (structMesh) structMesh.castShadow = true;
 
-  const poleMesh = addMesh(group, lampPole, solid({
+  // Same reasoning as the hedge: a hole that reaches the deck must take the
+  // standards with it rather than leave a row of poles over the water.
+  const poleMesh = addMesh(group, lampPole, applyHoleCut(solid({
     color: PALETTE.LAMP_POST, roughness: 0.5, metalness: 0.4, vertexColors: true,
-  }), 'bridge-lamps');
+    name: 'streets-bridge-lamp',
+  })), 'bridge-lamps');
   if (poleMesh) poleMesh.castShadow = true;
 
   let matGlow = null;
@@ -2253,8 +2560,9 @@ export function buildStreets(ctx) {
     `[streets] ${layout.blocks.length} blocks | ${stat.ramps} kerb ramps | ` +
     `${stat.xovers} crossovers | ${stat.crossBars} zebra bars | ` +
     `${stat.arrows} arrows | ${stat.bays} bays (${stat.accessible} accessible, ` +
-    `${stat.loading} loading) | ${Math.round(stat.cycleM)} m cycle lane | ` +
+    `${stat.loading} loading, ${stat.ev} EV) | ${Math.round(stat.cycleM)} m cycle lane | ` +
     `${stat.seams} crack seams | ${stat.manholes} manholes | ` +
+    `${stat.inlets} kerb inlets | ` +
     `${Math.round(stat.medianM)} m median | ${stat.bridges} bridges`
   );
 

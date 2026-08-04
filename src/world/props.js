@@ -1657,6 +1657,328 @@ function gPottedFicus(m) {
   shrub(m, 0, 1.20, 0, 0.52, P.TREE_CANOPY, 6);
 }
 
+/** Classic urn on a plinth, with the trailing bloom that stops it reading as
+ *  a bollard from above. The second planter MODEL, not a recolour: the round
+ *  pot is the single most repeated silhouette on any pavement in the city. */
+function gPlanterUrn(m) {
+  m.col(P.PRECAST).prism(0, 0, [[0, 0.58, 0.58], [0.09, 0.50, 0.50]],
+    { cols: [P.CONCRETE_DARK] });
+  m.tube(0, 0, [[0.09, 0.21], [0.28, 0.17], [0.46, 0.31], [0.74, 0.46], [0.82, 0.44]], 8, {
+    cols: [P.PRECAST, P.PRECAST, P.PRECAST, P.CONCRETE_DARK],
+  });
+  m.col(P.MULCH).plate(0, 0.80, 0, 0.78, 0.78);
+  shrub(m, 0, 0.74, 0, 0.32, P.HEDGE_LIGHT, 6);
+  m.col(P.FLOWER_MAGENTA);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * TAU + 0.9;
+    m.tube(Math.cos(a) * 0.40, Math.sin(a) * 0.40, [[0.70, 0.08], [0.90, 0.13]], 5, { capTop: true });
+  }
+}
+
+/** Tapered steel trough of ornamental grass — flat blades, no dome. A dome on
+ *  a box is just the round planter again wearing a different coat. */
+function gPlanterModern(m) {
+  m.col(P.BOLLARD_DARK).prism(0, 0, [
+    [0, 1.34, 0.54], [0.06, 1.26, 0.46], [0.86, 1.08, 0.38],
+  ], { cols: [P.STEEL_DARK, P.BOLLARD_DARK], capTop: false });
+  m.col(P.MULCH).plate(0, 0.82, 0, 1.02, 0.34);
+  const blades = [P.GRASS_DRY, P.GRASS_LIGHT, P.GRASS];
+  for (let k = 0; k < 7; k++) {
+    m.col(blades[k % 3]);
+    const x = -0.42 + k * 0.14;
+    const lean = (k % 2 ? 1 : -1) * (0.13 + (k % 3) * 0.05);
+    m.beam(x, 0.78, 0, x + lean, 1.42 + (k % 3) * 0.10, lean * 0.5, 0.09, 0.02, false);
+  }
+}
+
+/* -- terrace shade, service and the closed-up look ------------------------ */
+
+/**
+ * Freestanding terrace awning: four posts, a raked fabric and a valance.
+ *
+ * Spans along local x and rakes DOWN toward +z, i.e. out over the tables and
+ * toward the kerb once the placer has turned it to face the frontage. Four
+ * posts rather than a cantilever because a cantilevered awning is fixed to a
+ * building, and nothing this module makes is allowed to depend on a wall it
+ * does not own — its contact patch has to be four feet on the pavement.
+ *
+ * Fabric is authored near-white so the per-instance tint colours it. A street
+ * of terraces under one shade of coral is exactly the repetition this exists
+ * to break, and it costs nothing: one hex per instance, same pool, same draw.
+ */
+function gTerraceAwning(m) {
+  const HX = 1.90, BZ = -0.92, FZ = 0.86, TOP = 2.58, LIP = 2.14;
+  m.col(P.STEEL_DARK);
+  for (const sx of [-1, 1]) {
+    for (const [z, h] of [[BZ, TOP], [FZ, LIP]]) {
+      m.tube(sx * HX, z, [[0, 0.19], [0.06, 0.15]], 6, { capTop: true });
+      m.tube(sx * HX, z, [[0.06, 0.072], [h + 0.06, 0.062]], 6, { capTop: true });
+    }
+  }
+  m.beam(-HX, TOP + 0.02, BZ, HX, TOP + 0.02, BZ, 0.08, 0.08, false);
+  m.beam(-HX, LIP + 0.02, FZ, HX, LIP + 0.02, FZ, 0.08, 0.08, false);
+  m.col(0xffffff);
+  m.board(0, HX * 2 + 0.36, TOP + 0.07, BZ - 0.12, LIP + 0.07, FZ + 0.24, 0.06);
+  m.col(0xf0f0f0);
+  m.prism(0, FZ + 0.26, [[LIP - 0.16, HX * 2 + 0.36, 0.05], [LIP + 0.07, HX * 2 + 0.36, 0.05]]);
+  // Awning downlights. Without these a terrace goes completely dark at night
+  // while the shopfront behind it is lit, which reads as a closed restaurant.
+  m.lit(P.LAMP_GLOW, 1, 1.1);
+  for (const x of [-1.15, 0, 1.15]) {
+    m.tube(x, 0.06, [[2.18, 0.05], [2.26, 0.06]], 5, { capTop: true });
+  }
+}
+
+/** Champagne bucket on a folding tripod — the smallest thing on a terrace and
+ *  the one that says somebody is actually being served. */
+function gIceBucket(m) {
+  m.col(P.STEEL_DARK);
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * TAU + 0.5;
+    m.beam(Math.cos(a) * 0.25, 0, Math.sin(a) * 0.25,
+      Math.cos(a) * 0.09, 0.58, Math.sin(a) * 0.09, 0.045, 0.045, false);
+  }
+  m.col(P.CHROME);
+  m.tube(0, 0, [[0.56, 0.19], [0.62, 0.20], [0.88, 0.24]], 8, { capTop: false });
+  m.col(P.SEA_FOAM).plate(0, 0.86, 0, 0.36, 0.36);
+  m.col(P.GLASS_MINT).beam(0.05, 0.84, 0.02, 0.15, 1.14, 0.07, 0.085, 0.085, false);
+}
+
+/** Gelato counter: a low case with a canted hood and a row of lit tubs. The
+ *  pastry case is a vertical cabinet; this is the horizontal one. */
+function gGelatoCase(m) {
+  m.col(P.STEEL_DARK).prism(0, 0, [[0, 1.36, 0.86], [0.09, 1.28, 0.78], [0.82, 1.28, 0.78]]);
+  m.col(P.ALUMINIUM).prism(0, 0, [[0.82, 1.36, 0.86], [0.88, 1.32, 0.82]]);
+  const tubs = [P.STUCCO_BUTTER, P.FLOWER_PINK, P.TERRACOTTA, P.SEA_FOAM, P.WOOD_DARK];
+  for (let k = 0; k < 5; k++) {
+    m.lit(tubs[k], 1, 0.42);
+    m.prism(-0.48 + k * 0.24, 0, [[0.88, 0.21, 0.54], [0.98, 0.21, 0.54]]);
+  }
+  m.col(P.GLASS_SKY, 1.05).board(0, 1.32, 0.94, -0.36, 1.42, 0.32, 0.04);
+  m.lit(P.LAMP_GLOW, 1, 0.75).prism(0, -0.38, [[1.36, 1.22, 0.05], [1.42, 1.22, 0.05]]);
+}
+
+/**
+ * Post-and-rope terrace divider. Authored along local x with a 1.0 m half-span
+ * so it packs end to end on the boundary line exactly the way the hedge and
+ * the glass screen do — a terrace edge that reads as a dotted line is the one
+ * thing a terrace edge must not be.
+ */
+function gTerraceRope(m) {
+  const S = 1.00;
+  for (const s of [-1, 1]) {
+    m.col(P.WOOD_DARK).prism(s * S, 0, [[0, 0.36, 0.36], [0.07, 0.29, 0.29]]);
+    m.col(P.TEAK).tube(s * S, 0, [[0.07, 0.075], [1.00, 0.065]], 6, { capTop: false });
+    m.col(P.CHROME).tube(s * S, 0, [[1.00, 0.085], [1.08, 0.05]], 6, { capTop: true });
+  }
+  m.col(P.SAND_WET);
+  for (const [yEnd, yMid] of [[0.90, 0.72], [0.58, 0.44]]) {
+    const pts = [[-S, yEnd], [-S * 0.34, yMid], [S * 0.34, yMid], [S, yEnd]];
+    for (let k = 0; k < 3; k++) {
+      m.beam(pts[k][0], pts[k][1], 0, pts[k + 1][0], pts[k + 1][1], 0, 0.045, 0.045, false);
+    }
+  }
+}
+
+/** Chairs stacked for the night. Nothing else in the catalogue says "closed",
+ *  and a terrace that is identical at 3am and 3pm is a diorama. */
+function gChairStack(m) {
+  for (let k = 0; k < 4; k++) {
+    const y = 0.42 + k * 0.13;
+    m.col(k % 2 ? 0xf2ede1 : P.CHAIR);
+    m.xform((k - 1.5) * 0.05, 0, 0, k * 0.035);
+    m.prism(0, 0, [[y, 0.44, 0.42], [y + 0.05, 0.42, 0.40]]);
+    m.reset();
+  }
+  m.col(P.CHAIR, 0.95).board(0, 0.44, 0.86, -0.14, 1.34, -0.30, 0.06);
+  m.col(0xe2ddd0);
+  for (const sx of [-1, 1]) m.board(sx * 0.20, 0.06, 0, -0.18, 0.44, -0.20, 0.36);
+}
+
+/** Barrel high-top. A round table on a fat base reads completely differently
+ *  from a round table on a stem, which is the only reason it is here. */
+function gBarrelTable(m) {
+  m.tube(0, 0, [[0, 0.29], [0.14, 0.33], [0.54, 0.36], [0.94, 0.33], [1.04, 0.30]], 8, {
+    cols: [P.WOOD_DARK, P.WOOD_DECK, P.WOOD_DECK, P.WOOD_DARK],
+  });
+  m.col(P.STEEL_DARK);
+  for (const y of [0.20, 0.84]) m.tube(0, 0, [[y, 0.355], [y + 0.05, 0.355]], 8);
+  m.col(P.TEAK).tube(0, 0, [[1.04, 0.47], [1.10, 0.45]], 8, { capTop: true });
+  m.col(P.SIGN_FACE).tube(0.18, 0.10, [[1.10, 0.045], [1.22, 0.05]], 5, { capTop: true });
+}
+
+/* -- hotel + lounge ------------------------------------------------------- */
+
+/** Bell cart. Chrome frame, carpeted deck, three bags that do not match —
+ *  luggage never does, and matching it is the tell. */
+function gLuggageCart(m) {
+  m.col(P.TYRE);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.tube(sx * 0.50, sz * 0.34, [[0, 0.09], [0.16, 0.09]], 5, { capTop: true });
+    }
+  }
+  m.col(0x7a1f2b).prism(0, 0, [[0.16, 1.20, 0.82], [0.26, 1.16, 0.78]]);
+  m.col(P.CHROME);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.beam(sx * 0.54, 0.20, sz * 0.36, sx * 0.54, 1.44, sz * 0.36, 0.055, 0.055, false);
+    }
+    m.beam(sx * 0.54, 1.44, -0.36, sx * 0.54, 1.44, 0.36, 0.055, 0.055, false);
+  }
+  m.beam(-0.54, 1.44, -0.36, 0.54, 1.44, -0.36, 0.055, 0.055, false);
+  m.beam(-0.54, 1.44, 0.36, 0.54, 1.44, 0.36, 0.055, 0.055, false);
+  m.col(P.CAR_NAVY).prism(-0.28, 0, [[0.26, 0.50, 0.36], [0.86, 0.48, 0.34]]);
+  m.col(P.STUCCO_CORAL).prism(0.24, 0.08, [[0.26, 0.50, 0.34], [0.70, 0.48, 0.32]]);
+  m.col(P.WOOD_DARK).prism(0.18, -0.14, [[0.70, 0.40, 0.26], [0.96, 0.38, 0.24]]);
+}
+
+/** Galvanised drinks tub on a stand — the pop-up bar's ice station. */
+function gDrinksTub(m) {
+  m.col(P.STEEL_DARK);
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * TAU + 0.78;
+    m.beam(Math.cos(a) * 0.40, 0, Math.sin(a) * 0.40,
+      Math.cos(a) * 0.30, 0.52, Math.sin(a) * 0.30, 0.05, 0.05, false);
+  }
+  m.col(P.ALUMINIUM).tube(0, 0, [[0.50, 0.36], [0.58, 0.40], [0.84, 0.46]], 8, { capTop: false });
+  m.col(P.SEA_FOAM).plate(0, 0.82, 0, 0.70, 0.70);
+  const bottles = [P.GLASS_MINT, P.TERRACOTTA, P.STUCCO_BUTTER, P.GLASS_TEAL];
+  for (let k = 0; k < 4; k++) {
+    const a = (k / 4) * TAU + 0.4;
+    m.col(bottles[k]);
+    m.tube(Math.cos(a) * 0.20, Math.sin(a) * 0.20, [[0.80, 0.055], [1.00, 0.042]], 5, { capTop: true });
+  }
+}
+
+/**
+ * Outdoor lounge sofa. The brief asks for rooftop lounge furniture; roofs are
+ * buildings.js's ground and nothing standing on one has a contact patch this
+ * module can measure, so the lounge lives where the game can actually reach
+ * it — hotel forecourts, plazas and the bar corner. Cushions are near-white so
+ * the instance tint sets the scheme.
+ */
+function gLoungeSofa(m) {
+  m.col(P.WOOD_DARK).prism(0, 0, [[0, 1.96, 0.88], [0.10, 1.90, 0.82], [0.34, 1.90, 0.82]]);
+  m.col(0xf4f1e8);
+  for (let k = 0; k < 3; k++) {
+    m.prism(-0.62 + k * 0.62, 0.04, [[0.34, 0.58, 0.74], [0.49, 0.56, 0.72]]);
+  }
+  m.col(0xece8dc).board(0, 1.90, 0.49, -0.30, 0.88, -0.41, 0.16);
+  m.col(P.TEAK);
+  for (const s of [-1, 1]) m.prism(s * 0.99, 0, [[0.34, 0.10, 0.86], [0.64, 0.10, 0.86]]);
+}
+
+/** Low lounge table — the thing that turns two sofas into a seating group. */
+function gLoungeTable(m) {
+  m.col(P.WOOD_DARK);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    m.beam(sx * 0.40, 0, sz * 0.24, sx * 0.38, 0.34, sz * 0.22, 0.06, 0.06, false);
+  }
+  m.col(P.TEAK).prism(0, 0, [[0.34, 0.96, 0.60], [0.40, 0.92, 0.56]]);
+  m.col(P.GLASS_MINT).tube(0.26, 0.02, [[0.40, 0.07], [0.58, 0.055]], 5, { capTop: true });
+  m.col(P.FLOWER_WHITE).tube(-0.22, 0.04, [[0.40, 0.10], [0.52, 0.11], [0.60, 0.05]], 5, { capTop: true });
+}
+
+/* -- ironwork in the pavement --------------------------------------------- */
+/* Covers and hatches sit PROUD of the paving on their own frames, never flush.
+   A plate coplanar with the sidewalk z-fights, and z-fighting anywhere is an
+   automatic review failure — the 5-7 cm of frame is also what a real cover
+   has, so the honest model and the safe model are the same model. */
+
+function gManholeCover(m) {
+  m.col(0x5c554c).tube(0, 0, [[0, 0.44], [0.035, 0.44]], 8, { capTop: true });
+  m.col(0x6e675c).tube(0, 0, [[0.035, 0.40], [0.07, 0.39]], 8, { capTop: true });
+  m.col(0x4c463e);
+  for (const a of [0.5, 1.55]) {
+    m.beam(Math.cos(a) * -0.29, 0.076, Math.sin(a) * -0.29,
+      Math.cos(a) * 0.29, 0.076, Math.sin(a) * 0.29, 0.055, 0.016, false);
+  }
+}
+
+function gDrainGrate(m) {
+  m.col(0x6a6259).prism(0, 0, [[0, 0.76, 0.54], [0.06, 0.76, 0.54]]);
+  m.col(0x2e2a26).plate(0, 0.062, 0, 0.60, 0.40);
+  m.col(0x5f584f);
+  for (let k = 0; k < 4; k++) {
+    m.prism(-0.21 + k * 0.14, 0, [[0.062, 0.08, 0.40], [0.085, 0.08, 0.40]]);
+  }
+}
+
+/** Steel cellar doors outside a shop — the delivery hatch every old retail
+ *  street has and no procedural one ever does. */
+function gCellarHatch(m) {
+  m.col(0x6a6259).prism(0, 0, [[0, 1.26, 1.02], [0.05, 1.26, 1.02]]);
+  m.col(P.ALUMINIUM);
+  for (const s of [-1, 1]) m.prism(0, s * 0.26, [[0.05, 1.14, 0.46], [0.13, 1.12, 0.44]]);
+  m.col(P.STEEL_DARK);
+  for (const s of [-1, 1]) m.tube(s * 0.40, 0, [[0.13, 0.07], [0.16, 0.06]], 5, { capTop: true });
+}
+
+/* -- more kerbside -------------------------------------------------------- */
+
+/** Bus stop flag: the pole-and-blade version, for the stops that do not get a
+ *  shelter. Lit blade, so a stop is still findable after dark. */
+function gBusStopFlag(m) {
+  pole(m, 2.74, 0.055, P.SIGN_POLE);
+  m.col(P.SIGN_BLUE).prism(0, 0, [[2.10, 0.54, 0.06], [2.78, 0.54, 0.06]]);
+  m.lit(P.SIGN_FACE, 1, 0.60).prism(0, 0.036, [[2.18, 0.44, 0.015], [2.50, 0.44, 0.015]]);
+  m.lit(P.NEON_AQUA, 1, 0.90).prism(0, 0.036, [[2.54, 0.44, 0.015], [2.70, 0.44, 0.015]]);
+  m.col(P.SIGN_DARK).prism(0, 0.045, [[1.22, 0.42, 0.05], [1.88, 0.42, 0.05]]);
+  m.lit(P.SIGN_FACE, 1, 0.50).prism(0, 0.072, [[1.28, 0.34, 0.012], [1.82, 0.34, 0.012]]);
+}
+
+/** Twin-stream recycling station. Two bodies, two lid colours, one frame. */
+function gBinTwin(m) {
+  m.col(P.BENCH_METAL).prism(0, 0, [[0, 1.18, 0.54], [0.09, 1.10, 0.46], [0.20, 1.10, 0.46]]);
+  m.col(0xf2f2f2);
+  for (const s of [-1, 1]) m.prism(s * 0.27, 0, [[0.20, 0.50, 0.44], [0.92, 0.52, 0.46]]);
+  m.col(P.BIN_GREEN).prism(-0.27, 0, [[0.92, 0.56, 0.50], [1.02, 0.50, 0.44]]);
+  m.col(P.BIN_BLUE).prism(0.27, 0, [[0.92, 0.56, 0.50], [1.02, 0.50, 0.44]]);
+  m.col(P.SIGN_DARK);
+  for (const s of [-1, 1]) m.prism(s * 0.27, 0.235, [[0.58, 0.34, 0.02], [0.80, 0.34, 0.02]]);
+}
+
+/** Roll cage of stock waiting to go in the back door. */
+function gStockTrolley(m) {
+  m.col(P.TYRE);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.tube(sx * 0.34, sz * 0.28, [[0, 0.08], [0.15, 0.08]], 5, { capTop: true });
+    }
+  }
+  m.col(P.STEEL).prism(0, 0, [[0.15, 0.86, 0.68], [0.21, 0.82, 0.64]]);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.beam(sx * 0.40, 0.18, sz * 0.31, sx * 0.40, 1.50, sz * 0.31, 0.05, 0.05, false);
+    }
+  }
+  m.col(P.ALUMINIUM, 0.9);
+  for (const s of [-1, 1]) m.prism(0, s * 0.31, [[0.24, 0.80, 0.02], [1.46, 0.80, 0.02]]);
+  const cartons = [P.WOOD_LIGHT, 0xd9dcd6, P.WOOD_DECK];
+  for (let k = 0; k < 3; k++) {
+    m.col(cartons[k]);
+    m.xform((k - 1) * 0.07, 0, 0, 0);
+    m.prism(0, 0, [[0.21 + k * 0.33, 0.66, 0.50], [0.52 + k * 0.33, 0.64, 0.48]]);
+    m.reset();
+  }
+}
+
+/** Poster A-board. The chalk board is the most-repeated object on any retail
+ *  frontage in the game; this is the other half of that coin. */
+function gAboardPoster(m) {
+  m.col(P.ALUMINIUM);
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      m.board(sx * 0.40, 0.07, 0.02, sz * 0.23, 1.04, sz * 0.055, 0.05);
+    }
+  }
+  for (const sz of [-1, 1]) {
+    m.lit(P.SIGN_FACE, 1, 0.50).board(0, 0.86, 0.18, sz * 0.20, 1.00, sz * 0.058, 0.03);
+    m.lit(P.NEON_PINK, 1, 0.80).board(0, 0.86, 1.00, sz * 0.058, 1.14, sz * 0.038, 0.03);
+  }
+}
+
 /* ========================================================= catalogue ==== */
 
 const T = TIER;
@@ -1678,10 +2000,10 @@ const T = TIER;
 const DEFS = {
   /* litter + kerb ------------------------------------------------------- */
   cone: { g: gCone, tier: T.TINY, r: 0.30, h: 0.72, label: 'Traffic Cone', sv: 0.07, debris: P.CONE_ORANGE },
-  bollard: { g: gBollard, tier: T.TINY, r: 0.16, h: 0.95, label: 'Bollard', debris: P.BOLLARD_DARK },
+  bollard: { g: gBollard, tier: T.TINY, r: 0.16, h: 0.95, label: 'Bollard', sv: 0.06, debris: P.BOLLARD_DARK },
   bollardStone: { g: gBollardStone, tier: T.TINY, r: 0.20, h: 0.88, label: 'Stone Bollard', sv: 0.07, debris: P.PRECAST },
-  hydrant: { g: gHydrant, tier: T.TINY, r: 0.25, h: 0.80, label: 'Fire Hydrant', debris: P.HYDRANT_RED },
-  uplighter: { g: gUplighter, tier: T.TINY, r: 0.16, h: 0.22, label: 'Uplighter', debris: P.STEEL_DARK },
+  hydrant: { g: gHydrant, tier: T.TINY, r: 0.25, h: 0.80, label: 'Fire Hydrant', sv: 0.05, debris: P.HYDRANT_RED },
+  uplighter: { g: gUplighter, tier: T.TINY, r: 0.16, h: 0.22, label: 'Uplighter', sv: 0.08, debris: P.STEEL_DARK },
   cleat: { g: gMooringCleat, tier: T.TINY, r: 0.22, h: 0.25, label: 'Mooring Cleat', debris: P.STEEL_DARK },
 
   /* bins ----------------------------------------------------------------- */
@@ -1750,7 +2072,20 @@ const DEFS = {
   serviceStation: { g: gServiceStation, tier: T.SMALL, r: 0.54, h: 1.12, label: 'Service Station', debris: P.WOOD_DARK },
   terraceRail: { g: gTerraceRail, tier: T.SMALL, r: 0.99, h: 1.06, label: 'Terrace Screen', debris: P.ALUMINIUM },
   terraceHedge: { g: gTerraceHedge, tier: T.SMALL, r: 1.06, h: 1.00, label: 'Terrace Hedge', shadow: true, sv: 0.05, debris: P.HEDGE },
+  /* No `sv` on the rope: it packs end to end on the boundary line, and a 5%
+     length change there opens a visible gap between every pair. */
+  terraceRope: { g: gTerraceRope, tier: T.SMALL, r: 1.02, h: 1.08, label: 'Rope Divider', debris: P.TEAK },
   stringArch: { g: gStringArch, tier: T.MEDIUM, r: 2.20, h: 3.27, label: 'Festoon Lights', shadow: true, sv: 0.04, debris: P.WOOD_DARK },
+  terraceAwning: {
+    g: gTerraceAwning, tier: T.MEDIUM, r: 2.34, h: 2.65, label: 'Terrace Awning', shadow: true, sv: 0.04,
+    tint: [P.FABRIC_CORAL, P.FABRIC_AQUA, P.FABRIC_SUN, P.FABRIC_WHITE, P.FABRIC_PINK,
+      P.FABRIC_SKY, P.FABRIC_LIME],
+    debris: P.FABRIC_CORAL,
+  },
+  iceBucket: { g: gIceBucket, tier: T.TINY, r: 0.38, h: 1.14, label: 'Ice Bucket', sv: 0.06, debris: P.CHROME },
+  gelatoCase: { g: gGelatoCase, tier: T.MEDIUM, r: 0.81, h: 1.42, label: 'Gelato Counter', shadow: true, sv: 0.04, debris: P.ALUMINIUM },
+  chairStack: { g: gChairStack, tier: T.SMALL, r: 0.31, h: 1.34, label: 'Stacked Chairs', sv: 0.06, debris: P.CHAIR },
+  barrelTable: { g: gBarrelTable, tier: T.SMALL, r: 0.47, h: 1.22, label: 'Barrel Table', sv: 0.05, debris: P.WOOD_DECK },
 
   /* nightlife + hotel ------------------------------------------------------ */
   porteCochere: { g: gPorteCochere, tier: T.LARGE, r: 3.35, h: 4.45, label: 'Entrance Canopy', shadow: true, crumbles: true, debris: P.CONCRETE },
@@ -1761,14 +2096,24 @@ const DEFS = {
   cigBin: { g: gCigBin, tier: T.TINY, r: 0.28, h: 1.02, label: 'Ash Bin', sv: 0.05, debris: P.STEEL_DARK },
   lightboxSign: { g: gLightboxSign, tier: T.MEDIUM, r: 0.36, h: 3.44, label: 'Neon Sign', shadow: true, sv: 0.07, debris: P.NEON_PINK },
   outdoorBar: { g: gOutdoorBar, tier: T.MEDIUM, r: 1.35, h: 1.70, label: 'Outdoor Bar', shadow: true, debris: P.TEAK },
-  djBooth: { g: gDjBooth, tier: T.MEDIUM, r: 1.00, h: 1.20, label: 'DJ Booth', shadow: true, debris: P.NEON_PURPLE },
-  speakerStack: { g: gSpeakerStack, tier: T.SMALL, r: 0.44, h: 1.42, label: 'Speaker Stack', debris: P.SIGN_DARK },
+  djBooth: { g: gDjBooth, tier: T.MEDIUM, r: 1.00, h: 1.20, label: 'DJ Booth', shadow: true, sv: 0.04, debris: P.NEON_PURPLE },
+  speakerStack: { g: gSpeakerStack, tier: T.SMALL, r: 0.44, h: 1.42, label: 'Speaker Stack', sv: 0.05, debris: P.SIGN_DARK },
+  luggageCart: { g: gLuggageCart, tier: T.MEDIUM, r: 0.73, h: 1.50, label: 'Bell Cart', shadow: true, sv: 0.04, debris: P.CHROME },
+  drinksTub: { g: gDrinksTub, tier: T.SMALL, r: 0.60, h: 1.00, label: 'Drinks Tub', sv: 0.06, debris: P.ALUMINIUM },
+  loungeSofa: {
+    g: gLoungeSofa, tier: T.MEDIUM, r: 1.07, h: 0.88, label: 'Lounge Sofa', shadow: true, sv: 0.04,
+    tint: [0xffffff, 0xffffff, P.STUCCO_SKY, P.FABRIC_AQUA, P.STUCCO_PEACH, P.STUCCO_LILAC],
+    debris: 0xf4f1e8,
+  },
+  loungeTable: { g: gLoungeTable, tier: T.SMALL, r: 0.52, h: 0.60, label: 'Lounge Table', sv: 0.05, debris: P.TEAK },
 
   /* storefront dressing ---------------------------------------------------- */
   clothesRail: { g: gClothesRail, tier: T.SMALL, r: 0.62, h: 1.50, label: 'Clothes Rail', sv: 0.06, debris: P.FABRIC_SKY },
   produceStand: { g: gProduceStand, tier: T.MEDIUM, r: 0.67, h: 1.26, label: 'Produce Stand', shadow: true, sv: 0.05, debris: P.WOOD_LIGHT },
   flowerStand: { g: gFlowerStand, tier: T.SMALL, r: 0.61, h: 1.26, label: 'Flower Stand', sv: 0.05, debris: P.FLOWER_MAGENTA },
   deliveryStack: { g: gDeliveryStack, tier: T.SMALL, r: 0.69, h: 1.00, label: 'Delivery Pallet', sv: 0.06, debris: P.WOOD_LIGHT },
+  stockTrolley: { g: gStockTrolley, tier: T.MEDIUM, r: 0.58, h: 1.52, label: 'Stock Cage', shadow: true, sv: 0.05, debris: P.STEEL },
+  aboardPoster: { g: gAboardPoster, tier: T.SMALL, r: 0.48, h: 1.14, label: 'A-Board', sv: 0.07, debris: P.ALUMINIUM },
 
   /* extra kerbside --------------------------------------------------------- */
   dumpster: {
@@ -1781,6 +2126,16 @@ const DEFS = {
   newsKiosk: { g: gNewsKiosk, tier: T.MEDIUM, r: 1.27, h: 2.34, label: 'Newsstand', shadow: true, debris: P.NEWSSTAND },
   meshFence: { g: gMeshFence, tier: T.SMALL, r: 1.03, h: 1.97, label: 'Site Fence', debris: P.STEEL },
   pottedFicus: { g: gPottedFicus, tier: T.MEDIUM, r: 0.54, h: 1.72, label: 'Topiary', shadow: true, sv: 0.07, debris: P.TREE_CANOPY },
+  binTwin: { g: gBinTwin, tier: T.SMALL, r: 0.64, h: 1.02, label: 'Recycling Point', sv: 0.04, debris: P.BIN_GREEN },
+  busStopFlag: { g: gBusStopFlag, tier: T.SMALL, r: 0.12, h: 2.78, label: 'Bus Stop', debris: P.SIGN_BLUE },
+  /* Ironwork. TINY on purpose: a cover is the very first thing a fresh hole
+     should be able to take, and it is 8 cm tall — anything else would mean a
+     manhole surviving a hole that has already swallowed the pavement it is in. */
+  manholeCover: { g: gManholeCover, tier: T.TINY, r: 0.62, h: 0.09, label: 'Manhole Cover', sv: 0.06, debris: 0x5c554c },
+  drainGrate: { g: gDrainGrate, tier: T.TINY, r: 0.47, h: 0.09, label: 'Drain Grate', sv: 0.06, debris: 0x6a6259 },
+  cellarHatch: { g: gCellarHatch, tier: T.TINY, r: 0.81, h: 0.16, label: 'Cellar Hatch', sv: 0.05, debris: P.ALUMINIUM },
+  planterUrn: { g: gPlanterUrn, tier: T.SMALL, r: 0.41, h: 1.36, label: 'Stone Urn', sv: 0.08, crumbles: true, debris: P.PRECAST },
+  planterModern: { g: gPlanterModern, tier: T.SMALL, r: 0.72, h: 1.52, label: 'Grass Trough', shadow: true, sv: 0.07, debris: P.BOLLARD_DARK },
 
   /* park ------------------------------------------------------------------- */
   benchTeak: { g: gBenchTeak, tier: T.SMALL, r: 0.85, h: 0.96, label: 'Teak Bench', shadow: true, sv: 0.04, debris: P.TEAK },
@@ -1839,6 +2194,10 @@ const MAT_OF = {
   dumpster: 'metal', barStool: 'metal', keyBoard: 'metal',
   terraceRail: 'gloss', pastryCase: 'gloss',
   cafeTableCloth: 'fabric', carpetRunner: 'fabric',
+  terraceAwning: 'fabric', loungeSofa: 'fabric',
+  iceBucket: 'metal', drinksTub: 'metal', luggageCart: 'metal',
+  stockTrolley: 'metal', binTwin: 'metal', gelatoCase: 'gloss',
+  manholeCover: 'metal', drainGrate: 'metal', cellarHatch: 'metal',
 };
 
 const _geoCache = new Map();
