@@ -54,6 +54,7 @@ export class Match {
     this.onPhase = null;
     this.onFrenzy = null;
     this.onRespawn = null;
+    this.resetStats();
     /**
      * Optional sink for escalation lines: (text, color, kind) => void.
      * If nobody wires it, _announce falls back to the kill feed (see there).
@@ -68,7 +69,21 @@ export class Match {
     this._sorted = [];
   }
 
+  /** Per-match tallies, shown on the end screen. Reset by start(). */
+  resetStats() {
+    this.stats = {
+      devoured: 0,           // objects the player swallowed
+      biggestMeal: null,     // label of the largest thing they took
+      biggestMealScore: 0,
+      rivalsEaten: 0,
+      timesEaten: 0,
+      peakRadius: 0,
+      startedAt: 0,
+    };
+  }
+
   start(holes) {
+    this.resetStats();
     this.holes = holes;
     this.timeLeft = MATCH.DURATION;
     this.elapsed = 0;
@@ -307,5 +322,29 @@ export class Match {
     const r = this._rank();
     for (let i = 0; i < r.length; i++) if (r[i].isPlayer) return i + 1;
     return r.length;
+  }
+
+  /** The hole in first place. */
+  get winner() {
+    return this._rank()[0] || null;
+  }
+
+  /**
+   * Everything the end screen needs, gathered in one place so the UI never has
+   * to reach into match internals to work out how the round went.
+   */
+  summary(player) {
+    const ranks = this.rankings();
+    const me = ranks.indexOf(player);
+    return {
+      rankings: ranks,
+      winner: ranks[0] || null,
+      rank: me < 0 ? ranks.length : me + 1,
+      total: ranks.length,
+      score: player ? Math.round(player.score) : 0,
+      diameter: player ? player.radius * 2 : 0,
+      won: ranks[0] === player,
+      stats: this.stats || {},
+    };
   }
 }

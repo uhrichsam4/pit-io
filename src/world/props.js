@@ -78,13 +78,14 @@ import { ZONE } from './cityLayout.js';
 /**
  * ONE KNOB FOR THE WHOLE MODULE.
  *
- * 1.0 puts ~14.9k props on the map (the art bible asks for 9k-16k) and costs
- * ~795k geometry triangles / ~1.04M rendered once the shadow pass is counted.
+ * 1.0 puts ~16.6k props on the map (the art bible asks for 9k-16k small props;
+ * ~1.3k of the overshoot is pavement ironwork, which is 9 cm tall and reads as
+ * ground texture rather than as furniture) and costs ~1.09M geometry triangles.
  * Every spacing and every area-based count below divides by this, so if the
- * project needs the triangles back, 0.75 lands around 11k props and ~600k
+ * project needs the triangles back, 0.75 lands around 12.5k props and ~820k
  * triangles without changing how anything looks up close. Draw calls do not
- * move: this module is one InstancedMesh per prop type, ~59 total, whatever
- * the density.
+ * move with density: this module is one InstancedMesh per prop type, 119 of
+ * them, whatever DENSITY is set to.
  */
 const DENSITY = 1.0;
 
@@ -3074,6 +3075,7 @@ function dressBlock(pl, b, r) {
 
   for (const s of sides) kerbRun(pl, b, s, r, band, life);
   if (!open && band > 2.3) for (const s of sides) facadeRun(pl, b, s, r, band, life);
+  if (open) openPerimeter(pl, b, r);
   cornerDressing(pl, b, r);
 
   switch (Z) {
@@ -3318,7 +3320,10 @@ function kerbRun(pl, b, s, r, band, life) {
      gutter: the gutter samples below GROUND_MIN and is refused there anyway. */
   for (let u = 5 + r() * 9; u < len - 4; u += 26 + r() * 16) {
     const p = edgePt(b, s, u, 0.82 + r() * 0.2);
-    pl.putAlong('drainGrate', p.x, p.z, ux, uz, rot + Math.PI / 2);
+    // A gutter grate is 0.76 long by 0.54, authored along local x — which after
+    // SIDE_ROT is the edge direction, so plain `rot` lays it ALONG the kerb the
+    // way drainage actually runs.
+    pl.putAlong('drainGrate', p.x, p.z, ux, uz, rot);
   }
   if (band > 2.6) {
     for (let u = 9 + r() * 14; u < len - 5; u += 34 + r() * 22) {
@@ -3392,6 +3397,68 @@ function facadeRun(pl, b, s, r, band, life) {
     if (COMPANION[key] && r.chance(0.32)) {
       const q = edgePt(b, s, u + slid + 1.3 + r() * 0.8, inset - 0.2 - r() * 0.35);
       pl.putAlong(r.pick(COMPANION[key]), q.x, q.z, ux, uz, rot + (r() - 0.5) * 0.5);
+    }
+  }
+}
+
+/* --------------------------------------------------- open-block promenade -- */
+
+/**
+ * The promenade line around a PARK, PLAZA or MARINA apron.
+ *
+ * Neither existing pass was reaching that ground. `kerbRun` sets its furniture
+ * within 2.5 m of the block edge; the interior scatter spreads (w*d)/108
+ * objects over the whole parcel, which out on the apron works out at roughly
+ * one object every 11 m. Between the two there is a 3-8 m ring of bare paving,
+ * and because an open block is the one place the game camera sees a large
+ * uninterrupted area of ground, that ring is where thin dressing reads loudest
+ * — in the `crowd` frame it was the biggest empty surface on screen.
+ *
+ * So this dresses the line a person actually walks, with the vocabulary that
+ * belongs to it: benches turned to LOOK INTO the green rather than out at the
+ * traffic, bins where the benches are, lamps on an even cadence, planting
+ * between. `putAlong` rather than `putOpen` because a promenade is a rhythm —
+ * sliding a bench a metre keeps it, and `put` already refuses anything that
+ * would land inside nature.js's ponds, aprons and hedges.
+ */
+const PROMENADE = [
+  ['benchSlat', 6], ['benchTeak', 6], ['benchBackless', 5], ['benchCurve', 5],
+  ['binMesh', 4], ['binMuni', 3], ['binTwin', 3],
+  ['planterRound', 4], ['planterUrn', 4], ['planterModern', 4], ['planterTrough', 3],
+  ['bollardStone', 3], ['bollardBell', 3], ['pottedPalm', 3], ['pottedFicus', 3],
+  ['cigBin', 2], ['dogStation', 2], ['wayfindTotem', 2], ['drainGrate', 3],
+  ['manholeCover', 2], ['fountain', 2],
+];
+const FACES_IN = new Set(['benchSlat', 'benchTeak', 'benchBackless', 'benchCurve']);
+
+function openPerimeter(pl, b, r) {
+  // One inset for the whole block, so the ring is a ring and not a scribble.
+  const inset = 3.6 + r() * 2.4;
+  if (Math.min(b.w, b.d) < inset * 2 + 10) return;
+  for (const s of ['n', 's', 'w', 'e']) {
+    if (!b.edges[s]) continue;
+    const len = edgeLen(b, s);
+    if (len < 18) continue;
+    const rot = SIDE_ROT[s];
+    const [ux, uz] = EDGE_DIR[s];
+    // A bench on this line faces the block, i.e. 180 degrees off the kerb.
+    const inward = rot + Math.PI;
+    let sinceLamp = 14 + r() * 8;
+    for (let u = 4 + r() * 4; u < len - 4; u += 4.6 + r() * 3.2) {
+      const p = edgePt(b, s, u, inset + (r() - 0.5) * 0.6);
+      sinceLamp += 6;
+      if (sinceLamp > 23) {
+        if (pl.putAlong('lampPark', p.x, p.z, ux, uz, rot) !== null) { sinceLamp = 0; continue; }
+      }
+      const key = r.weighted(PROMENADE);
+      const yaw = FACES_IN.has(key) ? inward + (r() - 0.5) * 0.10 : squared(r);
+      const slid = pl.putAlong(key, p.x, p.z, ux, uz, yaw);
+      // A bin at the end of the bench, on the same line — the pairing that
+      // makes a promenade read as maintained rather than as furnished.
+      if (slid !== null && FACES_IN.has(key) && r.chance(0.42)) {
+        const q = edgePt(b, s, u + slid + 1.9 + r() * 0.6, inset);
+        pl.putAlong(r.chance(0.5) ? 'binMesh' : 'binTwin', q.x, q.z, ux, uz, rot);
+      }
     }
   }
 }
@@ -3581,9 +3648,8 @@ function restaurantTerrace(pl, b, r, band) {
      every terrace a hedge, then a glass screen, then a rope, then a planter
      along a single 12 m edge — which reads as four restaurants sharing a
      pavement, not as one restaurant's terrace. */
-  const edgeKey = r.weighted(TERRACE_EDGE);
+  const key = r.weighted(TERRACE_EDGE);
   for (let u = u0; fenced && u < u0 + span; ) {
-    const key = edgeKey;
     /* Pack on the item's LENGTH ALONG THE KERB, and reserve a capsule rather
        than the circle its footprint bounds. A 2.04 m hedge bounds a 1.06 m
        circle, so circle-packing it leaves a 0.4 m hole between every pair and
@@ -3614,16 +3680,16 @@ function restaurantTerrace(pl, b, r, band) {
   const hp = edgePt(b, s, uMid + 1.2, roomy ? dFacade - 0.3 : dTable + 0.9);
   pl.putAlong('hostStand', hp.x, hp.z, ux, uz, rot + (r() - 0.5) * 0.25);
 
-  /* Festoon gates run ACROSS the terrace — one pole on the boundary line, one
-     against the shopfront. Across rather than along because the arch is 4 m
-     wide and the terrace is only ever ~9-18 m long: along the frontage it
-     would eat two table bays, across it uses depth nothing else wants. */
   /* SHADE OR LIGHT, never both. A terrace gets either a fabric awning over the
      table line or a pair of festoon gates across it — the awning is 4.2 m of
      canopy at 2.6 m and the gates are 4 m of wire at 3.1 m, so together they
      interpenetrate and neither reads. Which one a terrace gets is the loudest
      difference between two terraces on the same street, so it is a coin flip
-     rather than a rule. */
+     rather than a rule.
+
+     The gates run ACROSS the terrace rather than along it: the arch is 4 m wide
+     and a terrace is only ever ~9-18 m long, so along the frontage it would eat
+     two table bays, while across it uses depth nothing else wants. */
   if (fenced && r.chance(0.5)) {
     /* Four posts in two rows across the pavement, so the reservation cannot be
        a line of feet — see claimLocal. The canopy sits ON the table line and
@@ -3843,14 +3909,25 @@ function loungeIsland(pl, x, z, face, r) {
 
 function retailTerrace(pl, b, r, band) {
   const life = b.streetLife;
-  const nClusters = Math.round((1 + life * 4 + r() * 1.6) * DENSITY);
   const s = b.frontage;
   const len = edgeLen(b, s);
   const rot = SIDE_ROT[s];
-  for (let k = 0; k < nClusters; k++) {
-    const u = 5 + r() * Math.max(1, len - 10);
-    const p = edgePt(b, s, u, Math.max(1.9, band * 0.62));
-    cafeCluster(pl, p.x, p.z, rot, r, 1);
+  /* Settings belong to a SHOP, so they arrive in short runs at one or two
+     addresses along the frontage — not as independent dice rolls down its whole
+     length. Same number of tables either way; the difference is that a run of
+     three outside one door reads as a café and three singletons 20 m apart read
+     as furniture that fell off a lorry. This is the "cluster them outside the
+     storefront they belong to" half of the brief, for the frontages that are
+     too shallow or too quiet to earn a full composed terrace. */
+  const addresses = 1 + r.int(0, life > 0.5 ? 2 : 1);
+  const inset = Math.max(1.9, band * 0.62);
+  for (let k = 0; k < addresses; k++) {
+    const u0 = 5 + r() * Math.max(1, len - 12);
+    const n = Math.max(1, Math.round((1 + life * 2 + r()) * DENSITY));
+    for (let i = 0; i < n; i++) {
+      const p = edgePt(b, s, u0 + i * 3.0, inset + (r() - 0.5) * 0.2);
+      cafeCluster(pl, p.x, p.z, rot + (r() - 0.5) * 0.1, r, 1);
+    }
   }
   const [ux, uz] = EDGE_DIR[s];
   /* Festoon lighting. A gate (two poles and the catenary between them, as one

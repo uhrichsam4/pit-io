@@ -42,6 +42,7 @@ export class Screens {
     root.appendChild(el);
     this.el = el;
     this.onPlay = null;
+    this.onLobby = null;
 
     this._cd = -99;
     this.playerName = readName();
@@ -196,63 +197,82 @@ export class Screens {
   /* RESULTS                                                                */
   /* ====================================================================== */
 
-  showResults(rankings, me) {
-    const rank = Math.max(1, rankings.indexOf(me) + 1);
-    const medal = ['var(--sun)', '#e6ecf2', '#f0a468'][rank - 1] || 'var(--aqua)';
-    const medal2 = ['var(--orange)', '#9fb0c0', '#b56a37'][rank - 1] || 'var(--hot)';
-    const best = uiState.bestMeal;
+  /**
+   * End of match.
+   *
+   * Two exits, deliberately: "Play Again" restarts immediately, "Return to
+   * Lobby" goes back to the title. Both must hand off to a FULL reset — the
+   * screen itself only reports, it never leaves gameplay state behind.
+   */
+  showResults(summary, me) {
+    const { rankings = [], winner, rank = 1, total = 1, score = 0,
+            diameter = 0, won = false, stats = {} } = summary || {};
+    const suffix = rank === 1 ? 'st' : rank === 2 ? 'nd' : rank === 3 ? 'rd' : 'th';
+
+    const stat = (label, value) =>
+      `<div class="stat"><span class="sv">${value}</span><span class="sl">${label}</span></div>`;
 
     this.el.innerHTML = `
-      <div class="scr veil">
-        <div class="aurora" style="opacity:.35"></div>
-        <div class="res-card" style="--pl-c:${medal};--pl-c2:${medal2}">
-          <div class="place">
-            <div class="n">${rank}<sup>${ordinal(rank)}</sup></div>
-            <div class="k">${rank === 1 ? 'You ate Miami' : 'Place'}</div>
+      <div class="screen results-screen">
+        <div class="rs-head">
+          <div class="rs-kicker">Match Complete</div>
+          <h1 class="rs-place">${rank}${suffix}<span class="rs-of"> of ${total}</span></h1>
+          <div class="rs-verdict ${won ? 'win' : ''}">
+            ${won ? 'You were the biggest hole in Miami'
+                  : `<b>${escapeHtml(winner ? winner.name : '—')}</b> took the city`}
           </div>
+        </div>
 
-          <div class="res-stats">
-            <div class="st"><div class="k">Final size</div>
-              <div class="v">${(me.radius * 2).toFixed(1)}<span class="u">m</span></div></div>
-            <div class="st"><div class="k">Objects devoured</div>
-              <div class="v">${(me.eatCount || 0).toLocaleString()}</div></div>
-            <div class="st"><div class="k">Best meal</div>
-              <div class="v" style="font-size:.86em">${
-                best ? `${esc(cap1(best.label))} <span class="u">+${Math.round(best.score)}</span>` : '&mdash;'
-              }</div></div>
-            <div class="st"><div class="k">Score</div>
-              <div class="v">${Math.round(me.score).toLocaleString()}</div></div>
-          </div>
+        <div class="rs-stats panel">
+          ${stat('Final score', Math.round(score).toLocaleString())}
+          ${stat('Hole size', `${diameter.toFixed(1)} m`)}
+          ${stat('Devoured', (stats.devoured || 0).toLocaleString())}
+          ${stat('Rivals eaten', stats.rivalsEaten || 0)}
+          ${stats.biggestMeal ? stat('Best meal', escapeHtml(stats.biggestMeal)) : ''}
+        </div>
 
-          <div class="res-list">
-            ${rankings.slice(0, 10).map((h, i) => `
-              <div class="row ${h === me ? 'me' : ''} ${i < 3 ? `p${i + 1}` : ''}"
-                   style="animation-delay:${(0.05 + i * 0.045).toFixed(3)}s">
-                <span class="rk">${i + 1}</span>
-                <span class="dot" style="background:#${h.color.getHexString()};color:#${h.color.getHexString()}"></span>
-                <span class="nm">${esc(h.name)}</span>
-                <span class="sc">${formatScore(h.score)}</span>
-              </div>`).join('')}
-          </div>
+        <div class="rs-board panel">
+          <h3>Final standings</h3>
+          ${rankings.slice(0, 8).map((h, i) => `
+            <div class="row ${h === me ? 'me' : ''}">
+              <span class="rank">${i + 1}</span>
+              <span class="dot" style="background:#${h.color.getHexString()}"></span>
+              <span class="nm">${escapeHtml(h.name)}${i === 0 ? ' 👑' : ''}</span>
+              <span class="sc">${Math.round(h.score).toLocaleString()}</span>
+            </div>`).join('')}
+        </div>
 
-          <div class="res-actions">
-            <button class="btn" id="again-btn">Play again</button>
-            <span class="key-hint">or press <kbd>Space</kbd></span>
-          </div>
+        <div class="rs-actions">
+          <button class="btn" id="again-btn">Play Again</button>
+          <button class="btn btn-ghost" id="lobby-btn">Return to Lobby</button>
         </div>
       </div>`;
     this.el.style.pointerEvents = 'auto';
-    this.el.querySelector('#again-btn').addEventListener('click', () => this._start());
-  }
-}
 
-/* --------------------------------------------------------------- helpers -- */
+    const fade = (fn) => {
+      const scr = this.el.querySelector('.results-screen');
+      if (scr) scr.classList.add('leaving');
+      // Let the transition play before the world is torn down and rebuilt.
+      setTimeout(fn, 240);
+    };
+    this.el.querySelector('#again-btn').addEventListener('click', () => {
+      fade(() => { if (this.onPlay) this.onPlay(); });
+    });
+    this.el.querySelector('#lobby-btn').addEventListener('click', () => {
+      fade(() => { if (this.onLobby) this.onLobby(); });
+    });
+  }
+
+}
 
 function esc(s) {
   return String(s).replace(/[&<>"']/g, (m) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]
   ));
 }
+
+/** Alias: the results screen was written against this name. */
+const escapeHtml = esc;
 
 function cap1(s) {
   const t = String(s || '');

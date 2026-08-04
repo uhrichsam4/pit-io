@@ -778,10 +778,13 @@ export class ConsumeSystem {
       // Drift toward the centre, NOT an orbit. The old code swung through more
       // than a full revolution on the way down, which read as the object flying
       // around the rim. A fraction of a turn is enough to suggest a drain.
-      const swirl = c._angle - k * 0.45;
+      const swirl = c._angle - k * (c._style === FALL.SINK ? 0.06 : 0.45);
       // Collapse to the centre quickly and monotonically, so nothing can appear
-      // to circle or drift back outward.
-      const rr = c._entryR * (1 - k) * (1 - k) * (1 - k * 0.4);
+      // to circle or drift back outward. A building barely converges at all: it
+      // collapses straight down rather than sliding into the middle.
+      const rr = c._style === FALL.SINK
+        ? c._entryR * (1 - k * 0.35)
+        : c._entryR * (1 - k) * (1 - k) * (1 - k * 0.4);
       const floor = c._startPos.y - pitDepth * 1.1;
 
       pose.pos.set(
@@ -906,6 +909,79 @@ export class ConsumeSystem {
     _v.set(at.x, Math.max(0.15, c.height * 0.25), at.z);
     this.effects.puff(_v, 0xffffff, 5, Math.max(0.3, c.radius * 0.6), 1.6, 0.3 + c.radius * 0.08, 0.4);
     if (this.onRespawn) this.onRespawn(c);
+  }
+
+
+  /* -------------------------------------------------------------- reset --- */
+
+  /**
+   * Put the entire city back exactly as it was built.
+   *
+   * A restart cannot just make new holes: by the end of a round thousands of
+   * objects are eaten, mid-fall, mid-topple or queued for respawn, and the
+   * registry has no memory of any of them. This walks the master list from
+   * worldBuild and restores every one — transform, physics state, visibility,
+   * collision and registry membership — so the next match starts on a city
+   * that is indistinguishable from a fresh load.
+   *
+   * @param {import('./entities.js').Consumable[]} all every consumable ever made
+   * @returns {{restored:number, wasFalling:number, wasGone:number}}
+   */
+  resetAll(all) {
+    const stats = { restored: 0, wasFalling: 0, wasGone: 0, wasTilted: 0 };
+
+    // Drop every in-flight interaction first, so nothing writes a transform
+    // after we have put it back.
+    this.falling.length = 0;
+    this.attracted.clear();
+    this.respawns.length = 0;
+    this._now = 0;
+    this.eatScale = 1.0;
+
+    for (const c of all) {
+      if (c.state === STATE.FALLING) stats.wasFalling++;
+      else if (c.state === STATE.GONE) stats.wasGone++;
+      else if (c._dyn && c._dyn.tilt > 0.001) stats.wasTilted++;
+
+      // Physics state
+      c.state = STATE.IDLE;
+      c.fallT = 0;
+      c.eatenBy = null;
+      c._tipQuat = null;
+      c._plungeVY = 0;
+      c._plungeY = 0;
+      c._style = undefined;
+      if (c._dyn) {
+        const d = c._dyn;
+        d.ox = d.oy = d.oz = 0;
+        d.vx = d.vz = 0;
+        d.roll = 0; d.tilt = 0; d.tiltVel = 0; d.loss = 0;
+        d.hole = null; d.settled = false; d.stuck = 0;
+      }
+
+      // Transform + visibility, back to exactly where it was authored.
+      this._restPos(c, _rest);
+      c.position.set(_rest.x, this._restY(c), _rest.z);
+      if (c.backing === BACKING.INSTANCE && c.pool && c.slot >= 0) {
+        c.pool.restore(c.slot);
+      } else if (c.object) {
+        c.object.visible = true;
+        if (c._restP) {
+          c.object.position.copy(c._restP);
+          c.object.quaternion.copy(c._restQ);
+          c.object.scale.copy(c._restS);
+        }
+      }
+
+      // Back into the registry, so it is collidable and edible again. add()
+      // would double-insert anything still registered, which would corrupt the
+      // spatial hash and leave phantom collisions.
+      if (!this.registry.byId.has(c.id)) this.registry.add(c);
+      stats.restored++;
+    }
+
+    this.registry.initialCount = this.registry.aliveCount;
+    return stats;
   }
 
   /* ---------------------------------------------------------------- pvp --- */

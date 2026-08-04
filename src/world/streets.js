@@ -265,6 +265,13 @@ class Surf {
     else this.quad(a, b, c, d, col);
   }
 
+  /** Same guarantee for a triangle — same normal test `quad` and `tri` use. */
+  triUp(a, b, c, col) {
+    const ny = (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]);
+    if (ny < 0) this.tri(c, b, a, col);
+    else this.tri(a, b, c, col);
+  }
+
   /** Axis-aligned horizontal rectangle. */
   rect(x0, x1, z0, z1, y, col) {
     if (x1 - x0 < 1e-4 || z1 - z0 < 1e-4) return;
@@ -1096,19 +1103,30 @@ export function buildStreets(ctx) {
    */
   function pool(cx, cz, along, across, alongX, seed) {
     const n = 10;
-    const ring = (k, y, col) => {
-      const pts = [];
-      for (let i = 0; i < n; i++) {
-        const a = (i / n) * Math.PI * 2 + seed;
-        const j = 0.70 + h01(seed + i, k) * 0.48;
-        const u = Math.cos(a) * along * k * j;
-        const v = Math.sin(a) * across * k * j;
-        pts.push(alongX ? [cx + u, cz + v] : [cx + v, cz + u]);
-      }
-      damp.polyY(pts, y, col);
+    /** Rim point i at radius fraction k. `j` is per-vertex, NOT per-ring, so
+        the core and the margin stay radially aligned and share their edge. */
+    const at = (i, k) => {
+      const a = ((i % n) / n) * Math.PI * 2 + seed;
+      const j = 0.72 + h01(seed + (i % n), 3.7) * 0.46;
+      const u = Math.cos(a) * along * k * j;
+      const v = Math.sin(a) * across * k * j;
+      return alongX ? [cx + u, Y_DAMP, cz + v] : [cx + v, Y_DAMP, cz + u];
     };
-    ring(1.0, Y_DAMP, 0.96);            // drying margin
-    ring(0.62, Y_DAMP + 0.0015, 0.88);  // the wet core
+    const C = [cx, Y_DAMP, cz];
+    for (let i = 0; i < n; i++) {
+      const a0 = at(i, 0.60), a1 = at(i + 1, 0.60);
+      const b0 = at(i, 1.0), b1 = at(i + 1, 1.0);
+      /* Wet core fanned from the CENTRE, not from a rim vertex: a jittered
+         outline is star-shaped but not reliably convex, and polyY's fan off
+         p[0] folds back on itself the moment it is not — two coplanar
+         triangles of one mesh fighting each other. */
+      damp.triUp(C, a1, a0, 0.86);
+      /* Drying margin as an annulus sharing the core's rim vertices. Stacking
+         a smaller disc on top of a bigger one would need a y offset, and a
+         millimetre of separation does not survive being looked at from the
+         menu-hero camera 400 m away. Tiling needs none. */
+      damp.quadUp(a0, a1, b1, b0, 0.97);
+    }
     stat.pools++;
   }
 
@@ -1531,10 +1549,13 @@ export function buildStreets(ctx) {
     if (style !== XWALK.CONTINENTAL) {
       for (const e of [eLo + ew, eHi - ew]) {
         if (style === XWALK.DASHED) {
-          // A transverse crossing laid in dashes: the cheapest marking there is,
-          // and the one a quiet residential crossroads actually gets.
-          for (let t = a0; t < a1 - 0.7; t += 1.55) {
-            span2(t, Math.min(t + 0.86, a1), e - ew, e + ew,
+          /* A transverse crossing laid in dashes: the cheapest marking there
+             is, and the one a quiet residential crossroads actually gets.
+             Long stride, long dash — a 1.5 m rhythm over a 24 m carriageway is
+             fifty little rectangles per line, which is the defect the whole
+             pass exists to remove rather than a cure for it. */
+          for (let t = a0; t < a1 - 0.9; t += 2.15) {
+            span2(t, Math.min(t + 1.2, a1), e - ew, e + ew,
               (p) => age * wearAt(p) * fade(p, e));
           }
         } else {

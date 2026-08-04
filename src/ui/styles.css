@@ -1053,3 +1053,45 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+/* ------------------------------------------------------- end of match ---- */
+/* Laid out as a column of blocks so it reads top-to-bottom: what happened,
+   how you did, where everyone finished, what to do next. */
+.results-screen { gap: 16px; animation: rsIn .32s cubic-bezier(.2,.9,.3,1); }
+.results-screen.leaving { animation: rsOut .24s ease forwards; }
+@keyframes rsIn  { from { opacity:0; transform: translateY(14px);} to { opacity:1; transform:none; } }
+@keyframes rsOut { to { opacity:0; transform: translateY(-10px); } }
+
+.rs-head { text-align: center; }
+.rs-kicker {
+  font-size: 12px; letter-spacing: 4px; text-transform: uppercase;
+  opacity: .62; font-weight: 800; margin-bottom: 2px;
+}
+.rs-place { margin: 0; font-size: clamp(52px, 10vw, 112px); line-height: .95; }
+.rs-of { font-size: .34em; opacity: .55; -webkit-text-fill-color: #fff; letter-spacing: 0; }
+.rs-verdict { font-size: 16px; opacity: .88; margin-top: 4px; }
+.rs-verdict.win { color: var(--sun); font-weight: 800; }
+
+.rs-stats { display: flex; gap: 26px; padding: 14px 22px; }
+.stat { display: flex; flex-direction: column; align-items: center; min-width: 74px; }
+.stat .sv { font-size: 22px; font-weight: 850; font-variant-numeric: tabular-nums; }
+.stat .sl { font-size: 10px; letter-spacing: 1.6px; text-transform: uppercase; opacity: .58; margin-top: 2px; }
+
+.rs-board { min-width: 340px; padding: 12px 14px; }
+.rs-board h3 {
+  margin: 0 0 8px; font-size: 11px; letter-spacing: 2.2px;
+  text-transform: uppercase; opacity: .6; font-weight: 700;
+}
+
+.rs-actions { display: flex; gap: 12px; align-items: center; }
+.btn-ghost {
+  background: rgba(255,255,255,.10); color: #fff;
+  border: 1px solid var(--stroke); box-shadow: none;
+}
+.btn-ghost:hover { background: rgba(255,255,255,.18); box-shadow: none; }
+
+@media (max-width: 700px) {
+  .rs-stats { flex-wrap: wrap; gap: 14px; justify-content: center; }
+  .rs-actions { flex-direction: column; width: 100%; padding: 0 24px; }
+  .rs-actions .btn { width: 100%; }
+}

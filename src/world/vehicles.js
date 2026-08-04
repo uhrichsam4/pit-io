@@ -1139,7 +1139,15 @@ function cityBus(sh) {
   for (const z of [3.30, -1.40]) {
     for (const s of [-1, 1]) faceX(sh, s * 1.28, 1.60, z, 1.20, 1.90, ROLE.GLASS, s);
   }
-  chamfer(sh, 0, 3.30, 1.2, 1.30, 0.26, 2.20, 0.08, ROLE.WHITE);   // roof AC pod
+  /* A bus roof is 11.8 x 2.5 m and the game's camera looks straight down at
+   * it — it is the largest single surface any vehicle in the city presents,
+   * and it was one unbroken slab of cream with a WHITE AC pod on a WHITE roof,
+   * i.e. invisible. Kit it out: metal AC pack, rear equipment box, hatch, and
+   * the pressed bows a monocoque roof actually has. */
+  chamfer(sh, 0, 3.30, 1.2, 1.30, 0.26, 2.20, 0.08, ROLE.STEEL);   // roof AC pack
+  box(sh, 0, 3.36, -4.30, 1.16, 0.20, 1.10, ROLE.STEEL);           // rear equipment pod
+  faceY(sh, 0, 3.26, -1.90, 0.74, 0.74, ROLE.DARK);                // escape hatch
+  for (const z of [-3.1, -0.5, 3.1, 4.3]) faceY(sh, 0, 3.26, z, 1.92, 0.09, ROLE.BODY_LO);
   chamfer(sh, 0, 0.42, 0, 2.36, 0.34, 11.0, 0.06, ROLE.DARK);
   wheels4(sh, 1.22, 4.10, -3.40, 0.56, 0.36);
   wheel(sh, 1.22, 0.56, -4.55, 0.56, 0.36, 6); wheel(sh, -1.22, 0.56, -4.55, 0.56, 0.36, 6);
@@ -1171,6 +1179,13 @@ function articBus(sh) {
     for (const s of [-1, 1]) faceX(sh, s * 1.28, 1.60, z, 1.20, 1.90, ROLE.GLASS, s);
   }
   faceZ(sh, 0, 3.02, 8.92, 1.70, 0.30, ROLE.SIGN, 1);
+  // Roof kit on both halves — 18 m of blank cream otherwise. See cityBus.
+  chamfer(sh, 0, 3.30, 5.6, 1.30, 0.26, 2.20, 0.08, ROLE.STEEL);
+  box(sh, 0, 3.36, -6.6, 1.16, 0.20, 1.10, ROLE.STEEL);
+  for (const z of [1.6, -3.4]) faceY(sh, 0, 3.26, z, 0.74, 0.74, ROLE.DARK);
+  for (const z of [0.7, 2.9, 7.5, -2.6, -4.6, -7.8]) {
+    faceY(sh, 0, 3.26, z, 1.92, 0.09, ROLE.BODY_LO);
+  }
   chamfer(sh, 0, 0.42, 3.6, 2.34, 0.34, 10.4, 0.06, ROLE.DARK);
   chamfer(sh, 0, 0.42, -5.4, 2.34, 0.34, 7.0, 0.06, ROLE.DARK);
   wheels4(sh, 1.22, 7.20, 1.10, 0.56, 0.36);
@@ -1188,7 +1203,9 @@ function shuttleBus(sh) {
   ], { edgeRoles: COACH_ROLES, capStart: ROLE.BODY, capEnd: ROLE.GLASS });
   for (const s of [-1, 1]) faceX(sh, s * 1.12, 1.00, 0, 5.8, 0.42, ROLE.ACCENT, s);
   faceX(sh, 1.12, 1.44, 1.60, 1.00, 1.70, ROLE.GLASS, 1);
-  chamfer(sh, 0, 2.86, -1.40, 1.50, 0.30, 2.40, 0.08, ROLE.WHITE);   // roof luggage pod
+  // Knocked-back paint, not white: a white pod on a white roof is no pod.
+  chamfer(sh, 0, 2.86, -1.40, 1.50, 0.30, 2.40, 0.08, ROLE.BODY_LO);  // roof luggage pod
+  for (const z of [0.3, 1.3, 2.3]) faceY(sh, 0, 2.70, z, 1.62, 0.09, ROLE.BODY_LO);
   chamfer(sh, 0, 0.42, 0, 2.06, 0.32, 6.6, 0.06, ROLE.DARK);
   wheels4(sh, 1.07, 2.30, -2.20, 0.48, 0.32);
   carLamps(sh, { zF: 3.60, zR: -3.60, yH: 0.80, yT: 1.02, dx: 0.76, wL: 0.36, yG: 0.52, wG: 1.2, yP: 0.46 });
@@ -1213,6 +1230,11 @@ function ambulance(sh) {
     faceZ(sh, -0.46, 2.82, 1.10 + dz * 0.17, 0.42, 0.14, ROLE.TAIL, dz);
     faceZ(sh, 0.46, 2.82, 1.10 + dz * 0.17, 0.42, 0.14, ROLE.BEACON, dz);
   }
+  // Roof cross. An ambulance is identified from the air, and from this game's
+  // camera the air is where the player is. The arms are 4 mm apart in y so the
+  // overlap at the centre cannot z-fight.
+  faceY(sh, 0, 2.70, -1.60, 1.40, 0.34, ROLE.RED);
+  faceY(sh, 0, 2.704, -1.60, 0.34, 1.40, ROLE.RED);
   faceZ(sh, 0, 1.10, -3.46, 1.60, 1.40, ROLE.DARK, -1);              // rear doors
   chamfer(sh, 0, 0.50, 0, 2.10, 0.30, 5.9, 0.06, ROLE.DARK);
   wheels4(sh, 1.06, 1.90, -1.90, 0.46, 0.30);
@@ -2435,8 +2457,11 @@ class Traffic {
    * which does not, and is why the queue behind it has to deal with it. The
    * cap on `blocking` is the only thing standing between "the city has life in
    * it" and "the city is gridlocked", so it is small and it is global.
+   *
+   * Transit is the third case and lives in its own branch below: a bus in a
+   * bus lane halts at a real shelter, which nobody else does.
    */
-  _tryKerbEvent(v, info, j) {
+  _tryKerbEvent(v, info) {
     const lane = info.lane;
     // A committed turn owns the vehicle's path outright; stopping halfway
     // through one would leave it braking for a kerb it is no longer aimed at.
@@ -2444,8 +2469,46 @@ class Traffic {
     const seg = info.segs[v.seg];
     if (!seg) return;
     const stopOff = lane.axis === 'x' ? 'stopX' : 'stopZ';
-    const clearOfJunction = (s) => (!j || s + 16 < j.s - j.ix[stopOff] - STOP_SETBACK)
-      && s > seg.lo + 12 && s < seg.hi - 28;
+    /**
+     * Is `s` a place a vehicle may legally stand?
+     *
+     * The junction it has to be clear of is the one nearest THE STOPPING
+     * POINT, not the one nearest the driver. Testing against the driver's next
+     * junction looks equivalent and is not: a bus stop 90 m ahead with a
+     * crossing 40 m ahead failed the test, and on a boulevard with a junction
+     * every 70 m and a shelter on every block that is EVERY stop — buses made
+     * exactly zero halts in a 150 s run. The same bug was quietly costing kerb
+     * bays and double-parks their far candidates too.
+     */
+    const clearOfJunction = (s) => {
+      if (!(s > seg.lo + 12 && s < seg.hi - 28)) return false;
+      const J = lane.junctions;
+      for (let i = 0; i < J.length; i++) {
+        const box = J[i].ix[stopOff] + STOP_SETBACK;
+        // Not queued across the approach, and not still inside the box behind.
+        if (s + 16 > J[i].s - box && s < J[i].s + box + 6) return false;
+      }
+      return true;
+    };
+
+    /**
+     * A bus stop may sit right on the corner — that is where they are built,
+     * and a bus standing at one is not a queue blocking the approach, it is a
+     * bus in a bus lane doing its job. The general clearance (16 m of lead-in
+     * plus a boulevard's 17 m half-width) blocks 69 m either side of every
+     * junction, which on a 68 m block is the whole block: with it, the fleet
+     * made zero halts. Transit only has to stay out of the box itself.
+     */
+    const clearForBus = (s) => {
+      if (!(s > seg.lo + 12 && s < seg.hi - 28)) return false;
+      const J = lane.junctions;
+      const pad = v.len * 0.6 + 2;
+      for (let i = 0; i < J.length; i++) {
+        const box = J[i].ix[stopOff];
+        if (s > J[i].s - box - pad && s < J[i].s + box + pad) return false;
+      }
+      return true;
+    };
 
     /**
      * Transit halts. A bus lane full of buses that never stop is the tell that
@@ -2471,14 +2534,14 @@ class Traffic {
         for (let i = 0; i < S.length; i++) {
           if (S[i] < v.s + 22) continue;
           if (S[i] > v.s + 200) break;              // sorted
-          if (!clearOfJunction(S[i])) continue;
+          if (!clearForBus(S[i])) continue;
           s = S[i];
           break;
         }
         if (s < 0) return;
       } else {
         s = v.s + 26 + this.rng() * 40;
-        if (!clearOfJunction(s)) return;
+        if (!clearForBus(s)) return;
       }
       if (!this.rng.chance(0.7)) return;
       this.busHalts++;
@@ -2623,10 +2686,15 @@ class Traffic {
         // --- kerbside manoeuvres --------------------------------------------
         v.cool -= dt;
         if (v.mode === 'drive') {
-          const nj = (v.cool <= 0 || v.lcT - dt <= 0) ? net.nextJunction(lane, v.s) : null;
+          // Only the lane-change test needs this now; the kerb tests look up
+          // the junction nearest their own candidate stopping point instead.
+          const nj = v.lcT - dt <= 0 ? net.nextJunction(lane, v.s) : null;
           if (v.cool <= 0) {
-            v.cool = 7 + this.rng() * 11;
-            this._tryKerbEvent(v, info, nj);
+            // Transit asks more often than everyone else: a bus only halts at
+            // one of the ~37 real shelters, and at 15 m/s a 12 s gap between
+            // questions carries it 180 m — past most of them.
+            v.cool = v.busStop ? 4 + this.rng() * 5 : 7 + this.rng() * 11;
+            this._tryKerbEvent(v, info);
           }
           if ((v.lcT -= dt) <= 0) {
             v.lcT = 1.4 + this.rng() * 2.2;
@@ -2735,6 +2803,27 @@ class Traffic {
           }
         }
 
+        /* --- the road physically runs out --------------------------------
+         * A segment whose far end is NOT the map boundary ends at water. Cars
+         * are supposed to turn off at the last junction before it, but a
+         * forced turn can be refused (no target lane, no gap), and nothing
+         * then told the car the road was gone: it drove to the end at full
+         * speed, got clamped onto the exact metre where the last arrival was
+         * already standing, and the whole city's interpenetration — ten pairs,
+         * every one of them past |z| = 370 — came from those few stubs.
+         * Treat the end as a wall and they queue for it like traffic. */
+        const segNow = info.segs[v.seg];
+        if (segNow && !segNow.edgeHi && v.s > segNow.lo) {
+          // `+ IDM_S0` for the same reason the bay stop needs it: IDM parks one
+          // standstill gap short of whatever you hand it, and a car parked
+          // short of the wall never trips the relocation test below — which is
+          // a permanent queue at every river bank in the city.
+          const dEnd = (segNow.hi - v.len * 0.5) - v.s;
+          if (dEnd < 60 && dEnd > -4) {
+            acc = Math.min(acc, this._interact(v, Math.max(0.05, dEnd + IDM_S0), 0));
+          }
+        }
+
         acc = Math.max(-BRAKE_MAX, Math.min(aMax, acc));
         // Kept for the updater: weight transfer is the difference between a
         // fleet that stops and a fleet that dives onto its nose when it stops.
@@ -2783,8 +2872,13 @@ class Traffic {
         }
 
         // --- leaving the map: reappear at a boundary, never mid-city ---------
+        // `>=`, not `>`. The clamp below parks the car EXACTLY on the wall, so
+        // a strict test never fired again and a vehicle that found no free
+        // boundary segment on its first try was stranded there for the whole
+        // match. Retrying costs one sample of eight entries a frame, for the
+        // handful of cars in that state.
         const seg = info.segs[v.seg];
-        if (seg && v.s > seg.hi - v.len * 0.5) {
+        if (seg && v.s >= seg.hi - v.len * 0.5) {
           const e = this._freeEntry(v);
           if (e) {
             this.pending.push({
@@ -2792,7 +2886,12 @@ class Traffic {
               s: e.info.segs[e.si].lo + v.len * 0.5 + 2, reset: true,
             });
           } else {
-            v.s = seg.hi - v.len * 0.5;
+            // Hold behind whatever is already waiting, never on top of it.
+            let hold = seg.hi - v.len * 0.5;
+            if (lead && !lead.dead) {
+              hold = Math.min(hold, lead.s - (lead.len + v.len) * 0.5 - IDM_S0);
+            }
+            v.s = Math.min(v.s, hold);
             v.v = 0;
           }
         }
@@ -3964,6 +4063,8 @@ export function buildVehicles(ctx) {
     boats: boats.length,
     cruising: boats.reduce((n, b) => n + (b.speed ? 1 : 0), 0),
     lanes: traf.lanes.length,
+    busLanes: traf.lanes.reduce((n, i) => n + (i.lane.busLane ? 1 : 0), 0),
+    busLanesServed: traf.lanes.reduce((n, i) => n + (i.stops ? 1 : 0), 0),
     bays,
     busStops,
     atKerb: traf.parked.length,
@@ -4097,7 +4198,11 @@ function makeUpdater(ctx, traf, state, boats) {
         const yF = deckHeight(decks, out.x + sn * v.axleZ, out.z + cs * v.axleZ);
         const yR = deckHeight(decks, out.x - sn * v.axleZ, out.z - cs * v.axleZ);
         surf = (yF + yR) * 0.5;
-        if (yF !== yR) grade = Math.atan2(yF - yR, 2 * v.axleZ);
+        // NEGATIVE, because a rotation about the body's +x axis carries the
+        // nose (local +z) toward -y: pitch > 0 is nose DOWN. Climbing a ramp
+        // is nose UP, so the gradient enters with its sign flipped. The dive
+        // term below wants the same convention and gets it from `-v.acc`.
+        if (yF !== yR) grade = -Math.atan2(yF - yR, 2 * v.axleZ);
       } else {
         surf = 0;
       }

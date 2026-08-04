@@ -146,6 +146,16 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
     occ,
     stats: { consumables: 0, meshes: 0, instances: 0, measured: 0, corrected: 0 },
 
+    /**
+     * EVERY consumable ever created, alive or eaten.
+     *
+     * The registry only holds what is currently standing, so it cannot be used
+     * to restore a match — by the end of a round most of the city is missing
+     * from it. A restart walks this list instead, which is the only way to put
+     * the city back exactly as it was built.
+     */
+    allConsumables: [],
+
     group(name) {
       let g = groups[name];
       if (!g) { g = new THREE.Group(); g.name = name; scene.add(g); groups[name] = g; }
@@ -210,6 +220,7 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
         sfx: opts.sfx,
       });
       registry.add(c);
+      ctx.allConsumables.push(c);
       ctx.stats.consumables++;
       return c;
     },
@@ -255,6 +266,7 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
         sfx: opts.sfx,
       });
       registry.add(c);
+      ctx.allConsumables.push(c);
       ctx.stats.consumables++;
       ctx.stats.meshes++;
       return c;

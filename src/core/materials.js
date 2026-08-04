@@ -664,7 +664,7 @@ function macroDetail(scale, weight, meanLuma) {
  * AMPLITUDE. This was set at +-5.7% and a 1024 px crop of the street-level
  * preset showed a sheet of one flat cream with a grid drawn on it — the mosaic
  * is the single strongest thing a real sidewalk has and it was below the
- * threshold of visibility. It is now +-12% of value on the ordinary slabs, plus
+ * threshold of visibility. It is now +-7.5% of value on the ordinary slabs, plus
  * two named minorities: slabs relaid out of a warmer batch, and slabs that are
  * permanently damp in the shade of a building. Value AND hue, because twenty
  * slabs at twenty brightnesses of the same cream still reads as one material
@@ -689,14 +689,17 @@ function macroSlab(cells, tone, rough) {
       // Slabs are cast in batches and the sand in the mix is never twice the
       // same colour, so the mosaic drifts on the warm/cool axis as well as in
       // value. Decorrelated from the value hash or the two just multiply.
-      float sh = ( fract( hh.x * 41.17 ) - 0.5 ) * ${(tone * 0.42).toFixed(4)} * aa;
+      // A THIRD of the value swing, not two thirds: hue variation is far more
+      // conspicuous than value variation, and at parity the pavement rendered
+      // as a decorative mosaic of gold and grey tiles rather than as concrete.
+      float sh = ( fract( hh.x * 41.17 ) - 0.5 ) * ${(tone * 0.30).toFixed(4)} * aa;
       diffuseColor.rgb *= vec3( 1.0 + sh, 1.0 + sh * 0.15, 1.0 - sh );
-      // One slab in fifteen was lifted and relaid out of a different batch...
-      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 1.16, 1.07, 0.86 ),
-                               step( 0.935, hh.y ) * aa );
-      // ...and one in eleven sits in permanent shade and never dries out.
-      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 0.80, 0.81, 0.83 ),
-                               step( 0.910, fract( hh.y * 7.31 ) ) * aa );
+      // One slab in twenty-five was lifted and relaid out of a different batch...
+      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 1.09, 1.045, 0.93 ),
+                               step( 0.960, hh.y ) * aa );
+      // ...and one in eighteen sits in permanent shade and never dries out.
+      diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( 0.87, 0.88, 0.90 ),
+                               step( 0.945, fract( hh.y * 7.31 ) ) * aa );
       mcSlabR = ( hh.y - 0.5 ) * ${rough.toFixed(4)} * aa;
     }
   }
@@ -820,17 +823,20 @@ const MACRO = {
   },
   paving: {
     m: 71, a: 0.22, r: 0.38, h: 0.034,
-    far: [3.10, 0.38], mid: [0.400, 0.42], slab: [0.240, 0.34],
+    far: [3.10, 0.38], mid: [0.400, 0.42], slab: [0.150, 0.30],
   },
   // Turf is the one surface where big albedo variation is not a defect: a lawn
   // really is a patchwork, and a flat green plane is the fakest thing in frame.
   grass: {
-    // a and the wear threshold both pulled back when the mid band landed:
-    // mcT's range grew about 35%, and turf is the family with the largest
-    // gain on it, so the same row would have doubled the amount of bald
-    // ground and pushed the bright lobes past the tone curve into acid lime.
-    m: 57, a: 0.42, r: 0.24, h: 0.105, stripe: [51, 0.062, 24],
-    far: [2.70, 0.36], mid: [0.400, 0.42], detail: [0.3830, 0.85],
+    // a, h and the wear threshold all pulled back when the mid band landed:
+    // mcT's range grew about 35%, and turf is the family with the largest gain
+    // on it. Rendered at the old row the lawn came out as camouflage — acid
+    // lime lobes against teal ones — and the post grade adds another 12% of
+    // saturation on top of what the diorama shows. Value variation is what
+    // makes turf read as turf; hue variation past a few percent makes it read
+    // as a different plant every ten metres, so h took the larger cut.
+    m: 57, a: 0.36, r: 0.24, h: 0.070, stripe: [51, 0.062, 24],
+    far: [2.70, 0.36], mid: [0.400, 0.38], detail: [0.3830, 0.85],
     wear: [PALETTE.GRASS_WORN, 0.64, 0.55],
   },
   sand: {
@@ -959,7 +965,7 @@ function roundRect(g, x, y, w, h, r) {
 /**
  * Draw a callback nine times, offset by +-size, so anything that crosses the
  * border of the tile reappears on the opposite edge. Cheap seamlessness for
- * vector features (seams, cracks, stains).
+ * vector features whose extent is not known up front (seams, cracks).
  */
 function wrapped(g, size, draw) {
   for (let ox = -1; ox <= 1; ox++) {
@@ -970,6 +976,46 @@ function wrapped(g, size, draw) {
       g.restore();
     }
   }
+}
+
+/**
+ * `wrapped` for a feature with a known centre and radius — i.e. every stain,
+ * scuff, bloom and patch in this file.
+ *
+ * Those are the overwhelming majority of the wrapped draws, they are almost
+ * never near a border, and eight of the nine copies land entirely off-canvas.
+ * The canvas 2D API still builds and rasterises the gradient for each one, and
+ * the paving generator alone was doing that up to 196 x 9 times. Emitting only
+ * the offsets the feature can actually reach cut measured boot cost of the
+ * texture library by about a fifth for identical output.
+ */
+function wrapPoint(g, size, x, y, r, draw) {
+  draw();
+  const ox = x - r < 0 ? 1 : x + r > size ? -1 : 0;
+  const oy = y - r < 0 ? 1 : y + r > size ? -1 : 0;
+  if (!ox && !oy) return;
+  const offs = ox && oy ? [[ox, 0], [0, oy], [ox, oy]] : ox ? [[ox, 0]] : [[0, oy]];
+  for (const [dx, dy] of offs) {
+    g.save();
+    g.translate(dx * size, dy * size);
+    draw();
+    g.restore();
+  }
+}
+
+/**
+ * Memo for noise fields that do not depend on the generator's arguments.
+ *
+ * `stucco`, `storefront` and `concrete` are each generated a dozen-plus times —
+ * once per facade tint, once per masonry base — and every one of them rebuilds
+ * the identical fBm from a hard-coded seed before it paints a single pixel.
+ * Sharing the field costs one Map lookup and gives byte-identical output.
+ */
+const _fields = new Map();
+function fields(key, make) {
+  let v = _fields.get(key);
+  if (v === undefined) { v = make(); _fields.set(key, v); }
+  return v;
 }
 
 /** A wandering polyline — cracks, tar seams, joints. */
@@ -1200,7 +1246,7 @@ export const Textures = {
       for (let i = 0; i < 8; i++) {
         const x = rand() * size, y = rand() * size;
         const r = size * (0.018 + rand() * 0.05);
-        const stain = (g, inner, outer) => wrapped(g, size, () => {
+        const stain = (g, inner, outer) => wrapPoint(g, size, x, y, r, () => {
           const rg = g.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, inner); rg.addColorStop(1, outer);
           g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
@@ -1215,7 +1261,7 @@ export const Textures = {
       for (let i = 0; i < 6; i++) {
         const x = rand() * size, y = rand() * size;
         const r = size * (0.14 + rand() * 0.20);
-        const polish = (g, inner) => wrapped(g, size, () => {
+        const polish = (g, inner) => wrapPoint(g, size, x, y, r, () => {
           const rg = g.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, inner); rg.addColorStop(1, 'rgba(0,0,0,0)');
           g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
@@ -1280,17 +1326,24 @@ export const Textures = {
       // Stacking a fourth warm push turns concrete into cardboard.
       const rgb = warmBalance(srgb(base), 0.10, 0.94);
 
-      const macro = normalise(fbm(size, 3, 3, rand));  // pour-to-pour tone
-      const mid = fbm(size, 16, 3, rand);
-      const fine = fbm(size, size >> 3, 2, rand);
-      // Blowholes and sand-streaks off the form face. Direction-free, so it is
-      // the one thing this generator can push hard without striping the bridge
-      // decks and park paths that share it.
-      const pit = contrast(fbm(size, size >> 2, 1, rand), 2.4);
-      // Patchy shutter release / curing blotch. Also direction-free, and at
-      // roughly a fifth of the tile it is the band that stops a seawall reading
-      // as a blank sheet from thirty metres.
-      const blotch = normalise(fbm(size, 5, 2, rand));
+      // Shared across every masonry base this is called with: the fields do not
+      // depend on `base`, and there are five concretes in the city.
+      const { macro, mid, fine, pit, blotch } = fields(`concrete-${size}`, () => {
+        const r = mulberry32(0x9d31c7);
+        return {
+          macro: normalise(fbm(size, 3, 3, r)),   // pour-to-pour tone
+          mid: fbm(size, 16, 3, r),
+          fine: fbm(size, size >> 3, 2, r),
+          // Blowholes and sand-streaks off the form face. Direction-free, so
+          // this is the one thing the generator can push hard without striping
+          // the bridge decks and park paths that share it.
+          pit: contrast(fbm(size, size >> 2, 1, r), 2.4),
+          // Patchy shutter release / curing blotch. Also direction-free, and at
+          // roughly a fifth of the tile it is the band that stops a seawall
+          // reading as a blank sheet from thirty metres.
+          blotch: normalise(fbm(size, 5, 2, r)),
+        };
+      });
 
       /*
        * Amplitudes roughly doubled from where they were. A dump of this map was
@@ -1306,7 +1359,7 @@ export const Textures = {
         { f: blotch, amp: 0.075, tint: [1.0, 1.0, 1.04] },
         { f: mid, amp: 0.050 },
         { f: fine, amp: 0.038 },
-        { f: pit, amp: 0.048 },
+        { f: pit, amp: 0.030 },
       ]);
       const hgt = canvas(size);
       const gh = paintGrey(hgt, size, 128, [
@@ -1369,17 +1422,26 @@ export const Textures = {
         gh.beginPath(); gh.arc(x, y, r, 0, 7); gh.fill();
       }
 
-      /* Rain streaking under the top edge — reads as vertical on facades. */
-      for (let i = 0; i < 14; i++) {
+      /* Rain streaking under the top edge — reads as vertical on facades.
+
+         Held down to a whisper for the same reason as the board-form courses,
+         and the reason is worth spelling out because it is not symmetric: this
+         generator dresses the seawall and the podiums, where a vertical streak
+         is exactly right, AND the bridge decks and park paths, where world UVs
+         turn the same streak into a comb of stripes running down world Z and
+         repeating every 3.2 m. At 0.20 alpha that comb was legible as a grid
+         from 200 m in a grazing shot. The interest it used to carry has moved
+         into the blotch band and the efflorescence, both of which are round. */
+      for (let i = 0; i < 9; i++) {
         const x = rand() * size;
         const w = 3 + rand() * 14;
         const h = size * (0.2 + rand() * 0.7);
         const grad = gc.createLinearGradient(0, 0, 0, h);
-        grad.addColorStop(0, 'rgba(126,116,98,0.20)');
+        grad.addColorStop(0, 'rgba(126,116,98,0.11)');
         grad.addColorStop(1, 'rgba(126,116,98,0)');
         gc.fillStyle = grad;
         gc.save(); gc.translate(x, 0); gc.fillRect(0, 0, w, h); gc.restore();
-        gr.fillStyle = 'rgba(255,255,255,0.12)';
+        gr.fillStyle = 'rgba(255,255,255,0.07)';
         gr.fillRect(x, 0, w, h);
       }
 
@@ -1390,14 +1452,14 @@ export const Textures = {
          Dead matte where it sits: the bloom is a powder. */
       for (let i = 0; i < 8; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.06 + rand() * 0.15);
-        wrapped(gc, size, () => {
+        wrapPoint(gc, size, x, y, r, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0.0, 'rgba(255,253,246,0.34)');
           rg.addColorStop(0.55, 'rgba(252,248,238,0.15)');
           rg.addColorStop(1.0, 'rgba(252,248,238,0)');
           gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
         });
-        wrapped(gr, size, () => {
+        wrapPoint(gr, size, x, y, r, () => {
           const rg = gr.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, 'rgba(255,255,255,0.55)');
           rg.addColorStop(1, 'rgba(255,255,255,0)');
@@ -1409,7 +1471,7 @@ export const Textures = {
          never green-grey, or a seawall in full sun reads as pond scum. */
       for (let i = 0; i < 6; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.08 + rand() * 0.17);
-        wrapped(gc, size, () => {
+        wrapPoint(gc, size, x, y, r, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, 'rgba(122,116,96,0.26)');
           rg.addColorStop(1, 'rgba(122,116,96,0)');
@@ -1587,7 +1649,7 @@ export const Textures = {
           const cx = i * step + off;
           const cy = (j + (rand() < 0.5 ? 0 : 1)) * step;
           const r = step * (0.14 + rand() * 0.18);
-          wrapped(gc, size, () => {
+          wrapPoint(gc, size, cx, cy, r, () => {
             const rg = gc.createRadialGradient(cx, cy, 0, cx, cy, r);
             rg.addColorStop(0, 'rgba(112,102,84,0.34)');
             rg.addColorStop(1, 'rgba(112,102,84,0)');
@@ -1599,13 +1661,13 @@ export const Textures = {
       /* Damp / dirt patches, metres across so they still read from the air. */
       for (let i = 0; i < 7; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.10 + rand() * 0.16);
-        wrapped(gc, size, () => {
+        wrapPoint(gc, size, x, y, r, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, 'rgba(126,114,92,0.27)');
           rg.addColorStop(1, 'rgba(126,114,92,0)');
           gc.fillStyle = rg; gc.beginPath(); gc.arc(x, y, r, 0, 7); gc.fill();
         });
-        wrapped(gr, size, () => {
+        wrapPoint(gr, size, x, y, r, () => {
           const rg = gr.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, 'rgba(120,120,120,0.5)');
           rg.addColorStop(1, 'rgba(120,120,120,0)');
@@ -1674,7 +1736,7 @@ export const Textures = {
         // thick shaded grass goes blue-green. Driving the two bands in opposite
         // hue directions is what stops it reading as one green with a dimmer.
         { f: mid, amp: 0.20, tint: [0.6, 1.0, 0.5] },
-        { f: patchy, amp: 0.16, tint: [1.1, 0.45, -0.4] },
+        { f: patchy, amp: 0.105, tint: [1.1, 0.45, -0.4] },
         { f: blade, amp: 0.12, tint: [0.7, 1.0, 0.6] },
       ]);
       const hgt = canvas(size);
@@ -1688,7 +1750,7 @@ export const Textures = {
       const dry = srgb(PALETTE.GRASS_DRY);
       for (let i = 0; i < 7; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.10 + rand() * 0.20);
-        wrapped(gc, size, () => {
+        wrapPoint(gc, size, x, y, r, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, css(dry, 0.40));
           rg.addColorStop(0.55, css(dry, 0.16));
@@ -1699,7 +1761,7 @@ export const Textures = {
       /* ...and the opposite: lush, over-watered dark patches near the sprinklers. */
       for (let i = 0; i < 5; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.09 + rand() * 0.16);
-        wrapped(gc, size, () => {
+        wrapPoint(gc, size, x, y, r, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, css(dark, 0.34));
           rg.addColorStop(1, css(dark, 0));
@@ -1770,7 +1832,7 @@ export const Textures = {
       /* Scuffs: footfall churns the ripples flat and lifts drier sand. */
       for (let i = 0; i < 9; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.03 + rand() * 0.07);
-        wrapped(gc, size, () => {
+        wrapPoint(gc, size, x, y, r, () => {
           const rg = gc.createRadialGradient(x, y, 0, x, y, r);
           rg.addColorStop(0, 'rgba(255,246,220,0.20)');
           rg.addColorStop(1, 'rgba(255,246,220,0)');
@@ -1951,10 +2013,14 @@ export const Textures = {
     return cached(`tex-stucco-${hex}-${floors}-${bays}-${size}`, () => {
       const rand = mulberry32(0x33aa71 ^ (hex | 0));
       const wall = srgb(hex);
-      const rand2 = mulberry32(0x811a);
-
-      const tooth = fbm(size, size >> 3, 2, rand2);   // render texture
-      const patch = fbm(size, 5, 3, rand2);           // patchy repaint
+      // Fixed seed, so identical for all sixteen facade tints. Shared.
+      const { tooth, patch } = fields(`stucco-${size}`, () => {
+        const r = mulberry32(0x811a);
+        return {
+          tooth: fbm(size, size >> 3, 2, r),   // render texture
+          patch: fbm(size, 5, 3, r),           // patchy repaint
+        };
+      });
 
       const col = canvas(size);
       const gc = paintBase(col, size, wall, [
@@ -2059,8 +2125,9 @@ export const Textures = {
       ];
       const accent = srgb(accentSet[(hex | 0) % accentSet.length]);
 
-      const tooth = fbm(size, size >> 3, 2, mulberry32(0x2b));
-      const patch = fbm(size, 5, 2, mulberry32(0x71));
+      // Fixed seeds, so identical for all eleven shop tints. Shared.
+      const tooth = fields(`shop-tooth-${size}`, () => fbm(size, size >> 3, 2, mulberry32(0x2b)));
+      const patch = fields(`shop-patch-${size}`, () => fbm(size, 5, 2, mulberry32(0x71)));
 
       const col = canvas(size);
       const gc = paintBase(col, size, wall, [
@@ -2225,7 +2292,7 @@ export const Textures = {
       }
       for (let i = 0; i < 5; i++) {
         const x = rand() * size, y = rand() * size, r = size * (0.06 + rand() * 0.12);
-        wrapped(gc, size, () => {
+        wrapPoint(gc, size, x, y, r, () => {
           const rg = gc.createRadialGradient(x, y, r * 0.4, x, y, r);
           rg.addColorStop(0, 'rgba(90,84,72,0.16)');
           rg.addColorStop(1, 'rgba(90,84,72,0)');

@@ -82,6 +82,7 @@ export class Game {
     const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer, worldSeed);
     this.layout = layout;
     this.worldCtx = ctx;
+    this.allConsumables = (ctx && ctx.allConsumables) || [];
     this.trafficUpdate = eng.scene.userData.trafficUpdate || null;
     this.pedestrianUpdate = eng.scene.userData.pedestrianUpdate || null;
     this.waterUniforms = eng.scene.userData.waterUniforms || null;
@@ -90,15 +91,39 @@ export class Game {
     this.occlusion = new OcclusionSystem(eng.camera);
     // Content modules advertise what may be faded. Fall back to walking the
     // building group so this keeps working if a module forgets to opt in.
+    // ONLY large structures fade. A tree, a car, a bench or a sign that
+    // dissolves as you drive past reads as a rendering fault, not as a
+    // camera aid — and with thousands of small props on screen it would make
+    // the whole city shimmer. Anything below this footprint stays solid and
+    // the player reads the hole's position from the ground cut instead.
+    const FADE_MIN_RADIUS = 6;
+    const FADE_MIN_HEIGHT = 8;
+    const _fb = new THREE.Box3();
+    const bigEnough = (o) => {
+      _fb.setFromObject(o);
+      if (!Number.isFinite(_fb.min.x)) return false;
+      const w = _fb.max.x - _fb.min.x, d = _fb.max.z - _fb.min.z;
+      const h = _fb.max.y - _fb.min.y;
+      return Math.hypot(w, d) / 2 >= FADE_MIN_RADIUS && h >= FADE_MIN_HEIGHT;
+    };
+
     const fadeables = (ctx && ctx.fadeableBuildings) || null;
-    if (fadeables && fadeables.length) {
-      for (const o of fadeables) this.occlusion.register(o);
-    } else {
-      for (const name of ['buildings', 'structures']) {
-        this.occlusion.registerGroup(eng.scene.getObjectByName(name));
-      }
+    const candidates = (fadeables && fadeables.length)
+      ? fadeables
+      : ['buildings', 'structures']
+          .map((n) => eng.scene.getObjectByName(n))
+          .filter(Boolean)
+          .flatMap((g) => g.children);
+
+    let skipped = 0;
+    for (const o of candidates) {
+      if (bigEnough(o)) this.occlusion.register(o);
+      else skipped++;
     }
-    console.info(`[game] occlusion candidates: ${this.occlusion.candidates.length}`);
+    console.info(
+      `[game] occlusion candidates: ${this.occlusion.candidates.length} ` +
+      `(${skipped} too small to fade)`
+    );
 
     this.hud = new HUD(this.uiRoot, eng.camera);
 
@@ -116,6 +141,17 @@ export class Game {
       // A swallowed building must stop being a fade candidate, or the system
       // keeps raycasting against geometry that is halfway down the pit.
       if (c.object) this.occlusion.unregister(c.object);
+      if (hole.isPlayer && !remote) {
+        const st = this.match.stats;
+        if (st) {
+          st.devoured++;
+          if (c.score > st.biggestMealScore) {
+            st.biggestMealScore = c.score;
+            st.biggestMeal = c.label;
+          }
+          st.peakRadius = Math.max(st.peakRadius, hole.radius);
+        }
+      }
       if (hole.isPlayer) {
         if (c.crumbles || c.tier.id >= 6) audio.crumble(Math.min(1, c.radius / 22));
         else audio.chomp(Math.min(1, c.radius / 5));
@@ -129,6 +165,8 @@ export class Game {
           `#${a.color.getHexString()}`
         );
       }
+      const st = this.match.stats;
+      if (st) { if (a.isPlayer) st.rivalsEaten++; if (b.isPlayer) st.timesEaten++; }
       if (a.isPlayer) { this.engine.flash(0.30, 0xffffff); audio.devourPlayer(); }
       if (b.isPlayer) { this.engine.flash(0.45, 0xff3d8b); audio.death(); }
     };
@@ -154,6 +192,7 @@ export class Game {
     };
 
     this.screens.onPlay = () => this.startMatch();
+    this.screens.onLobby = () => this.returnToLobby();
     this.screens.clear();
     this.screens.showMenu({ objects: this.registry.aliveCount.toLocaleString() });
     this.match.phase = PHASE.MENU;
@@ -269,8 +308,55 @@ export class Game {
     return { x: 0, z: 120 };
   }
 
+  /**
+   * Put the world back to its just-built state.
+   *
+   * Recreating the holes is not enough: by the end of a round thousands of
+   * objects are eaten, mid-fall, mid-topple or queued to respawn, traffic and
+   * crowds have wandered, and the effects pools are full. Everything that
+   * carries state across a match has to be rewound, or the next round starts
+   * on a half-eaten city with phantom collisions.
+   */
+  resetWorld() {
+    const r = this.consume.resetAll(this.allConsumables);
+
+    // Push every restored instance matrix to the GPU in one go, or the city
+    // stays visually eaten even though the simulation says otherwise.
+    if (this.worldCtx && this.worldCtx.props) {
+      for (const pool of this.worldCtx.props.pools.values()) {
+        pool._dirtyAll = true;
+        pool.flush();
+      }
+    }
+
+    // Content modules may expose their own rewind (traffic queues, crowd
+    // agents). Optional by design: a module without one is still correct,
+    // because its objects were just restored above.
+    const ud = this.engine.scene.userData;
+    if (typeof ud.trafficReset === 'function') ud.trafficReset();
+    if (typeof ud.pedestrianReset === 'function') ud.pedestrianReset();
+
+    // Clear anything still in flight visually.
+    this.effects.popups.length = 0;
+    this.effects.shake = 0;
+    this.engine.flash(0);
+    if (this.occlusion) {
+      for (const root of this.occlusion.candidates) root.userData.occFade = 1;
+    }
+    this._tierReached = 0;
+
+    console.info(
+      `[game] world reset: ${r.restored} objects restored ` +
+      `(${r.wasGone} eaten, ${r.wasFalling} mid-fall, ${r.wasTilted} tilted)`
+    );
+    return r;
+  }
+
   startMatch() {
-    // reset world state for a fresh round
+    // Rewind the city before anything else, so the new match starts on a
+    // complete map rather than on the leftovers of the last one.
+    this.resetWorld();
+
     for (const h of this.holes) {
       this.engine.scene.remove(h.group);
       h.dispose();
@@ -310,8 +396,28 @@ export class Game {
     if (p === PHASE.COUNTDOWN) this.screens.showCountdown(this.match.countdown);
     if (p === PHASE.PLAYING) this.screens.clear();
     if (p === PHASE.RESULTS) {
-      this.screens.showResults(this.match.rankings(), this.player);
+      if (this.player) this.player.desiredDir.set(0, 0);
+      for (const b of this.bots) b.hole.desiredDir.set(0, 0);
+      audio.stopMusic();
+      this.screens.showResults(this.match.summary(this.player), this.player);
     }
+  }
+
+  /** Leave the match and go back to the title, on a fully restored city. */
+  returnToLobby() {
+    this.resetWorld();
+    for (const h of this.holes) {
+      this.engine.scene.remove(h.group);
+      h.dispose();
+    }
+    this.holes.length = 0;
+    this.bots.length = 0;
+    this.player = null;
+    this.match.holes = [];
+    this.match.phase = PHASE.MENU;
+    if (this.hud) this.hud.root.style.opacity = '0';
+    this.screens.clear();
+    this.screens.showMenu({ objects: this.registry.aliveCount.toLocaleString() });
   }
 
   /** One deterministic simulation tick. Safe to call outside the render loop. */
@@ -319,6 +425,12 @@ export class Game {
     const t = this.clock.elapsedTime;
     const phase = this.match.phase;
     this.match.update(dt);
+
+    // The match is over: nothing moves. Traffic, crowds, bots, physics,
+    // scoring and consumption all stop dead so the end screen is presented
+    // over a still city rather than one that carries on being eaten.
+    if (phase === PHASE.RESULTS) return;
+
     if (this.trafficUpdate) this.trafficUpdate(dt);
     if (this.pedestrianUpdate) this.pedestrianUpdate(dt);
     if (phase === PHASE.PLAYING || phase === PHASE.COUNTDOWN) {

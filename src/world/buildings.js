@@ -991,6 +991,13 @@ function pergola(B, x, y, z, w, d, hex) {
   for (let i = 0; i <= n; i++) {
     B.trim(box(0.14, 0.16, d, x - w / 2 + (w * i) / n, y + h + 0.22, z, 2), hex);
   }
+  // Festoon bulbs slung under the beam. Twelve triangles apiece and they are
+  // the whole reason a roof terrace reads as OPEN at midnight rather than as
+  // another unlit lump of furniture.
+  const nb = Math.max(3, Math.round(w / 1.3));
+  for (let i = 0; i < nb; i++) {
+    B.lit(box(0.16, 0.16, 0.16, x - w / 2 + (w * (i + 0.5)) / nb, y + h - 0.2, z + d / 2 - 0.25, 1));
+  }
 }
 
 /** Rooftop bar: a counter, a back gantry and a row of stools. */
@@ -1589,9 +1596,12 @@ function canopy(B, w, y, zFace, proj, hex, x = 0) {
  * Sized off the SHAFT plan, not the lot, so it can never be the piece that puts
  * the building over its own lot line.
  */
-function towerBase(B, plan, r, pal, neon, glassMat) {
+function towerBase(B, plan, r, pal, neon, glassMat, grow = 1.5) {
   const h = 6.4 + r() * 2.8;
-  const out = offsetPlan(plan, 1.0 + r() * 0.5);
+  // The lobby grows OUTWARD from the shaft, so on a parcel the shaft nearly
+  // fills it is the piece that ends up on the kerb. `grow` is whatever spare
+  // ground the caller actually has.
+  const out = offsetPlan(plan, Math.min(grow, 1.0 + r() * 0.5));
   const ob = planBounds(out);
   const colon = r.chance(0.34);
   const wall = offsetPlan(out, colon ? -1.5 : -0.6);
@@ -2113,7 +2123,8 @@ function tower(ctx, B, r, w, d, h, o = {}) {
     });
     baseTop = podH;
   } else {
-    towerBase(B, plan0, r, pal, B.neon, cm);
+    towerBase(B, plan0, r, pal, B.neon, cm,
+      Math.max(0.35, Math.min((o.lotW ?? w + 3) - w, (o.lotD ?? d + 3) - d) / 2 - 0.25));
   }
 
   /* --- shaft ----------------------------------------------------------- */
@@ -2276,7 +2287,8 @@ function resiTower(ctx, B, r, w, d, h, o = {}) {
     });
     y = podH;
   } else {
-    towerBase(B, plan0, r, pal, B.neon);
+    towerBase(B, plan0, r, pal, B.neon, null,
+      Math.max(0.35, Math.min((o.lotW ?? w + 3) - w, (o.lotD ?? d + 3) - d) / 2 - 0.25));
   }
 
   let plan = plan0;
@@ -3571,8 +3583,8 @@ function towerBlock(ctx, group, b, r, lot, side, isLandmark) {
    * by `slender` below, so nothing turns into a needle.
    */
   const fill = wanted < 70
-    ? 0.95 - 0.07 * (wanted / 70)
-    : 0.88 - 0.10 * Math.min(1, (wanted - 70) / 150);
+    ? 0.92 - 0.05 * (wanted / 70)
+    : 0.87 - 0.09 * Math.min(1, (wanted - 70) / 150);
 
   const prop = r.weighted(TOWER_PROPORTION.map((e) => [e, e[2]]));
   let sw = pl.lw * fill * prop[1][0];
