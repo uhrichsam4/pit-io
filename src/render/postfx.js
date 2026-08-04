@@ -158,7 +158,12 @@ export const GradeShader = {
       float sat = (mx - mn) / max(mx, 1e-4);
       float blueDom = smoothstep(0.0, 0.05, col.b - max(col.r, col.g));
       float lowChroma = 1.0 - smoothstep(0.14, 0.30, sat);
-      float band = smoothstep(0.02, 0.08, l) * (1.0 - smoothstep(0.62, 0.88, l));
+      // The upper edge is pulled in from 0.62-0.88. Asphalt renders at 0.41-0.48
+      // display luminance and paving at 0.57, so the whole reason this term
+      // exists is comfortably inside the new band — while the sky's below-
+      // horizon sea band sits at 0.73 and was being dragged to grey by it,
+      // which is most of why "never grey" kept failing on the hero frames.
+      float band = smoothstep(0.02, 0.08, l) * (1.0 - smoothstep(0.56, 0.78, l));
       float k = uNeutralise * blueDom * lowChroma * band;
       float grey = (col.r + col.g) * 0.5;
       col.b = mix(col.b, grey, k * 0.85);

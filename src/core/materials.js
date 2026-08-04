@@ -1824,13 +1824,36 @@ export const Textures = {
         { f: blotch, amp: 0.075, tint: [1.0, 1.0, 1.04] },
         { f: mid, amp: 0.050 },
         { f: fine, amp: 0.038 },
-        { f: pit, amp: 0.030 },
+        // Same sigmoid, same maze; a third of what it was for the same reason.
+        { f: pit, amp: 0.011 },
       ]);
+      /*
+       * `pit` LEADS THE HEIGHT MAP NO LONGER, and that is a measured fix.
+       *
+       * It is `contrast(fbm, 2.4)` — a hard sigmoid — so as a height field it is
+       * not blowholes, it is a maze of flat-topped lumps with flat gaps between
+       * them. Run through normalMapFromHeight at 0.85 and lit by a 3.5x key it
+       * came back on screen as a dense brain-coral pattern over every parapet,
+       * balcony band, podium deck and crown in the city: a 1:1 crop of the
+       * hole-mid preset at 32 m showed 16 cm worms of alternating light and
+       * shadow, and the same field aliases into speckle at skyline range. It is
+       * present at NIGHT too, which is how it was separated from shadow acne
+       * and from the occlusion dither.
+       *
+       * PROVED by A/B on one frozen frame: with `normalScale` forced to 0 on
+       * every material in the scene the pattern vanishes completely and nothing
+       * else about the frame changes, so it is entirely normal-map relief and
+       * not albedo, AO, shadow or dither. All three noise bands are therefore
+       * cut hard — roughly a quarter of what they were. The board-form courses,
+       * the pour lines and the tie pockets are drawn as explicit high-contrast
+       * marks and keep their full strength, which is where cast concrete's
+       * relief should come from anyway.
+       */
       const hgt = canvas(size);
       const gh = paintGrey(hgt, size, 128, [
-        { f: pit, amp: 0.85 },
-        { f: fine, amp: 0.55 },
-        { f: mid, amp: 0.35 },
+        { f: pit, amp: 0.20 },
+        { f: fine, amp: 0.26 },
+        { f: mid, amp: 0.24 },
       ]);
       const rgh = canvas(size);
       const gr = paintGrey(rgh, size, 232, [

@@ -166,10 +166,18 @@ const SKY_FRAG = /* glsl */ `
        Costs two mixes and turns the dead band into depth. */
     float dn = smoothstep(0.0, -0.055, d.y);
     if (dn > 0.001) {
-      float deep = smoothstep(0.0, -0.30, d.y);
-      vec3 sea = mix(mix(uHaze, uFloor, 0.55), uFloor * 0.80, deep);
-      sea += uSunColor * (0.045 + 0.055 * uSunGlow)
-           * pow(max(azimuthal, 0.0), 2.0) * (1.0 - deep * 0.7);
+      // Both rates are EXPONENTIAL and fast, because the band the camera can
+      // see is only about five degrees tall. A smoothstep spread over 0.30 of
+      // sine put the whole visible band inside the warm end of the ramp, and a
+      // 50/50 mix of a warm haze and a cool sea is green by construction —
+      // which is precisely the grey card this replaces.
+      float below = max(0.0, -d.y);
+      float hz = exp(-below * 60.0);            // warm kiss, first ~1 degree
+      float deep = 1.0 - exp(-below * 12.0);    // open water by ~4 degrees
+      vec3 sea = mix(uFloor, mix(uFloor, uHaze, 0.60), hz);
+      sea = mix(sea, uFloor * 0.72, deep);
+      sea += uSunColor * (0.03 + 0.05 * uSunGlow)
+           * pow(max(azimuthal, 0.0), 3.0) * hz;
       col = mix(col, sea, dn);
     }
 

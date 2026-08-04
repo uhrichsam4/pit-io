@@ -1619,8 +1619,16 @@ export function buildStreets(ctx) {
         1.26 + jr() * 0.4);
     }
 
-    // Keep-clear box: only where two boulevards meet, or it becomes wallpaper.
-    const boxed = rx.cls === BOULEVARD && rz.cls === BOULEVARD;
+    /* Keep-clear box: only where two boulevards meet, or it becomes wallpaper.
+       AND NOT AT ALL OF THOSE. A boulevard crossing is 34 m square, so the box
+       is a 31 m yellow diamond, and with every one of them painted the wide
+       presets carried three at once — on park and rooftops they were the most
+       eye-catching thing in the frame and read as an abstract graphic laid over
+       the city rather than as road marking. Real cities box a minority of
+       junctions, for a reason (a bridge approach, a fire station, a tunnel
+       mouth), so a hash is the honest model as well as the prettier one. */
+    const boxed = rx.cls === BOULEVARD && rz.cls === BOULEVARD
+      && h01(ix.x * 0.37 + 11.3, ix.z * 0.61 - 4.7) < 0.42;
     if (boxed) keepClear(ix);
 
     /* Lane extension guides. A big junction box is otherwise a bare grey field

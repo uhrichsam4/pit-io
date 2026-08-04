@@ -537,8 +537,16 @@ export class Hole {
         // than doubles the blue channel and the 30 m pit measured out violet at
         // r:b 0.81. A third of the way over lands warm-neutral (52,41,44) and
         // survives that addition as dark earth.
+        //
+        // …AND THEN SCALED BACK DOWN. The mix fixes the hue and wrecks the
+        // value: MULCH is a real soil colour, so a third of it lifted the wall
+        // 2.5x in linear, and because `striae` and the sun catch below both
+        // MULTIPLY uWall the 30 m pit came back at 0.32 display luminance
+        // against a 0.47 road — a warm brown bowl instead of a void. The
+        // scalar puts the luminance back where the violet version was
+        // (~0.010 linear) with the warm balance kept.
         uWall: { value: new THREE.Color(PALETTE.HOLE_RIM)
-          .lerp(new THREE.Color(PALETTE.MULCH), 0.34) },
+          .lerp(new THREE.Color(PALETTE.MULCH), 0.34).multiplyScalar(0.38) },
         uVoid: { value: new THREE.Color(PALETTE.HOLE_VOID) },
         uTint: { value: this.color.clone() },
         uLipHot: { value: new THREE.Color(PALETTE.HOLE_GLOW) },

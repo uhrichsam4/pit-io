@@ -3112,8 +3112,17 @@ const SPECIES = {
     debris: PALETTE.HEDGE, variants: 2, tints: 'shrub', contactMax: 2.4,
     // A mat, so it is built as a slab (depth) rather than crossed cards, and it
     // keeps its top card — from the game camera the top card IS the plant.
+    //
+    // AND THAT IS EXACTLY WHY IT HAD TO SHRINK. At w 2.6 / depth 2.0 the ridge
+    // cards makeBush lays on top are a 2.5 x 2.4 m near-horizontal rectangle
+    // 35 cm off the ground, and under-planting drops these beside street trees
+    // — which on a plaza means on the paving. On the `crowd` preset that read
+    // as four hard-edged bright green rectangles lying on the pavement with
+    // nothing under them: a misplaced object, not a plant. At 1.7 x 1.3 m a mat
+    // is smaller than the paving module it sits on and reads as a clump, and
+    // where several land together (sep 0.85) they still merge into a bed.
     make: bushVariant,
-    base: { seed: 163, w: 2.6, h: 0.42, cell: 'groundcov', cards: 2, depth: 2.0 },
+    base: { seed: 163, w: 1.7, h: 0.42, cell: 'groundcov', cards: 2, depth: 1.3 },
   },
   agave: {
     label: 'Agave', tier: TIER.SMALL, h: 1.25, rad: 0.7, cap: 900, clear: 0.6, sep: 0.62,
