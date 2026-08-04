@@ -3293,153 +3293,6 @@ function shopUnit(ctx, group, b, r, world, lw, ld, h, hex, opt = {}) {
     'storefront', opt.label || 'Storefront', hex, { lw, ld });
 }
 
-/* =============================================== sheets you see through = */
-
-/**
- * Alpha-cut sheet materials: debris netting and perforated cladding.
- *
- * These are the only two surfaces this file wears that MUST have holes in them.
- * Everything else coloured pins its UVs to one texel of the skin texture, which
- * is the trick that keeps a whole building to a single draw call — and a texel
- * cannot have a hole in it. So these get a real tiled texture and ride in
- * Build's GLASS slot, which both the garage and the construction site leave
- * empty. The mesh they cost is a mesh that was not being used.
- *
- * alphaTest and NOT `transparent`: the depth material honours alphaTest, so the
- * shadow a net casts is perforated as well. A transparent sheet would lay a
- * solid dark rectangle across the whole site, which is a worse defect than the
- * one this replaces. It also means there is nothing to sort.
- */
-const _sheetMats = new Map();
-const hexCss = (h) => `#${(h >>> 0).toString(16).padStart(6, '0')}`;
-
-function sheetMaterial(key, paint, o = {}) {
-  let m = _sheetMats.get(key);
-  if (m) return m;
-  const size = 128;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const g = c.getContext('2d');
-  g.clearRect(0, 0, size, size);
-  paint(g, size);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
-  tex.needsUpdate = true;
-  m = new THREE.MeshStandardMaterial({
-    map: tex, side: THREE.DoubleSide, roughness: o.roughness ?? 0.9,
-    metalness: o.metalness ?? 0.0, envMapIntensity: 0.55, dithering: true,
-    ...(o.alphaTest ? { alphaTest: o.alphaTest } : {}),
-  });
-  _sheetMats.set(key, m);
-  return m;
-}
-
-/**
- * Woven debris sheeting.
- *
- * WHY THIS IS OPAQUE AND THE WEAVE IS TONAL.
- *
- * The obvious build — punch the weave out of the alpha channel and alpha-test
- * it — was measured and it is worse than what it replaced. At the distance a
- * site is actually seen a 0.5 m weave cell is three pixels, so the holes alias;
- * and because both elevations are wrapped, you see the FAR sheet through the
- * near one's holes at a slightly different scale, which is a moiré field. The
- * reviewer's word for the old dithered netting was "speckle", and a fine
- * alpha-cut mesh is a more expensive way to produce exactly that.
- *
- * Real scaffold sheeting is not see-through from outside anyway — it is a solid
- * wrap that you read the frame's shadow through. So the weave lives in the RGB
- * only: warp and weft in two casts of one saturated green, which mips down to a
- * clean flat green at 300 m and shows as cloth at 5 m. No alpha, no sorting,
- * no aliasing, and the shadow it casts is a shadow rather than a stipple.
- */
-function netMaterial(hex) {
-  return sheetMaterial(`net${hex}`, (g, size) => {
-    g.fillStyle = hexCss(hex);
-    g.fillRect(0, 0, size, size);
-    const n = 8, pitch = size / n;
-    // Weft: a darker cast of the SAME hue. A black wash greys the colour out,
-    // and a grey net in a city of pastels is the muddy mid the bible bans.
-    g.fillStyle = hexCss(jitterHex(hex, 0.86, 0.012));
-    for (let i = 0; i < n; i++) g.fillRect(0, i * pitch, size, pitch * 0.5);
-    // Warp: a lighter cast, laid over half of each weft band so the crossings
-    // read. This is the whole weave — two rectangles' worth of code.
-    g.fillStyle = hexCss(jitterHex(hex, 1.08, -0.012));
-    for (let i = 0; i < n; i++) g.fillRect(i * pitch, 0, pitch * 0.42, size);
-    // Panel seams every fourth strand, where two rolls of sheeting are laced.
-    g.fillStyle = hexCss(jitterHex(hex, 0.70, 0.02));
-    for (let i = 0; i < n; i += 4) {
-      g.fillRect(i * pitch, 0, pitch * 0.14, size);
-      g.fillRect(0, i * pitch, size, pitch * 0.14);
-    }
-  }, { roughness: 0.95 });
-}
-
-/**
- * Perforated metal cladding: solid sheet, staggered round punch.
- *
- * The punch IS alpha-cut — that is the point of the material and the reason it
- * is worth a mesh — but the sheet is deliberately 74% solid, so mip 1 already
- * averages well clear of the alphaTest and it settles to flat anodised metal
- * at distance instead of thrashing. Anything more open than this reads as a
- * dark noisy rectangle over the deck void rather than as a screen ON it.
- */
-/**
- * Perforated metal cladding.
- *
- * WHY THE PUNCH IS TONAL AND NOT AN ALPHA CUT.
- *
- * It was an alpha cut, and A/B'd with the shadow pass off it still rendered as
- * a dark olive rectangle rather than as pale anodised metal. Punching holes with
- * `destination-out` leaves the canvas PREMULTIPLIED — the cleared texels carry
- * RGB 0 as well as alpha 0 — and every mip above the first averages that black
- * back into the strands. alphaTest hides the holes but it cannot hide what they
- * did to the mip chain, so the panel darkens the moment it is more than a few
- * metres away, which is always.
- *
- * A perforated panel at 40 m is a tone, not a set of holes: 27 mm punches on a
- * 90 mm pitch are sub-pixel long before the player can see them. So the punch
- * lives in the RGB, the sheet stays fully opaque, and it reads as pale metal at
- * every distance with no alpha, no sorting and no mip bleed.
- */
-function perfMaterial(hex) {
-  return sheetMaterial(`perf${hex}`, (g, size) => {
-    g.fillStyle = hexCss(hex);
-    g.fillRect(0, 0, size, size);
-    // A shaded band per panel so a 20 m screen is not one flat value.
-    g.fillStyle = hexCss(jitterHex(hex, 0.94, 0.005));
-    g.fillRect(0, 0, size, size * 0.5);
-    // The punch: a staggered field of shaded dots, each with a lit lower lip,
-    // which is what a real punched hole looks like once it is too small to see
-    // through — a dark spot with a highlight under it.
-    const n = 5, p = size / n, rr = p * 0.28;
-    for (let j = 0; j < n; j++) {
-      for (let i = 0; i < n; i++) {
-        const cx = i * p + (j % 2 ? p * 0.5 : 0) + p * 0.5, cy = j * p + p * 0.5;
-        g.fillStyle = hexCss(jitterHex(hex, 0.44, 0.0));
-        g.beginPath(); g.arc(cx, cy, rr, 0, Math.PI * 2); g.fill();
-        g.fillStyle = hexCss(jitterHex(hex, 1.12, 0.0));
-        g.beginPath(); g.arc(cx, cy + rr * 0.42, rr * 0.52, 0, Math.PI * 2); g.fill();
-      }
-    }
-  }, { roughness: 0.46, metalness: 0.04 });
-}
-
-/**
- * One flat sheet standing on y=0, UV'd so the weave tiles every `tile` metres
- * whatever size the sheet is. Two triangles for a 30 x 50 m net.
- */
-function sheetGeo(w, h, tile) {
-  const g = new THREE.PlaneGeometry(w, h);
-  const a = g.attributes.uv;
-  for (let i = 0; i < a.count; i++) a.setXY(i, a.getX(i) * (w / tile), a.getY(i) * (h / tile));
-  a.needsUpdate = true;
-  g.translate(0, h / 2, 0);
-  return g;
-}
-
 /* ==================================================== street furniture == */
 
 /**
@@ -3793,26 +3646,41 @@ function garage(ctx, group, b, r, world, lw, ld, levels) {
   B.lit(box(0.4, 0.26, 0.06, tmx, 1.52, bb.z1 - 1.81, 1), P.NEON_WHITE);
   B.trim(box(0.7, 0.1, 0.62, tmx, 1.87, bb.z1 - 2.1, 2), P.STEEL_DARK);
 
-  /* PERFORATED SCREEN over two or three bays. The one piece of architecture on
-     the building, and it costs two triangles a bay — see sheetMaterial. */
+  /*
+   * SCREEN over two or three bays. The one piece of architecture on the
+   * building — 1111 Lincoln Road, Museum Garage, the Ballpark: a Miami garage
+   * wears a screen and that is what stops it reading as a shelf unit.
+   *
+   * WHY VERTICAL FINS RATHER THAN A PERFORATED PLANE.
+   * A punched sheet needs its own texture, and a texture means its own mesh —
+   * measured at +39 draw calls on `brickell-skyline`, which the perf audit says
+   * has about thirty calls of headroom in the whole budget. Fins are modelled,
+   * so they ride in the building's existing merged skin for nothing. They are
+   * also better: they have real depth, they self-shadow into a rhythm as the
+   * sun moves, and a 0.45 m rhythm of full-height blades reads cleanly at 200 m
+   * where a 90 mm punch has been sub-pixel since about 20 m.
+   */
   const scX0 = entryX + entryW / 2 + 2.2;              // first bay clear of the portal
   const avail = (bb.x1 - 1.2) - scX0;
   const scW = Math.min(lw * 0.19, 6.5);
   const scN = Math.max(0, Math.min(3, Math.floor(avail / (scW + 0.4))));
   for (let k = 0; k < scN; k++) {
     const x = scX0 + scW / 2 + k * (scW + 0.4);
-    const s = sheetGeo(scW, top - 0.4, 1.6);
-    s.translate(x, 0.4, bb.z1 + 0.42);
-    B.gl(s, perfMaterial(P.ALUMINIUM));
-    // The screen hangs on a frame; without it the sheet is a floating decal.
-    // Kept in bright STEEL — a dark mullion at this width reads as a black
-    // stripe painted down the elevation, which is the value hole being fixed.
-    for (const sx of [-1, 1]) {
-      B.trim(box(0.16, top - 0.2, 0.34, x + sx * scW / 2, 0.3, bb.z1 + 0.42, 2), P.STEEL);
+    const zf = bb.z1 + 0.42;
+    const nF = Math.max(4, Math.round(scW / 0.45));
+    for (let j = 0; j <= nF; j++) {
+      B.trim(box(0.15, top - 0.5, 0.30, x - scW / 2 + (scW * j) / nF, 0.4, zf, 1.6),
+        j % 3 === 0 ? P.CHROME : P.ALUMINIUM);
     }
-    B.trim(box(scW + 0.3, 0.18, 0.34, x, top - 0.1, bb.z1 + 0.42, 2), P.STEEL);
+    // Frame: stiles, a head and a rail at every floor, so the blades are
+    // hanging on something instead of floating in front of the elevation.
+    for (const sx of [-1, 1]) {
+      B.trim(box(0.22, top - 0.2, 0.40, x + sx * (scW / 2 + 0.14), 0.3, zf, 2), P.STEEL);
+    }
+    B.trim(box(scW + 0.6, 0.22, 0.42, x, top - 0.1, zf, 2), P.STEEL);
+    B.trim(box(scW + 0.6, 0.22, 0.42, x, 0.3, zf, 2), P.STEEL);
     for (let j = 1; j < levels; j++) {
-      B.trim(box(scW, 0.12, 0.28, x, j * lh, bb.z1 + 0.42, 2), P.ALUMINIUM);
+      B.trim(box(scW, 0.13, 0.26, x, j * lh, zf + 0.05, 2), P.STEEL);
     }
   }
 
@@ -4445,38 +4313,43 @@ function construction(ctx, group, b, r, world, lw, ld, h, lotW, lotD) {
   const sh = Math.min(h, 3.6 * Math.round(floors * 0.7));
   scaffold(B, bb.x0 + 1.5, bb.x1 - 1.5, 0, sh, bb.z1 + 0.9, P.SCAFFOLD);
   /*
-   * DEBRIS NETTING — one sheet, not a picket fence.
+   * DEBRIS SHEETING — one wrapped elevation, not a picket fence.
    *
    * It used to be a row of 1.3 m boxes with 1.3 m gaps between them. At the
    * distance a site is normally seen that alternation minifies into speckle:
    * reviewers read it as noise on the facade rather than as a wrapped
    * elevation, and it was the only saturated colour the whole assembly owned,
-   * so the noise was loud. This is a single alpha-cut sheet per face — see
-   * sheetMaterial — with a real woven texture in it, tied back to the frame
-   * with a horizontal line at every floor. Four triangles for both faces, and
-   * it costs no draw call the site was not already paying for.
+   * so the noise was loud.
+   *
+   * It is now a continuous sheet — but laid in COURSES, the same way roofDeck
+   * lays a membrane roof in rolls, with each course a slightly different cast
+   * of the one green. That is the weave tone, it is real construction (sheeting
+   * comes off a 1.5 m roll and is laced course to course), and being modelled
+   * rather than textured it rides in the building's existing merged mesh. A
+   * textured plane needs its own material and therefore its own draw call, and
+   * measured across 25 sites that was +39 calls on `brickell-skyline` — a frame
+   * the perf audit says has about thirty calls of headroom in total.
    */
-  // Debris netting is a saturated green or aqua on every real site, and that
-  // one saturated note is the whole reason a construction site reads as a
-  // construction site from 300 m. Pale sky-blue washed out to grey.
   const netHex = r.weighted([[P.FABRIC_AQUA, 12], [P.HEDGE_LIGHT, 9], [P.STUCCO_MINT, 6],
     [P.PALM_FROND, 6], [P.STUCCO_SKY, 4], [P.CONE_ORANGE, 4]]);
-  const netMat = netMaterial(netHex);
   const netW = lw - 2.4;
   for (const [zf, hh] of [[bb.z1 + 1.25, sh], [bb.z0 - 1.25, sh * 0.86]]) {
-    // 2.2 m tile: a 25 m sheet is then 11 weave repeats with 0.55 m cells,
-    // rather than 40 with 0.16 m cells. That cell size is what decides whether
-    // the sheet reads as a mesh or as a field of aliasing at street distance.
-    const s = sheetGeo(netW, hh, 2.2);
-    s.translate(bb.cx, 0.1, zf);
-    B.gl(s, netMat);
-    // Tie lines: a scaffold tube along the sheet at every floor, plus the tie
-    // ends that hold it. This is what stops the sheet reading as a decal.
+    const courses = Math.max(4, Math.round(hh / 1.55));
+    const chH = hh / courses;
+    for (let i = 0; i < courses; i++) {
+      // Value walks rather than jumping, so the sheet reads as one field that
+      // has weathered unevenly instead of as a barcode.
+      const v = 0.90 + ((i * 7919) % 11) / 11 * 0.20;
+      B.trim(box(netW, chH - 0.04, 0.06, bb.cx, 0.1 + i * chH, zf, 2.4),
+        jitterHex(netHex, v, ((i * 4993) % 5) / 5 * 0.04 - 0.015));
+    }
+    // Tie lines: a scaffold tube along the sheet at every floor, plus the ties
+    // that hold it back. This is what stops the sheet reading as a decal.
     for (let y = 3.6; y < hh; y += 3.6) {
-      B.trim(box(netW, 0.09, 0.09, bb.cx, y, zf + (zf > 0 ? 0.06 : -0.06), 3), P.STEEL_DARK);
+      B.trim(box(netW, 0.10, 0.10, bb.cx, y, zf + (zf > 0 ? 0.06 : -0.06), 3), P.STEEL_DARK);
     }
     for (let x = bb.x0 + 2.2; x < bb.x1 - 2.0; x += 4.4) {
-      B.trim(box(0.10, hh * 0.98, 0.10, x, 0.1, zf + (zf > 0 ? 0.05 : -0.05), 2), P.SCAFFOLD);
+      B.trim(box(0.11, hh * 0.98, 0.11, x, 0.1, zf + (zf > 0 ? 0.06 : -0.06), 2), P.SCAFFOLD);
     }
   }
   /* Debris chute down the west flank, into a skip on the hardstanding. */

@@ -15,21 +15,26 @@
  *      allowed to be visually loud is PLAY, then the limited-time event. Every
  *      other tile is a colourful but quiet door.
  *
- * Thumb reach: the hero PLAY button sits in the upper-middle where the layout
- * calls for it, and a compact PLAY dock slides up from the bottom edge the
- * moment the hero scrolls out of view, so on a small phone a match is always
- * one bottom-of-screen tap away.
+ * Thumb reach: on a portrait phone the hero PLAY is the LAST block in the
+ * column — the event banner and the launchpad take the top of the screen where
+ * the eye starts, and PLAY sits just above the footer where the thumb already
+ * is. (The reordering is `order` in lobby.css, so the markup below still reads
+ * top-down in importance.) A compact PLAY dock covers the case where the hero
+ * really has been scrolled past: arriving at the lobby, or a short landscape
+ * screen. It is driven by a scroll listener with an explicit evaluation at
+ * mount, not by an IntersectionObserver whose first callback may never come.
  */
 
 import '../css/lobby.css';
 import { esc, shortNum, icon } from '../shell.js';
+import { ic, modeIcon } from '../icons.js';
 import { profile as sharedProfile, xpForLevel } from '../../meta/profile.js';
 import { getMode, listModes, activeEvent } from '../../gameplay/modes.js';
+import { ITEMS, previewSVG } from '../../meta/cosmetics.js';
 
 /** Where the whole meta layer agrees to keep "the mode I am about to play". */
 export const LOBBY_SELECTED_KEY = 'miami-devour:mode';
 
-const BUILD = 'v1.0.0';
 const WEEK_MS = 6048e5;
 
 /* ------------------------------------------------------- selected mode --- */
@@ -53,13 +58,17 @@ export function setSelectedMode(id) {
 
 /* ------------------------------------------------------------- helpers --- */
 
+/* Six doors. `ico` is an icons.js name, never an emoji — see src/ui/icons.js
+   for why. `ccm` raises the accent mix for a warm colour: at the shared 34 %
+   the sun yellow composited to olive and was the one tile of six that did not
+   read as saturated. */
 const TILES = [
-  { key: 'public',  ico: '🌐', name: 'Public Match',    cc: '#ff3d8b', to: ['play', { intent: 'public' }] },
-  { key: 'friends', ico: '👥', name: 'Play w/ Friends', cc: '#37e6d5', to: ['play', { intent: 'friends' }] },
-  { key: 'modes',   ico: '🎯', name: 'Game Modes',      cc: '#8b5cf6', to: ['modes', {}] },
-  { key: 'board',   ico: '🏆', name: 'Leaderboards',    cc: '#ffc93c', to: ['leaderboard', {}] },
-  { key: 'store',   ico: '🛍️', name: 'Store',           cc: '#4dff9e', to: ['store', {}] },
-  { key: 'profile', ico: icon('card'), name: 'Profile',         cc: '#4dd2ff', to: ['profile', {}] },
+  { key: 'public',  ico: 'globe',      name: 'Public Match',    cc: '#ff3d8b', to: ['play', { intent: 'public' }] },
+  { key: 'friends', ico: 'friends',    name: 'Play w/ Friends', cc: '#37e6d5', to: ['play', { intent: 'friends' }] },
+  { key: 'modes',   ico: 'target',     name: 'Game Modes',      cc: '#8b5cf6', to: ['modes', {}] },
+  { key: 'board',   ico: 'trophy',     name: 'Leaderboards',    cc: '#ffc93c', ccm: '52%', to: ['leaderboard', {}] },
+  { key: 'store',   ico: 'store',      name: 'Store',           cc: '#4dff9e', to: ['store', {}] },
+  { key: 'profile', ico: 'badge',      name: 'Profile',         cc: '#4dd2ff', to: ['profile', {}] },
 ];
 
 const AVATAR_COLORS = ['#ff3d8b', '#ffc93c', '#37e6d5', '#4dff9e', '#8b5cf6', '#4dd2ff', '#ff9430', '#c58cff'];
@@ -70,6 +79,19 @@ function avatarColor(id) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
+/**
+ * The avatar's contents: the player's own equipped profile icon, drawn by the
+ * catalogue that already knows how to draw flamingos, palms, crowns and skulls.
+ * The lettered disc is the fallback and is deliberately the ONLY fallback — the
+ * old one dropped a 🕳 glyph onto a dark ring for a player with no name, which
+ * is indistinguishable from a broken image.
+ */
+function avatarInner(d) {
+  const art = d && d.icon ? previewSVG(d.icon, 64) : '';
+  if (art) return art;
+  return esc(avatarGlyph(cleanName(d && d.name)));
 }
 
 /**
@@ -127,28 +149,15 @@ function eventEndsInMs(now = Date.now()) {
   return Math.max(0, Math.min(yearStart + (idx + 1) * WEEK_MS, nextYear) - now);
 }
 
-/**
- * Cosmetics ship in a sibling module that may load after us. It is cached at
- * module scope so the store subtitle is exact from the second lobby visit on,
- * and merely vague on the first.
- */
-let cosmetics = null;
-let cosmeticsTried = false;
-
-function loadCosmetics() {
-  if (cosmetics || cosmeticsTried) return Promise.resolve(cosmetics);
-  cosmeticsTried = true;
-  return import('../../meta/cosmetics.js')
-    .then((m) => { cosmetics = m && Array.isArray(m.ITEMS) ? m : null; return cosmetics; })
-    .catch(() => null);
-}
-
+/* The catalogue is a static import now that the avatar draws the player's own
+   equipped icon from it: it has to be here on the FIRST paint, not the second,
+   and meta.js loads every screen in parallel anyway — the store pulls the same
+   module in, so nothing is added to the boot graph. */
 function storeSubtitle(profile) {
-  if (!cosmetics) return 'Skins, trails and rim effects';
   const coins = profile.data.coins;
   let unowned = 0;
   let affordable = 0;
-  for (const it of cosmetics.ITEMS) {
+  for (const it of ITEMS) {
     if (!it || !it.kind || profile.owns(it.kind, it.id)) continue;
     unowned++;
     if (!it.unlock && Number(it.price) > 0 && Number(it.price) <= coins) affordable++;
@@ -267,7 +276,7 @@ export function registerLobby(shell, deps = {}) {
     return `
       <header class="lob-id">
         <button class="lob-av" data-go="profile" aria-label="Open your profile">
-          <span class="avatar" style="--ac:${avatarColor(d.icon)}">${esc(avatarGlyph(name))}</span>
+          <span class="avatar art" style="--ac:${avatarColor(d.icon)}">${avatarInner(d)}</span>
         </button>
 
         <div class="lob-idmid">
@@ -301,7 +310,7 @@ export function registerLobby(shell, deps = {}) {
         <button class="btn btn-lg btn-block lob-playbtn" data-act="play">PLAY</button>
         <button class="lob-mode" data-act="modes" style="min-height:var(--row-h)"
                 aria-label="Change game mode">
-          <span class="lm-ico" aria-hidden="true">${esc(mode.icon)}</span>
+          <span class="lm-ico" aria-hidden="true">${modeIcon(mode.id, null)}</span>
           <span class="lm-txt">
             <b>${esc(mode.name)}</b>
             <i>${fmtDuration(mode.duration)} · ${(mode.botCount || 0) + 1} players${mode.limited ? ' · Limited' : ''}</i>
@@ -319,7 +328,7 @@ export function registerLobby(shell, deps = {}) {
               style="--cc:${esc(ev.accent || '#ff3d8b')};min-height:var(--evt-h)"
               aria-label="Limited time event: ${esc(ev.name)}">
         <span class="ev-glow" aria-hidden="true"></span>
-        <span class="ev-ico" aria-hidden="true">${esc(ev.icon)}</span>
+        <span class="ev-ico" aria-hidden="true">${modeIcon(ev.id, null)}</span>
         <span class="ev-body">
           <span class="ev-top">
             <span class="ev-kicker">LIMITED TIME</span>
@@ -350,8 +359,8 @@ export function registerLobby(shell, deps = {}) {
       <div class="lob-tiles">
         ${TILES.map((t, i) => `
           <button class="tile" data-tile="${t.key}"
-                  style="--cc:${t.cc};--i:${i};min-height:var(--tile-h)">
-            <span class="tile-ico" aria-hidden="true">${t.ico}</span>
+                  style="--cc:${t.cc};${t.ccm ? `--ccm:${t.ccm};` : ''}--i:${i};min-height:var(--tile-h)">
+            <span class="tile-ico" aria-hidden="true">${ic(t.ico, null)}</span>
             <span class="tile-name">${esc(t.name)}</span>
             <span class="tile-sub" data-sub="${t.key}">${esc(tileSubtitle(t.key))}</span>
           </button>`).join('')}
@@ -363,7 +372,7 @@ export function registerLobby(shell, deps = {}) {
     return `
       <button class="lob-daily" data-go="rewards" style="min-height:var(--row-h)"
               aria-label="Daily rewards and challenges">
-        <span class="dl-ico" aria-hidden="true">🔥</span>
+        <span class="dl-ico" aria-hidden="true">${ic('flame', null)}</span>
         <span class="dl-txt">
           <b data-daily="head">${esc(l.head)}</b>
           <i data-daily="sub">${esc(l.sub)}</i>
@@ -376,10 +385,11 @@ export function registerLobby(shell, deps = {}) {
   function renderFooter() {
     return `
       <footer class="lob-foot">
-        <button class="icon-btn" data-go="settings" aria-label="Settings">⚙</button>
+        <button class="icon-btn lob-gear" data-go="settings" aria-label="Settings">${ic('gear', null)}</button>
         <button class="lob-code" data-act="copy-code" aria-label="Copy your friend code">
-          <span class="fc-k tiny muted">MIAMI DEVOUR ${BUILD} · FRIEND CODE</span>
+          <span class="fc-k">FRIEND CODE</span>
           <span class="fc-v num">${esc(profile.data.id || '------')}</span>
+          <span class="fc-go" aria-hidden="true">⧉</span>
         </button>
       </footer>`;
   }
@@ -422,7 +432,11 @@ export function registerLobby(shell, deps = {}) {
       const btn = st.nameBtn;
       btn.classList.toggle('unset', !name);
       btn.querySelector('.nm-txt').textContent = name || 'Set your name';
-      st.avatar.textContent = avatarGlyph(name);
+      // innerHTML rather than textContent: the avatar holds the player's own
+      // equipped profile-icon SVG, which changes the moment they equip one in
+      // the store and come back. avatarInner() is our own markup plus an esc()d
+      // initial, so nothing untrusted reaches it.
+      st.avatar.innerHTML = avatarInner(d);
       st.avatar.style.setProperty('--ac', avatarColor(d.icon));
     }
 
@@ -485,7 +499,8 @@ export function registerLobby(shell, deps = {}) {
     const st = {
       shell: shellRef,
       editing: false,
-      io: null,
+      dockOn: null,
+      onResize: null,
       avatar: q('.lob-av .avatar'),
       nameBtn: q('.lob-name'),
       nameInput: q('.lob-nameinput'),
@@ -543,36 +558,52 @@ export function registerLobby(shell, deps = {}) {
     });
     st.nameInput.addEventListener('blur', () => endEdit(root, true));
 
-    // The bottom dock only exists to rescue thumb reach once the hero PLAY has
-    // scrolled away; on a desktop the hero never leaves and this never fires.
+    /* ---- the bottom PLAY dock ----------------------------------------- */
+    /*
+     * On a portrait phone the hero PLAY is the LAST thing in the column (see
+     * the `order` rules in lobby.css) so the primary action is where the thumb
+     * is. The dock covers the case where it has been scrolled past the bottom
+     * edge — arriving at the lobby, or on a short landscape screen.
+     *
+     * Driven by a scroll listener with an explicit evaluation at mount, NOT by
+     * an IntersectionObserver. The observer version was measurably dead code:
+     * its first callback is frame-driven, so on a phone where the hero starts
+     * partly out of view it could sit in its off state indefinitely, and the
+     * one control the brief cares most about was never reachable by thumb.
+     * This is deterministic — it has a value before the first paint.
+     */
     const body = q('.lob-body');
     const hero = q('.lob-playbtn');
     const dock = q('.lob-dock');
-    if (body && hero && dock && typeof IntersectionObserver === 'function') {
-      st.io = new IntersectionObserver((entries) => {
-        for (const en of entries) {
-          const on = !en.isIntersecting;
-          dock.classList.toggle('on', on);
-          dock.setAttribute('aria-hidden', on ? 'false' : 'true');
-          const b = dock.querySelector('.lob-dockbtn');
-          if (b) b.tabIndex = on ? 0 : -1;
-        }
-      }, { root: body, threshold: 0.4 });
-      st.io.observe(hero);
-    }
-
-    // Store affordability needs the cosmetics catalogue; it is loaded lazily so
-    // a first paint never waits on it, then patched in when it arrives.
-    if (!cosmetics) {
-      loadCosmetics().then((m) => {
-        if (m && STATE.has(root)) sync(root);
-      });
+    if (body && hero && dock) {
+      const dockBtn = dock.querySelector('.lob-dockbtn');
+      const evaluate = () => {
+        const hr = hero.getBoundingClientRect();
+        const br = body.getBoundingClientRect();
+        // "On" once the hero's own midline has left the scroll viewport, in
+        // either direction. Half a button is not a tap target.
+        const mid = hr.top + hr.height / 2;
+        const on = mid > br.bottom - 4 || mid < br.top + 4;
+        if (on === st.dockOn) return;
+        st.dockOn = on;
+        dock.classList.toggle('on', on);
+        dock.setAttribute('aria-hidden', on ? 'false' : 'true');
+        if (dockBtn) dockBtn.tabIndex = on ? 0 : -1;
+      };
+      st.dockOn = null;
+      st.onScroll = evaluate;
+      body.addEventListener('scroll', evaluate, { passive: true });
+      // The listener is on an element inside the page and dies with it, but the
+      // resize one is on window and must be released by hand.
+      st.onResize = evaluate;
+      window.addEventListener('resize', st.onResize);
+      evaluate();
     }
   }
 
   function unmount(root) {
     const st = STATE.get(root);
-    if (st && st.io) st.io.disconnect();
+    if (st && st.onResize) window.removeEventListener('resize', st.onResize);
     STATE.delete(root);
   }
 

@@ -20,6 +20,12 @@
   --evt-h: 5.6em;
   --row-h: 3.5em;
   --dock-h: 5.2em;
+  /* ONE column width for the whole screen. The identity plate, the hero, the
+     event banner and the tile grid all measure against this — previously the
+     hero was capped at 32em while the banner and tiles ran to 64em, so on a
+     desktop the single most important control on the front door was exactly
+     half the width of everything around it and read as a failed layout. */
+  --lob-col: 46em;
 }
 
 /* ======================================================================== */
@@ -40,11 +46,10 @@
   gap: 0.4em 0.55em;
   padding-top: calc(0.5em + var(--safe-t));
   padding-bottom: 0.55em;
-  /* The plate is full-bleed but its CONTENT lines up with the .wrap-wide column
-     below it, or the avatar and the coins float off on their own on a monitor.
-     64em is .wrap-wide's max-width in tokens.css — keep the two in step. */
-  padding-left: max(calc(1em + var(--safe-l)), calc((100% - 64em) / 2));
-  padding-right: max(calc(1em + var(--safe-r)), calc((100% - 64em) / 2));
+  /* The plate is full-bleed but its CONTENT lines up with the column below it,
+     or the avatar and the coins float off on their own on a monitor. */
+  padding-left: max(calc(1em + var(--safe-l)), calc((100% - var(--lob-col)) / 2));
+  padding-right: max(calc(1em + var(--safe-r)), calc((100% - var(--lob-col)) / 2));
   background: var(--glass);
   border-bottom: 1px solid var(--stroke);
   box-shadow: 0 0.5em 1.4em rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.10);
@@ -147,12 +152,18 @@
 /* ======================================================================== */
 
 [data-screen="lobby"] .lob-body {
-  /* Room for the bottom PLAY dock, which floats over the scroll area. */
+  /* NO dock reserve here. Reserving --dock-h made the column exactly one
+     viewport taller than its content, so at rest the last row — the settings
+     gear, the only route to Settings from the lobby — came to rest level with
+     the home-indicator gesture band. The dock is only ever on while the hero
+     is off-screen, and the footer sits below the hero, so the two can never be
+     visible at the same time and there is nothing to reserve for. */
   padding-top: 0.9em;
-  padding-bottom: calc(var(--dock-h) + var(--safe-b));
+  padding-bottom: calc(1.1em + var(--safe-b));
   display: flex; flex-direction: column;
 }
 [data-screen="lobby"] .lob-wrap {
+  max-width: var(--lob-col);
   display: flex; flex-direction: column; gap: 0.85em;
   width: 100%;
   /* auto on both axes: centred in the spare room on a monitor, and exactly 0
@@ -207,7 +218,16 @@
   transition: background 0.14s var(--ease), transform 0.14s var(--ease-back);
 }
 [data-screen="lobby"] .lob-mode:active { background: rgba(255, 255, 255, 0.09); transform: scale(0.99); }
-[data-screen="lobby"] .lm-ico { flex: 0 0 auto; font-size: 1.5em; line-height: 1; }
+[data-screen="lobby"] .lm-ico {
+  flex: 0 0 auto;
+  display: grid; place-items: center;
+  width: 2.1em; height: 2.1em;
+  border-radius: var(--r-sm);
+  color: var(--hot);
+  background: color-mix(in srgb, var(--hot) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hot) 45%, transparent);
+}
+[data-screen="lobby"] .lm-ico svg { width: 1.35em; height: 1.35em; }
 [data-screen="lobby"] .lm-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 [data-screen="lobby"] .lm-txt b {
   font-size: 0.98em; font-weight: 800;
@@ -260,9 +280,16 @@
 [data-screen="lobby"] .ev-ico {
   position: relative;
   flex: 0 0 auto;
-  font-size: 2.1em; line-height: 1;
+  display: grid; place-items: center;
+  width: 2.9em; height: 2.9em;
+  border-radius: var(--r-md);
+  color: color-mix(in srgb, var(--cc) 60%, #ffffff);
+  background: radial-gradient(120% 120% at 30% 20%,
+              color-mix(in srgb, var(--cc) 55%, transparent), rgba(6, 11, 21, 0.7));
+  border: 1px solid color-mix(in srgb, var(--cc) 60%, transparent);
   filter: drop-shadow(0 0.1em 0.3em rgba(0, 0, 0, 0.55));
 }
+[data-screen="lobby"] .ev-ico svg { width: 1.8em; height: 1.8em; }
 [data-screen="lobby"] .ev-body {
   position: relative;
   flex: 1 1 auto; min-width: 0;
@@ -270,7 +297,7 @@
 }
 [data-screen="lobby"] .ev-top { display: flex; align-items: center; gap: 0.45em; flex-wrap: wrap; }
 [data-screen="lobby"] .ev-kicker {
-  font-size: 0.58em; font-weight: 900; letter-spacing: 0.2em;
+  font-size: var(--fs-micro); font-weight: 900; letter-spacing: 0.2em;
   color: color-mix(in srgb, var(--cc) 72%, #ffffff);
 }
 [data-screen="lobby"] .ev-name {
@@ -306,6 +333,7 @@
 [data-screen="lobby"] .lob-tiles .tile-name {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+[data-screen="lobby"] .lob-tiles .tile-ico { width: 1.75em; height: 1.75em; }
 [data-screen="lobby"] .lob-tiles .tile-sub {
   line-height: 1.25;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -328,7 +356,13 @@
   transition: transform 0.14s var(--ease-back), filter 0.14s var(--ease);
 }
 [data-screen="lobby"] .lob-daily:active { transform: scale(0.99); filter: brightness(1.1); }
-[data-screen="lobby"] .dl-ico { flex: 0 0 auto; font-size: 1.45em; line-height: 1; }
+[data-screen="lobby"] .dl-ico {
+  flex: 0 0 auto;
+  display: grid; place-items: center;
+  width: 2em; height: 2em;
+  color: var(--orange);
+}
+[data-screen="lobby"] .dl-ico svg { width: 100%; height: 100%; }
 [data-screen="lobby"] .dl-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 [data-screen="lobby"] .dl-txt b {
   font-size: 0.95em; font-weight: 800;
@@ -357,28 +391,38 @@
   display: flex; align-items: center; gap: 0.6em;
   padding-top: 0.15em;
 }
+/* Solid stroke and a sunken well, not a dashed outline: a dashed border reads
+   as a placeholder or a drop zone everywhere else on the web, and this was the
+   last thing on the front door. The version stamp moved to Settings' about
+   block, where a build number belongs. */
 [data-screen="lobby"] .lob-code {
   flex: 1 1 auto; min-width: 0;
-  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
-  gap: 0.05em;
-  padding: 0.3em 0.75em;
-  border: 1px dashed var(--stroke);
-  border-radius: var(--r-sm);
-  background: transparent;
+  display: flex; align-items: center; gap: 0.6em;
+  padding: 0.35em 0.8em;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-pill);
+  background: var(--sunk);
   color: var(--dim);
   font: inherit; text-align: left; cursor: pointer;
-  transition: background 0.14s var(--ease);
+  transition: background 0.14s var(--ease), border-color 0.14s var(--ease);
 }
-[data-screen="lobby"] .lob-code:active { background: rgba(255, 255, 255, 0.07); }
+[data-screen="lobby"] .lob-code:active {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--aqua);
+}
 [data-screen="lobby"] .fc-k {
-  letter-spacing: 0.1em;
-  max-width: 100%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 0 auto;
+  font-size: var(--fs-micro); font-weight: 800;
+  letter-spacing: 0.12em; color: var(--dim);
 }
 [data-screen="lobby"] .fc-v {
-  font-size: 0.95em; font-weight: 900; letter-spacing: 0.24em;
-  color: var(--txt);
+  flex: 1 1 auto; min-width: 0;
+  font-size: 0.95em; font-weight: 900; letter-spacing: 0.2em;
+  color: var(--aqua);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+[data-screen="lobby"] .fc-go { flex: 0 0 auto; color: var(--dim); }
+[data-screen="lobby"] .lob-gear svg { width: 1.5em; height: 1.5em; }
 
 /* ======================================================================== */
 /* BOTTOM PLAY DOCK                                                         */
@@ -433,13 +477,32 @@
 /* RESPONSIVE                                                               */
 /* ======================================================================== */
 
+/* PORTRAIT PHONE — THUMB REACH.
+ *
+ * The hero PLAY used to sit at y≈112 on a 390x844 phone: the top eighth of the
+ * screen, 656 px from the thumb, against a brief that says in as many words
+ * that primary actions belong at the BOTTOM. The stated mitigation was a dock
+ * that slid up once the hero scrolled away — but the lobby only scrolled 27 px,
+ * so on the primary target device that dock could never appear.
+ *
+ * Flex `order` fixes it without moving a line of markup: the event banner and
+ * the launchpad take the top of the column, where the eye starts, and PLAY sits
+ * directly above the footer, where the thumb already is. The dock then does the
+ * job it was written for — it appears only when PLAY really has scrolled off. */
+@media (max-width: 759px) and (orientation: portrait) {
+  [data-screen="lobby"] .lob-event { order: 1; }
+  [data-screen="lobby"] .lob-tiles { order: 2; }
+  [data-screen="lobby"] .lob-daily { order: 3; }
+  [data-screen="lobby"] .lob-hero  { order: 4; margin-top: 0.15em; }
+  [data-screen="lobby"] .lob-foot  { order: 5; }
+}
+
 /* Tablet and desktop: the tiles become one wide bank rather than a long list. */
+/* Tablet and desktop: six tiles as 3x2. Never `repeat(4)` — that left the
+   second row two tiles wide with a 472 px hole beside the Profile tile. */
 @media (min-width: 760px) {
   [data-screen="lobby"] { --tile-h: 7.4em; }
-  [data-screen="lobby"] .lob-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  /* A 1000 px-wide PLAY button reads as a banner, not a button. Hold the hero
-     to a phone-ish column and let the event and tiles use the full width. */
-  [data-screen="lobby"] .lob-hero { width: 100%; max-width: 32em; align-self: center; }
+  [data-screen="lobby"] .lob-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   [data-screen="lobby"] .lob-playbtn { font-size: 1.75em; }
 }
 

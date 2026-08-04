@@ -107,12 +107,13 @@
    `top: 0` and not a nudged-down offset — the page body clips its own top edge,
    so flush against it there is no gap for content to show through. */
 [data-screen='rewards'] .jump {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35em;
   /* Full-bleed to the page-body's padding edges rather than a floating pill:
      a sticky pill leaves slivers of scrolling content visible down each side
-     and around its rounded corners, which reads as a rendering fault. */
+     and around its rounded corners, which reads as a rendering fault. The
+     INNER .tabs pill is held to the same column the cards use, so the bar no
+     longer sticks 14 px out of the content on each side on a desktop. */
   margin: 0 -1em;
-  padding: 0.4em 1em;
+  padding: 0.4em max(1em, calc((100% - 46em) / 2 + 1em));
   /* Fully opaque, not 0.98: at any alpha below 1 the challenge text scrolling
      underneath is still legible through it. */
   background: linear-gradient(180deg, #121c2f 0%, #090f1b 100%);
@@ -121,21 +122,17 @@
   box-shadow: 0 0.5em 1em rgba(6, 11, 21, 0.7);
   position: sticky; top: 0; z-index: 3;
 }
-[data-screen='rewards'] .jump-chip {
-  min-height: var(--tap);
-  min-width: 0;
-  padding: 0.4em 0.3em;
-  border: 0; border-radius: var(--r-pill);
-  background: transparent; color: var(--dim);
-  font: inherit; font-size: 0.82em; font-weight: 800;
-  cursor: pointer; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
-  transition: background 0.16s var(--ease), color 0.16s var(--ease), transform 0.1s var(--ease);
-}
-[data-screen='rewards'] .jump-chip:active {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.08));
+/* The chips ARE the .tabs component from tokens.css now — they were literally
+   unstyled before (`background: rgba(0,0,0,0)`, `border-width: 0`, no selected
+   state), four grey words that read as broken tabs. Only the lit state is
+   specialised, because the section you are in should be obvious. */
+[data-screen='rewards'] .jump-tabs { margin-bottom: 0; }
+[data-screen='rewards'] .jump-chip:active { transform: scale(0.96); }
+[data-screen='rewards'] .jump-chip[aria-selected='true'] {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--aqua) 34%, transparent),
+                                      color-mix(in srgb, var(--aqua) 12%, transparent));
   color: var(--txt);
-  transform: scale(0.96);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aqua) 55%, transparent);
 }
 
 /* ======================================================================== */
@@ -161,13 +158,37 @@
 
 [data-screen='rewards'] .ch-ico {
   flex: 0 0 auto;
-  width: 2.5em; height: 2.5em;
+  width: 2.7em; height: 2.7em;
   display: grid; place-items: center;
-  font-size: 1.15em;
   border-radius: var(--r-sm);
-  background: var(--sunk);
-  border: 1px solid var(--stroke);
+  color: var(--aqua);
+  background: color-mix(in srgb, var(--aqua) 14%, var(--sunk));
+  border: 1px solid color-mix(in srgb, var(--aqua) 38%, transparent);
 }
+[data-screen='rewards'] .ch-ico svg { width: 1.6em; height: 1.6em; }
+[data-screen='rewards'] .ch-card.is-done .ch-ico {
+  color: var(--lime);
+  background: color-mix(in srgb, var(--lime) 16%, var(--sunk));
+  border-color: color-mix(in srgb, var(--lime) 50%, transparent);
+}
+
+/* Ring gauge: what sits in the action slot until CLAIM earns it. */
+[data-screen='rewards'] .ch-ring {
+  flex: 0 0 auto;
+  width: 2.9em; height: 2.9em;
+  border-radius: 50%;
+  padding: 0.24em;
+  background: conic-gradient(var(--aqua) 0 var(--p, 0%), rgba(255, 255, 255, 0.12) var(--p, 0%) 100%);
+  display: grid; place-items: center;
+}
+[data-screen='rewards'] .ch-ring > span {
+  width: 100%; height: 100%;
+  border-radius: 50%;
+  background: linear-gradient(168deg, #16233c 0%, #0a1120 100%);
+  display: grid; place-items: center;
+  font-size: max(0.62em, 10px); font-weight: 900; color: var(--dim);
+}
+[data-screen='rewards'] .ch-ring i { font-style: normal; opacity: 0.6; }
 [data-screen='rewards'] .ch-body { flex: 1 1 auto; min-width: 0; }
 [data-screen='rewards'] .ch-text {
   font-size: 0.92em; font-weight: 800; line-height: 1.25;
@@ -202,17 +223,20 @@
 }
 [data-screen='rewards'] .ch-done {
   flex: 0 0 auto;
-  width: 2.2em; height: 2.2em; border-radius: 50%;
+  width: 2.4em; height: 2.4em; border-radius: 50%;
   display: grid; place-items: center;
-  color: var(--lime); font-weight: 900; font-size: 1.05em;
+  color: var(--lime);
   background: color-mix(in srgb, var(--lime) 18%, transparent);
   border: 1px solid color-mix(in srgb, var(--lime) 55%, transparent);
 }
+[data-screen='rewards'] .ch-done svg { width: 1.3em; height: 1.3em; }
 
 [data-screen='rewards'] .daily-clear {
   margin-top: 0.55em; padding: 0.7em;
-  text-align: center; font-size: 0.8em; font-weight: 700; color: var(--dim);
-  border: 1px dashed var(--stroke); border-radius: var(--r-sm);
+  text-align: center; font-size: 0.8em; font-weight: 700; color: var(--lime);
+  border: 1px solid color-mix(in srgb, var(--lime) 45%, transparent);
+  background: color-mix(in srgb, var(--lime) 10%, var(--sunk));
+  border-radius: var(--r-sm);
 }
 
 /* ======================================================================== */
@@ -226,14 +250,26 @@
   display: flex; flex-direction: column; align-items: center; gap: 0.3em;
 }
 [data-screen='rewards'] .wk-dot {
+  position: relative;
   width: 100%; aspect-ratio: 1 / 1; max-width: 3em;
   border-radius: 50%;
   display: grid; place-items: center;
-  font-size: 0.95em; line-height: 1;
+  line-height: 1;
   background: var(--sunk);
   border: 0.13em solid var(--stroke);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
 }
+[data-screen='rewards'] .wk-dot svg { width: 55%; height: 55%; }
+/* A day that was missed says so — a struck ring, not an empty hole. */
+[data-screen='rewards'] .wk-day.missed .wk-dot { border-style: dotted; opacity: 0.75; }
+[data-screen='rewards'] .wk-miss {
+  display: block; width: 52%; height: 0.14em;
+  border-radius: var(--r-pill);
+  background: var(--dimmer);
+  transform: rotate(-38deg);
+}
+[data-screen='rewards'] .wk-day.today .wk-dot { color: var(--sun); }
+[data-screen='rewards'] .wk-day.played .wk-dot { color: var(--hot); }
 [data-screen='rewards'] .wk-day.played .wk-dot {
   background: linear-gradient(180deg, color-mix(in srgb, var(--hot) 46%, transparent), rgba(10, 17, 31, 0.7));
   border-color: var(--hot);
@@ -251,7 +287,7 @@
   50% { box-shadow: 0 0 0.9em color-mix(in srgb, var(--aqua) 65%, transparent); }
 }
 [data-screen='rewards'] .wk-lab {
-  font-size: 0.66em; font-weight: 800; letter-spacing: 0.06em; color: var(--dim);
+  font-size: var(--fs-micro); font-weight: 800; letter-spacing: 0.06em; color: var(--dim);
 }
 [data-screen='rewards'] .wk-day.today .wk-lab { color: var(--sun); }
 [data-screen='rewards'] .wk-day.tomorrow .wk-lab { color: var(--aqua); }
@@ -306,7 +342,7 @@
 }
 [data-screen='rewards'] .sh-ready .btn { font-size: 0.85em; padding: 0.5em 1em; }
 [data-screen='rewards'] .sh-free {
-  margin-top: 0.6em; color: var(--dimmer);
+  margin-top: 0.6em; color: var(--dim); font-size: var(--fs-micro);
   letter-spacing: 0.04em; text-transform: uppercase; font-weight: 800;
 }
 
@@ -328,7 +364,8 @@
 
 [data-screen='rewards'] .tr {
   flex: 0 0 auto;
-  width: 7.4em; min-height: 9.6em;
+  width: 7.6em; min-height: 10.4em;
+  overflow: hidden;
   scroll-snap-align: center;
   display: flex; flex-direction: column; gap: 0.4em;
   padding: 0.6em;
@@ -342,12 +379,12 @@
   display: flex; align-items: center; justify-content: space-between;
 }
 [data-screen='rewards'] .tr-n {
-  font-size: 0.72em; font-weight: 900; letter-spacing: 0.08em; color: var(--dim);
+  font-size: var(--fs-micro); font-weight: 900; letter-spacing: 0.08em; color: var(--dim);
 }
 [data-screen='rewards'] .tr-n::before { content: 'TIER '; }
 [data-screen='rewards'] .tr-tick { color: var(--lime); font-weight: 900; }
 [data-screen='rewards'] .tr-at {
-  margin-top: auto; font-size: 0.68em; font-weight: 800; color: var(--dimmer);
+  margin-top: auto; font-size: max(0.68em, 10px); font-weight: 800; color: var(--dim);
   text-align: center;
 }
 
@@ -366,25 +403,50 @@
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0.25em; text-align: center;
 }
-[data-screen='rewards'] .tr-item-glyph {
-  width: 2.3em; height: 2.3em; border-radius: var(--r-sm);
-  display: grid; place-items: center; font-size: 1.1em;
-  background: color-mix(in srgb, var(--rc) 22%, rgba(8, 14, 26, 0.8));
+[data-screen='rewards'] .tr-item-art {
+  width: 3.5em; height: 3.5em; border-radius: var(--r-sm);
+  display: grid; place-items: center; overflow: hidden;
+  background: color-mix(in srgb, var(--rc) 16%, rgba(8, 14, 26, 0.85));
   border: 0.12em solid var(--rc);
   box-shadow: 0 0 0.8em color-mix(in srgb, var(--rc) 45%, transparent);
 }
+[data-screen='rewards'] .tr-item-art svg { display: block; width: 100%; height: 100%; }
 [data-screen='rewards'] .tr-item-name {
-  font-size: 0.64em; font-weight: 800; line-height: 1.15;
+  font-size: max(0.64em, 10px); font-weight: 800; line-height: 1.15;
   color: var(--rc); overflow-wrap: anywhere;
 }
+[data-screen='rewards'] .tr-glyph {
+  display: grid; place-items: center;
+  width: 2.1em; height: 2.1em;
+}
+[data-screen='rewards'] .tr-glyph svg { width: 100%; height: 100%; }
 
-[data-screen='rewards'] .tr.locked { opacity: 0.55; }
-[data-screen='rewards'] .tr.locked .tr-item-glyph { filter: grayscale(0.8); box-shadow: none; }
+/* Locked keeps its colour and simply sits behind a scrim — see the note on
+   .locked-art in tokens.css. A grey rail of charcoal rectangles was the
+   headline long-term progression in a game whose art direction is "sunlit,
+   saturated, zero grimness". */
+[data-screen='rewards'] .tr.locked { opacity: 0.9; }
+[data-screen='rewards'] .tr.locked .tr-item-art,
+[data-screen='rewards'] .tr.locked .tr-glyph {
+  filter: brightness(0.68) saturate(0.95);
+  box-shadow: none;
+}
+[data-screen='rewards'] .tr.locked .tr-item-name,
+[data-screen='rewards'] .tr.locked .tr-coins,
+[data-screen='rewards'] .tr.locked .tr-xp { opacity: 0.75; }
+[data-screen='rewards'] .tr.locked::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(6, 11, 21, 0.14), rgba(6, 11, 21, 0.44));
+  pointer-events: none;
+}
 [data-screen='rewards'] .tr.claimed {
-  border-color: color-mix(in srgb, var(--lime) 50%, transparent);
+  border-color: color-mix(in srgb, var(--lime) 55%, transparent);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--lime) 12%, transparent), transparent 60%),
+    linear-gradient(180deg, color-mix(in srgb, var(--lime) 16%, transparent), transparent 60%),
     var(--glass);
+  box-shadow: var(--lift-1), inset 0 0 0 1px color-mix(in srgb, var(--lime) 26%, transparent);
 }
 /* Claimable has to shout — an unclaimed reward the player never notices is a
    reward that was never given. */
@@ -436,8 +498,12 @@
   text-align: center;
   border-radius: var(--r-md);
   border: 1px solid var(--stroke);
-  background: var(--sunk);
-  filter: grayscale(1) brightness(0.72);
+  background:
+    radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--tc) 12%, transparent) 0%, transparent 62%),
+    var(--sunk);
+  /* Dimmed, NOT grayscale(1). Thirty desaturated tiles were the first thing a
+     new player saw on a screen whose whole job is to make them want one. */
+  filter: brightness(0.82);
   transition: filter 0.2s var(--ease);
 }
 [data-screen='rewards'] .ach.got {
@@ -452,7 +518,7 @@
   width: 2.4em; height: 2.4em; border-radius: 50%;
   display: grid; place-items: center; font-size: 1.15em;
   background: rgba(4, 8, 16, 0.5);
-  border: 0.12em solid var(--stroke);
+  border: 0.12em solid color-mix(in srgb, var(--tc) 45%, var(--stroke));
 }
 [data-screen='rewards'] .ach.got .ach-ico {
   border-color: var(--tc);
@@ -463,12 +529,15 @@
 }
 [data-screen='rewards'] .ach.got .ach-name { color: var(--tc); }
 [data-screen='rewards'] .ach-desc {
-  font-size: 0.66em; line-height: 1.25; color: var(--dim); overflow-wrap: anywhere;
+  font-size: max(0.66em, 10px); line-height: 1.25; color: var(--dim); overflow-wrap: anywhere;
 }
+/* On a LOCKED card this line is the only thing telling you what the award is
+   worth, and it was 9.3 px at 2.94:1 — under the 4.5:1 AA needs at that size.
+   --dim is ~5.6:1 and the floor puts it back over 10 px. */
 [data-screen='rewards'] .ach-foot {
   margin-top: 0.25em;
-  font-size: 0.62em; font-weight: 800; letter-spacing: 0.05em;
-  color: var(--dimmer);
+  font-size: var(--fs-micro); font-weight: 800; letter-spacing: 0.05em;
+  color: var(--dim);
 }
 [data-screen='rewards'] .ach.got .ach-foot { color: var(--lime); }
 

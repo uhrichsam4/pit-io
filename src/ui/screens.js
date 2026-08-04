@@ -20,6 +20,7 @@
 
 import { MATCH, TIER_LIST } from '../config.js';
 import { uiState, formatScore, ordinal } from './hud.js';
+import { icon } from './shell.js';
 
 const LOADING_TIPS = [
   'Cones first. Towers later.',
@@ -323,7 +324,7 @@ function rewardsBlock(b) {
   const pct = Math.min(100, Math.max(0, (after.xp / Math.max(1, after.need)) * 100));
   const parts = (b.parts || []).map((p) => `
     <li><span class="pl">${escapeHtml(p.label)}</span>
-        <span class="pv">${p.xp ? `+${num(p.xp)} XP` : ''}${p.xp && p.coins ? ' · ' : ''}${p.coins ? `+${num(p.coins)} 🪙` : ''}</span></li>`).join('');
+        <span class="pv">${p.xp ? `+${num(p.xp)} XP` : ''}${p.xp && p.coins ? ' · ' : ''}${p.coins ? `+${num(p.coins)} ${icon('coin', '0.9em')} coins` : ''}</span></li>`).join('');
 
   const done = (b.challenges || []).filter((c) => c.completed);
   const achievements = b.achievements || [];
@@ -332,7 +333,7 @@ function rewardsBlock(b) {
     <div class="rs-rewards">
       <div class="rw-top">
         <span class="rw-pill xp">+${num(b.xp.total)} XP</span>
-        <span class="rw-pill coin">+${num(b.coins ? b.coins.total : 0)} 🪙</span>
+        <span class="rw-pill coin">+${num(b.coins ? b.coins.total : 0)} ${icon('coin', '0.9em')} coins</span>
         ${b.xp.levelsGained > 0
           ? `<span class="rw-pill up">LEVEL UP → ${after.level}</span>` : ''}
       </div>

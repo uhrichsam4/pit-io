@@ -11,8 +11,10 @@
  */
 
 import { esc, shortNum, page, wireNav, icon } from '../shell.js';
+import { ic, TRACK_ICON } from '../icons.js';
 import '../css/rewards.css';
 import { profile } from '../../meta/profile.js';
+import { previewSVG } from '../../meta/cosmetics.js';
 import * as progression from '../../meta/progression.js';
 
 const RARITY_VAR = {
@@ -46,8 +48,11 @@ function coarseTime(ms) {
 
 function pct(v) { return `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`; }
 
+/* A real unlock timestamp is a 13-digit epoch. Anything smaller is corrupt
+   save data — one seeded profile carried `at: 1`, which printed the unlock date
+   of an achievement as "Dec 31, 69". Render nothing rather than 1969. */
 function dateShort(ts) {
-  if (!ts) return '';
+  if (!ts || ts < 1e11) return '';
   const d = new Date(ts);
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: '2-digit' });
 }
@@ -81,19 +86,26 @@ function levelCard(prog) {
 function challengeCard(c, i, prog) {
   const p = Math.min(c.progress, c.goal);
   const done = c.progress >= c.goal;
-  const track = prog.TRACKS[c.track] || { icon: '🎯' };
+  const frac = Math.max(0, Math.min(1, p / Math.max(1, c.goal)));
   const modeChip = c.modes
     ? `<span class="chip ch-mode">${esc(c.modes.map(modeName).join(' / '))}</span>`
     : '';
 
+  // The right-hand slot always holds SOMETHING. Reserving it for CLAIM meant
+  // that while nothing was claimable — most of the time, and always on day one
+  // — all three cards were visibly lopsided with an empty gutter. A ring gauge
+  // fills it until the challenge completes, then CLAIM takes the slot back.
   let action;
-  if (c.claimed) action = '<div class="ch-done" aria-label="Claimed">✓</div>';
+  if (c.claimed) action = `<div class="ch-done" aria-label="Claimed">${ic('check', null)}</div>`;
   else if (done) action = `<button class="btn btn-sun ch-claim" data-claim="${esc(c.id)}">CLAIM</button>`;
-  else action = '';
+  else {
+    action = `<div class="ch-ring" style="--p:${(frac * 100).toFixed(0)}%" aria-hidden="true">` +
+      `<span class="num">${Math.round(frac * 100)}<i>%</i></span></div>`;
+  }
 
   return `
     <article class="ch-card${done ? ' is-done' : ''}${c.claimed ? ' is-claimed' : ''} rv-in" style="--d:${60 + i * 45}ms">
-      <div class="ch-ico" aria-hidden="true">${track.icon}</div>
+      <div class="ch-ico" aria-hidden="true">${ic(TRACK_ICON[c.track] || 'target', null)}</div>
       <div class="ch-body">
         <div class="ch-text">${esc(c.text)}</div>
         <div class="bar ch-bar"><i style="width:${pct(p / Math.max(1, c.goal))}"></i></div>
@@ -134,7 +146,7 @@ function dailySection(prog) {
     <section id="sec-daily" class="rv-sec">
       <div class="sec-head">
         <h2>Daily Challenges</h2>
-        <span class="chip sun" data-countdown title="Time until new challenges">⏳ <b class="num">${hms(prog.msUntilReroll())}</b></span>
+        <span class="chip sun" data-countdown title="Time until new challenges">${ic('hourglass', null)} <b class="num">${hms(prog.msUntilReroll())}</b></span>
       </div>
       <div class="stack-sm">
         ${list.map((c, i) => challengeCard(c, i, prog)).join('')}
@@ -145,16 +157,28 @@ function dailySection(prog) {
 
 function streakSection(prog) {
   const s = prog.streakState();
+  /* Nothing is ever an empty hole. A day played is a lit flame; a past day
+     missed is a struck-through ring, so a broken streak reads as a broken
+     streak; tomorrow is a dashed aqua ring holding the coin it pays. Five
+     unstyled black circles in a row were the deadest element in the meta layer,
+     sitting on the screen whose entire job is to bring the player back. */
   const dots = s.days.map((d) => {
+    const missed = !d.played && !d.isTomorrow && !d.isToday;
     const cls = [
       'wk-day',
       d.played ? 'played' : '',
       d.isToday ? 'today' : '',
       d.isTomorrow ? 'tomorrow' : '',
+      missed ? 'missed' : '',
     ].filter(Boolean).join(' ');
+    let mark;
+    if (d.played) mark = ic('flame', null);
+    else if (d.isTomorrow) mark = icon('coin', null);
+    else if (d.isToday) mark = ic('star', null);
+    else mark = '<i class="wk-miss" aria-hidden="true"></i>';
     return `
       <div class="${cls}">
-        <span class="wk-dot">${d.played ? '🔥' : d.isTomorrow ? '＋' : ''}</span>
+        <span class="wk-dot">${mark}</span>
         <span class="wk-lab">${d.label}</span>
       </div>`;
   }).join('');
@@ -163,7 +187,7 @@ function streakSection(prog) {
     <section id="sec-streak" class="panel rv-sec">
       <div class="sec-head">
         <h2>Daily Streak</h2>
-        <span class="chip hot">🔥 <b class="num">${s.current}</b> day${s.current === 1 ? '' : 's'}</span>
+        <span class="chip hot">${ic('flame', null)} <b class="num">${s.current}</b> day${s.current === 1 ? '' : 's'}</span>
       </div>
       <div class="week">${dots}</div>
       <div class="wk-foot">
@@ -173,18 +197,35 @@ function streakSection(prog) {
     </section>`;
 }
 
+/**
+ * What a season tier pays, drawn.
+ *
+ * The item tiers used to print a system gift emoji standing in for a cosmetic
+ * whose finished SVG already exists in the catalogue, and the fallback branch
+ * shipped a literal "—" tile. The season track is the game's headline long-term
+ * progression; it cannot be the one place that does not show you the thing.
+ */
 function tierRewardHtml(reward) {
   if (reward.item) {
     const col = RARITY_VAR[reward.item.rarity] || 'var(--r-common)';
     return `
       <div class="tr-item" style="--rc:${col}">
-        <span class="tr-item-glyph">🎁</span>
+        <span class="tr-item-art">${previewSVG(reward.item, 72)}</span>
         <span class="tr-item-name">${esc(reward.item.name)}</span>
       </div>`;
   }
-  if (reward.coins) return `<div class="tr-coins">${icon('coin')} <b class="num">${reward.coins}</b></div>`;
-  if (reward.xp) return `<div class="tr-xp">⭐ <b class="num">${reward.xp}</b> XP</div>`;
-  return '<div class="tr-coins">—</div>';
+  if (reward.coins) {
+    return `<div class="tr-coins"><span class="tr-glyph">${icon('coin', null)}</span>` +
+      `<b class="num">${reward.coins}</b></div>`;
+  }
+  if (reward.xp) {
+    return `<div class="tr-xp"><span class="tr-glyph">${ic('star', null)}</span>` +
+      `<b class="num">${reward.xp}</b> XP</div>`;
+  }
+  // Every tier in SEASON.tiers carries coins, xp or an item, so this is
+  // unreachable today — it stays as a shape rather than an em-dash tile so a
+  // future reward type degrades to "something here" instead of "nothing".
+  return `<div class="tr-xp"><span class="tr-glyph">${ic('gift', null)}</span><b>Reward</b></div>`;
 }
 
 function seasonSection(prog) {
@@ -284,10 +325,12 @@ function bodyHtml(prog, animate) {
   return `<div class="wrap stack rv-root${animate ? ' anim' : ''}">
       ${levelCard(prog)}
       <nav class="jump" aria-label="Jump to section">
-        <button class="jump-chip" data-jump="sec-daily">Daily</button>
-        <button class="jump-chip" data-jump="sec-streak">Streak</button>
-        <button class="jump-chip" data-jump="sec-season">Season</button>
-        <button class="jump-chip" data-jump="sec-ach">Awards</button>
+        <div class="tabs jump-tabs" role="tablist">
+          <button role="tab" class="jump-chip" data-jump="sec-daily" aria-selected="true">Daily</button>
+          <button role="tab" class="jump-chip" data-jump="sec-streak" aria-selected="false">Streak</button>
+          <button role="tab" class="jump-chip" data-jump="sec-season" aria-selected="false">Season</button>
+          <button role="tab" class="jump-chip" data-jump="sec-ach" aria-selected="false">Awards</button>
+        </div>
       </nav>
       ${dailySection(prog)}
       ${streakSection(prog)}
@@ -374,6 +417,37 @@ export function registerRewards(shell, deps = {}) {
       // look at it, whenever that is.
       root.__scrollTimer = setTimeout(scrollToTier, 0);
 
+      /**
+       * Scroll spy. The section chips were four grey words on a transparent
+       * strip with no selected state — they read as broken tabs, or as a
+       * caption. They are the `.tabs` component now, and a tab strip that never
+       * lights up is worse than none, so the chip for the section you are
+       * actually in is `aria-selected`.
+       *
+       * Measured off getBoundingClientRect rather than offsetTop: the sections'
+       * offsetParent is the absolutely positioned .screen-page, so offsetTop is
+       * off by the header height.
+       */
+      const SPY = ['sec-daily', 'sec-streak', 'sec-season', 'sec-ach'];
+      const spy = () => {
+        if (!body) return;
+        const nav = root.querySelector('.jump');
+        const line = body.getBoundingClientRect().top + (nav ? nav.getBoundingClientRect().height : 0) + 16;
+        let active = SPY[0];
+        for (const id of SPY) {
+          const sec = root.querySelector(`#${id}`);
+          if (sec && sec.getBoundingClientRect().top <= line) active = id;
+        }
+        for (const chip of root.querySelectorAll('[data-jump]')) {
+          chip.setAttribute('aria-selected', String(chip.dataset.jump === active));
+        }
+      };
+      // Listener is on an element inside the page, so it dies with the node —
+      // but it is still detached in unmount() so the contract is obvious.
+      root.__spy = spy;
+      if (body) body.addEventListener('scroll', spy, { passive: true });
+      spy();
+
       root.addEventListener('click', (e) => {
         const claim = e.target.closest('[data-claim]');
         if (claim) {
@@ -447,6 +521,11 @@ export function registerRewards(shell, deps = {}) {
     unmount(root) {
       if (root.__timer) { clearInterval(root.__timer); root.__timer = null; }
       if (root.__scrollTimer) { clearTimeout(root.__scrollTimer); root.__scrollTimer = null; }
+      if (root.__spy) {
+        const body = root.querySelector('.page-body');
+        if (body) body.removeEventListener('scroll', root.__spy);
+        root.__spy = null;
+      }
       if (root.__cancelRefresh) root.__cancelRefresh();
       root.__refresh = null;
       root.__cancelRefresh = null;

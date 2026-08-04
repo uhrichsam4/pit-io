@@ -13,10 +13,12 @@
  * page root, which survives that re-render.
  */
 
-import { page, esc, shortNum, wireNav, icon } from '../shell.js';
+import { page, esc, shortNum, wireNav, icon, emptyState } from '../shell.js';
+import { ic, modeIcon } from '../icons.js';
 import { profile as globalProfile, xpForLevel } from '../../meta/profile.js';
 import { listModes, getMode } from '../../gameplay/modes.js';
 import { rankBadge } from '../../meta/leaderboard.js';
+import { getItem, previewSVG, RARITY } from '../../meta/cosmetics.js';
 import '../css/profile.css';
 
 const AV_COLORS = ['#ff3d8b', '#ffc93c', '#37e6d5', '#4dff9e', '#ff9430', '#b46bff', '#4dc4ff'];
@@ -39,14 +41,18 @@ function hashOf(s) {
 
 function colorFor(id) { return AV_COLORS[hashOf(id) % AV_COLORS.length]; }
 
-/** "skin-neon-wave" -> "Neon Wave". Cosmetic ids are our own, so this is safe. */
-function prettyId(id, kind) {
-  let s = String(id || '').trim();
-  if (!s) return 'None';
-  if (kind && s.startsWith(`${kind}-`)) s = s.slice(kind.length + 1);
-  s = s.replace(/^plate-/, '').replace(/[-_]+/g, ' ').trim();
-  return s.replace(/\b[a-z]/g, (c) => c.toUpperCase()) || 'None';
-}
+/**
+ * The equipped item, from the CATALOGUE.
+ *
+ * This screen used to invent both halves of the Equipped strip: a swatch
+ * colour hashed out of the item id, and a name derived from the id string.
+ * Both were lies. A player wearing Classic Void — hot pink lip — saw a purple
+ * ball; Sunset Drive rendered teal; the hand-drawn Flamingo emblem became the
+ * letter "F"; and every name disagreed with the one the store had just shown
+ * them. cosmetics.js already draws all sixty items correctly at any size, so
+ * there was never a reason to guess.
+ */
+function equippedItem(id) { return id ? getItem(id) : null; }
 
 function pct(part, whole) {
   if (!whole) return '—';
@@ -142,7 +148,9 @@ export function registerProfile(shell, deps = {}) {
   const avatar = (cls = '') => {
     const d = profile.data;
     const initial = String(d.name || 'P').trim().charAt(0).toUpperCase() || 'P';
-    return `<span class="avatar ${cls}" style="--ac:${colorFor(d.icon || d.id)};--rc:var(--sun)">${esc(initial)}</span>`;
+    const art = d.icon ? previewSVG(d.icon, 96) : '';
+    return `<span class="avatar ${art ? 'art ' : ''}${cls}" style="--ac:${colorFor(d.icon || d.id)};--rc:var(--sun)">` +
+      `${art || esc(initial)}</span>`;
   };
 
   const headHtml = () => {
@@ -189,15 +197,16 @@ export function registerProfile(shell, deps = {}) {
     const eq = profile.data.equipped || {};
     const tiles = COSMETIC_KINDS.map(({ kind, label }) => {
       const id = eq[kind] || '';
-      const c = colorFor(id || kind);
-      const glyph = (String(id).match(/\d+$/) || [''])[0]
-        || String(prettyId(id, kind)).charAt(0).toUpperCase() || '?';
+      const it = equippedItem(id);
+      const name = it ? it.name : 'None';
+      const rc = it && RARITY[it.rarity] ? RARITY[it.rarity].color : 'var(--stroke-hi)';
       return `
-        <button class="cos" data-cos="${esc(kind)}" style="--cc:${c}"
-                aria-label="${esc(label)}: ${esc(prettyId(id, kind))}. Change in store">
-          <span class="cos-pv cos-${esc(kind)}"><span class="cos-glyph">${esc(glyph)}</span></span>
+        <button class="cos rarity-${esc(it ? it.rarity : 'common')}" data-cos="${esc(kind)}"
+                style="--cc:${esc(rc)}"
+                aria-label="${esc(label)}: ${esc(name)}. Change in store">
+          <span class="cos-pv">${it ? previewSVG(it, 64) : ''}</span>
           <span class="cos-k">${esc(label)}</span>
-          <span class="cos-v">${esc(prettyId(id, kind))}</span>
+          <span class="cos-v">${esc(name)}</span>
         </button>`;
     }).join('');
     return `
@@ -242,7 +251,7 @@ export function registerProfile(shell, deps = {}) {
       const played = !!(st && st.matches);
       return `
         <div class="row mode-row${played ? '' : ' unplayed'}">
-          <span class="m-ico" style="--mc:${esc(m.accent || '#37e6d5')}">${esc(m.icon || '🕳️')}</span>
+          <span class="m-ico" style="--mc:${esc(m.accent || '#37e6d5')}">${modeIcon(id, null)}</span>
           <span class="nm-wrap">
             <span class="nm">${esc(m.name)}</span>
             <span class="sub">${played
@@ -286,19 +295,69 @@ export function registerProfile(shell, deps = {}) {
       </section>`;
   };
 
+  /**
+   * The screen a brand-new player is invited to open from the lobby was the
+   * deadest one in the app: ten stat tiles reading 0 / 0 / — / — / 0, seven
+   * identical dimmed "Not played yet" rows, then thirty grey achievement
+   * cards. None of it is information — it is a spreadsheet of zeros wearing a
+   * progress screen's clothes. Until there is a match on the record the whole
+   * lower half collapses to one card that says what to do next and dangles the
+   * closest award.
+   */
+  const isFresh = () => !(profile.data.stats && profile.data.stats.matches > 0);
+
+  /** The locked achievement the player is nearest to. Bait, and honest bait. */
+  const nextAward = () => {
+    const list = collectAchievements(progression);
+    if (!list) return null;
+    const unlockedMap = profile.data.achievements || {};
+    let best = null;
+    for (const a of list) {
+      const done = a.unlocked != null ? a.unlocked : !!unlockedMap[a.id];
+      if (done) continue;
+      const p = achProgress(a, profile);
+      const v = p == null ? 0 : p;
+      if (!best || v > best.p) best = { a, p: v };
+    }
+    return best;
+  };
+
+  const freshHtml = () => {
+    const award = nextAward();
+    return `
+      <section class="pf-sec pf-fresh">
+        ${emptyState({
+          art: ic('empty-hole', null),
+          head: 'No matches on the record yet',
+          sub: 'Play one match and this page fills up: lifetime totals, a breakdown by mode, and thirty awards to chase.',
+          cta: 'Pick a mode and play',
+          act: 'go-modes',
+          accent: '#ff3d8b',
+        })}
+        ${award ? `
+        <div class="panel pf-bait">
+          <div class="bait-k">Closest award</div>
+          <div class="bait-row">
+            <span class="bait-ico" aria-hidden="true">${esc(award.a.icon)}</span>
+            <span class="bait-txt">
+              <b>${esc(award.a.name)}</b>
+              ${award.a.req ? `<i>${esc(award.a.req)}</i>` : ''}
+            </span>
+          </div>
+          <div class="bar bait-bar"><i style="width:${(award.p * 100).toFixed(0)}%"></i></div>
+        </div>` : ''}
+      </section>`;
+  };
+
   const dangerHtml = () => `
     <section class="pf-danger">
       <button class="btn btn-ghost danger" data-act="reset">Reset progress</button>
       <p class="tiny muted">Wipes level, coins, cosmetics and every stat on this device. This cannot be undone.</p>
     </section>`;
 
-  const contentHtml = () => `
-    ${headHtml()}
-    ${cosmeticsHtml()}
-    ${statsHtml()}
-    ${modesHtml()}
-    ${achievementsHtml()}
-    ${dangerHtml()}`;
+  const contentHtml = () => (isFresh()
+    ? `${headHtml()}${cosmeticsHtml()}${freshHtml()}${dangerHtml()}`
+    : `${headHtml()}${cosmeticsHtml()}${statsHtml()}${modesHtml()}${achievementsHtml()}${dangerHtml()}`);
 
   const copyCode = async (btn) => {
     const code = profile.data.id;
@@ -360,7 +419,10 @@ export function registerProfile(shell, deps = {}) {
         }
         const a = e.target.closest('[data-act]');
         if (!a) return;
-        if (a.dataset.act === 'copy-code') {
+        if (a.dataset.act === 'go-modes') {
+          if (shell.has('modes')) shell.go('modes');
+          else shell.back();
+        } else if (a.dataset.act === 'copy-code') {
           copyCode(a);
         } else if (a.dataset.act === 'reset') {
           const yes = await shell.confirm(

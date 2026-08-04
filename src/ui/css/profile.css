@@ -133,7 +133,7 @@
   min-height: var(--tap);
   padding: 0.5em 0.9em;
   border-radius: var(--r-sm);
-  border: 1px dashed var(--stroke-hi);
+  border: 1px solid var(--stroke-hi);
   background: var(--sunk);
   color: var(--txt);
   font: inherit;
@@ -142,7 +142,7 @@
 }
 [data-screen='profile'] .code-btn:active { transform: scale(0.985); background: rgba(255, 255, 255, 0.06); }
 [data-screen='profile'] .code-k {
-  font-size: 0.72em; letter-spacing: 0.09em; text-transform: uppercase; color: var(--dim);
+  font-size: var(--fs-micro); letter-spacing: 0.09em; text-transform: uppercase; color: var(--dim);
 }
 [data-screen='profile'] .code-v {
   flex: 1 1 auto; min-width: 0;
@@ -151,9 +151,7 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 [data-screen='profile'] .code-ico { font-size: 1.1em; color: var(--dim); }
-[data-screen='profile'] .code-btn.copied {
-  border-color: var(--lime); border-style: solid;
-}
+[data-screen='profile'] .code-btn.copied { border-color: var(--lime); }
 [data-screen='profile'] .code-btn.copied .code-ico::after {
   content: ' copied'; font-size: 0.6em; letter-spacing: 0.1em; color: var(--lime);
 }
@@ -183,51 +181,24 @@
   transform: scale(0.955);
   border-color: color-mix(in srgb, var(--cc) 70%, transparent);
 }
+/* The preview is the CATALOGUE's own drawing (previewSVG), not a swatch this
+   screen invented — see the note in profile.js. --cc is the item's rarity
+   colour, so the tile frames the art in the same ramp the store uses. */
 [data-screen='profile'] .cos-pv {
   display: grid; place-items: center;
-  width: 2.3em; height: 2.3em;
+  width: 2.9em; height: 2.9em;
   border-radius: var(--r-sm);
   background: var(--sunk);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
   overflow: hidden;
 }
-[data-screen='profile'] .cos-glyph {
-  font-size: 0.78em; font-weight: 900; color: #0a0f1a;
-}
-/* Only the icon slot spells out its variant; on the others the swatch is the
-   preview and a letter on top of it just makes it muddy. */
-[data-screen='profile'] .cos-pv:not(.cos-icon) .cos-glyph { display: none; }
-
-[data-screen='profile'] .cos-skin {
-  border-radius: 50%;
-  background: radial-gradient(circle at 38% 32%, #fff 2%, var(--cc) 42%, #0a0f1a 100%);
-}
-[data-screen='profile'] .cos-trail {
-  background:
-    linear-gradient(118deg, transparent 12%, color-mix(in srgb, var(--cc) 85%, transparent) 48%,
-                    transparent 88%),
-    var(--sunk);
-}
-[data-screen='profile'] .cos-rim {
-  border-radius: 50%;
-  background: #0a0f1a;
-  box-shadow: inset 0 0 0 0.28em var(--cc), inset 0 0 0.6em rgba(0, 0, 0, 0.8);
-}
-[data-screen='profile'] .cos-nameplate {
-  border-radius: 0.35em;
-  background: linear-gradient(100deg, color-mix(in srgb, var(--cc) 70%, transparent), rgba(10, 17, 31, 0.9));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
-}
-[data-screen='profile'] .cos-icon {
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 50%, var(--cc) 62%, #0a0f1a 100%);
-}
+[data-screen='profile'] .cos-pv svg { display: block; width: 100%; height: 100%; }
 [data-screen='profile'] .cos-k {
-  font-size: 0.62em; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim);
+  font-size: var(--fs-micro); letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim);
 }
 [data-screen='profile'] .cos-v {
   max-width: 100%;
-  font-size: 0.68em; font-weight: 800;
+  font-size: max(0.68em, 10px); font-weight: 800;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -243,10 +214,11 @@
   display: grid; place-items: center;
   width: 2.1em; height: 2.1em;
   border-radius: var(--r-sm);
-  font-size: 1em; line-height: 1;
+  color: var(--mc);
   background: color-mix(in srgb, var(--mc) 22%, transparent);
   border: 1px solid color-mix(in srgb, var(--mc) 55%, transparent);
 }
+[data-screen='profile'] .mode-row .m-ico svg { width: 1.3em; height: 1.3em; }
 [data-screen='profile'] .mode-row .nm-wrap {
   flex: 1 1 auto; min-width: 0;
   display: flex; flex-direction: column; gap: 0.05em;
@@ -263,9 +235,11 @@
   flex: 0 0 auto;
   font-weight: 800; font-variant-numeric: tabular-nums;
 }
-/* A mode never played stays legible but obviously empty — it is a to-do list. */
-[data-screen='profile'] .mode-row.unplayed { opacity: 0.5; }
-[data-screen='profile'] .mode-row.unplayed .m-ico { filter: grayscale(0.85); }
+/* A mode never played stays legible but obviously empty — it is a to-do list.
+   Dimmed, never desaturated: this is a bright, saturated game and grey rows
+   were the first thing a new player saw. */
+[data-screen='profile'] .mode-row.unplayed { opacity: 0.62; }
+[data-screen='profile'] .mode-row.unplayed .m-ico { filter: brightness(0.78); }
 [data-screen='profile'] .mode-row.unplayed .sc { color: var(--dim); }
 
 /* ========================================================== achievements === */
@@ -289,7 +263,7 @@
   overflow-wrap: anywhere;
 }
 [data-screen='profile'] .ach-rq {
-  font-size: 0.64em; color: var(--dim); line-height: 1.3;
+  font-size: max(0.64em, 10px); color: var(--dim); line-height: 1.3;
   overflow-wrap: anywhere;
 }
 /* An unlocked achievement wears its tier colour when progression supplies one;
@@ -301,13 +275,46 @@
     var(--glass);
 }
 [data-screen='profile'] .ach.done .ach-nm { color: var(--tc, var(--lime)); }
-[data-screen='profile'] .ach.locked { opacity: 0.55; }
-[data-screen='profile'] .ach.locked .ach-ico { filter: grayscale(1); }
+[data-screen='profile'] .ach.locked { opacity: 0.72; }
+[data-screen='profile'] .ach.locked .ach-ico { filter: brightness(0.72); }
 [data-screen='profile'] .ach-bar {
   width: 100%; height: 0.3em;
   margin-top: 0.25em;
 }
 [data-screen='profile'] .ach-bar > i { background: linear-gradient(90deg, var(--aqua), var(--lime)); }
+
+/* ========================================================== first run === */
+
+[data-screen='profile'] .pf-fresh {
+  display: flex; flex-direction: column; gap: 0.7em;
+}
+[data-screen='profile'] .pf-bait {
+  display: flex; flex-direction: column; gap: 0.45em;
+  background:
+    linear-gradient(150deg, color-mix(in srgb, var(--sun) 20%, transparent) 0%, transparent 58%),
+    var(--glass);
+  border-color: color-mix(in srgb, var(--sun) 40%, var(--stroke));
+}
+[data-screen='profile'] .bait-k {
+  font-size: var(--fs-micro); font-weight: 900;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--sun);
+}
+[data-screen='profile'] .bait-row { display: flex; align-items: center; gap: 0.7em; min-width: 0; }
+[data-screen='profile'] .bait-ico {
+  flex: 0 0 auto;
+  display: grid; place-items: center;
+  width: 2.4em; height: 2.4em; border-radius: 50%;
+  font-size: 1.15em; line-height: 1;
+  background: rgba(4, 8, 16, 0.5);
+  border: 0.12em solid color-mix(in srgb, var(--sun) 60%, transparent);
+}
+[data-screen='profile'] .bait-txt { min-width: 0; display: flex; flex-direction: column; gap: 0.1em; }
+[data-screen='profile'] .bait-txt b { font-size: 0.95em; font-weight: 900; }
+[data-screen='profile'] .bait-txt i {
+  font-style: normal; font-size: max(0.72em, 11px); color: var(--dim); line-height: 1.3;
+}
+[data-screen='profile'] .bait-bar { height: 0.45em; }
+[data-screen='profile'] .bait-bar > i { background: linear-gradient(90deg, var(--sun), var(--hot)); }
 
 /* ============================================================ danger zone === */
 
@@ -336,7 +343,7 @@
   [data-screen='profile'] .lvl-ring { width: 4.4em; height: 4.4em; }
   [data-screen='profile'] .avatar.xl { width: 3.1em; height: 3.1em; font-size: 1em; }
   [data-screen='profile'] .pf-name { font-size: 1.15em; }
-  [data-screen='profile'] .cos-pv { width: 1.9em; height: 1.9em; }
+  [data-screen='profile'] .cos-pv { width: 2.4em; height: 2.4em; }
   [data-screen='profile'] .cos-v { font-size: 0.62em; }
 }
 

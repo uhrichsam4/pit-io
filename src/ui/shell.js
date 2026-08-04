@@ -161,6 +161,15 @@ export class Shell {
     const prev = this.current;
     const prevEl = this._el;
 
+    // Cancel any open confirm BEFORE the swap. The modal is appended to
+    // this.root, not to this.layer, so clearing the layer left it — and its
+    // full-screen backdrop — sitting on top of the newly rendered screen with
+    // its promise never settling. Reachable with no unusual input at all: the
+    // shell wires Android's back gesture to popstate, so opening Settings'
+    // "reset progress" confirm and swiping back left an undismissable modal
+    // over every subsequent screen. Cancel-on-navigate is what a phone does.
+    this._closeModals(false);
+
     if (prev && prev.unmount && prevEl) {
       try { prev.unmount(prevEl); } catch (e) { console.warn('[shell] unmount failed', e); }
     }
@@ -236,8 +245,23 @@ export class Shell {
     return t;
   }
 
+  /**
+   * Tear down every open confirm and settle its promise. Called on navigation.
+   * @param {boolean} answer what an abandoned confirm resolves to — always
+   *        false: navigating away is not consent.
+   */
+  _closeModals(answer = false) {
+    if (!this._modalCancels || !this._modalCancels.size) return;
+    for (const done of [...this._modalCancels]) {
+      try { done(answer); } catch { /* a settled promise is not an error */ }
+    }
+    this._modalCancels.clear();
+    for (const m of this.root.querySelectorAll('.shell-modal')) m.remove();
+  }
+
   /** Simple confirm, so no screen reaches for window.confirm on a phone. */
   confirm(question, { ok = 'Confirm', cancel = 'Cancel' } = {}) {
+    if (!this._modalCancels) this._modalCancels = new Set();
     return new Promise((resolve) => {
       const wrap = document.createElement('div');
       wrap.className = 'shell-modal';
@@ -252,7 +276,12 @@ export class Shell {
       wrap.querySelector('.modal-q').textContent = question;
       wrap.querySelector('[data-a="no"]').textContent = cancel;
       wrap.querySelector('[data-a="yes"]').textContent = ok;
-      const done = (v) => { wrap.remove(); resolve(v); };
+      const done = (v) => {
+        this._modalCancels.delete(done);
+        wrap.remove();
+        resolve(v);
+      };
+      this._modalCancels.add(done);
       wrap.addEventListener('click', (e) => {
         const a = e.target.closest('[data-a]');
         if (a) done(a.dataset.a === 'yes');
@@ -340,6 +369,32 @@ export function icon(name, size = '1em', cls = '') {
     </svg>`;
   }
   return '';
+}
+
+/**
+ * The one empty state, used by all eight screens.
+ *
+ * Every "nothing here yet" in this app was a bare sentence in a flat dark box,
+ * and on a phone those were regularly the biggest element on their screen — the
+ * friends board with no friends was a gold podium of one holding a score of 0
+ * above 330 px of black. An empty state needs a drawn mark, one line of copy,
+ * and something to DO; the last of those is the part that was always missing.
+ *
+ * `art` is an inline SVG string (see src/ui/icons.js) — never an emoji, and
+ * never a network asset. `cta` is optional; when present it is a real button
+ * carrying `data-act`, so the screen's existing delegated click handler picks
+ * it up with no extra listener.
+ *
+ * @param {{art?:string, head:string, sub?:string, cta?:string, act?:string,
+ *          accent?:string, cls?:string}} o
+ */
+export function emptyState({ art = '', head, sub = '', cta = '', act = '', accent = '', cls = '' }) {
+  return `<div class="empty-state ${esc(cls)}"${accent ? ` style="--ec:${esc(accent)}"` : ''}>
+      ${art ? `<span class="es-art" aria-hidden="true">${art}</span>` : ''}
+      <div class="es-h">${esc(head)}</div>
+      ${sub ? `<p class="es-s">${esc(sub)}</p>` : ''}
+      ${cta ? `<button class="btn" data-act="${esc(act)}">${esc(cta)}</button>` : ''}
+    </div>`;
 }
 
 /** Standard page scaffold: title bar with back, then a scrolling body. */

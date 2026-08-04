@@ -20,6 +20,14 @@
  * Palette continues src/ui/styles.css, which is loaded first and owns :root.
  * ====================================================================== */
 
+/* --tap is stamped on .shell by src/ui/shell.js, but tokens.css also styles
+   things that live OUTSIDE the shell — the end-of-match results card in
+   src/ui/screens.js uses `.btn` and `.icon-btn`. Outside .shell the variable
+   was unset, `min-height: var(--tap)` computed to `auto`, and the two results
+   buttons shipped at 33 px. A :root default costs nothing and closes the hole;
+   shell.js keeps stamping its own copy as the responsive override. */
+:root { --tap: 44px; }
+
 .shell {
   position: fixed;
   inset: 0;
@@ -44,6 +52,18 @@
   --r-epic: #b46bff;
   --r-legendary: #ffb01f;
   --r-mythic: #ff3d8b;
+
+  /* The content column. Screens whose body is `.wrap-wide` raise this to 64em
+     so their PAGE HEADER lines up with their own content instead of sitting on
+     a different grid — see .page-head below. */
+  --col: 46em;
+
+  /* Kicker/label floor. iOS and Android both recommend ~11 pt as the smallest
+     readable size; em-only sizing put nine separate labels under 10 px at
+     every phone width, with no viewport at which they grew back. Anything
+     doing real work (a tag, a unit, a reward line) uses this instead of a bare
+     em fraction, so the em scale still drives everything above the floor. */
+  --fs-micro: max(0.66em, 10px);
 
   /* ---- geometry -------------------------------------------------------- */
   --r-sm: 0.6em;
@@ -95,10 +115,18 @@
 @keyframes pg-in-back { from { opacity: 0; transform: translateX(-2.2em); } }
 @keyframes pg-fade    { from { opacity: 0; transform: scale(0.985); } }
 
+/* The header sits on the SAME column as the body. Left at the viewport edges it
+   put the title 100 px and the store's coin balance 157 px outside the content
+   column on a desktop — header and content reading as two different grids on
+   every screen that uses this scaffold. `max()` keeps the phone padding intact
+   and only bites once the viewport is wider than the column. */
 .page-head {
   flex: 0 0 auto;
   display: flex; align-items: center; gap: var(--gap);
-  padding: calc(0.7em + var(--safe-t)) calc(1em + var(--safe-r)) 0.7em calc(1em + var(--safe-l));
+  padding-top: calc(0.7em + var(--safe-t));
+  padding-bottom: 0.7em;
+  padding-left: max(calc(1em + var(--safe-l)), calc((100% - var(--col)) / 2));
+  padding-right: max(calc(1em + var(--safe-r)), calc((100% - var(--col)) / 2));
 }
 .page-head h1 {
   flex: 1 1 auto; margin: 0;
@@ -137,9 +165,11 @@
 /* Deliberately specific enough to beat a screen's own accidental sizing and */
 /* deliberately overridable by one that sets min-height on purpose.          */
 /* ------------------------------------------------------------------------ */
-/* Inline SVG glyphs from shell.js icon(). Sits on the text baseline like the
-   emoji it replaced, so no screen has to adjust its layout for the swap. */
-.shell .md-ico {
+/* Inline SVG glyphs from shell.js icon() and icons.js ic(). Sits on the text
+   baseline like the emoji it replaced, so no screen has to adjust its layout
+   for the swap. NOT scoped to .shell: the end-of-match results card lives
+   outside the shell and prints the same coin. */
+.md-ico {
   display: inline-block;
   vertical-align: -0.14em;
   flex: 0 0 auto;
@@ -180,8 +210,11 @@
   padding: 0.9em;
   border: 1px solid var(--stroke);
   border-radius: var(--r-md);
+  /* `--ccm` lets a tile whose accent is warm (the sun yellow) push its mix up:
+     at a flat 34 % over this plate #ffc93c composites to a dull olive, the one
+     tile of six that did not read as a saturated colour. */
   background:
-    linear-gradient(150deg, color-mix(in srgb, var(--cc, var(--aqua)) 34%, transparent) 0%,
+    linear-gradient(150deg, color-mix(in srgb, var(--cc, var(--aqua)) var(--ccm, 34%), transparent) 0%,
                             rgba(10, 17, 31, 0.90) 62%),
     var(--glass);
   box-shadow: var(--lift-1), inset 0 1px 0 rgba(255, 255, 255, 0.10);
@@ -195,13 +228,20 @@
   content: '';
   position: absolute; inset: 0;
   background: radial-gradient(90% 70% at 100% 0%,
-              color-mix(in srgb, var(--cc, var(--aqua)) 40%, transparent) 0%, transparent 62%);
-  opacity: 0.5; pointer-events: none;
+              color-mix(in srgb, var(--cc, var(--aqua)) 52%, transparent) 0%, transparent 62%);
+  opacity: 0.55; pointer-events: none;
 }
 .tile:active { transform: scale(0.975); filter: brightness(1.12); }
-.tile .tile-ico { font-size: 1.7em; line-height: 1; margin-bottom: auto; }
+.tile .tile-ico {
+  position: relative;
+  width: 1.9em; height: 1.9em;
+  margin-bottom: auto;
+  color: var(--cc, var(--aqua));
+  line-height: 1;
+}
+.tile .tile-ico svg { display: block; width: 100%; height: 100%; }
 .tile .tile-name { font-size: 1.05em; font-weight: 800; position: relative; }
-.tile .tile-sub { font-size: 0.76em; color: var(--dim); position: relative; }
+.tile .tile-sub { font-size: max(0.76em, 11px); color: var(--dim); position: relative; }
 .tile.tall { min-height: 8.5em; }
 
 /* ======================================================================== */
@@ -228,10 +268,22 @@
   transform: translateY(0.22em);
   box-shadow: 0 0.06em 0 color-mix(in srgb, var(--hot-deep) 70%, #000);
 }
+/* Disabled is DRAWN, not filtered. `grayscale(0.7) brightness(0.72)` over the
+   aqua CTA composited to a sage-green sludge and over the pink one to a dusty
+   maroon — two colours that exist nowhere in this palette, on the two most
+   important buttons in the meta layer ("Join Lobby" and the store's Buy). Both
+   read as a rendering fault rather than as an unavailable action. A flat sunken
+   fill reads as an empty slot, which is what it is. */
 .btn:disabled, .btn[aria-disabled='true'] {
-  filter: grayscale(0.7) brightness(0.72); cursor: not-allowed;
-  box-shadow: none; transform: none;
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  color: var(--dim);
+  filter: none;
+  cursor: not-allowed;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+  transform: none;
 }
+.btn:disabled .md-ico, .btn[aria-disabled='true'] .md-ico { opacity: 0.55; }
 .btn-lg { font-size: 1.2em; padding: 0.8em 1.8em; }
 .btn-block { display: flex; width: 100%; }
 
@@ -259,6 +311,16 @@
   transition: transform 0.12s var(--ease), background 0.12s var(--ease);
 }
 .icon-btn:active { transform: scale(0.9); background: rgba(255, 255, 255, 0.14); }
+
+/* On-brand keyboard focus. Chromium's default is a bright blue double ring; on
+   the store's detail sheet it became the loudest thing on the panel and pointed
+   the eye at "close" instead of at the product. :focus-visible only, so a thumb
+   tap never paints it. */
+.shell :focus-visible {
+  outline: 2px solid var(--aqua);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
 
 /* ======================================================================== */
 /* CHIPS, BADGES, TABS                                                      */
@@ -324,21 +386,37 @@
 /* PROGRESS                                                                 */
 /* ======================================================================== */
 
+/* An empty track carries a faint accent wash so a bar at 0 % reads as an
+   unfilled METER with a destination, not as a hairline rule or a stalled
+   loader — which is exactly what every bar on a fresh profile was. */
 .bar {
   position: relative;
   height: 0.6em; border-radius: var(--r-pill);
-  background: var(--sunk);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--aqua) 16%, transparent), transparent 78%),
+    var(--sunk);
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
+/* min-width keeps a visible nub at 0 %: progress you cannot see is progress the
+   player does not believe exists. */
 .bar > i {
   display: block; height: 100%;
-  width: 0%;
+  width: 0%; min-width: 0.6em;
   border-radius: var(--r-pill);
   background: linear-gradient(90deg, var(--aqua), var(--lime));
+  box-shadow: 0 0 0.5em color-mix(in srgb, var(--aqua) 45%, transparent);
   transition: width 0.5s var(--ease);
 }
-.bar.xp > i { background: linear-gradient(90deg, var(--sun), var(--hot)); }
+.bar.xp {
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--sun) 16%, transparent), transparent 78%),
+    var(--sunk);
+}
+.bar.xp > i {
+  background: linear-gradient(90deg, var(--sun), var(--hot));
+  box-shadow: 0 0 0.5em color-mix(in srgb, var(--sun) 45%, transparent);
+}
 
 /* ======================================================================== */
 /* LISTS — leaderboards, rosters, challenges                                */
@@ -367,27 +445,50 @@
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rows .sc { flex: 0 0 auto; font-weight: 800; font-variant-numeric: tabular-nums; }
 
-/* Player avatar. Procedural — no image assets anywhere in this project. */
+/* Player avatar. Procedural — no image assets anywhere in this project.
+ *
+ * It used to be `radial-gradient(#0a0f1a 34%, var(--ac) 36%, #0a0f1a)`, which
+ * gave every player a numbered-billiard-ball look — seven of them down a
+ * leaderboard in seven colours with the same initial — and turned an unnamed
+ * player's fallback glyph into a dark blob on a dark ring, indistinguishable
+ * from a broken image. Now: a solid accent disc with dark ink, or the player's
+ * own equipped profile-icon SVG dropped straight in. */
 .avatar {
+  position: relative;
   flex: 0 0 auto;
   width: 2.1em; height: 2.1em;
   border-radius: 50%;
   border: 0.14em solid var(--rc, var(--stroke-hi));
-  background: radial-gradient(circle at 50% 42%, #0a0f1a 34%, var(--ac, var(--aqua)) 36%, #0a0f1a 100%);
+  background:
+    linear-gradient(168deg,
+      color-mix(in srgb, var(--ac, var(--aqua)) 82%, #ffffff) 0%,
+      color-mix(in srgb, var(--ac, var(--aqua)) 62%, #071120) 100%);
+  color: #06101d;
   display: grid; place-items: center;
-  font-size: 0.9em; line-height: 1;
-  box-shadow: var(--lift-1);
+  overflow: hidden;
+  font-size: 0.9em; font-weight: 900; line-height: 1;
+  text-shadow: 0 0.05em 0 rgba(255, 255, 255, 0.35);
+  box-shadow: var(--lift-1), inset 0 0.08em 0 rgba(255, 255, 255, 0.4);
 }
+/* An equipped profile icon fills the disc edge to edge. */
+.avatar > svg { display: block; width: 100%; height: 100%; }
+.avatar.art { background: #0a1120; }
 
 /* ======================================================================== */
 /* STAT TILES                                                               */
 /* ======================================================================== */
 
+/* A FIXED column count per breakpoint, not auto-fit. `auto-fit minmax(7em,1fr)`
+   packed ten lifetime tiles as 6+4 on a desktop and 3+3+3+1 on a phone, so the
+   last row was a lone tile with two thirds of the row empty. Counts here are
+   chosen to divide the stat sets that use them. */
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7em, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55em;
 }
+@media (min-width: 560px) { .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .stat-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .stat-tile {
   display: flex; flex-direction: column; gap: 0.1em;
   padding: 0.7em;
@@ -396,7 +497,7 @@
   border: 1px solid var(--stroke);
 }
 .stat-tile .sv { font-size: 1.35em; font-weight: 800; font-variant-numeric: tabular-nums; }
-.stat-tile .sl { font-size: 0.7em; letter-spacing: 0.07em; text-transform: uppercase; color: var(--dim); }
+.stat-tile .sl { font-size: var(--fs-micro); letter-spacing: 0.07em; text-transform: uppercase; color: var(--dim); }
 
 /* ======================================================================== */
 /* TOASTS & MODALS                                                          */
@@ -456,14 +557,92 @@
   padding: 2.4em 1em; text-align: center; color: var(--dim); font-size: 0.9em;
 }
 
-/* Anything a screen wants pinned above the thumb. */
-.sticky-actions {
-  position: sticky; bottom: 0;
-  margin: var(--gap) -1em calc(-1.6em - var(--safe-b));
-  padding: 0.8em 1em calc(0.8em + var(--safe-b));
-  background: linear-gradient(180deg, transparent, rgba(6, 11, 21, 0.92) 34%);
-  display: flex; gap: 0.6em;
+/* ======================================================================== */
+/* EMPTY STATES — one component, eight screens                              */
+/*                                                                          */
+/* Every "nothing here yet" in the app used to be a bare sentence in a flat  */
+/* dark box, and on a phone those were routinely the LARGEST element on      */
+/* their screen. A drawn mark, one line of copy and a real button, built by  */
+/* emptyState() in shell.js so they cannot drift apart again.                */
+/* ======================================================================== */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0.5em;
+  padding: 1.8em 1.2em;
+  text-align: center;
+  border-radius: var(--r-md);
+  border: 1px solid var(--stroke);
+  background:
+    radial-gradient(90% 80% at 50% 0%, color-mix(in srgb, var(--ec, var(--aqua)) 14%, transparent) 0%, transparent 68%),
+    var(--sunk);
 }
+.empty-state .es-art {
+  width: 5.4em; height: 5.4em;
+  color: var(--ec, var(--aqua));
+  filter: drop-shadow(0 0.25em 0.6em rgba(0, 0, 0, 0.5));
+}
+.empty-state .es-art svg { display: block; width: 100%; height: 100%; }
+.empty-state .es-h { font-size: 1.05em; font-weight: 900; }
+.empty-state .es-s {
+  max-width: 22em;
+  font-size: 0.85em; line-height: 1.45; color: var(--dim);
+}
+.empty-state .btn { margin-top: 0.5em; min-width: 12em; }
+
+/* ======================================================================== */
+/* THE LOCKED STATE                                                         */
+/*                                                                          */
+/* NOT grayscale(). The design system used desaturation as its universal     */
+/* "not yet" and a brand-new player therefore opened a game whose art        */
+/* direction is "sunlit, saturated, zero grimness" and found thirty grey     */
+/* achievements, grey season tiers, grey collection thumbnails and grey mode */
+/* rows all at once. Locked has to read as ASPIRATIONAL, which means it stays */
+/* coloured and legible and simply sits behind a scrim.                      */
+/* ======================================================================== */
+.locked-art {
+  position: relative;
+  filter: brightness(0.62) saturate(0.92);
+  transition: filter 0.2s var(--ease);
+}
+.locked-art::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(6, 11, 21, 0.10), rgba(6, 11, 21, 0.46));
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------------ */
+/* THE BOTTOM ACTION BAR                                                     */
+/*                                                                           */
+/* It was `position: sticky` INSIDE .page-body, which was wrong twice.        */
+/* Chrome resolves a sticky offset against the scroll container's CONTENT     */
+/* box, so `bottom: 0` plus a negative margin never reached the bottom of the */
+/* viewport — measured at 104 px short on a 390x844 phone — while the bar's   */
+/* own transparent bottom padding kept floating over the list as an invisible */
+/* full-width strip that ate taps on the cards beneath it.                    */
+/*                                                                           */
+/* Absolute against .screen-page instead: .page-body and .wrap are both       */
+/* unpositioned, so this resolves to the page element and genuinely sits on   */
+/* the bottom edge. `pointer-events: none` on the plate with `auto` on its    */
+/* children means the gradient can never swallow a tap meant for content, and */
+/* a screen that uses this MUST reserve its height in .page-body's            */
+/* padding-bottom (see modes.css / play.css).                                 */
+/* ------------------------------------------------------------------------ */
+.sticky-actions {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  z-index: 6;
+  margin: 0;
+  padding-top: 1.4em;
+  padding-bottom: calc(0.85em + var(--safe-b));
+  padding-left: max(calc(1em + var(--safe-l)), calc((100% - var(--col)) / 2));
+  padding-right: max(calc(1em + var(--safe-r)), calc((100% - var(--col)) / 2));
+  background: linear-gradient(180deg, transparent, rgba(6, 11, 21, 0.90) 42%, rgba(6, 11, 21, 0.97) 100%);
+  display: flex; gap: 0.6em;
+  pointer-events: none;
+}
+.sticky-actions > * { pointer-events: auto; }
 .sticky-actions .btn { flex: 1 1 0; }
 
 /* ======================================================================== */
