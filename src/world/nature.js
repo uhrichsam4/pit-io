@@ -3991,10 +3991,22 @@ function court(B, x, z, w, d, y, kind, rot) {
  */
 function parkBlock(ctx, B, b, rng) {
   const y = ctx.Y_WALK + 0.015;
-  // Leave the sidewalk band that streets.js already paved showing all the way
-  // round: a lawn that runs to the kerb reads as a green rectangle dropped on
-  // the map rather than as a park with a footpath around it.
-  const edge = Math.min(3.0, Math.max(1.2, b.sidewalk * 0.55));
+  /* Leave the sidewalk band that streets.js already paved showing all the way
+     round: a lawn that runs to the kerb reads as a green rectangle dropped on
+     the map rather than as a park with a footpath around it.
+
+     IT HAS TO BE THE BAND STREETS.JS ACTUALLY PAVED, not a fraction of the
+     block's nominal sidewalk width. `b.sidewalk * 0.55` capped at 3 m, and on a
+     block with a 6 m frontage footway that left the turf lying three metres
+     out over the paving with no kerb under it — measured on the `crowd`
+     preset, a lawn quad at y=0.17 sitting 1 cm above the sidewalk mesh at
+     y=0.16, which is both a misplaced object and a coplanar pair waiting to
+     z-fight. streets.js publishes the width it used as `_swInset`; use it. */
+  const paved = b._swInset ?? b.sidewalk;
+  // Guarded: a small parcel with a wide footway would otherwise inset itself
+  // out of existence and hand `lawn()` an inverted rectangle.
+  const edge = Math.min(Math.max(1.2, paved + 0.25),
+    Math.max(1.2, Math.min(b.w, b.d) / 2 - 3.5));
   const hw = b.w / 2 - edge, hd = b.d / 2 - edge;
   const x0 = b.x - hw, x1 = b.x + hw, z0 = b.z - hd, z1 = b.z + hd;
 

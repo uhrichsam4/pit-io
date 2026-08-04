@@ -126,8 +126,16 @@ export const GradeShader = {
       hdr *= vec3(1.0 + uTemperature, 1.0 + uTemperature * 0.18, 1.0 - uTemperature * 0.90);
 
       // Split tone, weighted by scene luminance while still in linear.
+      //
+      // The low knee is NOT cosmetic. The shadow tint is ADDITIVE and at night
+      // it carries +0.042 of blue; the hole's throat renders around 0.015
+      // linear, so the tint was tripling its blue channel and the one object in
+      // the game that has to be a neutral near-black came back violet
+      // (measured r:b 0.81 on the 30 m hole). Rolling the tint off below ~0.035
+      // leaves every real shadow — asphalt in shade sits at 0.03-0.08 — exactly
+      // where it was, and lets a true black stay black.
       float lin = luma(hdr);
-      float sw = 1.0 - smoothstep(0.0, 0.20, lin);
+      float sw = (1.0 - smoothstep(0.0, 0.20, lin)) * smoothstep(0.0, 0.035, lin);
       float hw = smoothstep(0.40, 1.60, lin);
       hdr += uShadowTint * sw;
       hdr *= (1.0 + uHighlightTint * hw);

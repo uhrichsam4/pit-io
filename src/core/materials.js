@@ -825,9 +825,20 @@ const MACRO = {
    * moved into `mid` (structured, and at the scale you can see) and into
    * roughness (which reads as the sun catching a rough surface, not as dirt).
    */
+  /*
+   * SECOND PASS, and the numbers came off a 1:1 crop rather than off a swatch.
+   * On the hole-small preset a clean patch of carriageway with no paint in it
+   * measured 0.23 to 0.70 display luminance — a factor of three inside two
+   * metres — and at that spread the road reads as grey-green camouflage, not
+   * as a wearing course. Four bands were stacking on one surface: the map's own
+   * two coarse octaves, `far`, `mid` and a 0.80-weight second read of the map.
+   * Albedo energy is roughly halved across all of them and moved into
+   * roughness, which is where "this stone is rough and that patch is polished"
+   * belongs and which cannot turn into blotches whatever the sun does.
+   */
   asphalt: {
-    m: 88, a: 0.25, r: 0.44, h: 0.036,
-    far: [3.10, 0.42], mid: [0.380, 0.44], detail: [0.3413, 0.80],
+    m: 88, a: 0.13, r: 0.54, h: 0.024,
+    far: [3.10, 0.34], mid: [0.380, 0.30], detail: [0.3413, 0.42],
   },
   paving: {
     m: 71, a: 0.22, r: 0.38, h: 0.034,
@@ -1591,8 +1602,11 @@ export const Textures = {
         // BONE SIDEWALK beside it, which is how a road ends up reading as dried
         // mud. The macro hue drift in worldDetail is stacked on top of this, so
         // the two have to be budgeted together, not tuned separately.
-        { f: macro, amp: 0.120, tint: [1.05, 1.0, 0.92] },
-        { f: band, amp: 0.112, tint: [1.02, 1.0, 0.96] },
+        // Amplitudes cut with the MACRO.asphalt row for the same measured
+        // reason: the two sets stack on one pixel, so budgeting either alone
+        // just moves the blotches between them.
+        { f: macro, amp: 0.078, tint: [1.04, 1.0, 0.94] },
+        { f: band, amp: 0.072, tint: [1.02, 1.0, 0.97] },
         // Everything under half a metre is HALVED from what it was. At 40 m the
         // old settings rendered as an even sandpaper hiss over the whole
         // carriageway — technically aggregate, visually video noise, and the

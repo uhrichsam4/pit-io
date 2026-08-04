@@ -873,9 +873,35 @@ export function buildStreets(ctx) {
     );
 
     const STEP = 3.2, TRANSIT = 3.4, CYCLE = 1.5;
-    for (let t = 0; t + STEP < d.len; t += STEP) {
+    /*
+     * Which 3.2 m steps are clear, resolved BEFORE any paint is laid.
+     *
+     * Emitting per step and skipping the blocked ones leaves orphans: where a
+     * single step falls in the gap between two crossing zones, the whole
+     * programme — bus bed, edge line, green cycle surface — is laid for 3.2 m
+     * and nothing either side of it. On the street-level preset that came out
+     * as an isolated 3.2 x 1.5 m green rectangle lying in the middle of the
+     * carriageway with no lane attached to it, which reads as a dropped decal,
+     * not as a cycle track. A lane has to be long enough to be a lane, so a run
+     * shorter than MIN_RUN steps is dropped entirely.
+     */
+    const MIN_RUN = 4;
+    const steps = Math.max(0, Math.floor((d.len - STEP) / STEP));
+    const clear = new Array(steps);
+    for (let i = 0; i < steps; i++) {
+      const t = i * STEP;
       const mx = d.ax + d.ux * (t + STEP / 2), mz = d.az + d.uz * (t + STEP / 2);
-      if (onCrossRoad(mx, mz) || layout.isWater(mx, mz)) continue;
+      clear[i] = !onCrossRoad(mx, mz) && !layout.isWater(mx, mz);
+    }
+    for (let i = 0; i < steps; i++) {
+      if (!clear[i]) continue;
+      let j = i; while (j < steps && clear[j]) j++;
+      if (j - i < MIN_RUN) { for (let k = i; k < j; k++) clear[k] = false; }
+      i = j;
+    }
+    for (let i = 0; i < steps; i++) {
+      if (!clear[i]) continue;
+      const t = i * STEP;
       for (const s of [-1, 1]) {
         strip(t, t + STEP, s * 0.35, s * (0.35 + TRANSIT), Y_TINT, busl, 1.0);
         strip(t, t + STEP, s * (0.35 + TRANSIT), s * (0.55 + TRANSIT), Y_MARK, white, 0.96);

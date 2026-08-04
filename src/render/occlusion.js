@@ -100,9 +100,16 @@ const FRAG_BODY = /* glsl */ `
     float d = distance(gl_FragCoord.xy, uOccCenter);
     // Floors keep a small hole from opening a porthole too tight to see
     // through; the ceiling stops a late-game hole from opening the whole frame.
-    float rPx = clamp(uOccRadius, 26.0, 160.0);
-    float inner = max(rPx * 1.7, 64.0);   // fully x-rayed
-    float outer = max(rPx * 3.6, 168.0);  // fully solid again
+    //
+    // MEASURED, and much tighter than the first version. At r=30 on the
+    // hole-big preset uOccRadius is 103 px, so an outer of rPx * 3.6 opened a
+    // 372 px disc — a fifth of the frame — and 90% stochastic discard across
+    // that much screen is exactly the television static this porthole exists to
+    // avoid. The player only has to see the OPENING plus enough margin to read
+    // where its lip is; anything past ~2x the hole radius is noise for nothing.
+    float rPx = clamp(uOccRadius, 26.0, 150.0);
+    float inner = max(rPx * 1.15, 42.0);  // fully x-rayed
+    float outer = max(rPx * 2.10, 112.0); // fully solid again
     float window = 1.0 - smoothstep(inner, outer, d);
 
     // Guarded rather than early-returned: this block is spliced into the middle
@@ -126,10 +133,15 @@ const FRAG_BODY = /* glsl */ `
       // Cool the surviving fragments and lift the rim so the opening reads as a
       // deliberate x-ray. Gated by the window for the same reason as the discard:
       // tinting the solid part of the tower blue announced the bug from 400 m.
+      // Pushed harder than the first version. The surviving fragments ARE the
+      // artefact — there is no way to make 10% of a facade's pixels read as
+      // anything but noise while they still look like facade. Turned into a
+      // single flat cyan they stop reading as a broken material and start
+      // reading as the same holographic sheet the rim is drawn on.
       float ghost = (1.0 - uOccFade) * window;
       diffuseColor.rgb = mix(diffuseColor.rgb,
-                             diffuseColor.rgb * 1.30 + vec3(0.08, 0.14, 0.20),
-                             ghost * 0.5);
+                             diffuseColor.rgb * 0.45 + vec3(0.16, 0.30, 0.42),
+                             ghost * 0.85);
       diffuseColor.rgb += vec3(0.30, 0.55, 0.85) * rim * ghost * 0.55;
     }
   }
@@ -248,8 +260,21 @@ export class OcclusionSystem {
 
     /** @type {THREE.Object3D[]} roots that may be faded */
     this.candidates = [];
-    /** @type {Set<THREE.Object3D>} */
-    this._hitThisFrame = new Set();
+    /**
+     * root -> how many of this frame's samples it blocked.
+     *
+     * A COUNT, not a flag. One ray clipping the edge of a 30 m hole used to
+     * dissolve a whole tower, and at that size the hole was plainly visible
+     * round it — so the frame paid a fifth of its pixels in stochastic discard
+     * to reveal something already on screen. Fading in proportion to how much
+     * of the opening is actually hidden is what keeps the x-ray for the case it
+     * was built for (a small hole disappearing under a podium) and off
+     * everywhere else.
+     * @type {Map<THREE.Object3D, number>}
+     */
+    this._hitThisFrame = new Map();
+    /** Fraction of the hole that must be hidden before anything starts to go. */
+    this.blockedFloor = opts.blockedFloor ?? 0.34;
     /** @type {Map<THREE.Object3D, number>} root -> current fade */
     this.fades = new Map();
     this._enabled = true;
@@ -422,6 +447,8 @@ export class OcclusionSystem {
     _right.crossVectors(_dir, _worldUp).normalize();
     _up.crossVectors(_right, _dir).normalize();
 
+    const samples = ring + 1;
+    const seen = new Set();
     for (let i = -1; i < ring; i++) {
       if (i < 0) {
         _target.copy(holePos);
@@ -442,9 +469,15 @@ export class OcclusionSystem {
       this.raycaster.far = len - 0.5;
 
       const hits = this.raycaster.intersectObjects(this.candidates, true);
+      // One sample counts ONCE per root however many of its faces it passes
+      // through, or a building with a podium, a shaft and a canopy on the same
+      // ray reports three quarters of the hole hidden from a single ray.
+      seen.clear();
       for (const h of hits) {
         const root = this._rootOf(h.object);
-        if (root) this._hitThisFrame.add(root);
+        if (!root || seen.has(root)) continue;
+        seen.add(root);
+        this._hitThisFrame.set(root, (this._hitThisFrame.get(root) || 0) + 1);
       }
     }
 
@@ -452,10 +485,15 @@ export class OcclusionSystem {
     // mid-fade cost anything, so this stays cheap with hundreds of buildings.
     const outK = 1 - Math.exp(-this.fadeOutRate * dt);
     const inK = 1 - Math.exp(-this.fadeInRate * dt);
+    const floor = this.blockedFloor;
 
     for (const root of this.candidates) {
-      const occluding = this._hitThisFrame.has(root);
-      const target = occluding ? this.minFade : 1;
+      const blocked = (this._hitThisFrame.get(root) || 0) / samples;
+      // Proportional, with a dead band: clipping one edge of a wide hole is not
+      // an occlusion, it is a hole with a building next to it.
+      const k = blocked <= floor ? 0
+        : Math.min(1, (blocked - floor) / (1 - floor));
+      const target = 1 - (1 - this.minFade) * (k * k * (3 - 2 * k));
       const cur = root.userData.occFade ?? 1;
 
       if (Math.abs(cur - target) < 0.002) {
@@ -466,8 +504,8 @@ export class OcclusionSystem {
         }
         continue;
       }
-      const k = target < cur ? outK : inK;
-      const next = cur + (target - cur) * k;
+      const ease = target < cur ? outK : inK;
+      const next = cur + (target - cur) * ease;
       root.userData.occFade = next;
       // Anything not fully solid renders through its private clone.
       this._setFadeMaterials(root, true);

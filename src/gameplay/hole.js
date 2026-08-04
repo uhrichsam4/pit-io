@@ -75,6 +75,7 @@ const PIT_FRAG = /* glsl */ `
   uniform float uPulse;     // swallow ring, -1..1
   uniform float uFlash;     // tier-up celebration, 0..1
   uniform vec2  uSunXZ;     // horizontal sun direction, for a faint wall catch
+  uniform float uNight;     // scene.userData.nightFactor, 0 day .. 1 night
   uniform float uSeed;      // must match the ground cut's torn edge
   varying vec2  vUv;
   varying vec2  vDirH;
@@ -114,17 +115,28 @@ const PIT_FRAG = /* glsl */ `
     // in 'a' and there is no seam where uv wraps.
     striae *= 0.30 + 0.70 * hcNoise(vDirH * 7.0 + vec2(dv * 9.0 - uTime * 0.75, 0.0));
 
-    /* ---- the void -------------------------------------------------------- */
-    vec3 col = mix(uWall, uVoid, smoothstep(0.0, 0.34, d));
+    /* ---- the void --------------------------------------------------------
+       DIMMED AFTER DARK, and this shader is the only thing in the game that
+       has to do it by hand: every other surface is lit by the rig, so when the
+       sun goes the whole city drops with it — while an unlit pit painted from
+       constant uniforms does not. Measured on the hole-mid preset at
+       timeOfDay 0.87, the throat sat at 0.30 display luminance against a
+       0.21 road: the hole had stopped being the darkest thing on screen, which
+       is the one property the art bible says it must never lose. Held at a
+       quarter after dark it lands at ~0.08 against the same road. */
+    float lit = 1.0 - 0.76 * uNight;
+    vec3 wall = uWall * lit;
+    vec3 voidc = uVoid * lit;
+    vec3 col = mix(wall, voidc, smoothstep(0.0, 0.34, d));
     col *= exp(-d * 4.6);                // hard ambient falloff down the throat
-    col += uWall * striae * 2.1 * (1.0 - smoothstep(0.05, 0.55, d));
+    col += wall * striae * 2.1 * (1.0 - smoothstep(0.05, 0.55, d));
 
     // Sun catch on the up-sun side of the throat. This is the term that gives
     // the pit a direction; without it a big hole collapses into a flat disc,
     // which is the specific failure the brief calls out. The wall's INWARD
     // normal is -vDirH, hence the negation.
     float sun = max(0.0, dot(-vDirH, uSunXZ));
-    col += uWall * pow(sun, 2.0) * 2.6 * (1.0 - smoothstep(0.0, 0.62, d));
+    col += wall * pow(sun, 2.0) * 2.6 * (1.0 - smoothstep(0.0, 0.62, d));
 
     /* ---- inner glow ------------------------------------------------------
        Something is burning down there. Deliberately starved: the owner tint is
@@ -150,7 +162,7 @@ const PIT_FRAG = /* glsl */ `
     // Never let the very bottom pick up anything at all.
     col *= smoothstep(-0.02, 0.22, 1.0 - dv);
     // Overhang to pure void, so the seal reads as an undercut shadow.
-    col = mix(col, uVoid * 0.4, outside);
+    col = mix(col, voidc * 0.4, outside);
 
     gl_FragColor = vec4(max(col, 0.0), 1.0);
     #include <colorspace_fragment>
@@ -516,14 +528,22 @@ export class Hole {
       uniforms: {
         // PALETTE.HOLE_RIM is a violet near-black. Straight, it makes the whole
         // throat read as a bruise once the striations multiply it up, so it is
-        // pulled a tenth of the way toward mulch: still near-black, but warm
-        // enough to read as earth rather than as a UI colour.
+        // pulled toward mulch: still near-black, but warm enough to read as
+        // earth rather than as a UI colour.
+        //
+        // 0.34, not 0.10. At a tenth the mix is still blue-dominant (30,25,36),
+        // and the grade's shadow tint then adds another 0.02 of linear blue on
+        // top of a wall whose own linear value is around 0.015 — so it more
+        // than doubles the blue channel and the 30 m pit measured out violet at
+        // r:b 0.81. A third of the way over lands warm-neutral (52,41,44) and
+        // survives that addition as dark earth.
         uWall: { value: new THREE.Color(PALETTE.HOLE_RIM)
-          .lerp(new THREE.Color(PALETTE.MULCH), 0.10) },
+          .lerp(new THREE.Color(PALETTE.MULCH), 0.34) },
         uVoid: { value: new THREE.Color(PALETTE.HOLE_VOID) },
         uTint: { value: this.color.clone() },
         uLipHot: { value: new THREE.Color(PALETTE.HOLE_GLOW) },
         uSunXZ: { value: SUN_XZ.clone() },
+        uNight: { value: 0 },
         uSeed: { value: this.edgeSeed },
         uTime: { value: 0 },
         uPulse: { value: 0 },
@@ -753,6 +773,19 @@ export class Hole {
     this._spillGrit(dt);
 
     this.pitMaterial.uniforms.uTime.value = t;
+    // The day/night contract: engine.js republishes these every frame and the
+    // pit is unlit, so this is the only way the throat knows the sun has gone.
+    // Read off the parent rather than held as a reference — a hole is created
+    // and disposed several times a match and must never pin a stale scene.
+    const sd = this.group.parent && this.group.parent.userData;
+    if (sd) {
+      this.pitMaterial.uniforms.uNight.value = sd.nightFactor || 0;
+      if (sd.sunDir) {
+        const sx = sd.sunDir.x, sz = sd.sunDir.z;
+        const m = Math.hypot(sx, sz);
+        if (m > 1e-4) this.pitMaterial.uniforms.uSunXZ.value.set(sx / m, sz / m);
+      }
+    }
     this.syncVisual(t);
   }
 

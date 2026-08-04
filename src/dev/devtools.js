@@ -47,7 +47,14 @@ export const PRESETS = {
     note: 'Late game: the hole is eating whole city blocks.' },
   'waterfront': { x: 300, z: -240, dist: 250, pitch: 24, yaw: 75, holeR: 6,
     note: 'Bayfront: seawall, promenade, marina, boats, Bayfront Amphitheatre.' },
-  'river': { x: 140, z: 0, dist: 235, pitch: 20, yaw: 60, holeR: 6,
+  // Stood ON the channel and looking along it. The old spot (x140 z0, yaw 60)
+  // put the camera at (331, 80, 110) — on the bayfront, not over the water —
+  // and 5 of 15 rays from there to the look-at box hit a building 160 m out,
+  // so a third of the frame was the near face of a tower with its balconies
+  // two metres off the lens and the river squeezed into the far right. Swung
+  // round to look up the cut from the bay: camera lands at (290, 110, 11),
+  // which is open water, and 0 of 15 rays are blocked.
+  'river': { x: 100, z: 4, dist: 220, pitch: 30, yaw: 88, holeR: 6,
     note: 'Miami River: bends, bridges, riverwalk, bulkheads.' },
   'park': { x: 290, z: -200, dist: 155, pitch: 34, yaw: 55, holeR: 4,
     note: 'Bayfront park + plaza: lawn, palms, paths, fountains.' },

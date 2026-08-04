@@ -152,8 +152,26 @@ const SKY_FRAG = /* glsl */ `
            * pow(max(azimuthal, 0.0), 3.5) * exp(-max(up, 0.0) * 4.5);
     }
 
-    // Below the horizon line the dome becomes distant sea haze.
-    col = mix(col, uFloor, smoothstep(0.0, -0.055, d.y));
+    /* ---- below the horizon ----------------------------------------------
+       This band matters far more than its share of the dome suggests. The
+       gameplay camera pitches 50-58 degrees DOWN and the widest review presets
+       sit at 20-30, so at a 42 degree FOV the top of a hero frame is around the
+       horizon line and every sky pixel in it comes from here — measured on
+       menu-hero, the entire visible sky was one flat #b3c0b9, a grey card, and
+       "never grey" is the first line of the art bible's sky rule.
+
+       So it is a gradient rather than a fill: the haze colour still sitting on
+       the horizon line, cooling and deepening into distant open water below it,
+       with the sun's bearing warming the side of the bay it is actually over.
+       Costs two mixes and turns the dead band into depth. */
+    float dn = smoothstep(0.0, -0.055, d.y);
+    if (dn > 0.001) {
+      float deep = smoothstep(0.0, -0.30, d.y);
+      vec3 sea = mix(mix(uHaze, uFloor, 0.55), uFloor * 0.80, deep);
+      sea += uSunColor * (0.045 + 0.055 * uSunGlow)
+           * pow(max(azimuthal, 0.0), 2.0) * (1.0 - deep * 0.7);
+      col = mix(col, sea, dn);
+    }
 
     /* ---- stars ---------------------------------------------------------- */
     #if STARS
