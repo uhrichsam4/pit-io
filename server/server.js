@@ -58,6 +58,11 @@ class Room {
       color: PLAYER_COLORS[this.colorCursor++ % PLAYER_COLORS.length],
       x: 0, z: 0, r: 1.15, score: 0, alive: true,
       lastSeen: Date.now(),
+      // Set by the first STATE. A client is connected long before it can play:
+      // it opens the socket, then builds the whole city synchronously, which
+      // takes tens of seconds on a phone and minutes on a loaded machine. See
+      // tick() — the match clock does not run until somebody is actually in it.
+      ready: false,
       // Cheap sanity envelope: a hole cannot outrun this, so a client that
       // teleports gets snapped back rather than trusted.
       maxSpeed: 60,
@@ -97,6 +102,7 @@ class Room {
     switch (msg.t) {
       case C2S.STATE: {
         const d = msg.d || {};
+        client.ready = true;
         if (typeof d.x === 'number' && typeof d.z === 'number') {
           client.x = d.x; client.z = d.z;
         }
@@ -150,11 +156,16 @@ class Room {
     const dt = (now - this.lastTick) / 1000;
     this.lastTick = now;
 
-    // Drop clients that have gone quiet. This is only a backstop: liveness is
-    // really tracked by protocol-level ping/pong below, because a client
-    // spends up to a minute inside a synchronous world build during which it
-    // cannot send anything, and a short message-based timeout would evict it
-    // mid-load — taking the room (and therefore the shared seed) with it.
+    // Drop clients whose socket has gone. `lastSeen` is refreshed by the
+    // WebSocket-level pong as well as by application messages, which is the
+    // whole point: a client spends its entire load inside a synchronous world
+    // build during which it cannot send a single game message, and on a busy
+    // machine that build runs for minutes. Keyed on application messages alone
+    // this backstop evicted joining clients mid-load — the loader finished, the
+    // player was already gone from the room, and multiplayer silently degraded
+    // to a solo city with a dead socket. The browser's network stack answers
+    // pings while the renderer is blocked, so pong is the honest liveness
+    // signal and this timeout only ever catches a socket that is really dead.
     for (const c of [...this.clients.values()]) {
       if (now - c.lastSeen > 180000) {
         try { c.ws.close(); } catch { /* already gone */ }
@@ -163,7 +174,18 @@ class Room {
     }
     if (this.clients.size === 0) return;
 
-    if (this.phase === 'playing') {
+    // Hold the clock until at least one client has finished loading and started
+    // sending state. The room was created by the first HELLO, so without this
+    // the 150 s round is already ticking while everybody is still building the
+    // city — join a fresh room on a slow machine and you arrive at the results
+    // screen, or, worse, several rounds later. Snapshots still go out below so
+    // the roster and the lobby are live while people load.
+    let anyReady = false;
+    for (const c of this.clients.values()) if (c.ready) { anyReady = true; break; }
+
+    if (!anyReady) {
+      // nothing to time yet
+    } else if (this.phase === 'playing') {
       this.timeLeft -= dt;
       if (this.timeLeft <= 0) {
         this.timeLeft = INTERMISSION;
@@ -229,9 +251,13 @@ wss.on('connection', (ws, req) => {
   let client = null;
 
   // Browsers answer WebSocket pings in the network stack, not in JS, so this
-  // keeps working while the page is blocked building the city.
+  // keeps working while the page is blocked building the city — which is
+  // precisely when the room must not evict it.
   ws.isAlive = true;
-  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('pong', () => {
+    ws.isAlive = true;
+    if (client) client.lastSeen = Date.now();
+  });
 
   ws.on('message', (raw) => {
     const msg = decode(raw.toString());

@@ -305,6 +305,19 @@ export class Game {
 
     net.onRoster = () => this._syncPeerHoles();
 
+    // A dropped socket used to be invisible: the rivals stopped moving, nothing
+    // else was ever eaten, and the round played out in an empty city with no
+    // hint that the room had gone.
+    net.onDisconnect = () => {
+      console.warn('[net] connection lost — finishing this round offline');
+      for (const p of net.peers.values()) {
+        if (p.hole) p.hole.alive = false;
+      }
+      net.peers.clear();
+      this._syncPeerHoles();
+      if (this.hud) this.hud.pushFeed('<b>Disconnected</b> from the room', '#ff9f43');
+    };
+
     this.consume.onClaimKill = (victim) => {
       if (victim.netId != null) net.claimKill(victim.netId);
     };
@@ -314,6 +327,13 @@ export class Game {
   _syncPeerHoles() {
     const net = this.net;
     if (!net) return;
+    // startMatch() disposes every hole in the list, peers included, but the
+    // peer record still points at the dead one. Without this the `if (p.hole)`
+    // guard below matched a disposed avatar and quietly refused to rebuild it,
+    // so from the second round on an online match showed no rivals at all.
+    for (const p of net.peers.values()) {
+      if (p.hole && !this.holes.includes(p.hole)) p.hole = null;
+    }
     for (const p of net.peers.values()) {
       if (p.hole) continue;
       const h = new Hole({ type: 'remote', name: p.name, color: p.color, x: 0, z: 0 });

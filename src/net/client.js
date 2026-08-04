@@ -44,6 +44,7 @@ export class NetClient {
     this.onKill = null;      // (killerId, victimId, reward) => void
     this.onRoster = null;    // () => void
     this.onMatch = null;     // ({phase, timeLeft, seed}) => void
+    this.onDisconnect = null; // () => void  — the socket dropped mid-match
   }
 
   connect() {
@@ -69,7 +70,15 @@ export class NetClient {
         ws.send(encode(C2S.HELLO, { name: this.name, version: PROTOCOL_VERSION }));
       };
       ws.onerror = () => { clearTimeout(timeout); fail('connection error'); };
-      ws.onclose = () => { this.connected = false; };
+      ws.onclose = () => {
+        // Losing the socket mid-match is not a no-op: online play runs with no
+        // bots, so a silent drop leaves the player alone in a city with no
+        // opponents and no explanation. Tell the host so it can say so.
+        const wasConnected = this.connected;
+        this.connected = false;
+        for (const p of this.peers.values()) p.buffer.length = 0;
+        if (wasConnected && this.onDisconnect) this.onDisconnect();
+      };
       ws.onmessage = (ev) => {
         const msg = decode(ev.data);
         if (!msg) return;

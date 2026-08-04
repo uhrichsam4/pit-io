@@ -61,10 +61,22 @@ const check = (name, ok, detail) => {
 /* 1. one seed, one city --------------------------------------------------- */
 const world = (p) => p.evaluate(() => {
   const g = window.__GAME__;
-  // Hash the id set rather than shipping 28k ids across the bridge.
+  // Hash the AUTHORED set — g.allConsumables, not the live registry, which has
+  // already lost whatever the players ate — over fields the simulation never
+  // writes to. Position is NOT one of them: a prop mid-plunge has moved, so
+  // hashing it made this compare gameplay divergence instead of build
+  // determinism. id + kind + the measured physics box is exactly what the
+  // replication scheme relies on being identical on both machines. Hashed
+  // rather than shipped: 28k records across the playwright bridge is not free.
   let h = 2166136261 >>> 0;
-  for (const id of g.registry.byId.keys()) { h ^= id; h = Math.imul(h, 16777619) >>> 0; }
-  return { seed: g.net && g.net.seed, initial: g.registry.initialCount, idHash: h };
+  const mix = (v) => { h ^= v >>> 0; h = Math.imul(h, 16777619) >>> 0; };
+  for (const c of g.allConsumables) {
+    mix(c.id);
+    for (let i = 0; i < c.kind.length; i++) mix(c.kind.charCodeAt(i));
+    mix(Math.round(c.radius * 64)); mix(Math.round(c.height * 64));
+    mix(Math.round(c.passRadius * 64));
+  }
+  return { seed: g.net && g.net.seed, initial: g.allConsumables.length, idHash: h };
 });
 const wA = await world(A), wB = await world(B);
 check('same world',
