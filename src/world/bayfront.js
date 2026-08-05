@@ -42,11 +42,11 @@ export const ISLAND = { cx: 4000, cz: 0, r: 178 };
 
 /** Where the park sits inside that circle. +x is the bay, -z is Bayside. */
 const P = {
-  GRASS: 0x5f9e4a,
-  GRASS_DK: 0x4d8a3c,
-  PATH: 0xd9b9a0,        // the pink-beige paving the whole park is laid in
-  PATH_DK: 0xc2a189,
-  PLAZA: 0xe0cdb8,
+  GRASS: 0x55913f,
+  GRASS_DK: 0x437b34,
+  PATH: 0xc9ab96,        // the pink-beige paving the whole park is laid in
+  PATH_DK: 0xb2957f,
+  PLAZA: 0xcfbca8,
   CONCRETE: 0xbfc3c0,
   CONCRETE_DK: 0x8f9694,
   SAND: 0xded1b0,
@@ -59,6 +59,9 @@ const P = {
   ROOF: 0x9aa4a8,
   TEAK: 0xb07a44,
   ASPHALT: 0x3f4247,
+  TERRACOTTA: 0xc98b6b,     // the fountain apron and the great promenade
+  TERRACOTTA_DK: 0xb0755a,
+  TOWER: 0x7d4436,          // the light tower's oxide-red concrete
 };
 
 /* ------------------------------------------------------------- helpers --- */
@@ -168,7 +171,12 @@ function buildGround(m) {
   }
 
   /* --- the great central promenade, boulevard to the fountain ---------- */
-  strip(m, -160, 96, 96, 74, 22, 0.07);
+  m.col(P.TERRACOTTA);
+  strip(m, -160, 96, 96, 74, 24, 0.07);
+  m.col(P.TERRACOTTA_DK);
+  strip(m, -160, 84, 96, 62, 2.0, 0.075);
+  strip(m, -160, 108, 96, 86, 2.0, 0.075);
+  m.col(P.PATH);
   // and the north-south spine
   strip(m, -30, -150, -10, 170, 15, 0.07);
 
@@ -273,27 +281,42 @@ function buildAmphitheatre(m) {
   }
 }
 
-/** The Pepper Fountain — circular, waterfront, stepped basin, ring plaza. */
+/**
+ * The Claude Pepper Fountain.
+ *
+ * Colour corrected against the close aerial: the apron is TERRACOTTA paving,
+ * not beige, and the water is a jade green in concentric rings, not pool blue.
+ * Those two colours are most of what makes this thing recognisable from above.
+ */
 function buildFountain(m) {
   const cx = 96, cz = 74;
-  m.col(P.PLAZA);
-  ring(m, cx, cz, 0.08, 20, 62, 56);            // the big paved apron
-  m.col(P.PATH_DK);
-  ring(m, cx, cz, 0.09, 58, 62, 56);            // its darker outer band
+  m.col(P.TERRACOTTA);
+  ring(m, cx, cz, 0.08, 21, 60, 64);
+  m.col(P.TERRACOTTA_DK);
+  ring(m, cx, cz, 0.085, 56, 60, 64);          // darker outer band
+  ring(m, cx, cz, 0.09, 21, 23, 64);           // and an inner kerb
 
-  // Stepped stone basin.
+  // Planting collar — the aerial shows a red-flowered ring right at the basin.
+  m.col(0xa8443a);
+  ring(m, cx, cz, 0.14, 19.4, 21, 64);
+
+  // Stone basin lip.
   m.col(P.CONCRETE);
-  ring(m, cx, cz, 0.5, 17.5, 20.5, 48);
-  ring(m, cx, cz, 1.0, 15.0, 17.5, 48);
-  // Water, in two tones so the middle reads deeper.
-  m.col(0x35c9d6);
-  ring(m, cx, cz, 0.8, 6.5, 15.5, 48);
-  m.col(0x18a3b4);
-  ring(m, cx, cz, 0.7, 2.5, 6.5, 32);
-  // Centre boss and its plume.
-  m.col(P.CONCRETE).tube(cx, cz, [[0.7, 2.6], [1.9, 1.9]], 16);
-  m.col(0xbfeef6).tube(cx, cz, [[1.9, 1.1], [8.5, 0.35]], 10);
-  m.col(0xe6fbff).tube(cx, cz, [[8.5, 1.9], [10.2, 0.2]], 10);
+  ring(m, cx, cz, 0.55, 17.6, 19.4, 56);
+  m.col(P.WHITE);
+  ring(m, cx, cz, 0.62, 16.4, 17.6, 56);
+
+  /* Concentric water. Three tones stepping inward and slightly down, which is
+     exactly how the real basin reads from the air. */
+  m.col(0x3fbf9a); ring(m, cx, cz, 0.5, 12.6, 16.4, 56);
+  m.col(0x2aa98a); ring(m, cx, cz, 0.44, 8.6, 12.6, 48);
+  m.col(0xd8efe6); ring(m, cx, cz, 0.50, 7.4, 8.6, 48);   // the white weir ring
+  m.col(0x1f8f78); ring(m, cx, cz, 0.38, 3.0, 7.4, 40);
+
+  // Centre boss and plume.
+  m.col(P.CONCRETE).tube(cx, cz, [[0.38, 3.0], [1.5, 2.2]], 18);
+  m.col(0xcdf2ea).tube(cx, cz, [[1.5, 1.0], [7.5, 0.32]], 10);
+  m.col(0xeafbf6).tube(cx, cz, [[7.5, 1.7], [9.2, 0.18]], 10);
 }
 
 /** Skyviews — the observation wheel on the north-east point. */
@@ -358,10 +381,7 @@ function buildBayside(m, rng) {
 
 /** The Noguchi light tower, the slide mound, playground and dog park. */
 function buildSouth(m, rng) {
-  // Light tower — a tapered concrete slab column.
-  m.col(P.CONCRETE);
-  m.prism(-6, 4, [[0, 9, 9], [3, 7.5, 7.5], [26, 3.4, 3.4]]);
-  m.col(0xd8d2c6).prism(-6, 4, [[26, 4.2, 4.2], [29, 1.2, 1.2]]);
+  // (the light tower and the Challenger Memorial live in buildMonuments)
 
   // The triangular reflecting pool the aerials show beside it.
   m.col(0x2aa7b5);
@@ -369,20 +389,9 @@ function buildSouth(m, rng) {
   m.col(P.CONCRETE_DK);
   strip(m, -66, 120, -22, 102, 3, 0.12);
 
-  // Playground: a canopy of teal sails over soft ground.
+  // Playground surfacing only — nature.js's playground model sits on it.
   m.col(0xcfa87e);
   polygon(m, [[16, 118], [56, 112], [64, 146], [26, 154]], 0.09);
-  m.col(0x2aa39b);
-  for (const [px, pz, r] of [[30, 128, 7], [46, 136, 6], [38, 146, 5]]) {
-    m.col(P.STEEL).tube(px, pz, [[0, 0.35], [6.5, 0.3]], 6);
-    m.col(0x2aa39b);
-    for (let i = 0; i < 6; i++) {
-      const a0 = (i / 6) * TAU, a1 = ((i + 1) / 6) * TAU;
-      m.tri([px, 7.2, pz],
-        [px + Math.cos(a0) * r, 4.6, pz + Math.sin(a0) * r],
-        [px + Math.cos(a1) * r, 4.6, pz + Math.sin(a1) * r]);
-    }
-  }
 
   // Dog park: fenced lawn on the south-east.
   m.col(P.GRASS_DK);
@@ -394,46 +403,145 @@ function buildSouth(m, rng) {
   }
 }
 
-/** Planting: real specimens from nature.js, laid out as the aerials show. */
-function plant(group, rng) {
-  const KINDS = ['liveOak', 'mahogany', 'poinciana', 'banyan', 'sabal', 'coconutA', 'royalA', 'queenPalm'];
-  const avail = KINDS.filter((k) => specimen(k, 0));
-  if (!avail.length) return;
-
-  /** One InstancedMesh per species, because a park is hundreds of trees. */
+/**
+ * Everything that is placed rather than modelled: planting, park furniture and
+ * the downtown skyline behind it.
+ *
+ * nature.js already owns finished models for all of this — sixteen tree
+ * species, a bandshell, park lamps, a pergola, a playground, planters. Calling
+ * specimen() is both cheaper and better-looking than re-modelling them here,
+ * and it keeps the island in the same visual register as the city.
+ *
+ * One InstancedMesh per species. A park is a thousand plants and this must not
+ * be a thousand draw calls.
+ */
+function dress(group, rng) {
   const buckets = new Map();
-  const add = (key, x, z, s, rot) => {
+  const put = (key, x, z, s = 1, rot = null, tilt = 0) => {
     if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push({ x, z, s, rot });
+    buckets.get(key).push({ x, z, s, rot: rot == null ? rng() * TAU : rot, tilt });
   };
+  const pick = (a) => a[(rng() * a.length) | 0];
 
-  // The dense canopy through the middle of the park.
-  for (let i = 0; i < 190; i++) {
+  /* --- the canopy ------------------------------------------------------- */
+  // Big shade trees are the body of this park; the aerials are mostly dark
+  // green mass with lawn cut through it.
+  const CANOPY = ['liveOak', 'liveOak', 'banyan', 'mahogany', 'seagrapeT', 'tabebuia'];
+  const FLOWER = ['poinciana', 'jacaranda'];
+  const clear = (x, z) => (
+    Math.hypot(x - 96, z - 74) > 64 &&        // fountain plaza
+    Math.hypot(x + 8, z + 78) > 86 &&         // amphitheatre
+    Math.abs(z - 85 - (x + 160) * -0.086) > 16 && // the great promenade
+    x > -168 && x < 146
+  );
+  // Even coverage, not one clump: sample the whole park rectangle and reject,
+  // rather than a radial spray that piles everything at one centre.
+  for (let i = 0; i < 300; i++) {
+    const x = -160 + rng() * 300;
+    const z = -190 + rng() * 380;
+    if (!clear(x, z)) continue;
+    // Keep the two big open lawns the aerials show actually open.
+    if (Math.hypot(x + 96, z - 46) < 34) continue;
+    if (Math.hypot(x - 30, z + 20) < 30) continue;
+    // Flowering trees are accents, not the rule — the first pass made the park
+    // look orange from the air.
+    put(rng() < 0.06 ? pick(FLOWER) : pick(CANOPY), x, z, 0.85 + rng() * 0.55);
+  }
+  // A second belt along the western boulevard edge.
+  for (let i = 0; i < 40; i++) {
+    put(pick(CANOPY), -150 + rng() * 18, -190 + rng() * 380, 0.8 + rng() * 0.4);
+  }
+
+  /* --- palms: the signature planting ----------------------------------- */
+  const PALM = ['royalA', 'royalB', 'coconutA', 'coconutB', 'queenPalm', 'sabal', 'washingtonia'];
+  // Double row down the baywalk, evenly spaced — the photos show them regular.
+  for (let i = 0; i < 46; i++) {
+    const t = i / 46;
+    const bx = 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13;
+    const bz = -174 + t * 356;
+    put(PALM[i % PALM.length], bx + 3, bz, 0.95 + rng() * 0.3);
+    if (i % 2 === 0) put(PALM[(i + 3) % PALM.length], bx - 14, bz + 3, 0.9 + rng() * 0.3);
+  }
+  // Ring around the fountain apron, as in the close aerial.
+  for (let i = 0; i < 30; i++) {
+    const a = (i / 30) * TAU;
+    put(PALM[i % PALM.length], 96 + Math.cos(a) * 63, 74 + Math.sin(a) * 63, 0.95 + rng() * 0.25);
+  }
+  // Avenue of royals along the promenade.
+  for (let i = 0; i < 18; i++) {
+    const t = i / 18, x = -150 + t * 220, z = 96 - t * 22;
+    put(i % 2 ? 'royalA' : 'royalB', x, z - 17, 1.0 + rng() * 0.2);
+    put(i % 2 ? 'royalB' : 'royalA', x, z + 17, 1.0 + rng() * 0.2);
+  }
+
+  /* --- understory and ground cover -------------------------------------- */
+  // GREEN, mostly. Flowering shrubs are a garnish here, not the planting: the
+  // first pass drew 260 of them at equal weight and the park came out yellow,
+  // purple and orange from the air when every reference photo is dark green
+  // with sand-coloured paths.
+  const UNDER = ['shrub', 'shrub', 'shrub', 'arecaClump', 'fanShort', 'sago', 'traveller'];
+  const BLOOM = ['hibiscus', 'bougain', 'croton'];
+  for (let i = 0; i < 260; i++) {
     const a = rng() * TAU, rr = Math.sqrt(rng());
-    const x = -60 + Math.cos(a) * rr * 95;
-    const z = 10 + Math.sin(a) * rr * 120;
-    if (Math.hypot(x - 96, z - 74) < 66) continue;       // keep the plaza clear
-    if (Math.hypot(x + 8, z + 78) < 82) continue;        // and the amphitheatre
-    const k = avail[(rng() * Math.min(3, avail.length)) | 0];
-    add(k, x, z, 0.85 + rng() * 0.5, rng() * TAU);
+    const x = -50 + Math.cos(a) * rr * 110, z = 25 + Math.sin(a) * rr * 135;
+    if (!clear(x, z)) continue;
+    // Blooms cluster at path edges and the plaza, the way planting beds do.
+    const nearPath = Math.abs(z - 85 - (x + 160) * -0.086) < 30 || Math.hypot(x - 96, z - 74) < 80;
+    put(rng() < (nearPath ? 0.16 : 0.03) ? pick(BLOOM) : pick(UNDER), x, z, 0.8 + rng() * 0.5);
   }
-  // Palm rows along the baywalk and the fountain apron — the signature planting.
-  const palms = avail.filter((k) => /royal|coconut|sabal|queenPalm|washingtonia/i.test(k));
-  if (palms.length) {
-    for (let i = 0; i < 34; i++) {
-      const t = i / 34;
-      add(palms[i % palms.length], 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13,
-        -172 + t * 350, 0.9 + rng() * 0.35, rng() * TAU);
-    }
-    for (let i = 0; i < 22; i++) {
-      const a = (i / 22) * TAU;
-      add(palms[i % palms.length], 96 + Math.cos(a) * 56, 74 + Math.sin(a) * 56,
-        0.9 + rng() * 0.3, rng() * TAU);
-    }
+  // Grass tufts and low cover, scattered thickly — this is what stops a lawn
+  // reading as a flat green plane from the gameplay camera.
+  for (let i = 0; i < 520; i++) {
+    const a = rng() * TAU, rr = Math.sqrt(rng());
+    const x = -50 + Math.cos(a) * rr * 118, z = 20 + Math.sin(a) * rr * 145;
+    if (!clear(x, z)) continue;
+    put(rng() < 0.62 ? 'ornGrass' : 'groundcover', x, z, 0.7 + rng() * 0.7);
+  }
+  // Clipped hedges lining the formal paths.
+  for (let i = 0; i < 26; i++) {
+    const t = i / 26;
+    put('hedge', -150 + t * 226, 79 - t * 22, 1, 0.1);
+    put('hedge', -150 + t * 226, 113 - t * 22, 1, 0.1);
+  }
+  // Agave and grass on the rock revetment, as in the ground-level photo.
+  for (let i = 0; i < 40; i++) {
+    const t = i / 40;
+    put(rng() < 0.5 ? 'agave' : 'ornGrass',
+      154 + Math.sin(t * 3.1) * 9 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 14 + rng() * 4,
+      -178 + t * 366, 0.7 + rng() * 0.5);
   }
 
+  /* --- park furniture, all real models ---------------------------------- */
+  // Lamps down every path. The aerials are dotted with them.
+  for (let i = 0; i < 30; i++) {
+    const t = i / 30;
+    put('parkLamp', -150 + t * 232, 82 - t * 22, 1, 0);
+    put('parkLamp', -150 + t * 232, 110 - t * 22, 1, 0);
+  }
+  for (let i = 0; i < 22; i++) {
+    const t = i / 22;
+    put('parkLamp', 138 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13 - 14, -170 + t * 348, 1, 0);
+  }
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * TAU;
+    put('parkLamp', 96 + Math.cos(a) * 50, 74 + Math.sin(a) * 50, 1, 0);
+  }
+  // Planters along the promenade and the plaza.
+  for (let i = 0; i < 14; i++) {
+    const t = i / 14;
+    put(i % 2 ? 'planterL' : 'planterS', -140 + t * 200, 86 - t * 20, 1, 0);
+  }
+  put('pergola', -96, 40, 1.2, 0.35);
+  put('pergola', 34, 150, 1.1, -0.6);
+  put('playground', 40, 132, 1.3, 0.2);
+  put('hoop', 108, 156, 1.0, 0.5);
+  put('flagUS', -18, 18, 1.2, 0);
+  put('bandshell', -8, -78, 1.6, Math.PI);      // at the focus of the bowl
+
+  /* --- build the instanced meshes --------------------------------------- */
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(),
-    _p = new THREE.Vector3(), _s = new THREE.Vector3();
+    _p = new THREE.Vector3(), _s = new THREE.Vector3(), _ax = new THREE.Vector3(0, 1, 0);
+  let placed = 0;
   for (const [key, list] of buckets) {
     const sp = specimen(key, 0);
     if (!sp) continue;
@@ -441,13 +549,116 @@ function plant(group, rng) {
     inst.castShadow = true;
     inst.receiveShadow = false;
     list.forEach((t, i) => {
-      _q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), t.rot);
-      _p.set(t.x, 0, t.z); _s.set(t.s, t.s, t.s);
+      _q.setFromAxisAngle(_ax, t.rot);
+      _p.set(t.x, 0, t.z);
+      _s.set(t.s, t.s, t.s);
       inst.setMatrixAt(i, _m.compose(_p, _q, _s));
     });
     inst.instanceMatrix.needsUpdate = true;
     inst.name = `bayfront-${key}`;
     group.add(inst);
+    placed += list.length;
+  }
+  return placed;
+}
+
+/**
+ * The downtown skyline behind the park.
+ *
+ * Every reference photo of Bayfront Park is really a photo of the park AND the
+ * wall of Brickell and Downtown towers behind it — take those away and the
+ * place reads as a field by the sea. They are pure backdrop: no collision, no
+ * consumables, never approached, so they are boxes with glass banding and that
+ * is the correct amount of geometry to spend.
+ */
+function buildSkyline(m, rng) {
+  const GLASS = [0x8fb6c9, 0x7fa8bd, 0xa8c6d4, 0x6f97ad, 0x9fc3cf];
+  const place = (x, z, w, d, h, seed) => {
+    const g = GLASS[seed % GLASS.length];
+    m.col(0xd9dde0).box(x - w / 2, 0, z - d / 2, w, 3, d);          // podium
+    m.col(g).box(x - w / 2, 3, z - d / 2, w, h, d);
+    // Spandrel banding: the single cue that reads as "tower" at this distance.
+    m.col(0xf0f4f6);
+    for (let y = 6; y < h; y += 7) {
+      m.box(x - w / 2 - 0.25, y, z - d / 2 - 0.25, w + 0.5, 1.1, d + 0.5);
+    }
+    m.col(0xc8d2d8).box(x - w / 2 + 1.5, 3 + h, z - d / 2 + 1.5, w - 3, 2.2, d - 3);
+    if (seed % 3 === 0) {
+      m.col(0x9aa4aa).tube(x, z, [[5 + h, 0.5], [5 + h + 14, 0.22]], 5);
+    }
+  };
+  // The Biscayne Boulevard wall, west of the park.
+  for (let i = 0; i < 16; i++) {
+    const z = -210 + i * 27 + rng() * 8;
+    const h = 46 + rng() * 118;
+    place(-250 - rng() * 46, z, 26 + rng() * 16, 24 + rng() * 14, h, i);
+  }
+  // A second rank further back, shorter, to give the wall depth.
+  for (let i = 0; i < 13; i++) {
+    place(-330 - rng() * 70, -220 + i * 34 + rng() * 10,
+      22 + rng() * 14, 22 + rng() * 12, 34 + rng() * 80, i + 5);
+  }
+  // Brickell across the mouth of the river, seen past the point to the south.
+  for (let i = 0; i < 9; i++) {
+    place(150 + rng() * 120, 300 + rng() * 90, 24 + rng() * 14, 24 + rng() * 12,
+      54 + rng() * 96, i + 2);
+  }
+}
+
+/**
+ * The Challenger Memorial and the light tower.
+ *
+ * The memorial is Noguchi's twisting helix — it reads as both a DNA strand and
+ * the shuttle — and it stands in the south-west corner. The first pass had a
+ * plain tapered slab here, which is neither.
+ */
+function buildMonuments(m) {
+  // Challenger Memorial: two counter-rotating helical ribbons on a low plinth.
+  const hx = -104, hz = 128;
+  m.col(P.CONCRETE_DK);
+  ring(m, hx, hz, 0.3, 0, 11, 24);
+  m.col(P.WHITE);
+  for (const phase of [0, Math.PI]) {
+    let px = null;
+    for (let i = 0; i <= 34; i++) {
+      const t = i / 34;
+      const a = phase + t * Math.PI * 2.6;
+      const r = 5.4 * (1 - t * 0.55);
+      const y = 0.3 + t * 27;
+      const cur = [hx + Math.cos(a) * r, y, hz + Math.sin(a) * r];
+      if (px) m.tubeBetween(px[0], px[1], px[2], cur[0], cur[1], cur[2], 0.85, 5);
+      px = cur;
+    }
+  }
+
+  // The light tower: an oxide-red concrete cylinder, the tallest thing in the
+  // park and visible in every reference photo.
+  m.col(P.TOWER);
+  m.tube(-6, 4, [[0, 5.2], [30, 4.4]], 12);
+  m.col(0x62362b).tube(-6, 4, [[30, 4.8], [32, 4.0]], 12);
+  m.col(0x2f3338);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * TAU;
+    m.box(-6 + Math.cos(a) * 4.3, 8, 4 + Math.sin(a) * 4.3, 1.2, 18, 1.2);
+  }
+
+  // Noguchi's geometric mound — the stepped grass cone the aerials show.
+  m.col(P.GRASS_DK);
+  for (let i = 0; i < 5; i++) {
+    ring(m, -78, -18, 0.4 + i * 1.5, 0, 20 - i * 3.6, 20);
+  }
+
+  // White tensile sail canopies, south-west of the lawn.
+  m.col(P.WHITE);
+  for (const [sx, sz] of [[-118, 92], [-100, 104], [-124, 116]]) {
+    m.col(P.STEEL).tube(sx, sz, [[0, 0.3], [8, 0.24]], 5);
+    m.col(P.WHITE);
+    for (let i = 0; i < 5; i++) {
+      const a0 = (i / 5) * TAU, a1 = ((i + 1) / 5) * TAU;
+      m.tri([sx, 8.4, sz],
+        [sx + Math.cos(a0) * 9, 3.4, sz + Math.sin(a0) * 9],
+        [sx + Math.cos(a1) * 9, 3.4, sz + Math.sin(a1) * 9]);
+    }
   }
 }
 
@@ -473,6 +684,8 @@ export function buildBayfront(scene) {
   buildWheel(m);
   buildBayside(m, rng);
   buildSouth(m, rng);
+  buildMonuments(m);
+  buildSkyline(m, rng);
 
   const mesh = new THREE.Mesh(m.geometry(), solid({
     name: 'bayfront', vertexColors: true, roughness: 0.72, metalness: 0.03,
@@ -482,7 +695,8 @@ export function buildBayfront(scene) {
   mesh.name = 'bayfront-shell';
   group.add(mesh);
 
-  plant(group, rng);
+  const n = dress(group, rng);
+  console.info(`[bayfront] spawn island: ${n} plants and props placed`);
 
   // Spawn ring: on the great lawn, spread so nobody lands on a landmark or on
   // top of somebody else.
