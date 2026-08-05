@@ -353,6 +353,26 @@ export class Game {
       this.startMatch();
     });
 
+    // Escape: pause in, resume out.
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'Escape' && e.key !== 'Escape') return;
+      const playing = this.match.phase === PHASE.PLAYING || this.match.phase === PHASE.COUNTDOWN;
+      if (playing && !(this.meta && this.meta.visible)) {
+        e.preventDefault();
+        this.openPause();
+        return;
+      }
+      // Only the pause screen itself resumes. Escape while the player is deeper
+      // in the menu — reading Settings — should take them back one screen, and
+      // the shell already owns that.
+      if (playing && this.meta && this.meta.visible) {
+        e.preventDefault();
+        const at = this.meta._el && this.meta._el.dataset.screen;
+        if (at === 'pause') this.resumeFromPause();
+        else this.meta.back();
+      }
+    });
+
     const { installDevTools } = await import('./dev/devtools.js');
     installDevTools(this);
 
@@ -575,6 +595,7 @@ export class Game {
    *   the last round was played under, which is what "Play Again" wants.
    */
   startMatch(modeId) {
+    this.paused = false;
     const mode = getMode(modeId || (this.mode && this.mode.id));
     this.mode = mode;
     if (this.meta) this.meta.hide();
@@ -963,7 +984,55 @@ export class Game {
   }
 
   /** Leave the match and go back to the lobby, on a fully restored city. */
+  /* ------------------------------------------------------------- pause --- */
+
+  /**
+   * Freeze the match and raise the Escape menu.
+   *
+   * `paused` zeroes dt in the loop rather than stopping it, so the city keeps
+   * DRAWING while nothing moves — the point of a pause menu is to look at where
+   * you are. The network keeps pumping for the same reason it does on the
+   * results screen: a client that stops sending state is dropped by the room's
+   * silence timeout, and pausing must not eject you from a multiplayer match.
+   */
+  openPause() {
+    if (!this.meta) return;
+    if (this.match.phase !== PHASE.PLAYING && this.match.phase !== PHASE.COUNTDOWN) return;
+    this.paused = true;
+    // Drop any held direction, or releasing the key behind the menu leaves the
+    // hole drifting when play resumes.
+    if (this.player) this.player.desiredDir.set(0, 0);
+    if (this.input && this.input.reset) this.input.reset();
+    if (this.hud) this.hud.root.style.opacity = '0';
+    this.meta.show();
+    this.meta.reset('pause');
+  }
+
+  resumeFromPause() {
+    if (!this.meta) return;
+    this.meta.hide();
+    this.paused = false;
+    if (this.input && this.input.reset) this.input.reset();
+  }
+
+  /** What the pause card shows about the run so far. */
+  pauseSnapshot() {
+    const p = this.player;
+    const ranks = this.match.rankings ? this.match.rankings() : [];
+    const t = Math.max(0, Math.round(this.match.timeLeft || 0));
+    return {
+      score: p ? p.score : 0,
+      diameter: p ? p.radius * 2 : 0,
+      rank: p ? (ranks.indexOf(p) + 1 || 0) : 0,
+      total: ranks.length,
+      timeLeft: `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`,
+    };
+  }
+
   returnToLobby() {
+    // Leaving from the Escape menu must not carry the freeze out with it, or
+    // the lobby's camera drift stops and the next match starts dead.
+    this.paused = false;
     this.resetWorld();
     for (const h of this.holes) {
       this.engine.scene.remove(h.group);

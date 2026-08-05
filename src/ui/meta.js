@@ -28,6 +28,13 @@ import { audio } from '../core/audio.js';
  */
 const SCREENS = [
   {
+    name: 'pause',
+    title: 'Paused',
+    mod: () => import('./screens/pause.js'),
+    fn: 'registerPause',
+    deps: (d) => ({ onResume: d.onResume, onLobby: d.onLobbyFromPause, snapshot: d.snapshot }),
+  },
+  {
     name: 'lobby',
     title: 'Lobby',
     mod: () => import('./screens/lobby.js'),
@@ -146,6 +153,10 @@ export async function installMeta(game, uiRoot) {
     /** Join a room. game.js owns what that means — see Game#joinRoom. */
     onJoin: (info) => game.joinRoom(info || {}),
     onQuality: (id, level) => game.applyQuality(level),
+    /** The Escape menu. game.js owns freezing and thawing the simulation. */
+    onResume: () => game.resumeFromPause(),
+    onLobbyFromPause: () => game.returnToLobby(),
+    snapshot: () => (game.pauseSnapshot ? game.pauseSnapshot() : null),
     /**
      * settings.js draws its own FPS readout over the viewport; the game has
      * nothing extra to do, but the hook is passed so the setting has one owner.

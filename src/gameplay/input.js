@@ -271,5 +271,17 @@ export class Input {
     return this.worldDir;
   }
 
+  /**
+   * Forget every held key and pointer. The pause menu needs this: a key held
+   * when Escape was pressed never sees its keyup (the menu swallows it), so
+   * without this the hole drifts off on its own the moment play resumes.
+   */
+  reset() {
+    this.keys.clear();
+    if (this._latch) this._latch.clear();
+    this.pointerActive = false;
+    return this;
+  }
+
   dispose() { this._dispose(); }
 }
