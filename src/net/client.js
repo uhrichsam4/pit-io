@@ -45,6 +45,10 @@ export class NetClient {
     this.onRoster = null;    // () => void
     this.onMatch = null;     // ({phase, timeLeft, seed}) => void
     this.onDisconnect = null; // () => void  — the socket dropped mid-match
+    /** (state) => void — the pre-lobby roster changed. See S2C.LOBBY. */
+    this.onLobby = null;
+    /** Latest waiting-room state, so a screen can render before the next push. */
+    this.lobby = null;
   }
 
   connect() {
@@ -149,6 +153,10 @@ export class NetClient {
         if (msg.d.seed) this.seed = msg.d.seed;
         if (this.onMatch) this.onMatch(msg.d);
         break;
+      case S2C.LOBBY:
+        this.lobby = msg.d;
+        if (this.onLobby) this.onLobby(msg.d);
+        break;
       case S2C.PONG:
         this.rtt = performance.now() - msg.d.t;
         break;
@@ -164,6 +172,28 @@ export class NetClient {
   /** Queue an object id that the local player just swallowed. */
   reportAte(id) {
     this._pendingAte.push(id);
+  }
+
+  /* ------------------------------------------------------- pre-lobby --- */
+
+  /** "I am at my keyboard." */
+  setReady(on) {
+    if (this.connected) this.ws.send(encode(C2S.READY, { on: !!on }));
+  }
+
+  /** Host only; the server rejects it from anyone else. */
+  startMatch() {
+    if (this.connected) this.ws.send(encode(C2S.START, {}));
+  }
+
+  /** Name chosen in the pre-lobby, before anyone plays. */
+  rename(name) {
+    if (this.connected) this.ws.send(encode(C2S.RENAME, { name: String(name || '') }));
+  }
+
+  /** Am I the one who may press start? */
+  get isHost() {
+    return !!(this.lobby && this.lobby.hostId === this.id);
   }
 
   claimKill(victimId) {

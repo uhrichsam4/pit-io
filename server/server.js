@@ -50,8 +50,16 @@ class Room {
     this.clients = new Map();     // id -> client
     this.nextId = 1;
     this.seed = (Math.random() * 0x7fffffff) | 0;
-    this.phase = 'playing';
+    /**
+     * A room opens as a WAITING ROOM, not mid-match. The old behaviour dropped
+     * whoever arrived first into a running game alone, and their friend joined
+     * a match already in progress with a stranger's score on the board.
+     * The host presses start when everyone is in.
+     */
+    this.phase = 'lobby';
     this.timeLeft = MATCH_DURATION;
+    /** Whoever may press start. Moves on if they leave, so no lobby strands. */
+    this.hostId = null;
     this.pendingConsumed = [];
     this.lastTick = Date.now();
     this.colorCursor = 0;
@@ -71,11 +79,18 @@ class Room {
       // takes tens of seconds on a phone and minutes on a loaded machine. See
       // tick() — the match clock does not run until somebody is actually in it.
       ready: false,
+      /**
+       * Pre-lobby "I am at my keyboard". Distinct from `ready` above, which
+       * means "has finished building the city" — a player can be loaded and
+       * still be away making tea.
+       */
+      armed: false,
       // Cheap sanity envelope: a hole cannot outrun this, so a client that
       // teleports gets snapped back rather than trusted.
       maxSpeed: 60,
     };
     this.clients.set(id, client);
+    if (this.hostId === null || !this.clients.has(this.hostId)) this.hostId = id;
 
     ws.send(encode(S2C.WELCOME, {
       id,
@@ -88,6 +103,7 @@ class Room {
       })),
     }));
     this.broadcast(S2C.JOIN, { id, name: client.name, color: client.color }, id);
+    this.broadcastLobby();
     return client;
   }
 
@@ -95,6 +111,28 @@ class Room {
     if (!this.clients.has(id)) return;
     this.clients.delete(id);
     this.broadcast(S2C.LEAVE, { id });
+    // The host leaving must not leave a room nobody can start. Oldest player
+    // present inherits it.
+    if (this.hostId === id) {
+      const next = [...this.clients.keys()].sort((a, b) => a - b)[0];
+      this.hostId = next === undefined ? null : next;
+    }
+    this.broadcastLobby();
+  }
+
+  /** The waiting-room roster. Pushed on every change, never polled. */
+  lobbyState() {
+    return {
+      phase: this.phase,
+      hostId: this.hostId,
+      players: [...this.clients.values()].map((c) => ({
+        id: c.id, name: c.name, color: c.color, armed: !!c.armed, loaded: !!c.ready,
+      })),
+    };
+  }
+
+  broadcastLobby() {
+    this.broadcast(S2C.LOBBY, this.lobbyState());
   }
 
   /**
@@ -171,6 +209,31 @@ class Room {
         }, 2600);
         break;
       }
+      case C2S.READY: {
+        client.armed = !!msg.d?.on;
+        this.broadcastLobby();
+        break;
+      }
+      case C2S.RENAME: {
+        // Chosen in the pre-lobby before anyone plays. Same sanitising as
+        // everywhere else a name reaches another player's screen.
+        const n = String(msg.d?.name || '').replace(/[<>&"'`\\\u0000-\u001f]/g, '')
+          .replace(/\s+/g, ' ').trim().slice(0, 16);
+        if (n) { client.name = n; this.broadcastLobby(); }
+        break;
+      }
+      case C2S.START: {
+        // Host only, and only out of the waiting room. Anyone can spam this;
+        // the check is here rather than trusting the button to be hidden.
+        if (client.id !== this.hostId) break;
+        if (this.phase !== 'lobby') break;
+        this.phase = 'playing';
+        this.timeLeft = MATCH_DURATION;
+        for (const c of this.clients.values()) { c.score = 0; c.r = 1.15; c.alive = true; }
+        this.broadcast(S2C.MATCH, { phase: 'playing', timeLeft: this.timeLeft, seed: this.seed });
+        this.broadcastLobby();
+        break;
+      }
       case C2S.PING:
         client.ws.send(encode(S2C.PONG, { t: msg.d?.t }));
         break;
@@ -211,7 +274,10 @@ class Room {
     let anyReady = false;
     for (const c of this.clients.values()) if (c.ready) { anyReady = true; break; }
 
-    if (!anyReady) {
+    if (this.phase === 'lobby') {
+      // A waiting room has no clock. Snapshots still go out below so the
+      // roster stays live while people load.
+    } else if (!anyReady) {
       // nothing to time yet
     } else if (this.phase === 'playing') {
       this.timeLeft -= dt;
@@ -223,8 +289,9 @@ class Room {
     } else {
       this.timeLeft -= dt;
       if (this.timeLeft <= 0) {
-        this.phase = 'playing';
+        this.phase = 'lobby';
         this.timeLeft = MATCH_DURATION;
+        for (const c of this.clients.values()) c.armed = false;
         // The seed is fixed for the life of the room. Clients build the city
         // once, synchronously, at page load — they cannot adopt a new seed
         // mid-session, and a player who joined before the re-roll would be
@@ -238,6 +305,7 @@ class Room {
         this.broadcast(S2C.MATCH, {
           phase: this.phase, timeLeft: this.timeLeft, seed: this.seed,
         });
+        this.broadcastLobby();
       }
     }
 

@@ -28,6 +28,16 @@ import { audio } from '../core/audio.js';
  */
 const SCREENS = [
   {
+    name: 'prelobby',
+    title: 'Lobby',
+    mod: () => import('./screens/prelobby.js'),
+    fn: 'registerPrelobby',
+    deps: (d) => ({
+      net: () => d.liveNet(), code: () => d.roomCode(),
+      onName: d.onName, onLeave: d.onLeaveRoom,
+    }),
+  },
+  {
     name: 'pause',
     title: 'Paused',
     mod: () => import('./screens/pause.js'),
@@ -155,6 +165,11 @@ export async function installMeta(game, uiRoot) {
     onQuality: (id, level) => game.applyQuality(level),
     /** The Escape menu. game.js owns freezing and thawing the simulation. */
     onResume: () => game.resumeFromPause(),
+    /** The live NetClient, or null offline. A getter: it is built at boot. */
+    liveNet: () => game.net,
+    roomCode: () => (game.netCfg ? game.netCfg.room : ''),
+    onName: (n) => { try { profile.data.name = n; profile.save(); } catch { /* ignore */ } },
+    onLeaveRoom: () => { location.href = location.origin + location.pathname; },
     onLobbyFromPause: () => game.returnToLobby(),
     snapshot: () => (game.pauseSnapshot ? game.pauseSnapshot() : null),
     /**

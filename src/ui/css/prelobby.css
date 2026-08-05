@@ -1,0 +1,113 @@
+/* =========================================================================
+ * PRE-LOBBY — the waiting room you land in after joining with a code.
+ * Layout only; every component here comes from tokens.css.
+ * ====================================================================== */
+
+[data-screen="prelobby"] .pl-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+/* --- name step ----------------------------------------------------------- */
+
+[data-screen="prelobby"] .pl-name h2 { margin-bottom: 0.2em; }
+
+[data-screen="prelobby"] .pl-name-row {
+  display: flex;
+  gap: 0.5em;
+  margin: 0.9em 0;
+}
+
+[data-screen="prelobby"] .pl-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.6em 0.9em;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--stroke-hi);
+  background: var(--sunk);
+  color: var(--txt);
+  font: inherit;
+  font-size: 1.05em;
+  font-weight: 700;
+}
+[data-screen="prelobby"] .pl-input::placeholder { color: var(--dimmer); font-weight: 600; }
+[data-screen="prelobby"] .pl-input:focus {
+  outline: none;
+  border-color: var(--aqua);
+  box-shadow: 0 0 0 0.18em color-mix(in srgb, var(--aqua) 26%, transparent);
+}
+
+/* --- invite code --------------------------------------------------------- */
+
+[data-screen="prelobby"] .pl-code { text-align: center; }
+
+[data-screen="prelobby"] .pl-code-label {
+  font-size: 0.68em;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* The code is the thing a player reads out loud to a friend, so it gets the
+   biggest type on the screen and generous tracking — a mistaken 0/O costs them
+   a whole attempt. */
+[data-screen="prelobby"] .pl-code-value {
+  margin: 0.15em 0 0.5em;
+  font-size: 2.4em;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  color: var(--aqua);
+  text-shadow: 0 0 0.6em color-mix(in srgb, var(--aqua) 45%, transparent);
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+[data-screen="prelobby"] .pl-code-actions {
+  display: flex;
+  gap: 0.5em;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.5em;
+}
+[data-screen="prelobby"] .pl-code-actions .btn { flex: 1 1 8em; }
+
+/* --- roster -------------------------------------------------------------- */
+
+[data-screen="prelobby"] .pl-roster-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: 0.8em 1em 0.5em;
+}
+[data-screen="prelobby"] .pl-roster-head h3 { margin: 0; }
+
+[data-screen="prelobby"] .pl-roster .row { padding-left: 1em; padding-right: 1em; }
+
+[data-screen="prelobby"] .pl-state {
+  flex: 0 0 auto;
+  font-size: 0.74em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+}
+[data-screen="prelobby"] .pl-state.on { color: var(--lime); }
+
+[data-screen="prelobby"] .pl-roster .chip.tiny {
+  font-size: 0.62em;
+  padding: 0.1em 0.45em;
+  vertical-align: 0.15em;
+}
+
+[data-screen="prelobby"] .pl-hint { text-align: center; }
+
+/* Three buttons in the thumb strip is one too many on a narrow phone; let the
+   primary keep its width and the secondary wrap under it. */
+@media (max-width: 380px) {
+  [data-screen="prelobby"] .sticky-actions { flex-wrap: wrap; }
+  [data-screen="prelobby"] .sticky-actions .btn { flex: 1 1 100%; }
+}

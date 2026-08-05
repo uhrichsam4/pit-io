@@ -22,7 +22,7 @@
  * is not worth the complexity of a binary codec.
  */
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 /** client -> server */
 export const C2S = {
@@ -31,6 +31,9 @@ export const C2S = {
   ATE: 'ate',         // { ids:[...], score }
   CLAIM_KILL: 'kill', // { victimId }  — server validates radii before granting
   PING: 'ping',       // { t }
+  READY: 'ready',     // { on }        — pre-lobby "I am at my keyboard"
+  START: 'start',     // {}            — host only; begins the match
+  RENAME: 'rename',   // { name }      — chosen in the pre-lobby, before play
 };
 
 /** server -> client */
@@ -42,6 +45,13 @@ export const S2C = {
   LEAVE: 'leave',       // { id }
   KILL: 'kill',         // { killerId, victimId, reward }
   MATCH: 'match',       // { phase, timeLeft }
+  /**
+   * The pre-lobby roster. Sent on every change rather than polled, because the
+   * whole point of a waiting room is seeing someone arrive the moment they do.
+   * `hostId` is whoever may press start; it moves to the next player if the
+   * host leaves, so a lobby can never be stranded with nobody able to begin.
+   */
+  LOBBY: 'lobby',       // { phase, hostId, players:[{id,name,color,armed,loaded}] }
   PONG: 'pong',         // { t }
   ERROR: 'error',       // { message }
 };

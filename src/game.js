@@ -376,11 +376,22 @@ export class Game {
     const { installDevTools } = await import('./dev/devtools.js');
     installDevTools(this);
 
-    // Arriving with ?room= means the player followed an invite, and the world
-    // has already been built on that room's seed. Drop them straight in.
+    // Arriving with ?room= means the player followed an invite. They land in
+    // the WAITING ROOM, not mid-match: dropping the first arrival into a live
+    // game alone meant their friend joined a round already in progress with a
+    // stranger's score on the board. The host starts it when everyone is in.
+    //
+    // If the connection failed there is no room to wait in, so fall through to
+    // an offline match rather than stranding them on a roster of nobody.
     if (this.netCfg.enabled) {
       const q = new URLSearchParams(location.search);
-      this.startMatch(q.get('mode') || undefined);
+      this._joinMode = q.get('mode') || undefined;
+      if (this.net && this.meta) {
+        this.meta.show();
+        this.meta.reset('prelobby', { code: this.netCfg.room });
+      } else {
+        this.startMatch(this._joinMode);
+      }
     }
 
     this.loop = this.loop.bind(this);
@@ -417,8 +428,18 @@ export class Game {
     // and was evicted by the server's silence timeout — so multiplayer worked
     // for exactly one match and then died.
     net.onMatch = (d) => {
-      if (d.phase === 'playing' && this.match.phase === PHASE.RESULTS) {
-        this.startMatch();
+      // The host pressed start, or the previous round ended. Either way the
+      // server owns the transition and every client follows it, so nobody is
+      // playing while somebody else is still on the roster.
+      if (d.phase === 'playing' && this.match.phase !== PHASE.PLAYING
+          && this.match.phase !== PHASE.COUNTDOWN) {
+        this.startMatch(this._joinMode);
+      }
+      if (d.phase === 'lobby' && this.meta) {
+        // Back to the waiting room between rounds.
+        this.paused = false;
+        this.meta.show();
+        this.meta.reset('prelobby', { code: this.netCfg ? this.netCfg.room : '' });
       }
       if (typeof d.timeLeft === 'number') this.match.timeLeft = d.timeLeft;
     };
