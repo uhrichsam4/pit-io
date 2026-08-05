@@ -26,7 +26,7 @@
  */
 
 import * as THREE from 'three';
-import { solid } from '../core/materials.js';
+import { solid, ground, Textures } from '../core/materials.js';
 import { M } from './props.js';
 import { specimen } from './nature.js';
 import { makeRNG } from '../core/rng.js';
@@ -128,23 +128,26 @@ function strip(m, x0, z0, x1, z1, w, y) {
  * Ground, shoreline and paths. One mesh: this is a lot of flat geometry and
  * every piece of it shares a material, so it has no business being 40 draws.
  */
-function buildGround(m) {
+function buildGround(m, lawn, pave, water, sandM) {
   // Grass body of the park — an irregular wedge, bay side bulging east.
-  polygon(m, [
+  lawn.col(0xffffff);
+  polygon(lawn, [
     [-150, -190], [-40, -200], [70, -170], [120, -120], [150, -40],
     [158, 40], [130, 120], [70, 175], [-40, 195], [-140, 180], [-165, 60], [-168, -70],
   ], 0.02);
   // Mown bands. Kept SHORT and confined to the open lawn: run full width and
   // they read as a barcode laid over the whole park rather than cut grass.
-  m.col(P.GRASS_DK);
+  // Mowing stripes: the SAME texture a shade darker, which is literally what a
+  // mower leaves — blades laid in opposite directions.
+  lawn.col(0xc8d0c8);
   for (let i = -2; i <= 2; i++) {
-    strip(m, -120, 40 + i * 15, -20, 44 + i * 15, 9, 0.03);
-    strip(m, 10, 130 + i * 13, 90, 132 + i * 13, 8, 0.03);
+    strip(lawn, -120, 40 + i * 15, -20, 44 + i * 15, 9, 0.03);
+    strip(lawn, 10, 130 + i * 13, 90, 132 + i * 13, 8, 0.03);
   }
 
   /* --- the bay, east of the revetment ---------------------------------- */
-  m.col(P.WATER);
-  polygon(m, [[150, -200], [340, -200], [340, 210], [90, 210], [140, 120], [162, 30], [156, -60]], -0.35);
+  water.col(0xffffff);
+  polygon(water, [[150, -200], [340, -200], [340, 210], [90, 210], [140, 120], [162, 30], [156, -60]], -0.35);
 
   /* --- rock revetment: the whole eastern shore is armoured, not beach --- */
   m.col(P.ROCK);
@@ -165,25 +168,25 @@ function buildGround(m) {
   }
 
   /* --- the baywalk, just inland of the rocks --------------------------- */
-  m.col(P.PATH);
+  pave.col(0xffffff);
   for (let i = 0; i < shore.length - 1; i++) {
-    strip(m, shore[i][0] - 9, shore[i][1], shore[i + 1][0] - 9, shore[i + 1][1], 9, 0.06);
+    strip(pave, shore[i][0] - 9, shore[i][1], shore[i + 1][0] - 9, shore[i + 1][1], 9, 0.06);
   }
 
   /* --- the great central promenade, boulevard to the fountain ---------- */
-  m.col(P.TERRACOTTA);
-  strip(m, -160, 96, 96, 74, 24, 0.07);
-  m.col(P.TERRACOTTA_DK);
-  strip(m, -160, 84, 96, 62, 2.0, 0.075);
-  strip(m, -160, 108, 96, 86, 2.0, 0.075);
-  m.col(P.PATH);
+  pave.col(0xd9a288);
+  strip(pave, -160, 96, 96, 74, 24, 0.07);
+  pave.col(0xb7876c);
+  strip(pave, -160, 84, 96, 62, 2.0, 0.075);
+  strip(pave, -160, 108, 96, 86, 2.0, 0.075);
+  pave.col(0xffffff);
   // and the north-south spine
-  strip(m, -30, -150, -10, 170, 15, 0.07);
+  strip(pave, -30, -150, -10, 170, 15, 0.07);
 
   /* --- radial paths off the fountain plaza ------------------------------ */
   const FX = 96, FZ = 74;
   for (const a of [-2.5, -1.9, -1.25, -0.6, 0.55, 1.2, 1.9]) {
-    strip(m, FX + Math.cos(a) * 26, FZ + Math.sin(a) * 26,
+    strip(pave, FX + Math.cos(a) * 26, FZ + Math.sin(a) * 26,
       FX + Math.cos(a) * 120, FZ + Math.sin(a) * 120, 7, 0.065);
   }
   // Curving walks through the tree canopy.
@@ -194,7 +197,7 @@ function buildGround(m) {
     for (let i = 0; i < segs; i++) {
       const t0 = i / segs, t1 = (i + 1) / segs;
       const bow = Math.sin(Math.PI * t0) * 22, bow1 = Math.sin(Math.PI * t1) * 22;
-      strip(m, sx + (ex - sx) * t0, sz + (ez - sz) * t0 + bow,
+      strip(pave, sx + (ex - sx) * t0, sz + (ez - sz) * t0 + bow,
         sx + (ex - sx) * t1, sz + (ez - sz) * t1 + bow1, 6, 0.06);
     }
   }
@@ -288,13 +291,13 @@ function buildAmphitheatre(m) {
  * not beige, and the water is a jade green in concentric rings, not pool blue.
  * Those two colours are most of what makes this thing recognisable from above.
  */
-function buildFountain(m) {
+function buildFountain(m, pave) {
   const cx = 96, cz = 74;
-  m.col(P.TERRACOTTA);
-  ring(m, cx, cz, 0.08, 21, 60, 64);
-  m.col(P.TERRACOTTA_DK);
-  ring(m, cx, cz, 0.085, 56, 60, 64);          // darker outer band
-  ring(m, cx, cz, 0.09, 21, 23, 64);           // and an inner kerb
+  pave.col(0xd9a288);
+  ring(pave, cx, cz, 0.08, 21, 60, 64);
+  pave.col(0xb7876c);
+  ring(pave, cx, cz, 0.085, 56, 60, 64);       // darker outer band
+  ring(pave, cx, cz, 0.09, 21, 23, 64);        // and an inner kerb
 
   // Planting collar — the aerial shows a red-flowered ring right at the basin.
   m.col(0xa8443a);
@@ -491,7 +494,7 @@ function dress(group, rng) {
   }
   // Grass tufts and low cover, scattered thickly — this is what stops a lawn
   // reading as a flat green plane from the gameplay camera.
-  for (let i = 0; i < 520; i++) {
+  for (let i = 0; i < 1400; i++) {
     const a = rng() * TAU, rr = Math.sqrt(rng());
     const x = -50 + Math.cos(a) * rr * 118, z = 20 + Math.sin(a) * rr * 145;
     if (!clear(x, z)) continue;
@@ -548,13 +551,24 @@ function dress(group, rng) {
     const inst = new THREE.InstancedMesh(sp.geometry, sp.material, list.length);
     inst.castShadow = true;
     inst.receiveShadow = false;
+    /**
+     * Per-instance tint. Four hundred copies of one tree at one colour is the
+     * loudest "this is instanced" tell there is — a real canopy varies from
+     * tree to tree and within a species. A few percent of value and a touch of
+     * hue is enough; more than that and the park looks diseased.
+     */
+    inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
     list.forEach((t, i) => {
       _q.setFromAxisAngle(_ax, t.rot);
       _p.set(t.x, 0, t.z);
-      _s.set(t.s, t.s, t.s);
+      // Non-uniform scale: real trees are not spheres scaled evenly.
+      _s.set(t.s * (0.92 + rng() * 0.16), t.s * (0.9 + rng() * 0.24), t.s * (0.92 + rng() * 0.16));
       inst.setMatrixAt(i, _m.compose(_p, _q, _s));
+      const v = 0.82 + rng() * 0.30;
+      inst.instanceColor.setXYZ(i, v * (0.96 + rng() * 0.08), v, v * (0.93 + rng() * 0.10));
     });
     inst.instanceMatrix.needsUpdate = true;
+    inst.instanceColor.needsUpdate = true;
     inst.name = `bayfront-${key}`;
     group.add(inst);
     placed += list.length;
@@ -676,24 +690,87 @@ export function buildBayfront(scene) {
   group.name = 'bayfront';
   group.position.set(ISLAND.cx, 0, ISLAND.cz);
 
-  const m = new M();
+  /**
+   * FOUR meshes, not one.
+   *
+   * The first version drew the whole island into a single vertexColors solid
+   * with no map on it, and that is the entire reason it read as a 2002 game:
+   * every surface was a flat untextured colour. The city does not do that —
+   * streets.js and nature.js put real procedural textures and normal maps on
+   * every ground plane. Splitting by material costs three extra draw calls and
+   * buys grass that looks like grass.
+   */
+  const m = new M();          // structures: vertex-coloured solid
+  const lawn = new M();       // grass, textured
+  const pave = new M();       // paths and plazas, textured
+  const water = new M();      // the bay
+  const sandM = new M();      // beach / soft surfacing
+
   m.col(P.GRASS);
-  buildGround(m);
+  buildGround(m, lawn, pave, water, sandM);
   buildAmphitheatre(m);
-  buildFountain(m);
+  buildFountain(m, pave);
   buildWheel(m);
   buildBayside(m, rng);
   buildSouth(m, rng);
   buildMonuments(m);
   buildSkyline(m, rng);
 
-  const mesh = new THREE.Mesh(m.geometry(), solid({
+  /**
+   * Planar UVs from world XZ.
+   *
+   * props.js's M builder writes position, normal, colour and glow — but no uv,
+   * because a prop is vertex-coloured and never needs one. That is why the
+   * grass and paving textures were invisible: `map:` had no coordinates to
+   * sample and every surface stayed a flat fill. Every surface being textured
+   * here is horizontal, so projecting straight down is not an approximation —
+   * it is the correct mapping, and it tiles seamlessly across the whole park.
+   */
+  const planarUV = (g, tiles) => {
+    const pos = g.getAttribute('position');
+    const uv = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      uv[i * 2] = pos.getX(i) / tiles;
+      uv[i * 2 + 1] = pos.getZ(i) / tiles;
+    }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  };
+
+  const addMesh = (builder, material, name, shadow = true, tiles = 0) => {
+    const g = builder.geometry();
+    if (!g.getAttribute('position') || g.getAttribute('position').count === 0) return;
+    if (tiles) planarUV(g, tiles);
+    const mesh = new THREE.Mesh(g, material);
+    mesh.castShadow = shadow;
+    mesh.receiveShadow = true;
+    mesh.name = `bayfront-${name}`;
+    group.add(mesh);
+  };
+
+  addMesh(lawn, ground({
+    name: 'bayfront-lawn', map: Textures.grass(), color: 0x86a878,
+    roughness: 0.98, metalness: 0, vertexColors: true,
+  }), 'lawn', false, 9);
+
+  addMesh(pave, ground({
+    name: 'bayfront-pave',
+    map: Textures.paving(512, 0xc9ab96, 'rgba(150,140,120,0.45)', 5),
+    roughness: 0.92, metalness: 0, vertexColors: true,
+  }), 'pave', false, 6);
+
+  addMesh(water, solid({
+    name: 'bayfront-water', color: 0x1d8f9c, roughness: 0.16, metalness: 0.35,
+    envMapIntensity: 1.6, vertexColors: true,
+  }), 'water', false, 24);
+
+  addMesh(sandM, ground({
+    name: 'bayfront-sand', map: Textures.sand(), color: 0xd9cdb2,
+    roughness: 0.95, metalness: 0, vertexColors: true,
+  }), 'sand', false, 7);
+
+  addMesh(m, solid({
     name: 'bayfront', vertexColors: true, roughness: 0.72, metalness: 0.03,
-  }));
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.name = 'bayfront-shell';
-  group.add(mesh);
+  }), 'shell', true);
 
   const n = dress(group, rng);
   console.info(`[bayfront] spawn island: ${n} plants and props placed`);
