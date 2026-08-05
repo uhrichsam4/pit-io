@@ -1,128 +1,63 @@
-# MIAMI DEVOUR
+# pit.io
 
-A bright, playful, multiplayer city-eating game built in Three.js. You are a hole
-in the ground in Brickell. Start by swallowing traffic cones. End by swallowing
-the skyline.
+A Hole.io-style city-eating game set in a stylised Miami — Brickell and
+Downtown, ~27,000 edible objects, seven game modes, and a cosmetic meta layer.
+Three.js, no binary assets: every texture, prop and icon is generated in code.
 
-![preset: brickell-skyline](shots/latest/brickell-skyline.png)
+## Deploy
 
-## Run it
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/uhrichsam4/pit-io)
+
+**One service, one port.** `server/server.js` serves the built game, the REST
+API and the WebSocket game protocol together, so a deployment is a single URL
+you can send to a friend — no CORS, no second host to keep in sync, and no
+`?server=` parameter anyone has to be told about.
+
+`render.yaml` configures the build, the start command, the Node version and a
+health check, so there is nothing to fill in by hand.
+
+## Playing with someone
+
+Send them the deployed link, then either:
+
+- **Play With Friends → Create Private Lobby**, and give them the six-character
+  invite code to enter under **Join with Code**; or
+- both open `<url>/?room=anything` with the same word.
+
+The world is generated deterministically from a seed the server hands out, so
+every client in a room builds a byte-identical city and the network only has to
+replicate *events* against it, not the world itself.
+
+## Running locally
 
 ```bash
 npm install
-npm run dev
+npm run dev      # game on http://localhost:5173
+npm run server   # room server + API on http://localhost:8787
 ```
 
-Then open <http://localhost:5173>.
-
-For multiplayer, start the room server in a second terminal:
+In development those are two processes on two ports; the client only adds
+`:8787` when the hostname is loopback. Built and deployed, the server serves the
+game itself and everything shares one origin.
 
 ```bash
-npm run server
+npm run build            # produces dist/
+node tools/boot-check.mjs --port 8787
 ```
 
-and open <http://localhost:5173/?room=miami> in two or more tabs. Everyone in the
-same `?room=` shares a match. Optional query parameters:
+## tools/
 
-| Parameter | Meaning |
-|---|---|
-| `?room=NAME` | join/create a multiplayer room (omit for solo + bots) |
-| `?name=NAME` | your display name |
-| `?server=host:port` | point at a non-default room server |
-| `?debug=1` | enable debug overlays |
+`boot-check.mjs` is the one to run after touching anything under `src/world/`.
+`node --check` only proves a file *parses* — a registry entry naming a geometry
+function that was never written is a ReferenceError, not a syntax error, so the
+file parses perfectly while the game fails to boot. That exact bug once took the
+whole game down behind a wall of green `--check` results. Boot it.
 
-## How it plays
+Also here: `prop-catalogue.mjs` (photograph every prop kind alone),
+`prop-audit.mjs` (placement), `consume-test.mjs` (the swallow physics contract),
+`perf-audit.mjs` (triangles and draw calls), `net-test.mjs` (two real clients in
+one room), `meta-test.mjs` (the meta-layer acceptance gate).
 
-- **Move** with WASD, the arrow keys, a gamepad stick, or by dragging.
-- You can only swallow things smaller than your hole. Everything else you drive
-  underneath and ignore.
-- Every swallow grows you, which unlocks the next tier: street furniture → bikes
-  and carts → cars and palms → buses and boats → storefronts → whole buildings →
-  landmark towers.
-- Rival holes are food too, once you are ~18% bigger than they are. Being eaten
-  costs you half your score and a short respawn.
-- The last 30 seconds are a **frenzy**: size requirements drop and everything is
-  suddenly on the menu.
+## docs/
 
-## Architecture
-
-```
-src/
-  config.js            WORLD / HOLE / MATCH / TIER constants (re-exports palette + quality)
-  game.js              wires engine + world + holes + UI into one loop
-  core/
-    engine.js          renderer, sun/sky rig, camera, post-processing chain
-    quality.js         QUALITY + CAMERA tunables
-    materials.js       procedural canvas textures + shared material factories
-    pools.js           InstancedMesh pools with proxy-mesh leasing
-    audio.js           fully synthesised SFX + generative music
-    rng.js             seeded mulberry32 — the city is deterministic
-  render/
-    palette.js         every colour in the game
-    groundShader.js    the multi-hole ground cutter
-    effects.js         particles, debris, shockwaves, screen shake
-  world/
-    cityLayout.js      pure-data street grid + block zoning for Brickell/Downtown
-    streets.js         roads, sidewalks, curbs, markings, bridges
-    buildings.js       towers, midrises, storefronts, garages, construction
-    props.js           street furniture
-    vehicles.js        traffic, parked cars, boats, machinery
-    nature.js          parks, plazas, palms, fountains
-    water.js           Biscayne Bay + the Miami River
-    worldBuild.js      orchestrator; defines the content-module contract
-  gameplay/
-    entities.js        Consumable registry + spatial hash
-    hole.js            the hole: growth curve, movement, pit visual
-    consume.js         suction, capture, the tumble, hole-vs-hole
-    ai.js              bot opponents
-    match.js           match state machine
-    input.js           keyboard / pointer / touch / gamepad
-  net/
-    protocol.js        wire format, shared with the server
-    client.js          snapshot interpolation + event reporting
-  ui/                  HUD, minimap, screens
-  dev/devtools.js      window.DEV — the automated screenshot harness
-server/server.js       authoritative room server
-tools/shot.mjs         headless screenshot driver
-tools/compare.mjs      A/B and contact-sheet builder
-docs/ART_DIRECTION.md  the visual law
-```
-
-### Two ideas worth knowing
-
-**The hole is a shader, not geometry.** Every ground surface uses a material
-patched by `applyHoleCut()`, which discards fragments inside any active hole and
-darkens a soft rim just outside it. Objects that have dropped below `y = 0` are
-therefore only visible through the cut, because everywhere else the opaque
-ground still wins the depth test. One shared uniform block means adding a hole
-costs a single write per frame regardless of how many ground meshes exist.
-
-**Instanced until swallowed.** Repeated props live as one slot inside an
-`InstancedMesh` — one draw call for thousands of cones. The instant a prop is
-captured, its slot is zeroed and it leases a real `Mesh` from a free list, so it
-gets full individual physics for the second it spends falling. Cheap when
-sleeping, correct when it matters.
-
-### Determinism and multiplayer
-
-World generation uses only the seeded RNG in `core/rng.js`, so the same seed
-produces a byte-identical city with identical `Consumable` ids on every client.
-That is what lets multiplayer replicate *events against the world* (`ids 41, 42
-were eaten`) instead of replicating the world itself. The server stays
-authoritative for the match clock, the roster, and hole-vs-hole kills.
-
-## Development
-
-```bash
-# screenshot any canonical view, headless
-node tools/shot.mjs --presets hole-small,brickell-skyline --out shots/check
-
-# every preset
-node tools/shot.mjs --all --out shots/full --w 1600 --h 900
-
-# blind A/B two runs
-node tools/compare.mjs --ab shots/before shots/after --out shots/ab.png --blind
-```
-
-`shots/<dir>/report.json` records draw calls, triangle counts and any runtime
-errors for each shot. Preset names are defined in `src/dev/devtools.js`.
+`ART_DIRECTION.md`, `META_LAYER.md`, `PERF_FINDINGS.md`, `STREET_LIFE.md`.
