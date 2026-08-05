@@ -20,6 +20,7 @@ import { spawnBots } from './gameplay/ai.js';
 import { Match, PHASE } from './gameplay/match.js';
 import { getMode } from './gameplay/modes.js';
 import { buildWorld } from './world/worldBuild.js';
+import { buildBayfront } from './world/bayfront.js';
 import { HUD, uiState } from './ui/hud.js';
 import { Screens } from './ui/screens.js';
 import { NetClient, readNetConfig } from './net/client.js';
@@ -168,6 +169,12 @@ export class Game {
     this.match.layout = layout;
     this.worldCtx = ctx;
     this.allConsumables = (ctx && ctx.allConsumables) || [];
+    /**
+     * The spawn island. Built once and parked far off the city grid, hidden
+     * until somebody is waiting in a room — see enterIsland().
+     */
+    this.island = buildBayfront(eng.scene);
+
     this.trafficUpdate = eng.scene.userData.trafficUpdate || null;
     this.pedestrianUpdate = eng.scene.userData.pedestrianUpdate || null;
     this.waterUniforms = eng.scene.userData.waterUniforms || null;
@@ -387,6 +394,7 @@ export class Game {
       const q = new URLSearchParams(location.search);
       this._joinMode = q.get('mode') || undefined;
       if (this.net && this.meta) {
+        this.enterIsland();
         this.meta.show();
         this.meta.reset('prelobby', { code: this.netCfg.room });
       } else {
@@ -438,6 +446,7 @@ export class Game {
       if (d.phase === 'lobby' && this.meta) {
         // Back to the waiting room between rounds.
         this.paused = false;
+        this.enterIsland();
         this.meta.show();
         this.meta.reset('prelobby', { code: this.netCfg ? this.netCfg.room : '' });
       }
@@ -617,6 +626,7 @@ export class Game {
    */
   startMatch(modeId) {
     this.paused = false;
+    this.leaveIsland();
     const mode = getMode(modeId || (this.mode && this.mode.id));
     this.mode = mode;
     if (this.meta) this.meta.hide();
@@ -1005,6 +1015,66 @@ export class Game {
   }
 
   /** Leave the match and go back to the lobby, on a fully restored city. */
+  /* ------------------------------------------------------------ island --- */
+
+  /**
+   * Drop the player onto the spawn island to wait in.
+   *
+   * Reuses the machinery that already exists rather than adding a lobby mode:
+   * a normal Hole, the normal follow camera, and the same circular clamp Last
+   * Hole Standing uses for its closing ring. The only thing that is special is
+   * that nothing here is edible — the island carries no Consumables at all, so
+   * "you cannot eat the park" needs no rule.
+   */
+  enterIsland() {
+    if (!this.island) return;
+    this.onIsland = true;
+    this.island.show();
+    this.paused = false;
+
+    for (const h of this.holes) { this.engine.scene.remove(h.group); h.dispose(); }
+    this.holes.length = 0;
+    this.bots.length = 0;
+
+    const n = this.net && this.net.id ? this.net.id : 1;
+    const sp = this.island.spawns[(n - 1) % this.island.spawns.length];
+    this.player = new Hole({
+      type: 'player', name: this.playerName(), color: this._playerColor(),
+      x: sp.x, z: sp.z,
+    });
+    if (this.net) this.player.netId = this.net.id;
+    this.engine.scene.add(this.player.group);
+    this.holes.push(this.player);
+    if (this.net) this._syncPeerHoles();
+
+    this.engine._camTarget.set(sp.x, 0, sp.z);
+    this.engine._boom = 1;
+    if (this.hud) this.hud.root.style.opacity = '0';
+  }
+
+  leaveIsland() {
+    if (!this.island) return;
+    this.onIsland = false;
+    this.island.hide();
+  }
+
+  /** Hold every hole inside the island. The ring clamp, on a fixed circle. */
+  _clampToIsland() {
+    const b = this.island && this.island.bounds;
+    if (!b) return;
+    for (const h of this.holes) {
+      const dx = h.position.x - b.cx, dz = h.position.z - b.cz;
+      const d = Math.hypot(dx, dz);
+      const lim = Math.max(8, b.r - h.radius);
+      if (d <= lim) continue;
+      const inv = lim / (d || 1);
+      h.position.x = b.cx + dx * inv;
+      h.position.z = b.cz + dz * inv;
+      h.velocity.x *= 0.2; h.velocity.z *= 0.2;
+      h.syncVisual();
+    }
+  }
+
   /* ------------------------------------------------------------- pause --- */
 
   /**
@@ -1129,6 +1199,21 @@ export class Game {
   stepSimulation(dt) {
     const t = this.clock.elapsedTime;
     const phase = this.match.phase;
+
+    // Waiting on the spawn island: the player drives, nothing else runs. The
+    // match clock is not started, there are no bots and nothing is edible, so
+    // this is deliberately NOT the match path — it is just movement.
+    if (this.onIsland) {
+      if (this.player && this.player.alive) {
+        this.player.desiredDir.copy(this.input.update());
+      }
+      for (const h of this.holes) h.update(dt, t);
+      this._clampToIsland();
+      if (this.net && this.player) this.net.update(this.player, t);
+      this.effects.update(dt);
+      return;
+    }
+
     this.match.update(dt);
 
     // The match is over: nothing moves. Traffic, crowds, bots, physics,
@@ -1257,6 +1342,8 @@ export class Game {
         c.x + this.engine.sunDir.x * 320, this.engine.sunDir.y * 320,
         c.z + this.engine.sunDir.z * 320
       );
+    } else if (this.onIsland && this.player) {
+      this.engine.updateCamera(this.player.position, this.player.displayRadius, dt, 0);
     } else if (this.player && (phase === PHASE.PLAYING || phase === PHASE.COUNTDOWN || phase === PHASE.RESULTS)) {
       const tgt = this.player.alive
         ? this.player.position

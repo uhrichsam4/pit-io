@@ -143,7 +143,11 @@ function aoAt(y) {
  * sub-parts — a street-name blade, a canted sign, a chair turned to the table —
  * can reuse the axis-aligned primitives instead of needing their own maths.
  */
-class M {
+/**
+ * Exported so the Bayfront spawn island can build with the same primitives the
+ * city does. Sharing the builder is what keeps the two looking like one game.
+ */
+export class M {
   constructor() {
     this.p = []; this.n = []; this.c = []; this.i = []; this.g = [];
     this.v = 0;
