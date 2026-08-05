@@ -43,8 +43,12 @@ function hostFromQuery() {
   // — people paste whichever one they happen to have in the clipboard.
   host = host.replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '');
   if (!host) {
+    // Same rule as readNetConfig()'s defaultHost(): :8787 only in local
+    // development, where Vite and the room server are separate processes.
+    // Deployed, the server serves the game, so the API is on this very origin.
     const h = (loc && loc.hostname) || 'localhost';
-    host = `${h}:8787`;
+    const dev = h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+    host = dev ? `${h}:8787` : ((loc && loc.host) || h);
   }
   return host;
 }

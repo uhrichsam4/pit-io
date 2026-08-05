@@ -1,5 +1,5 @@
 {
-  "name": "miami-devour",
+  "name": "pit-io",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -7,7 +7,8 @@
     "dev": "vite --port 5173 --strictPort",
     "build": "vite build",
     "preview": "vite preview --port 4173 --strictPort",
-    "server": "node server/server.js"
+    "server": "node server/server.js",
+    "start": "node server/server.js"
   },
   "dependencies": {
     "three": "^0.185.1",
@@ -16,5 +17,8 @@
   "devDependencies": {
     "playwright": "^1.62.1",
     "vite": "^8.2.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

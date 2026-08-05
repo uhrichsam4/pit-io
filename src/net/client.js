@@ -223,13 +223,31 @@ export class NetClient {
 }
 
 /**
+ * Where the room server is, when the URL does not say.
+ *
+ * In development the game is served by Vite on :5173 and the room server is a
+ * separate process on :8787, so the port has to be added. Deployed, the server
+ * serves the built game itself (see server/http.js), so the socket lives at the
+ * SAME origin — and hardcoding :8787 there would point at a port the host does
+ * not expose, which reads to the player as "multiplayer is broken".
+ *
+ * Shared with matchmaking.js's hostFromQuery(); the REST surface and the game
+ * socket must always resolve to the same place.
+ */
+export function defaultHost() {
+  const h = location.hostname;
+  const dev = h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '';
+  return dev ? `${h || 'localhost'}:8787` : location.host;
+}
+
+/**
  * Read the multiplayer intent off the page URL.
  * @returns {{enabled:boolean, room:string, url:string, name:string}}
  */
 export function readNetConfig() {
   const q = new URLSearchParams(location.search);
   const room = q.get('room');
-  const host = q.get('server') || `${location.hostname}:8787`;
+  const host = q.get('server') || defaultHost();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return {
     enabled: !!room,

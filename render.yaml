@@ -1,0 +1,29 @@
+# One-click deploy for pit.io on Render (https://render.com).
+#
+# ONE SERVICE, not two. server/server.js serves the built game, the REST API and
+# the WebSocket game protocol on a single port, so there is one URL to share
+# with a friend, no CORS, and no second thing to keep in sync.
+#
+# To use: push this repo to GitHub, then on Render choose
+# New -> Blueprint and point it at the repo. Everything below is picked up
+# automatically; there is nothing to type into the dashboard.
+
+services:
+  - type: web
+    name: pit-io
+    runtime: node
+    plan: free
+    # Playwright is a devDependency used only by the local test harness. Its
+    # postinstall downloads several hundred MB of browsers, which on the free
+    # tier is the difference between a build that finishes and one that times
+    # out — and the server never runs a browser.
+    buildCommand: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install && npm run build
+    startCommand: node server/server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+        value: "1"
+    # The room server answers this without touching the game state, so it is a
+    # cheap liveness probe.
+    healthCheckPath: /api/health

@@ -20,6 +20,9 @@
  * shows nothing — which is exactly the failure mode that looks like "the
  * feature was never built".
  */
+import { createReadStream, statSync } from 'node:fs';
+import { dirname, extname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const MAX_BODY = 16 * 1024;
 const RATE_WINDOW_MS = 60000;
@@ -117,6 +120,55 @@ function parseJson(text) {
  * @returns {(req: import('node:http').IncomingMessage,
  *            res: import('node:http').ServerResponse) => void}
  */
+/** Where the built client lives, relative to this file. */
+const DIST = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist');
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.map': 'application/json; charset=utf-8',
+};
+
+/**
+ * Serve a file out of dist/. Returns false if there is nothing to serve, so the
+ * caller can fall through to its own 404.
+ *
+ * Path traversal is the whole risk here: this is the one place the server turns
+ * a string from the network into a filesystem read. resolve() the joined path
+ * and require it to still be inside DIST — `/../../etc/passwd` normalises out
+ * of the directory and is rejected rather than read.
+ */
+function serveStatic(req, res, path) {
+  let rel = path === '/' ? '/index.html' : path;
+  try { rel = decodeURIComponent(rel); } catch { return false; }
+  const file = resolve(join(DIST, rel));
+  if (file !== resolve(DIST) && !file.startsWith(resolve(DIST) + sep)) return false;
+
+  let st;
+  try { st = statSync(file); } catch { return false; }
+  if (st.isDirectory()) return false;
+
+  const type = MIME[extname(file).toLowerCase()] || 'application/octet-stream';
+  // Vite fingerprints every asset filename, so those are immutable; index.html
+  // is the one file that must never be cached or players get a stale bundle
+  // pointing at hashes that no longer exist.
+  const cache = /\/assets\//.test(rel)
+    ? 'public, max-age=31536000, immutable'
+    : 'no-cache';
+  res.writeHead(200, { 'content-type': type, 'content-length': st.size, 'cache-control': cache });
+  if ((req.method || 'GET').toUpperCase() === 'HEAD') { res.end(); return true; }
+  createReadStream(file).pipe(res);
+  return true;
+}
+
 export function createHttpHandler({ store, version = 0 }) {
   /** ip -> { n, reset }. Swept lazily; an unbounded map is a slow memory leak. */
   const rate = new Map();
@@ -150,18 +202,32 @@ export function createHttpHandler({ store, version = 0 }) {
       return;
     }
 
-    // A human who opens the server port in a browser should get something
-    // better than a stack trace.
-    if (path === '/' && method === 'GET') {
-      sendJson(res, 200, {
-        name: 'miami-devour room server',
-        version,
-        api: ['/api/health', '/api/rooms', '/api/rooms/:code', '/api/leaderboard', '/api/profile/:id'],
-      });
-      return;
-    }
-
+    // Anything that is not the API is the GAME.
+    //
+    // One service, not two. A hosting platform gives you a single port, and
+    // splitting the client onto a static host and the socket onto another
+    // origin means CORS, a second URL to keep in sync, and a `?server=` query
+    // param the player has to be told about. Serving the built client from the
+    // same process makes the deployed game one link you can send someone, and
+    // the WebSocket lives at that same origin for free.
+    //
+    // If dist/ has not been built this falls through to the old JSON banner, so
+    // running the server alone for local development behaves exactly as before.
     if (!path.startsWith('/api/')) {
+      if (method !== 'GET' && method !== 'HEAD') {
+        sendJson(res, 405, { error: 'method not allowed' });
+        return;
+      }
+      if (serveStatic(req, res, path)) return;
+      if (path === '/') {
+        sendJson(res, 200, {
+          name: 'miami-devour room server',
+          version,
+          note: 'no dist/ build found — run `npm run build` to serve the game from here',
+          api: ['/api/health', '/api/rooms', '/api/rooms/:code', '/api/leaderboard', '/api/profile/:id'],
+        });
+        return;
+      }
       sendJson(res, 404, { error: 'not found' });
       return;
     }
