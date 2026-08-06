@@ -811,6 +811,12 @@ export class PowerupSystem {
    * @param {number} [baseR] the un-multiplied search radius, if already known
    */
   pullAccel(hole, c, dist, baseR) {
+    /* A prop sitting exactly on the centre has no direction to be pulled in,
+       and the caller divides by this distance to get one. consume.js guards the
+       identical case (`if (d > 1e-3)`) with the note that normalising a zero
+       vector is how an object at dead centre starts spinning; here it would
+       write NaN into the position and then into the spatial hash. */
+    if (!(dist > 1e-3)) return 0;
     const env = this._env(hole, POWERUP_ID.VACUUM);
     if (env <= 0) return 0;
     if (!this.vacuumEligible(hole, c)) return 0;
@@ -911,6 +917,22 @@ export class PowerupSystem {
   }
 
   /** Apply radiusMultiplier with the MAX_RADIUS overshoot cap. */
+  /**
+   * The hole's radius WITHOUT any temporary surge — what every tier, unlock and
+   * threshold reader must use.
+   *
+   * game.js latches its unlock monotonically, hole.js re-derives `.tier` from
+   * the radius every frame, and hud.js colours the ring from it. A Mass Surge
+   * that grazes a tier boundary therefore SPENDS the unlock: the chime and the
+   * feed line fire 15% early, and when the player genuinely gets there the
+   * latch refuses to fire again. Reading through this getter instead makes the
+   * temporary modifier invisible to everything that must only see real growth.
+   */
+  baseRadius(hole) {
+    const m = this.radiusMultiplier(hole);
+    return m === 1 ? hole.radius : Math.min(HOLE.MAX_RADIUS, hole.radius / m);
+  }
+
   scaleRadius(hole, baseRadius) {
     const m = this.radiusMultiplier(hole);
     if (m === 1) return baseRadius;              // exact identity, no drift
@@ -1133,7 +1155,18 @@ export class PowerupSystem {
     // Audio owns its own naming; a power-up cue may or may not exist yet. Probe
     // the specific names first, then fall back to a method that is verified to
     // exist (ui) so a pickup is never silent.
-    this._sound(['powerupStart', 'powerup'], def.id, 'click');
+    /* The REAL method names. 'powerupStart' and 'powerup' do not exist on the
+       Audio class, and _sound falls back to the generic UI click when a name
+       misses — so every boost was picked up with the same little tick and the
+       whole authored suite (whoosh, wind bed, power-down) never ran. audio.js
+       warns about precisely this above its POWERUP_ALIAS table: a wrong key
+       fails SILENTLY and nobody notices the boost lost its identity. */
+    this._sound(['powerupPickup'], def.id, 'click');
+    /* The wind bed is idempotent BY KIND, not by hole, so only the local player
+       starts one — otherwise a bot's boost blows wind in your ears. */
+    if (hole.isPlayer && this.audio && typeof this.audio.powerupLoop === 'function') {
+      try { this.audio.powerupLoop(def.id); } catch (err) { /* audio optional */ }
+    }
   }
 
   _expireFx(hole, def) {

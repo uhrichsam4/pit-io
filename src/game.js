@@ -1619,9 +1619,18 @@ export class Game {
 
     // Size-tier chime + a rumble bed that grows with the hole.
     if (this.player) {
+      /* The CANONICAL radius, not the surged one. Mass Surge inflates
+         hole.radius ~15% and this latch is monotonic, so a surge that grazes a
+         tier threshold SPENDS the unlock — chime, feed line and all — and when
+         the player genuinely reaches that size `tier > this._tierReached` is
+         false and it never announces. The exposed window is the 13% of radius
+         below every threshold, so it lands in most matches. */
+      const rTier = (this.powerups && typeof this.powerups.baseRadius === 'function')
+        ? this.powerups.baseRadius(this.player)
+        : this.player.radius;
       let tier = 0;
       for (let i = 0; i < TIER_LIST.length; i++) {
-        if (this.player.radius >= TIER_LIST[i].eatRadius) tier = i;
+        if (rTier >= TIER_LIST[i].eatRadius) tier = i;
       }
       if (tier > this._tierReached) {
         this._tierReached = tier;

@@ -878,13 +878,22 @@ export class HUD {
     while (this._caps.length > 3) {
       const old = this._caps.shift();
       if (old && old.row) old.row.remove();
+      this._capDbg = (this._capDbg || { added: 0, evicted: 0, expired: 0 });
+      this._capDbg.evicted++;
     }
+    this._capDbg = (this._capDbg || { added: 0, evicted: 0, expired: 0 });
+    this._capDbg.added++;
     if (!this._capTimer) {
       this._capTimer = setInterval(() => {
         const t = typeof performance !== 'undefined' ? performance.now() : Date.now();
         for (let i = this._caps.length - 1; i >= 0; i--) {
           if (this._caps[i].until > t) continue;
           const r = this._caps.splice(i, 1)[0];
+          this._capDbg = (this._capDbg || { added: 0, evicted: 0, expired: 0 });
+          this._capDbg.expired++;
+          (this._capDbg.at || (this._capDbg.at = [])).push({
+            until: Math.round(r.until), t: Math.round(t), overdueBy: Math.round(t - r.until),
+          });
           r.row.classList.remove('on');
           setTimeout(() => r.row.remove(), 220);
         }
@@ -1178,8 +1187,8 @@ export class HUD {
    *   color?:string, description?:string, kind?:'get'|'end'}} [info]
    *
    * The two states are told apart by a kicker word, an arrow glyph and a border
-   * style, not by hue: `GOT IT ▲` on a solid edge versus `ENDED ▼` on a dashed
-   * one. The end card fades out; the pickup card pops in and holds.
+   * style, not by hue: `POWER-UP ▲` on a solid edge versus `ENDED ▼` on a
+   * dashed one. The end card fades out; the pickup card pops in and holds.
    */
   showPowerupBanner(info) {
     if (!info) return;
@@ -1805,6 +1814,7 @@ export class HUD {
     window.removeEventListener('pointerdown', this._onDocDown, true);
     window.removeEventListener('keydown', this._onDocKey);
     window.removeEventListener('resize', this._resize);
+    if (window.visualViewport) window.visualViewport.removeEventListener('resize', this._resize);
   }
 
   /* ====================================================================== */

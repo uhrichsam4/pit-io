@@ -275,6 +275,29 @@ export class EventGlue {
      */
     this.stormModes = null;
 
+    /**
+     * MAY THE STORM CREATE DEBRIS IN A NETWORKED MATCH? Default NO, and this is
+     * a correctness gate rather than a taste one.
+     *
+     * A Consumable's `id` is a module-wide counter in entities.js, and the net
+     * protocol eats by id: game.js sends `net.reportAte(c.id)` and every peer
+     * resolves it with `registry.byId.get(id)` (game.js:510). That works only
+     * while every client's counter is in lockstep, which holds for the world
+     * build (same seed, same objects, same order) and would hold for debris too
+     * — the landfall time and the whole field are drawn from a worldSeed-only
+     * stream precisely so that they match — EXCEPT for a client that joined
+     * mid-match. Its `match.elapsed` starts near zero, so it makes its 46 crates
+     * at a different moment, and from then on its id space is offset from
+     * everybody else's. The symptom is not a missing crate: it is a remote
+     * player eating a bus and a DIFFERENT client watching a lamppost fall over.
+     *
+     * Online the storm still runs in full — weather, wind, audio, banner,
+     * marker, heat — it just does not add objects to a world the protocol
+     * assumes is fixed. Flip this to true only once `ate` carries something
+     * better than a bare counter.
+     */
+    this.debrisOnline = false;
+
     /* --- the two systems ------------------------------------------------- */
     this.events = new EventManager({
       rng: this._seed(0x45564e54),          // 'EVNT'
@@ -329,6 +352,8 @@ export class EventGlue {
 
     this._gradeK = -1;          // last normalised darkness pushed to the grade
     this._gradeBase = null;     // the map's own biome grade, captured at arm()
+    this._hudHeatTier = -1;     // last {tier, value} pushed to hud.setHeat
+    this._hudHeatVal = -1;
     this._phase = null;
     this._armed = false;
     this._purgeAt = 0;
@@ -483,52 +508,36 @@ export class EventGlue {
   }
 
   /**
-   * Drive the HUD surfaces for Heat and the active event.
+   * The Heat meter — the ONE HUD surface that has to be polled.
    *
-   * These existed on both sides and were connected on neither: hud.js had
-   * setHeat/setEventBanner/setEventMarker, this glue tracked all the state they
-   * need, and nothing called across. A Heat meter that never moves is worse
-   * than no Heat meter, because it reads as "you are safe".
+   * The event banner and the map marker are NOT driven from here: hud.js runs
+   * its own countdown for the banner (`_evtLeft` is decayed in its per-frame
+   * tick) and paints the marker inside drawMinimap, so both are push-once
+   * surfaces fed from _banner()/_marker() when something actually happens.
+   * Polling them every frame would fight the HUD's own clock and restart the
+   * banner animation sixty times a second.
    *
-   * Everything here is null-guarded — the HUD may not exist in a headless
-   * harness, and an older HUD may not have these methods at all.
+   * WHAT NOT TO READ HERE, because both are tempting and both are wrong: the
+   * cityEvents runtime has no `remaining` and no `zone`. Seconds-left is
+   * `events.countdown()` (a public method, phase-aware) and the zone is the
+   * marker object handed to onMarker. Reading `ev.remaining` yields undefined
+   * and shows a permanent 0; reading `ev.zone` yields undefined and shows no
+   * marker at all — both silently, which is this codebase's signature failure.
    */
   _syncHud() {
     const g = this.game;
     const hud = g.hud;
     const me = g.player;
-    if (!hud || !me) return;
+    if (!hud || !me || typeof hud.setHeat !== 'function') return;
 
-    if (typeof hud.setHeat === 'function') {
-      const tier = this.heat.tierOf ? this.heat.tierOf(me) : 0;
-      const value = this.heat.heatOf ? this.heat.heatOf(me) : 0;
-      // Only on change: setHeat rebuilds DOM, and this runs every frame.
-      if (tier !== this._hudHeatTier || Math.abs(value - (this._hudHeatVal || 0)) > 0.01) {
-        this._hudHeatTier = tier;
-        this._hudHeatVal = value;
-        hud.setHeat({ tier, value });
-      }
-    }
-
-    const ev = this.events.active ? this.events.active() : null;
-    const id = ev ? (ev.id || ev.def && ev.def.id || 'event') : null;
-    if (id !== this._hudEventId) {
-      this._hudEventId = id;
-      if (!ev) {
-        if (typeof hud.clearEventBanner === 'function') hud.clearEventBanner();
-        if (typeof hud.setEventMarker === 'function') hud.setEventMarker(null);
-      }
-    }
-    if (ev && typeof hud.setEventBanner === 'function') {
-      hud.setEventBanner({
-        id,
-        name: ev.name || (ev.def && ev.def.name) || 'Event',
-        seconds: Math.max(0, Math.ceil(ev.remaining != null ? ev.remaining : 0)),
-      });
-    }
-    if (ev && typeof hud.setEventMarker === 'function' && ev.zone) {
-      hud.setEventMarker({ x: ev.zone.x, z: ev.zone.z, r: ev.zone.r || 60 });
-    }
+    const tier = this.heat.tierOf(me);
+    const value = this.heat.heatOf(me);
+    /* setHeat dedupes internally on tier and on whole percent, but it is still
+       a call and a couple of property reads per frame; gate it here too. */
+    if (tier === this._hudHeatTier && Math.abs(value - (this._hudHeatVal || 0)) <= 0.005) return;
+    this._hudHeatTier = tier;
+    this._hudHeatVal = value;
+    hud.setHeat({ tier, value });
   }
 
   /* --------------------------------------------------------- match seams -- */
@@ -580,7 +589,8 @@ export class EventGlue {
    *   7. mark decals                         -> hidden
    *   8. the rain volume                     -> hidden and rewound
    *   9. the storm grade                     -> the map's own grade restored
-   *  10. the marker                          -> onMarker(null)
+   *  10. the marker                          -> onMarker(null) / minimap cleared
+   *  11. the HUD's Heat chip and event banner -> hidden
    *
    * Safe to call twice, and safe to call before anything was ever armed.
    */
@@ -624,6 +634,15 @@ export class EventGlue {
 
     /* 10. */
     this._marker(null);
+
+    /* 11. events.clearAll() already pushed a `kind: 'clear'` banner, which
+       hud.setEventBanner takes down on its own. The Heat chip has no such ping
+       — heat.clearAll() forgets the state without telling anyone — so it has to
+       be hidden explicitly or a HEAT 3 chip sits over the results screen. */
+    const hud = this.game.hud;
+    if (hud && typeof hud.setHeat === 'function') hud.setHeat(null);
+    this._hudHeatTier = -1;
+    this._hudHeatVal = -1;
   }
 
   /** Release every GPU resource this file owns. For a full page teardown. */
@@ -644,8 +663,8 @@ export class EventGlue {
       this._rain.material.dispose();
       this._rain = null;
     }
-    for (const g of this._owned.geo) g.dispose();
-    for (const m of this._owned.mat) m.dispose();
+    for (const geo of this._owned.geo) geo.dispose();
+    for (const mat of this._owned.mat) mat.dispose();
     this._owned.geo.length = 0;
     this._owned.mat.length = 0;
     this._templates.clear();
@@ -667,11 +686,18 @@ export class EventGlue {
 
     if (typeof this.onBanner === 'function') { this.onBanner(payload); return; }
 
-    /* Fallback so the feature is visible with no orchestrator work at all.
-       'clear' is the teardown ping and has no message; never show it. */
-    if (payload.kind === 'clear') return;
     const hud = this.game.hud;
-    if (!hud || !hud.pushFeed) return;
+    if (!hud) return;
+
+    /* hud.setEventBanner takes the FULL EventManager payload as-is — its own
+       doc comment says so, and it treats `kind: 'clear'` and a missing name as
+       "take it down". So hand it over whole rather than picking three fields
+       out and re-deriving a countdown the HUD already runs itself. */
+    if (typeof hud.setEventBanner === 'function') { hud.setEventBanner(payload); return; }
+
+    /* No banner strip in this build of the HUD: fall back to the kill feed so
+       the event is still announced. 'clear' is the silent teardown ping. */
+    if (payload.kind === 'clear' || !hud.pushFeed) return;
     const secs = payload.seconds > 0 ? ` — ${Math.round(payload.seconds)}s` : '';
     const sub = payload.sub ? ` <i>${payload.sub}</i>` : '';
     hud.pushFeed(
@@ -681,9 +707,16 @@ export class EventGlue {
     );
   }
 
+  /**
+   * The map marker. cityEvents hands over {x, z, r, id, color, label, kind} and
+   * hud.setEventMarker wants {x, z, r, label?, color?} — the same object, so it
+   * goes across untouched. null takes it off the minimap.
+   */
   _marker(m) {
     this.marker = m || null;
-    if (typeof this.onMarker === 'function') this.onMarker(this.marker);
+    if (typeof this.onMarker === 'function') { this.onMarker(this.marker); return; }
+    const hud = this.game.hud;
+    if (hud && typeof hud.setEventMarker === 'function') hud.setEventMarker(this.marker);
   }
 
   /* ----------------------------------------------------------------- voice -- */
@@ -798,16 +831,16 @@ export class EventGlue {
     /* Start from a COPY of the map's grade so shadowTint / highlightTint /
        contrast survive untouched — those are the snow look, and a storm has no
        business editing them. */
-    const g = base ? { ...base } : {};
-    g.exposure = (base && base.exposure != null ? base.exposure : 1)
+    const out = base ? { ...base } : {};
+    out.exposure = (base && base.exposure != null ? base.exposure : 1)
       * (1 - STORM_GRADE.EXPOSURE_CUT * k);
-    g.saturation = (base && base.saturation != null ? base.saturation : 1)
+    out.saturation = (base && base.saturation != null ? base.saturation : 1)
       * (1 - STORM_GRADE.SATURATION_CUT * k);
     /* postfx.js:376 ADDS temperature. Adding to the map's own offset is right:
        a storm over Snowfall City is colder still. */
-    g.temperature = (base && base.temperature != null ? base.temperature : 0)
+    out.temperature = (base && base.temperature != null ? base.temperature : 0)
       + STORM_GRADE.TEMPERATURE * k;
-    post.setBiomeGrade(g);
+    post.setBiomeGrade(out);
   }
 
   _restoreGrade() {
@@ -960,6 +993,10 @@ export class EventGlue {
     if (!items || !items.length) return;
     const g = this.game;
     if (!g.registry || !this.scene) return;
+    if (g.net && !this.debrisOnline) {
+      console.info('[eventGlue] storm debris skipped online — see debrisOnline');
+      return;
+    }
 
     const scoreFor = g.mode && typeof g.mode.scoreFor === 'function' ? g.mode.scoreFor : null;
     let made = 0;
@@ -1227,9 +1264,16 @@ export class EventGlue {
     if (i >= HEAT.MAX_UNITS) return null;
     let m = this._marks[i];
     if (m) return m;
-    /* Unit radius, scaled per use — one geometry for every marker. */
-    const geo = new THREE.RingGeometry(0.86, 1.0, 48, 1);
-    geo.rotateX(-Math.PI / 2);
+    /* ONE unit-radius ring geometry for every marker, scaled per use. The
+       MATERIAL cannot be shared — each decal pulses on its own unit's deadline
+       — but the geometry is identical and there is no reason to mint six. */
+    let geo = this._templates.get('geo:mark-ring');
+    if (!geo) {
+      geo = new THREE.RingGeometry(0.86, 1.0, 48, 1);
+      geo.rotateX(-Math.PI / 2);
+      this._templates.set('geo:mark-ring', geo);
+      this._owned.geo.push(geo);
+    }
     const mat = new THREE.MeshBasicMaterial({
       color: UNIT_COL.WARN,
       transparent: true,
@@ -1237,7 +1281,6 @@ export class EventGlue {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
-    this._owned.geo.push(geo);
     this._owned.mat.push(mat);
     m = new THREE.Mesh(geo, mat);
     m.name = 'containment-mark';
@@ -1445,8 +1488,8 @@ export class EventGlue {
    * LOOKS like, never whether it exists.
    */
   _debrisMesh(it) {
-    const g = new THREE.Group();
-    g.name = `debris-${it.kind}`;
+    const grp = new THREE.Group();
+    grp.name = `debris-${it.kind}`;
     const wood = this._mat('deb-wood', { color: 0xa07845 });
     const leaf = this._mat('deb-leaf', { color: 0x4e7a3a });
     const metal = this._mat('deb-metal', { color: 0x9aa3ab, roughness: 0.5, metalness: 0.35 });
@@ -1455,52 +1498,52 @@ export class EventGlue {
 
     switch (it.kind) {
       case 'storm-branch': {
-        this._part(g, this._box('br-limb', 1.6, 0.11, 0.13), wood, 0, 0.09, 0);
-        this._part(g, this._box('br-twig', 0.7, 0.07, 0.08), wood, 0.5, 0.14, 0.22, 0.7);
-        this._part(g, this._box('br-frond', 1.1, 0.03, 0.34), leaf, -0.45, 0.16, 0.1, -0.5);
-        this._part(g, this._box('br-frond', 1.1, 0.03, 0.34), leaf, 0.3, 0.15, -0.2, 0.9);
+        this._part(grp, this._box('br-limb', 1.6, 0.11, 0.13), wood, 0, 0.09, 0);
+        this._part(grp, this._box('br-twig', 0.7, 0.07, 0.08), wood, 0.5, 0.14, 0.22, 0.7);
+        this._part(grp, this._box('br-frond', 1.1, 0.03, 0.34), leaf, -0.45, 0.16, 0.1, -0.5);
+        this._part(grp, this._box('br-frond', 1.1, 0.03, 0.34), leaf, 0.3, 0.15, -0.2, 0.9);
         break;
       }
       case 'storm-umbrella': {
         /* Blown over, not standing: a patio umbrella that survived the gust
            upright would be the one thing on screen the wind is not touching. */
-        this._part(g, this._cyl('um-pole', 0.05, 0.05, 2.0, 8), metal, 0, 0.42, 0).rotation.z = 1.3;
+        this._part(grp, this._cyl('um-pole', 0.05, 0.05, 2.0, 8), metal, 0, 0.42, 0).rotation.z = 1.3;
         const canopy = new THREE.Mesh(this._cyl('um-canopy', 0.06, 0.95, 0.55, 12), fabric);
         canopy.position.set(0.82, 0.5, 0);
         canopy.rotation.z = 1.3;
         canopy.castShadow = true;
-        g.add(canopy);
+        grp.add(canopy);
         break;
       }
       case 'storm-sign': {
-        this._part(g, this._box('sg-post', 0.09, 1.4, 0.09), metal, 0, 0.7, 0);
-        const panel = this._part(g, this._box('sg-panel', 1.1, 0.7, 0.06), card, 0, 1.28, 0);
+        this._part(grp, this._box('sg-post', 0.09, 1.4, 0.09), metal, 0, 0.7, 0);
+        const panel = this._part(grp, this._box('sg-panel', 1.1, 0.7, 0.06), card, 0, 1.28, 0);
         panel.rotation.z = 0.22;   // torn loose and hanging
         break;
       }
       case 'storm-crate': {
-        this._part(g, this._box('cr-body', 1.15, 0.8, 1.15), card, 0, 0.4, 0);
-        this._part(g, this._box('cr-band', 1.2, 0.08, 1.2), wood, 0, 0.72, 0);
+        this._part(grp, this._box('cr-body', 1.15, 0.8, 1.15), card, 0, 0.4, 0);
+        this._part(grp, this._box('cr-band', 1.2, 0.08, 1.2), wood, 0, 0.72, 0);
         break;
       }
       case 'storm-cart': {
-        this._part(g, this._box('ct-body', 1.5, 0.85, 0.95), metal, 0, 0.62, 0);
-        this._part(g, this._box('ct-canopy', 1.7, 0.1, 1.1), fabric, 0, 1.5, 0);
+        this._part(grp, this._box('ct-body', 1.5, 0.85, 0.95), metal, 0, 0.62, 0);
+        this._part(grp, this._box('ct-canopy', 1.7, 0.1, 1.1), fabric, 0, 1.5, 0);
         for (const sx of [-1, 1]) {
-          this._part(g, this._cyl('ct-post', 0.04, 0.04, 0.6, 6), metal, sx * 0.7, 1.18, 0);
+          this._part(grp, this._cyl('ct-post', 0.04, 0.04, 0.6, 6), metal, sx * 0.7, 1.18, 0);
         }
         for (const sx of [-1, 1]) {
           const w = new THREE.Mesh(this._cyl('ct-wheel', 0.2, 0.2, 0.08, 10), this._mat('deb-tyre', { color: 0x22262b }));
           w.position.set(sx * 0.62, 0.2, 0.3);
           w.rotation.z = Math.PI / 2;
-          g.add(w);
+          grp.add(w);
         }
         break;
       }
       default: {
         const r = Math.max(0.25, it.radius || 0.6);
         const h = Math.max(0.25, it.height || 0.7);
-        this._part(g, this._box(`deb-generic-${r.toFixed(2)}-${h.toFixed(2)}`, r * 1.6, h, r * 1.6), card, 0, h * 0.5, 0);
+        this._part(grp, this._box(`deb-generic-${r.toFixed(2)}-${h.toFixed(2)}`, r * 1.6, h, r * 1.6), card, 0, h * 0.5, 0);
         console.warn(`[eventGlue] no shape for debris kind '${it.kind}'; using a crate`);
       }
     }
@@ -1510,9 +1553,9 @@ export class EventGlue {
        items is ~60 objects; at 3-4 parts each that would be ~220 extra shadow
        draws for a handful of crates. One caster per item (the body, always
        child 0) keeps them grounded for the cost of 60. */
-    g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
-    if (g.children[0]) g.children[0].castShadow = true;
-    return g;
+    grp.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    if (grp.children[0]) grp.children[0].castShadow = true;
+    return grp;
   }
 
   /* ------------------------------------------------------------- devtools -- */
@@ -1545,16 +1588,25 @@ export class EventGlue {
 /**
  * Build the glue, wire it into the running game and return it.
  *
- * Call this LATE in Game.init() — after `layout`, `effects`, `consume`, `hud`,
- * `voice` and `map` all exist. The recommended anchor is immediately after
- * `this.screens.onMenu = () => this.showLobby();` (game.js:409), which is past
- * every one of those and before the meta layer's await.
+ * ORDERING, and it matters twice:
+ *   - AFTER `this.consume.onSwallow` is assigned, because this WRAPS that
+ *     callback. Installed earlier it would wrap `undefined`, game.js would
+ *     overwrite the wrapper a moment later, and Heat would never see a single
+ *     swallow — silently, with everything else still working.
+ *   - AFTER `layout`, `effects`, `registry`, `hud` and `map` exist. `voice` and
+ *     `powerups` are resolved lazily at call time, so those two may come later.
+ * The live call site is game.js, right after installPowerups(this).
+ *
+ * Idempotent, and it REPLACES rather than returning the incumbent: a hot reload
+ * that kept the old glue would leave two step wrappers on one game, with the
+ * stale one holding references into a scene that no longer exists.
  *
  * @param {object} game
  * @returns {EventGlue}
  */
 export function install(game) {
-  if (game.eventGlue instanceof EventGlue) return game.eventGlue;
+  const prev = game.eventGlue;
+  if (prev instanceof EventGlue) prev.uninstall();
   const glue = new EventGlue(game).install();
   game.eventGlue = glue;
   return glue;
