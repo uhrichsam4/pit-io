@@ -576,33 +576,92 @@ export class Game {
   }
 
   /**
-   * @param {number} salt  0 uses the shared city RNG (offline: the player and
-   *   each bot draw in turn, so they all differ). Anything else draws from its
-   *   own stream keyed on that number.
+   * Is this a legal place to put a hole?
    *
-   * The salt exists for multiplayer. The city RNG is seeded from the room seed
-   * and every client runs it through exactly the same sequence, so every player
-   * asking for "a spawn point" was handed the SAME square metre — two players
-   * materialised inside one another and whoever grew first ate the other before
-   * either had touched a key. Keyed on the network id, each player gets their
-   * own point and every client agrees about where everyone started.
+   * The old spawn only asked isWater(), then fell back to a HARDCODED point
+   * after sixty misses with no validation at all — so a bad draw or an
+   * imperfect water mask could put the player in Biscayne Bay with nothing to
+   * eat. "Not water" is also not sufficient: a spawn on an empty lawn is dry
+   * and still a dead start, because the whole first minute of this game is
+   * eating litter.
+   *
+   * @returns {{ok:boolean, why:string, props:number}}
+   */
+  _validateSpawn(x, z) {
+    const lim = WORLD.SIZE * 0.86;
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return { ok: false, why: 'nan', props: 0 };
+    if (Math.abs(x) > lim || Math.abs(z) > lim) return { ok: false, why: 'outside', props: 0 };
+    if (this.layout && this.layout.isWater && this.layout.isWater(x, z)) {
+      return { ok: false, why: 'water', props: 0 };
+    }
+    if (x > WORLD.BAY_EDGE - 12) return { ok: false, why: 'bay', props: 0 };
+
+    /* Somewhere to START. A hole opens at 2 m and can only take litter, so a
+       spawn is only good if there is litter within a few seconds of it. This is
+       the check the old code never made, and the reason a technically-valid
+       spawn could still be unplayable. */
+    let small = 0;
+    let blocked = false;
+    for (const c of this.allConsumables) {
+      if (!c || c.state !== STATE.IDLE) continue;
+      const dx = c.position.x - x, dz = c.position.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > 900) continue;
+      if (c.radius > 3 && d2 < (c.radius + 2.5) * (c.radius + 2.5)) { blocked = true; break; }
+      if (c.tier && c.tier.id <= 1) small++;
+    }
+    if (blocked) return { ok: false, why: 'inside-object', props: small };
+    if (small < 6) return { ok: false, why: 'no-starters', props: small };
+    return { ok: true, why: 'ok', props: small };
+  }
+
+  /**
+   * A validated spawn point.
+   *
+   * @param {number} salt  0 uses the shared city RNG. Anything else draws from
+   *   its own stream keyed on that number — the city RNG is seeded from the
+   *   room seed and every client runs the same sequence, so without a salt
+   *   every player in a room is handed the SAME square metre.
    */
   _spawnPoint(salt = 0) {
     const rng = salt
       ? makeRNG(((this.worldSeed ?? 0) ^ Math.imul(salt, 2654435761)) >>> 0)
       : this.rng;
-    // Spread spawns across both districts, never on water or inside a tower.
-    for (let tries = 0; tries < 60; tries++) {
+
+    let best = null;
+    for (let tries = 0; tries < 240; tries++) {
       const brickell = rng() < 0.5;
-      const x = rng.range(-WORLD.SIZE * 0.75, WORLD.BAY_EDGE - 50);
+      const x = rng.range(-WORLD.SIZE * 0.75, WORLD.BAY_EDGE - 60);
       const z = brickell
         ? rng.range(WORLD.RIVER_HALF_W + 50, WORLD.SIZE * 0.8)
         : rng.range(-WORLD.SIZE * 0.8, -WORLD.RIVER_HALF_W - 50);
-      if (this.layout.isWater(x, z)) continue;
-      return { x, z };
+      const v = this._validateSpawn(x, z);
+      if (v.ok) return { x, z };
+      if (v.why === 'no-starters' && (!best || v.props > best.props)) best = { x, z, props: v.props };
     }
+    if (best) {
+      console.warn(`[spawn] no ideal point in 240 tries; best dry had ${best.props} starters`);
+      return { x: best.x, z: best.z };
+    }
+
+    /* Deterministic sweep. The old fallback was a hardcoded coordinate checked
+       against nothing — if it happened to be water, the player spawned in the
+       sea. A grid search can only return a point it has validated. */
+    for (let ring = 0; ring < 14; ring++) {
+      const r = 40 + ring * 30;
+      for (let a = 0; a < 16; a++) {
+        const ang = (a / 16) * Math.PI * 2;
+        const x = Math.cos(ang) * r, z = Math.sin(ang) * r;
+        if (this._validateSpawn(x, z).ok) {
+          console.warn('[spawn] fell back to grid sweep');
+          return { x, z };
+        }
+      }
+    }
+    console.error('[spawn] NO valid spawn anywhere — check the layout');
     return { x: 0, z: 120 };
   }
+
 
   /**
    * Put the world back to its just-built state.
@@ -1065,12 +1124,15 @@ export class Game {
     this.mode = getMode(modeId || (this.mode && this.mode.id));
     this._joinMode = this.mode.id;
     this.enterIsland();
+    // The clock must exist BEFORE the screen mounts. reset() renders and paints
+    // immediately, so setting lobbyLeft afterwards meant the first paint read
+    // null and the countdown showed an em-dash until the next tick — which is
+    // exactly the "is this thing working?" moment a waiting room cannot afford.
+    this.lobbyLeft = this.net ? null : LOBBY_WAIT;
     if (this.meta) {
       this.meta.show();
       this.meta.reset('prelobby', { code: this.netCfg && this.netCfg.enabled ? this.netCfg.room : null });
     }
-    // Offline: run the lobby clock here. Online the server sends MATCH.
-    this.lobbyLeft = this.net ? null : LOBBY_WAIT;
   }
 
   /** Countdown for the offline waiting room. Returns seconds left, or null. */
