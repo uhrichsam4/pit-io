@@ -143,17 +143,16 @@ const play = await pg.evaluate(async () => {
      so the original block took ~50 s and looked exactly like a hang. Driving
      the heading from the frame callback costs one await total and follows the
      page's real frame rate, whatever it happens to be. */
-  await new Promise((done) => {
-    const t0 = performance.now();
-    let i = 0;
-    const tick = () => {
-      p.desiredDir.set(Math.cos(i * 0.08), Math.sin(i * 0.05));
-      i++;
-      if (performance.now() - t0 > 4000) { done(); return; }
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  });
+  /* Drive the SIMULATION, not the clock. rAF runs at ~1.3 fps in this harness,
+     so four wall-clock seconds of "play" is five frames and the hole never
+     reaches anything — the first run reported +0 score and that was the test's
+     fault, not the game's. stepSimulation is the same function the render loop
+     calls, so this is real gameplay at a deterministic rate. */
+  if (g.match.phase !== 'playing' && g.match.setPhase) g.match.setPhase('playing');
+  for (let i = 0; i < 900; i++) {
+    p.desiredDir.set(Math.cos(i * 0.02), Math.sin(i * 0.013));
+    g.stepSimulation(1 / 60);
+  }
   const cov = a && a.coverage ? a.coverage() : null;
   return {
     scoreGained: p.score - s0, radius: +p.radius.toFixed(2),
@@ -183,7 +182,16 @@ const pvp = await pg.evaluate(async () => {
   const before = bot.score;
   g.consume._resolvePvP(g.holes);
   const eaten = !bot.alive;
-  for (let i = 0; i < 200; i++) { g.match.update(1/60); }
+  /* match.update() returns immediately unless the phase is PLAYING
+     (match.js: `if (this.phase !== PHASE.PLAYING) return;`), so on the first
+     run the countdown consumed the frames and the 2.6 s respawn timer never
+     advanced — four checks failed for one reason, none of them the game's.
+     Force the phase, then give the timer comfortably more than it needs. */
+  if (g.match.phase !== 'playing') {
+    if (g.match._setPhase) g.match._setPhase('playing');
+    else g.match.phase = 'playing';
+  }
+  for (let i = 0; i < 600; i++) { g.match.update(1/60); }
   return { eaten, respawned: bot.alive, keptFraction: before ? +(bot.score / before).toFixed(2) : -1,
            respawnDry: !g.layout.isWater(bot.position.x, bot.position.z),
            farFromKiller: Math.hypot(bot.position.x - p.position.x, bot.position.z - p.position.z) > 40,
