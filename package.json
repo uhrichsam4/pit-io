@@ -8,7 +8,10 @@
     "build": "vite build",
     "preview": "vite preview --port 4173 --strictPort",
     "server": "node server/server.js",
-    "start": "node server/server.js"
+    "start": "node server/server.js",
+    "voices": "node --env-file-if-exists=.env tools/generate-voices.mjs",
+    "voices:dry": "node --env-file-if-exists=.env tools/generate-voices.mjs --dry-run",
+    "audit:secrets": "node tools/audit-secrets.mjs"
   },
   "dependencies": {
     "three": "^0.185.1",
