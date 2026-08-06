@@ -3,3 +3,23 @@ dist/
 shots/
 .DS_Store
 *.log
+
+# --- secrets. Nothing here ever reaches a commit or the browser bundle. -----
+.env
+.env.*
+!.env.example
+*.key
+# Broad on purpose. The owner dropped a key file named
+# "11 labs api keys for claude.env.txt" into the repo root, which matched NONE
+# of the earlier patterns — `.env.*` only matches names STARTING with .env, and
+# Finder had hidden the trailing .txt. One `git add -A` would have committed a
+# live credential. These patterns catch it by extension AND by name.
+*.env
+*.env.txt
+*api*key*
+*API*KEY*
+**/api*key*.txt
+**/*api-keys*
+secrets/
+# Generated voice audio is large and rebuildable from the line library.
+public/audio/voice/
