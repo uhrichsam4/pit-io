@@ -304,42 +304,62 @@ function buildAmphitheatre(m) {
 }
 
 /**
- * The Claude Pepper Fountain.
+ * The Claude Pepper Fountain and its plaza.
  *
- * Colour corrected against the close aerial: the apron is TERRACOTTA paving,
- * not beige, and the water is a jade green in concentric rings, not pool blue.
- * Those two colours are most of what makes this thing recognisable from above.
+ * A civic plaza is not one flat orange disc. Radial banding, concentric joint
+ * lines and a pale kerb are what the close aerial actually shows, and they are
+ * what stop a 120 m circle reading as a car park. Colour corrected too: the
+ * apron is terracotta and the water is jade in rings, not beige and pool-blue.
  */
 function buildFountain(m, pave) {
   const cx = 96, cz = 74;
-  pave.col(0xd9a288);
+
+  pave.col(0xcfae95);
   ring(pave, cx, cz, 0.08, 21, 60, 96);
-  pave.col(0xb7876c);
-  ring(pave, cx, cz, 0.085, 56, 60, 64);       // darker outer band
-  ring(pave, cx, cz, 0.09, 21, 23, 64);        // and an inner kerb
+  pave.col(0xc2a189);
+  for (let i = 0; i < 24; i += 2) {
+    ring(pave, cx, cz, 0.085, 23, 58, 4, (i / 24) * TAU, ((i + 1) / 24) * TAU);
+  }
+  pave.col(0xb5977f);
+  for (const r of [30, 39, 48, 56]) ring(pave, cx, cz, 0.09, r - 0.35, r + 0.35, 96);
 
-  // Planting collar — the aerial shows a red-flowered ring right at the basin.
+  m.col(0xdcd3c4);
+  ring(m, cx, cz, 0.12, 60, 61.6, 96);
+  ring(m, cx, cz, 0.12, 20.2, 21.4, 96);
   m.col(0xa8443a);
-  ring(m, cx, cz, 0.14, 19.4, 21, 64);
+  ring(m, cx, cz, 0.16, 18.8, 20.2, 96);
 
-  // Stone basin lip.
   m.col(P.CONCRETE);
-  ring(m, cx, cz, 0.55, 17.6, 19.4, 56);
+  ring(m, cx, cz, 0.55, 17.2, 18.8, 84);
   m.col(P.WHITE);
-  ring(m, cx, cz, 0.62, 16.4, 17.6, 56);
+  ring(m, cx, cz, 0.62, 16.2, 17.2, 84);
 
-  /* Concentric water. Three tones stepping inward and slightly down, which is
-     exactly how the real basin reads from the air. */
-  m.col(0x3fbf9a); ring(m, cx, cz, 0.5, 12.6, 16.4, 84);
+  m.col(0x3fbf9a); ring(m, cx, cz, 0.5, 12.6, 16.2, 84);
   m.col(0x2aa98a); ring(m, cx, cz, 0.44, 8.6, 12.6, 72);
-  m.col(0xd8efe6); ring(m, cx, cz, 0.50, 7.4, 8.6, 48);   // the white weir ring
-  m.col(0x1f8f78); ring(m, cx, cz, 0.38, 3.0, 7.4, 40);
+  m.col(0xd8efe6); ring(m, cx, cz, 0.50, 7.4, 8.6, 72);
+  m.col(0x1f8f78); ring(m, cx, cz, 0.38, 3.0, 7.4, 60);
 
-  // Centre boss and plume.
-  m.col(P.CONCRETE).tube(cx, cz, [[0.38, 3.0], [1.5, 2.2]], 18);
-  m.col(0xcdf2ea).tube(cx, cz, [[1.5, 1.0], [7.5, 0.32]], 10);
-  m.col(0xeafbf6).tube(cx, cz, [[7.5, 1.7], [9.2, 0.18]], 10);
+  m.col(P.CONCRETE).tube(cx, cz, [[0.38, 3.0], [1.5, 2.2]], 24);
+  m.col(0xcdf2ea).tube(cx, cz, [[1.5, 1.0], [7.5, 0.32]], 12);
+  m.col(0xeafbf6).tube(cx, cz, [[7.5, 1.7], [9.2, 0.18]], 12);
+
+  /* Benches facing the water. Every civic fountain has them and they are what
+     make a plaza read as somewhere people sit rather than somewhere they cross.
+     Angles are jittered so twenty of them are not a perfect clock face. */
+  for (let i = 0; i < 20; i++) {
+    const a = (i / 20) * TAU + 0.08 + Math.sin(i * 2.3) * 0.05;
+    const rr = 26 + Math.sin(i * 1.7) * 1.2;
+    const bx = cx + Math.cos(a) * rr, bz = cz + Math.sin(a) * rr;
+    m.col(P.CONCRETE_DK);
+    m.box(bx - 0.9, 0.1, bz - 0.9, 1.8, 0.42, 1.8);
+    m.col(i % 3 ? P.TEAK : 0xa06f3d);
+    for (let k = 0; k < 3; k++) m.box(bx - 1.55 + k * 1.1, 0.52, bz - 0.72, 0.95, 0.1, 1.45);
+    m.col(P.STEEL);
+    m.box(bx - 1.7, 0.12, bz - 0.8, 0.14, 0.42, 1.6);
+    m.box(bx + 1.56, 0.12, bz - 0.8, 0.14, 0.42, 1.6);
+  }
 }
+
 
 /** Skyviews — the observation wheel on the north-east point. */
 function buildWheel(m) {
@@ -426,174 +446,261 @@ function buildSouth(m, rng) {
 }
 
 /**
- * Everything that is placed rather than modelled: planting, park furniture and
- * the downtown skyline behind it.
+ * PLACEMENT RULES.
  *
- * nature.js already owns finished models for all of this — sixteen tree
- * species, a bandshell, park lamps, a pergola, a playground, planters. Calling
- * specimen() is both cheaper and better-looking than re-modelling them here,
- * and it keeps the island in the same visual register as the city.
+ * The density pass scattered planting across the park with a few circular
+ * exclusions and turned Bayfront into a jungle: foliage closed over the paths,
+ * buried the amphitheatre and hid the bay. A real civic park is mostly OPEN —
+ * lawns you can see across, a plaza, clear sightlines to the water and the
+ * skyline — with planting in defined belts and beds.
  *
- * One InstancedMesh per species. A park is a thousand plants and this must not
- * be a thousand draw calls.
+ * Nothing is scattered freely now. Every placement is tested against a path
+ * corridor, the open areas, landmark footprints, and an occupancy grid so two
+ * things can never share a spot.
+ */
+
+/** Centre-lines of every walkway: [x0,z0,x1,z1,halfWidth]. */
+const PATHS = [
+  [-160, 96, 96, 74, 13],
+  [-30, -150, -10, 170, 8.5],
+];
+for (const a of [-2.5, -1.9, -1.25, -0.6, 0.55, 1.2, 1.9]) {
+  PATHS.push([96 + Math.cos(a) * 26, 74 + Math.sin(a) * 26,
+    96 + Math.cos(a) * 120, 74 + Math.sin(a) * 120, 4.5]);
+}
+for (let i = 0; i < 70; i++) {
+  const t = i / 70, t2 = (i + 1) / 70;
+  const bx = (u) => 141 - Math.pow(Math.abs(u - 0.45) * 2, 2) * 13;
+  PATHS.push([bx(t) - 9, -180 + t * 370, bx(t2) - 9, -180 + t2 * 370, 7]);
+}
+
+/** Deliberately empty: [x, z, radius]. Lawns, plaza, audience ground. */
+const OPEN = [
+  [-96, 46, 40],      // the great west lawn
+  [-8, -50, 56],      // the amphitheatre's audience lawn — in FRONT of the bowl,
+  [-8, -100, 40],     //   and the bowl itself, rather than one 84 m disc that
+                      //   reached halfway across the park and ate two groves
+  [96, 74, 58],       // the fountain plaza
+  [-104, 74, 30],     // the pavilion lawn
+  [34, 22, 30],       // the central lawn
+  [-44, 152, 26],     // the south lawn
+];
+
+/** Landmark footprints: [x, z, radius]. */
+const BUILT = [
+  [104, -156, 40], [40, -178, 70], [46, -148, 62], [-6, 4, 12],
+  [-104, 128, 14], [-78, -18, 22], [40, 132, 22], [108, 156, 12], [-214, 40, 30],
+];
+
+function distToSeg(px, pz, x0, z0, x1, z1) {
+  const dx = x1 - x0, dz = z1 - z0;
+  const L = dx * dx + dz * dz;
+  const t = L ? Math.max(0, Math.min(1, ((px - x0) * dx + (pz - z0) * dz) / L)) : 0;
+  return Math.hypot(px - (x0 + dx * t), pz - (z0 + dz * t));
+}
+
+function blocked(x, z, r, opts) {
+  const open = !opts || opts.open !== false;
+  const path = !opts || opts.path !== false;
+  // A landmark must not be rejected by its OWN entry in BUILT. The playground
+  // and the hoop were, which left their surfacing painted on the ground with
+  // nothing standing on it — a bare tan rectangle beside the fountain.
+  const built = !opts || opts.built !== false;
+  if (x < -164 || x > 148 || z < -194 || z > 188) return true;
+  if (path) {
+    for (let i = 0; i < PATHS.length; i++) {
+      const s = PATHS[i];
+      if (distToSeg(x, z, s[0], s[1], s[2], s[3]) < s[4] + r + 1.2) return true;
+    }
+  }
+  if (open) {
+    for (const o of OPEN) if (Math.hypot(x - o[0], z - o[1]) < o[2]) return true;
+  }
+  if (built) {
+    for (const b of BUILT) if (Math.hypot(x - b[0], z - b[1]) < b[2] + r) return true;
+  }
+  return false;
+}
+
+/**
+ * Everything placed rather than modelled: planting and park furniture.
+ *
+ * nature.js owns finished models for all of it, so this calls specimen()
+ * instead of re-modelling badly, and keeps the island in the city's register.
+ * One InstancedMesh per species.
  */
 function dress(group, rng) {
   const buckets = new Map();
-  const put = (key, x, z, s = 1, rot = null, tilt = 0) => {
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push({ x, z, s, rot: rot == null ? rng() * TAU : rot, tilt });
+  const CELL = 3;
+  const taken = new Set();
+  const free = (x, z, r) => {
+    const n = Math.ceil(r / CELL), gx = Math.floor(x / CELL), gz = Math.floor(z / CELL);
+    for (let i = -n; i <= n; i++) {
+      for (let j = -n; j <= n; j++) if (taken.has(`${gx + i},${gz + j}`)) return false;
+    }
+    return true;
+  };
+  const claim = (x, z, r) => {
+    const n = Math.max(0, Math.ceil(r / CELL) - 1);
+    const gx = Math.floor(x / CELL), gz = Math.floor(z / CELL);
+    for (let i = -n; i <= n; i++) for (let j = -n; j <= n; j++) taken.add(`${gx + i},${gz + j}`);
+  };
+  const put = (k, x, z, s = 1, rot = null, r = 2.5, opts) => {
+    if (blocked(x, z, r, opts) || !free(x, z, r)) return false;
+    claim(x, z, r);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push({ x, z, s, rot: rot == null ? rng() * TAU : rot });
+    return true;
   };
   const pick = (a) => a[(rng() * a.length) | 0];
 
-  /* --- the canopy ------------------------------------------------------- */
-  // Big shade trees are the body of this park; the aerials are mostly dark
-  // green mass with lawn cut through it.
   const CANOPY = ['liveOak', 'liveOak', 'banyan', 'mahogany', 'seagrapeT', 'tabebuia'];
   const FLOWER = ['poinciana', 'jacaranda'];
-  const clear = (x, z) => (
-    Math.hypot(x - 96, z - 74) > 64 &&        // fountain plaza
-    Math.hypot(x + 8, z + 78) > 86 &&         // amphitheatre
-    Math.abs(z - 85 - (x + 160) * -0.086) > 16 && // the great promenade
-    x > -168 && x < 146
-  );
-  // Even coverage, not one clump: sample the whole park rectangle and reject,
-  // rather than a radial spray that piles everything at one centre.
-  for (let i = 0; i < D.canopy; i++) {
-    const x = -160 + rng() * 300;
-    const z = -190 + rng() * 380;
-    if (!clear(x, z)) continue;
-    // Keep the two big open lawns the aerials show actually open.
-    if (Math.hypot(x + 96, z - 46) < 34) continue;
-    if (Math.hypot(x - 30, z + 20) < 30) continue;
-    // Flowering trees are accents, not the rule — the first pass made the park
-    // look orange from the air.
-    put(rng() < 0.06 ? pick(FLOWER) : pick(CANOPY), x, z, 0.85 + rng() * 0.55);
+
+  // The western shade belt — the park's wall against Biscayne Boulevard.
+  for (let i = 0; i < 190; i++) {
+    put(rng() < 0.07 ? pick(FLOWER) : pick(CANOPY),
+      -158 + rng() * 32, -190 + rng() * 380, 0.9 + rng() * 0.55, null, 4 + rng() * 2);
   }
-  // A second belt along the western boulevard edge.
-  for (let i = 0; i < 120; i++) {
-    put(pick(CANOPY), -152 + rng() * 22, -190 + rng() * 380, 0.8 + rng() * 0.4);
+  // Groves BETWEEN the open areas, which is where the aerials show tree mass.
+  const GROVES = [
+    [-78, -6, 24], [26, 96, 26], [-56, 112, 22], [70, 6, 26],
+    [14, -140, 28], [-126, -104, 30], [96, 136, 20], [-118, 6, 22],
+    [56, -108, 24], [-40, -152, 26], [116, 96, 16], [-96, 158, 20],
+    [66, 56, 18], [-140, 88, 18],
+  ];
+  for (const [gx, gz, gr] of GROVES) {
+    for (let i = 0; i < 90; i++) {
+      const a = rng() * TAU, rr = Math.sqrt(rng()) * gr;
+      put(rng() < 0.07 ? pick(FLOWER) : pick(CANOPY),
+        gx + Math.cos(a) * rr, gz + Math.sin(a) * rr, 0.9 + rng() * 0.55, null, 4 + rng() * 2);
+    }
   }
 
-  /* --- palms: the signature planting ----------------------------------- */
+  // Specimen trees standing alone on the lawns. A real park lawn is not bare —
+  // it has half a dozen big trees with clear ground under them.
+  for (const [ox, oz, orr] of OPEN) {
+    const n = Math.max(1, Math.round(orr / 16));
+    for (let i = 0; i < n; i++) {
+      const a = rng() * TAU, rr = (0.35 + rng() * 0.45) * orr;
+      put(pick(CANOPY), ox + Math.cos(a) * rr, oz + Math.sin(a) * rr,
+        1.05 + rng() * 0.4, null, 7, { open: false });
+    }
+  }
+
+  /* --- palms: rows and rings, jittered so they are not a grid ------------- */
   const PALM = ['royalA', 'royalB', 'coconutA', 'coconutB', 'queenPalm', 'sabal', 'washingtonia'];
-  // Double row down the baywalk, evenly spaced — the photos show them regular.
-  for (let i = 0; i < D.palmsWalk; i++) {
-    const t = i / D.palmsWalk;
+  for (let i = 0; i < 64; i++) {
+    const t = i / 64;
     const bx = 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13;
-    const bz = -174 + t * 356;
-    put(PALM[i % PALM.length], bx + 3, bz, 0.95 + rng() * 0.3);
-    if (i % 2 === 0) put(PALM[(i + 3) % PALM.length], bx - 14, bz + 3, 0.9 + rng() * 0.3);
+    const bz = -172 + t * 350 + (rng() - 0.5) * 3.5;
+    put(PALM[(i * 3 + 1) % PALM.length], bx - 1.5 + (rng() - 0.5) * 1.5, bz,
+      1.0 + rng() * 0.3, null, 2.2, { path: false });
+    if (i % 2 === 0) {
+      put(PALM[(i * 5 + 2) % PALM.length], bx - 18 + (rng() - 0.5) * 3, bz + 3,
+        0.95 + rng() * 0.3, null, 2.2, { open: false });
+    }
   }
-  // Ring around the fountain apron, as in the close aerial.
-  for (let i = 0; i < D.palmsPlaza; i++) {
-    const a = (i / D.palmsPlaza) * TAU;
-    put(PALM[i % PALM.length], 96 + Math.cos(a) * 63, 74 + Math.sin(a) * 63, 0.95 + rng() * 0.25);
-  }
-  // Avenue of royals along the promenade.
-  for (let i = 0; i < 18; i++) {
-    const t = i / 18, x = -150 + t * 220, z = 96 - t * 22;
-    put(i % 2 ? 'royalA' : 'royalB', x, z - 17, 1.0 + rng() * 0.2);
-    put(i % 2 ? 'royalB' : 'royalA', x, z + 17, 1.0 + rng() * 0.2);
-  }
-
-  /* --- understory and ground cover -------------------------------------- */
-  // GREEN, mostly. Flowering shrubs are a garnish here, not the planting: the
-  // first pass drew 260 of them at equal weight and the park came out yellow,
-  // purple and orange from the air when every reference photo is dark green
-  // with sand-coloured paths.
-  const UNDER = ['shrub', 'shrub', 'shrub', 'arecaClump', 'fanShort', 'sago', 'traveller'];
-  const BLOOM = ['hibiscus', 'bougain', 'croton'];
-  for (let i = 0; i < D.understory; i++) {
-    const a = rng() * TAU, rr = Math.sqrt(rng());
-    const x = -50 + Math.cos(a) * rr * 110, z = 25 + Math.sin(a) * rr * 135;
-    if (!clear(x, z)) continue;
-    // Blooms cluster at path edges and the plaza, the way planting beds do.
-    const nearPath = Math.abs(z - 85 - (x + 160) * -0.086) < 30 || Math.hypot(x - 96, z - 74) < 80;
-    put(rng() < (nearPath ? 0.16 : 0.03) ? pick(BLOOM) : pick(UNDER), x, z, 0.8 + rng() * 0.5);
-  }
-  // Grass tufts and low cover, scattered thickly — this is what stops a lawn
-  // reading as a flat green plane from the gameplay camera.
-  for (let i = 0; i < D.grass; i++) {
-    const a = rng() * TAU, rr = Math.sqrt(rng());
-    const x = -50 + Math.cos(a) * rr * 118, z = 20 + Math.sin(a) * rr * 145;
-    if (!clear(x, z)) continue;
-    put(rng() < 0.62 ? 'ornGrass' : 'groundcover', x, z, 0.7 + rng() * 0.7);
-  }
-  // Clipped hedges lining the formal paths.
-  for (let i = 0; i < 26; i++) {
-    const t = i / 26;
-    put('hedge', -150 + t * 226, 79 - t * 22, 1, 0.1);
-    put('hedge', -150 + t * 226, 113 - t * 22, 1, 0.1);
-  }
-  // Agave and grass on the rock revetment, as in the ground-level photo.
   for (let i = 0; i < 40; i++) {
-    const t = i / 40;
-    put(rng() < 0.5 ? 'agave' : 'ornGrass',
-      154 + Math.sin(t * 3.1) * 9 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 14 + rng() * 4,
-      -178 + t * 366, 0.7 + rng() * 0.5);
-  }
-
-  /* --- park furniture, all real models ---------------------------------- */
-  // Lamps down every path. The aerials are dotted with them.
-  for (let i = 0; i < 30; i++) {
-    const t = i / 30;
-    put('parkLamp', -150 + t * 232, 82 - t * 22, 1, 0);
-    put('parkLamp', -150 + t * 232, 110 - t * 22, 1, 0);
+    const a = (i / 40) * TAU + (rng() - 0.5) * 0.05;
+    const rr = 57 + (rng() - 0.5) * 2.5;
+    put(PALM[(i * 3) % PALM.length], 96 + Math.cos(a) * rr, 74 + Math.sin(a) * rr,
+      1.0 + rng() * 0.25, null, 2.2, { open: false, path: false });
   }
   for (let i = 0; i < 22; i++) {
-    const t = i / 22;
-    put('parkLamp', 138 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13 - 14, -170 + t * 348, 1, 0);
+    const t = i / 22, x = -148 + t * 226, z = 95 - t * 22;
+    put(i % 2 ? 'royalA' : 'royalB', x + (rng() - 0.5) * 2, z - 17 + (rng() - 0.5) * 2,
+      1.05 + rng() * 0.2, null, 2.2, { open: false });
+    put(i % 2 ? 'royalB' : 'royalA', x + (rng() - 0.5) * 2, z + 17 + (rng() - 0.5) * 2,
+      1.05 + rng() * 0.2, null, 2.2, { open: false });
   }
-  for (let i = 0; i < 14; i++) {
-    const a = (i / 14) * TAU;
-    put('parkLamp', 96 + Math.cos(a) * 50, 74 + Math.sin(a) * 50, 1, 0);
-  }
-  // Planters along the promenade and the plaza.
-  for (let i = 0; i < 14; i++) {
-    const t = i / 14;
-    put(i % 2 ? 'planterL' : 'planterS', -140 + t * 200, 86 - t * 20, 1, 0);
-  }
-  put('pergola', -96, 40, 1.2, 0.35);
-  put('pergola', 34, 150, 1.1, -0.6);
-  put('playground', 40, 132, 1.3, 0.2);
-  put('hoop', 108, 156, 1.0, 0.5);
-  put('flagUS', -18, 18, 1.2, 0);
-  put('bandshell', -8, -78, 1.6, Math.PI);      // at the focus of the bowl
 
-  /* --- build the instanced meshes --------------------------------------- */
+  /* --- understory at grove edges and in beds, never loose on a lawn ------- */
+  const UNDER = ['shrub', 'shrub', 'arecaClump', 'fanShort', 'sago', 'traveller'];
+  const BLOOM = ['hibiscus', 'bougain', 'croton'];
+  for (const [gx, gz, gr] of GROVES) {
+    for (let i = 0; i < 40; i++) {
+      const a = rng() * TAU, rr = (0.72 + rng() * 0.5) * gr;
+      put(rng() < 0.22 ? pick(BLOOM) : pick(UNDER),
+        gx + Math.cos(a) * rr, gz + Math.sin(a) * rr, 0.8 + rng() * 0.5, null, 2.2);
+    }
+  }
+  for (let i = 0; i < 60; i++) {
+    const a = (i / 60) * TAU;
+    put(rng() < 0.42 ? pick(BLOOM) : 'hedge', 96 + Math.cos(a) * 62, 74 + Math.sin(a) * 62,
+      0.9 + rng() * 0.35, a + Math.PI / 2 + (rng() - 0.5) * 0.2, 1.6,
+      { open: false, path: false });
+  }
+
+  /* --- grass ONLY on the lawns, which is what a lawn is ------------------- */
+  for (const [ox, oz, orr] of OPEN) {
+    const n = Math.round(orr * orr * 0.55);
+    for (let i = 0; i < n; i++) {
+      const a = rng() * TAU, rr = Math.sqrt(rng()) * (orr - 3);
+      const x = ox + Math.cos(a) * rr, z = oz + Math.sin(a) * rr;
+      if (blocked(x, z, 0.4, { open: false })) continue;
+      const k = rng() < 0.6 ? 'ornGrass' : 'groundcover';
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push({ x, z, s: 0.65 + rng() * 0.65, rot: rng() * TAU });
+    }
+  }
+
+  /* --- furniture serves the thing it stands beside ------------------------ */
+  for (let i = 0; i < 24; i++) {
+    const t = i / 24;
+    put('parkLamp', -146 + t * 226, 95 - t * 22 - 15.5, 1, 0, 1.2, { open: false });
+    put('parkLamp', -146 + t * 226, 95 - t * 22 + 15.5, 1, 0, 1.2, { open: false });
+  }
+  for (let i = 0; i < 26; i++) {
+    const t = i / 26;
+    put('parkLamp', 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13 - 15.5,
+      -168 + t * 340, 1, 0, 1.2, { open: false });
+  }
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * TAU;
+    put('parkLamp', 96 + Math.cos(a) * 45, 74 + Math.sin(a) * 45, 1, 0, 1.2,
+      { open: false, path: false });
+  }
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * TAU + 0.22;
+    put(i % 2 ? 'planterL' : 'planterS', 96 + Math.cos(a) * 23.5, 74 + Math.sin(a) * 23.5,
+      1, a, 1.6, { open: false, path: false });
+  }
+  put('pergola', -132, 30, 1.2, 0.35, 6, { open: false, built: false });
+  put('pergola', 64, 160, 1.1, -0.6, 6, { open: false, built: false });
+  put('playground', 40, 132, 1.3, 0.2, 10, { open: false, built: false, path: false });
+  put('hoop', 108, 158, 1.0, 0.5, 5, { open: false, built: false });
+  put('flagUS', -24, 34, 1.2, 0, 3, { open: false, built: false });
+  put('bandshell', -8, -78, 1.6, Math.PI, 8, { open: false, path: false, built: false });
+
+  /* --- instance them ------------------------------------------------------ */
   const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(),
     _p = new THREE.Vector3(), _s = new THREE.Vector3(), _ax = new THREE.Vector3(0, 1, 0);
   let placed = 0;
-  for (const [key, list] of buckets) {
-    const sp = specimen(key, 0);
-    if (!sp) continue;
+  for (const [k, list] of buckets) {
+    const sp = specimen(k, 0);
+    if (!sp || !list.length) continue;
     const inst = new THREE.InstancedMesh(sp.geometry, sp.material, list.length);
     inst.castShadow = true;
     inst.receiveShadow = false;
-    /**
-     * Per-instance tint. Four hundred copies of one tree at one colour is the
-     * loudest "this is instanced" tell there is — a real canopy varies from
-     * tree to tree and within a species. A few percent of value and a touch of
-     * hue is enough; more than that and the park looks diseased.
-     */
     inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(list.length * 3), 3);
     list.forEach((t, i) => {
       _q.setFromAxisAngle(_ax, t.rot);
       _p.set(t.x, 0, t.z);
-      // Non-uniform scale: real trees are not spheres scaled evenly.
-      _s.set(t.s * (0.92 + rng() * 0.16), t.s * (0.9 + rng() * 0.24), t.s * (0.92 + rng() * 0.16));
+      _s.set(t.s * (0.9 + rng() * 0.2), t.s * (0.86 + rng() * 0.3), t.s * (0.9 + rng() * 0.2));
       inst.setMatrixAt(i, _m.compose(_p, _q, _s));
-      const v = 0.82 + rng() * 0.30;
-      inst.instanceColor.setXYZ(i, v * (0.96 + rng() * 0.08), v, v * (0.93 + rng() * 0.10));
+      const v = 0.84 + rng() * 0.26;
+      inst.instanceColor.setXYZ(i, v * (0.96 + rng() * 0.08), v, v * (0.94 + rng() * 0.09));
     });
     inst.instanceMatrix.needsUpdate = true;
     inst.instanceColor.needsUpdate = true;
-    inst.name = `bayfront-${key}`;
+    inst.name = `bayfront-${k}`;
     group.add(inst);
     placed += list.length;
   }
   return placed;
 }
+
 
 /**
  * The downtown skyline behind the park.
@@ -826,36 +933,59 @@ function figureGeometry() {
 }
 
 /**
- * Promenade life. The reference photos are never empty: the baywalk always has
- * walkers, joggers, people at the rail, a food cart, pigeons on the paving.
- * Static instances, not agents — this is a waiting room, and a crowd that
- * wanders would need collision against a park that has none.
+ * Promenade life.
+ *
+ * People GATHER. Scattering 250 figures evenly over a park is the same mistake
+ * as scattering the trees — it reads as noise, not as a crowd. These cluster
+ * where the reference photos put them: the fountain apron, the baywalk, the
+ * promenade, the amphitheatre steps and the pavilion, in knots of two to six
+ * with a few loners walking between.
+ *
+ * Static instances rather than agents. This is a waiting room, and a crowd that
+ * wandered would need collision against a park that has none.
  */
 function crowd(group, rng) {
   const mat = solid({ name: 'bayfront-crowd', vertexColors: true, roughness: 0.78, metalness: 0.02 });
   const SKIN = [0xe8c39a, 0xd9a878, 0xb07a4e, 0x8a5a36, 0xf0d3b4];
   const WEAR = [0xff6b8a, 0x37e6d5, 0xffd25e, 0xf2f4f2, 0x4dd2ff, 0xff9f43, 0x9b7bff, 0x6fdc8c];
 
-  /** Points along the baywalk, which is where the photos are busiest. */
+  /** [x, z, spread, groups] — the social areas, weighted by how busy they are. */
+  const HAUNTS = [
+    [96, 74, 34, 14],       // the fountain plaza
+    [124, -40, 16, 5],      // baywalk north
+    [128, 60, 16, 6],       // baywalk by the fountain
+    [120, 140, 14, 4],      // baywalk south
+    [-40, 88, 26, 7],       // the great promenade
+    [-8, -34, 26, 6],       // amphitheatre steps
+    [-104, 82, 18, 5],      // the pavilion
+    [40, 132, 14, 3],       // playground
+  ];
+
   const spots = [];
-  for (let i = 0; i < D.crowd * 0.45; i++) {
-    const t = i / (D.crowd * 0.45);
-    const bx = 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13;
-    spots.push([bx - 4 - rng() * 6, -170 + t * 348 + (rng() - 0.5) * 5]);
+  const near = (x, z, r) => [x + (rng() - 0.5) * r, z + (rng() - 0.5) * r];
+  for (const [hx, hz, spread, groups] of HAUNTS) {
+    for (let g = 0; g < groups; g++) {
+      // A knot of people standing together, then jitter within the knot.
+      const [cx0, cz0] = near(hx, hz, spread * 2);
+      const n = 2 + ((rng() * 5) | 0);
+      for (let i = 0; i < n; i++) {
+        const [x, z] = near(cx0, cz0, 3.2);
+        // Never on a lawn (that is what makes lawns read as open) and never on
+        // a path centre-line, but the plaza and promenade edges are fine.
+        if (blocked(x, z, 0.6, { open: true, path: false })) continue;
+        spots.push([x, z]);
+      }
+    }
   }
-  // The fountain apron and the great promenade.
-  for (let i = 0; i < D.crowd * 0.25; i++) {
-    const a = rng() * TAU, r = 26 + rng() * 30;
-    spots.push([96 + Math.cos(a) * r, 74 + Math.sin(a) * r]);
-  }
-  for (let i = 0; i < D.crowd * 0.2; i++) {
+  // A few walking alone along the baywalk and the promenade.
+  for (let i = 0; i < 26; i++) {
     const t = rng();
-    spots.push([-150 + t * 230, 96 - t * 22 + (rng() - 0.5) * 16]);
+    const bx = 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13;
+    spots.push([bx - 9 + (rng() - 0.5) * 4, -170 + t * 344]);
   }
-  // Amphitheatre steps and the pavilion lawn.
-  for (let i = 0; i < D.crowd * 0.13; i++) {
-    const a = Math.PI * 0.5 + (rng() - 0.5) * 2.2, r = 30 + rng() * 40;
-    spots.push([-8 + Math.cos(a) * r, -78 + Math.sin(a) * r]);
+  for (let i = 0; i < 14; i++) {
+    const t = rng();
+    spots.push([-150 + t * 236, 96 - t * 22 + (rng() - 0.5) * 9]);
   }
 
   const geo = figureGeometry();
@@ -869,10 +999,11 @@ function crowd(group, rng) {
   spots.forEach(([x, z], i) => {
     _q.setFromAxisAngle(_ax, rng() * TAU);
     _p.set(x, 0, z);
-    const h = 0.92 + rng() * 0.22;                  // adults and a few children
-    _s.set(h * (0.94 + rng() * 0.12), h, h * (0.94 + rng() * 0.12));
+    // Adults, a few children, nobody exactly the same height.
+    const h = rng() < 0.16 ? 0.7 + rng() * 0.12 : 0.94 + rng() * 0.2;
+    _s.set(h * (0.93 + rng() * 0.13), h, h * (0.93 + rng() * 0.13));
     inst.setMatrixAt(i, _m.compose(_p, _q, _s));
-    _c.setHex(rng() < 0.42 ? SKIN[(rng() * SKIN.length) | 0] : WEAR[(rng() * WEAR.length) | 0]);
+    _c.setHex(rng() < 0.4 ? SKIN[(rng() * SKIN.length) | 0] : WEAR[(rng() * WEAR.length) | 0]);
     inst.instanceColor.setXYZ(i, _c.r, _c.g, _c.b);
   });
   inst.instanceMatrix.needsUpdate = true;
@@ -880,15 +1011,15 @@ function crowd(group, rng) {
   inst.name = 'bayfront-crowd';
   group.add(inst);
 
-  /* Birds and dogs, straight from pedestrians.js — already modelled, already
-     in the right style, and a waterfront with no pigeons on it looks sterile. */
+  /* Birds and dogs where they would actually be: pigeons on paving, dogs on
+     the lawn edges and the promenade. */
   const extras = [
-    ['pigeon', 46, 0.9, [[96, 74, 44], [120, -60, 30], [40, 150, 26]]],
-    ['dogShort', 5, 1.0, [[70, 150, 22]]],
-    ['dogLean', 4, 1.0, [[-60, 60, 26]]],
+    ['pigeon', 40, 1.0, [[96, 74, 30], [124, 40, 16], [-40, 90, 18]]],
+    ['dogShort', 4, 1.0, [[-40, 92, 12], [40, 130, 10]]],
+    ['dogLean', 3, 1.0, [[124, 20, 12]]],
   ];
-  for (const [key, n, sc, zones] of extras) {
-    const g = PED[key] && PED[key]();
+  for (const [k, n, sc, zones] of extras) {
+    const g = PED[k] && PED[k]();
     if (!g) continue;
     const im = new THREE.InstancedMesh(g, mat, n);
     im.castShadow = true;
@@ -897,24 +1028,23 @@ function crowd(group, rng) {
       const a = rng() * TAU, r = Math.sqrt(rng()) * zr;
       _q.setFromAxisAngle(_ax, rng() * TAU);
       _p.set(zx + Math.cos(a) * r, 0, zz + Math.sin(a) * r);
-      _s.set(sc, sc, sc);
+      _s.set(sc * (0.9 + rng() * 0.2), sc, sc * (0.9 + rng() * 0.2));
       im.setMatrixAt(i, _m.compose(_p, _q, _s));
     }
     im.instanceMatrix.needsUpdate = true;
-    im.name = `bayfront-${key}`;
+    im.name = `bayfront-${k}`;
     group.add(im);
   }
 
-  /* Vendor kit on the promenade — the food trucks and carts show up in the
-     photo set more than once. */
+  /* Vendor kit belongs in the active social areas, not on a lawn. */
   const kit = [
-    ['streetTable', [[104, 40], [86, 112], [-40, 92]]],
-    ['streetCooler', [[106, 43], [-38, 95]]],
-    ['trolley', [[88, 110]]],
-    ['tripod', [[122, -30], [110, 120]]],
+    ['streetTable', [[108, 52], [-46, 92]]],
+    ['streetCooler', [[110, 55], [-44, 95]]],
+    ['trolley', [[106, 50]]],
+    ['tripod', [[126, -24], [118, 118]]],
   ];
-  for (const [key, at] of kit) {
-    const g = PED[key] && PED[key]();
+  for (const [k, at] of kit) {
+    const g = PED[k] && PED[k]();
     if (!g) continue;
     const im = new THREE.InstancedMesh(g, mat, at.length);
     im.castShadow = true;
@@ -924,12 +1054,13 @@ function crowd(group, rng) {
       im.setMatrixAt(i, _m.compose(_p, _q, _s));
     });
     im.instanceMatrix.needsUpdate = true;
-    im.name = `bayfront-${key}`;
+    im.name = `bayfront-${k}`;
     group.add(im);
   }
 
   return spots.length;
 }
+
 
 /* --------------------------------------------------------------- build --- */
 
