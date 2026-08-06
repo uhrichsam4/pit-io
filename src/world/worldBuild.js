@@ -325,6 +325,7 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
   ctx.stats.instances = pstats.instances;
   registry.initialCount = registry.aliveCount;
 
+  scene.userData.buildStats = ctx.stats;
   console.info(
     `[worldBuild] ${registry.aliveCount} consumables | ` +
     `${pstats.pools} pools / ${pstats.instances} instances | ` +

@@ -6271,6 +6271,30 @@ const WINTER_SWAP = {
   flowerPink: null, flowerYellow: null, agave: null,
 };
 
+
+/* ------------------------------------------------------------ clearings --- */
+/**
+ * Rectangles nothing may be planted in, in world space.
+ *
+ * Axis-aligned in the rectangle's OWN frame, so a rotated court is tested by
+ * rotating the query point rather than by growing a loose bounding box that
+ * would strip a 30 m circle of trees out of the park.
+ */
+let CLEARINGS = [];
+
+export function setClearings(list) { CLEARINGS = list || []; }
+
+function inClearing(x, z) {
+  for (let i = 0; i < CLEARINGS.length; i++) {
+    const c = CLEARINGS[i];
+    const dx = x - c.x, dz = z - c.z;
+    const lx = dx * Math.cos(c.yaw) - dz * Math.sin(c.yaw);
+    const lz = dx * Math.sin(c.yaw) + dz * Math.cos(c.yaw);
+    if (Math.abs(lx) <= c.hw && Math.abs(lz) <= c.hd) return true;
+  }
+  return false;
+}
+
 function plant(ctx, key, x, z, rot, scale, opts = {}) {
   if (BIOME === 'snow') {
     if (Object.prototype.hasOwnProperty.call(WINTER_SWAP, key)) {
@@ -6287,6 +6311,12 @@ function plant(ctx, key, x, z, rot, scale, opts = {}) {
   if (!opts.shoreline && ctx.layout.isWater(x, z)) { rej.water++; return null; }
   if (!opts.island && ctx.layout.isRoad(x, z)) { rej.road++; return null; }
   if (inBuilding(x, z)) { rej.building++; return null; }
+  /* Reserved clearings — a basketball court, a zoo habitat. These are decided
+     in cityLayout BEFORE anything is planted, because props.js runs after
+     nature and a court built into an already-planted park loses its hoops and
+     half its fence to trees that were there first. Checked at the funnel every
+     plant passes through, so no caller can miss it. */
+  if (inClearing(x, z)) { rej.clearing = (rej.clearing || 0) + 1; return null; }
   const sep = opts.sep ?? def.sep;
   if (sep > 0 && !sepFree(x, z, sep)) { rej.spacing++; return null; }
 
@@ -7843,6 +7873,13 @@ export function speciesKeys() { return Object.keys(SPECIES); }
 /* ======================================================================== */
 
 export function buildNature(ctx) {
+  /* Court and habitat footprints, plus a little margin so a canopy does not
+     overhang the baseline. */
+  setClearings(ctx.layout.blocks.flatMap((b) => {
+    const out = [];
+    if (b.court) out.push({ x: b.x, z: b.z, yaw: b.court.yaw, hw: b.court.hw + 1.6, hd: b.court.hd + 1.6 });
+    return out;
+  }));
   const { layout } = ctx;
   const B = new Buckets();
 

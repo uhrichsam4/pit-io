@@ -5028,6 +5028,146 @@ function gAboardPoster(m) {
 
 /* ========================================================= catalogue ==== */
 
+
+/* ====================================================== recreation ======= */
+/**
+ * A neighbourhood basketball court, and the life around it.
+ *
+ * Authored facing +z with the court's long axis on x, so one yaw rotates the
+ * whole scene. Everything here is a normal prop: pooled, measured off its own
+ * geometry, and eaten under the same rules as a bench.
+ */
+
+/** Low-poly ball as a lathe profile — `tube` is the only sphere available. */
+function ballRows(r, rows = 6) {
+  const out = [];
+  for (let i = 0; i <= rows; i++) {
+    const a = (i / rows) * Math.PI;
+    out.push([r - Math.cos(a) * r, Math.max(0.004, Math.sin(a) * r)]);
+  }
+  return out;
+}
+
+/** A ring of short segments. A real torus is not worth a primitive. */
+function ring(m, cx, cy, cz, R, tubeR, segs = 12) {
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI * 2, a1 = ((i + 1) / segs) * Math.PI * 2;
+    m.tubeBetween(
+      cx + Math.cos(a0) * R, cy, cz + Math.sin(a0) * R,
+      cx + Math.cos(a1) * R, cy, cz + Math.sin(a1) * R,
+      tubeR, 4
+    );
+  }
+}
+
+/** Full-height hoop: footing, gooseneck pole, backboard, rim, net. */
+function gHoopStreet(m) {
+  m.col(0xb4afa3).box(0, 0, 0, 0.86, 0.14, 0.86);          // footing
+  m.col(0x39404a);
+  m.tube(0, 0, [[0.10, 0.105], [1.70, 0.095], [3.02, 0.082]], 6, { capTop: false });
+  // Gooseneck: up and forward, the shape that keeps the pole out of the paint.
+  m.tubeBetween(0, 3.02, 0, 0, 3.34, 0.42, 0.078, 6);
+  m.tubeBetween(0, 3.34, 0.42, 0, 3.36, 0.92, 0.070, 6);
+  // Backboard. Thin in z, and the orange shooter's square is the detail every
+  // eye goes to — leaving it off is what makes a hoop read as scaffolding.
+  m.col(0xf3f1ea).box(0, 2.90, 1.02, 1.80, 1.06, 0.055);
+  m.col(0xd8532c);
+  m.box(0, 3.36, 1.055, 0.62, 0.035, 0.02);                // square, top
+  m.box(0, 2.92, 1.055, 0.62, 0.035, 0.02);                // square, bottom
+  for (const s of [-1, 1]) m.box(s * 0.30, 3.14, 1.055, 0.035, 0.48, 0.02);
+  m.col(0x9aa2ac);
+  m.box(0, 2.42, 1.02, 1.84, 0.05, 0.07);                  // board edge trim
+  // Rim at 3.05 m, the one measurement anyone would notice being wrong.
+  m.col(0xe2622b);
+  m.box(0, 3.05, 1.03, 0.10, 0.045, 0.10);                 // mount plate
+  ring(m, 0, 3.05, 1.31, 0.225, 0.022, 12);
+  // Net: eight tapering strands, gathered inward at the hem.
+  m.col(0xf2efe6);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const x0 = Math.cos(a) * 0.225, z0 = Math.sin(a) * 0.225;
+    m.tubeBetween(x0, 3.04, 1.31 + z0, x0 * 0.46, 2.63, 1.31 + z0 * 0.46, 0.014, 3);
+  }
+}
+
+/** Court floodlight: a real one is two heads on a cranked arm, not a lamp. */
+function gCourtFlood(m) {
+  m.col(0xb4afa3).box(0, 0, 0, 0.52, 0.18, 0.52);
+  m.col(0x4a515a);
+  m.tube(0, 0, [[0.14, 0.095], [3.4, 0.082], [6.3, 0.070]], 7, { capTop: false });
+  m.tubeBetween(0, 6.3, 0, 0, 6.55, 0.52, 0.062, 5);
+  for (const s of [-1, 1]) {
+    m.col(0x3d444c).box(s * 0.30, 6.58, 0.62, 0.44, 0.20, 0.30);
+    m.lit(0xfff2cf, 1.0, 0.55).box(s * 0.30, 6.47, 0.62, 0.38, 0.03, 0.24);
+  }
+}
+
+/** One chain-link panel. Posts, rails, and a suggestion of mesh. */
+function gFenceChain(m) {
+  const H = 3.0, W = 2.6;
+  m.col(0x8d949c);
+  for (const s of [-1, 1]) m.tube(s * W / 2, 0, [[0, 0.055], [H, 0.050]], 6, { capTop: true });
+  m.box(0, H - 0.06, 0, W, 0.05, 0.05);                    // top rail
+  m.box(0, 0.10, 0, W, 0.04, 0.04);                        // bottom rail
+  // Diagonals both ways read as chain-link at play distance for 24 triangles.
+  m.col(0xa7aeb6);
+  for (let i = -2; i <= 2; i++) {
+    m.beam(i * 0.52 - 0.5, 0.12, 0, i * 0.52 + 0.5, H - 0.1, 0, 0.012, 0.012, false);
+    m.beam(i * 0.52 + 0.5, 0.12, 0, i * 0.52 - 0.5, H - 0.1, 0, 0.012, 0.012, false);
+  }
+}
+
+function gBallBasket(m) {
+  m.col(0xd2662c).tube(0, 0, ballRows(0.121), 9);
+  m.col(0x2b2622);                                          // seams
+  ring(m, 0, 0.121, 0, 0.1205, 0.006, 10);
+  for (const a of [0, Math.PI / 2]) {
+    for (let i = 0; i < 8; i++) {
+      const t0 = (i / 8) * Math.PI, t1 = ((i + 1) / 8) * Math.PI;
+      m.tubeBetween(
+        Math.sin(t0) * Math.cos(a) * 0.1205, 0.121 - Math.cos(t0) * 0.1205, Math.sin(t0) * Math.sin(a) * 0.1205,
+        Math.sin(t1) * Math.cos(a) * 0.1205, 0.121 - Math.cos(t1) * 0.1205, Math.sin(t1) * Math.sin(a) * 0.1205,
+        0.006, 3);
+    }
+  }
+}
+
+function gBagBackpack(m) {
+  m.col(0x2f3f5c).prism(0, 0, [[0, 0.26, 0.17], [0.14, 0.30, 0.19], [0.40, 0.28, 0.17], [0.46, 0.20, 0.12]]);
+  m.col(0x263349).box(0, 0.20, 0.10, 0.22, 0.16, 0.03);     // front pocket
+  m.col(0x8a5a2a).box(0, 0.30, 0.105, 0.07, 0.03, 0.02);    // buckle
+  m.col(0x222c40);
+  for (const s of [-1, 1]) m.beam(s * 0.07, 0.44, -0.07, s * 0.09, 0.16, -0.09, 0.035, 0.02, false);
+}
+
+function gBagDuffel(m) {
+  m.col(0x4a4f58).tube(0, 0, [[0.06, 0.14], [0.16, 0.17], [0.30, 0.14]], 8, { capTop: true });
+  m.col(0x33383f).box(0, 0.33, 0, 0.44, 0.03, 0.10);        // strap over the top
+  m.col(0xc0562f).box(0, 0.18, 0.16, 0.20, 0.05, 0.015);    // colour flash
+}
+
+function gBottleSport(m) {
+  m.col(0x9fd8ef).tube(0, 0, [[0, 0.036], [0.04, 0.040], [0.19, 0.039], [0.22, 0.028]], 8, { capTop: false });
+  m.col(0x2b6fa8).tube(0, 0, [[0.22, 0.026], [0.26, 0.025]], 8, { capTop: true });
+  m.col(0xf0f4f7).box(0, 0.11, 0, 0.062, 0.06, 0.062);      // label band
+}
+
+/**
+ * Outreach point. A service board where people can actually read where to go.
+ *
+ * Plain municipal signage on purpose. The scene it belongs to is somebody's
+ * life, not set dressing, and the sign's job is to say help exists here.
+ */
+function gOutreachSign(m) {
+  m.col(0x7d848c);
+  for (const s of [-1, 1]) m.tube(s * 0.34, 0, [[0, 0.038], [1.42, 0.034]], 6, { capTop: true });
+  m.col(0x1f6f5c).box(0, 1.02, 0, 0.92, 0.62, 0.045);       // board
+  m.col(0xf4f7f5);
+  m.box(0, 1.24, 0.026, 0.72, 0.055, 0.012);                // heading
+  for (let i = 0; i < 3; i++) m.box(-0.06, 1.08 - i * 0.12, 0.026, 0.56, 0.035, 0.012);
+  m.col(0x8fd6c2).box(0.30, 0.86, 0.026, 0.18, 0.18, 0.012);
+}
+
 const T = TIER;
 
 /**
@@ -5352,6 +5492,40 @@ const DEFS = {
     sv: 0.07, tint: [0xffffff, 0xdca882, 0xd8dcd8, 0x9ce0d8], debris: P.BOLLARD_DARK,
   },
 
+  /* recreation -------------------------------------------------------------- */
+  hoopStreet: {
+    g: gHoopStreet, tier: T.LARGE, r: 0.48, h: 3.55, label: 'Basketball Hoop',
+    shadow: true, debris: 0x39404a,
+  },
+  courtFlood: {
+    g: gCourtFlood, tier: T.LARGE, r: 0.32, h: 6.7, label: 'Court Floodlight',
+    shadow: true, debris: 0x4a515a,
+  },
+  fenceChain: {
+    g: gFenceChain, tier: T.SMALL, r: 0.16, h: 3.0, label: 'Court Fence',
+    shadow: true, debris: 0x8d949c,
+  },
+  ballBasket: {
+    g: gBallBasket, tier: T.TINY, r: 0.13, h: 0.25, label: 'Basketball',
+    shadow: false, debris: 0xd2662c,
+  },
+  bagBackpack: {
+    g: gBagBackpack, tier: T.TINY, r: 0.17, h: 0.48, label: 'Backpack',
+    shadow: true, sv: 0.06, tint: [0x2f3f5c, 0x5c2f3f, 0x2f5c48, 0x54492f, 0x40305c],
+    debris: 0x2f3f5c,
+  },
+  bagDuffel: {
+    g: gBagDuffel, tier: T.TINY, r: 0.18, h: 0.35, label: 'Kit Bag',
+    shadow: true, sv: 0.06, tint: [0x4a4f58, 0x3c4a3a, 0x53414a], debris: 0x4a4f58,
+  },
+  bottleSport: {
+    g: gBottleSport, tier: T.TINY, r: 0.05, h: 0.27, label: 'Water Bottle',
+    shadow: false, tint: [0x9fd8ef, 0xef9fb4, 0xd6ef9f, 0xf2f2f2], debris: 0x9fd8ef,
+  },
+  outreachSign: {
+    g: gOutreachSign, tier: T.SMALL, r: 0.38, h: 1.45, label: 'Outreach Point',
+    shadow: true, debris: 0x1f6f5c,
+  },
   /* park ------------------------------------------------------------------- */
   benchTeak: {
     g: gBenchTeak, tier: T.SMALL, r: 0.85, h: 0.96, label: 'Teak Bench', shadow: true, sv: 0.04,
@@ -5767,6 +5941,20 @@ class Placer {
     this.bridges = ctx.layout.bridges || [];
     this._near = [];
     this.ground = new Ground(ctx.scene);
+    /* Reserved clearings. nature.js already refuses to plant in these, but
+       props has its OWN earlier passes — a terrace/lounge scene was landing a
+       sofa, five barrel tables and a speaker stack in the middle of the court,
+       and every court piece that wanted that ground was then rejected as
+       `occupied`. Same rule, applied at props' own funnel. */
+    this.clearings = [];
+    for (const b of ctx.layout.blocks) {
+      if (!b.court) continue;
+      this.clearings.push({
+        x: b.x, z: b.z, yaw: b.court.yaw,
+        hw: b.court.hw + 0.8, hd: b.court.hd + 0.8,
+      });
+    }
+    this.inCourt = false;      // true only while the court builds itself
     this.rejected = { water: 0, bridge: 0, scenery: 0, occupied: 0, road: 0, void: 0 };
     /* Named counters for the COMPOSED layouts. A terrace or an entrance is
        either there or it is not, and when it is not there is nothing in the
@@ -5811,6 +5999,18 @@ class Placer {
       }
     }
     return true;
+  }
+
+  /** Inside a reserved clearing? Tested in the rectangle's own frame. */
+  _reserved(x, z) {
+    for (let i = 0; i < this.clearings.length; i++) {
+      const c = this.clearings[i];
+      const dx = x - c.x, dz = z - c.z;
+      const lx = dx * Math.cos(c.yaw) - dz * Math.sin(c.yaw);
+      const lz = dx * Math.sin(c.yaw) + dz * Math.cos(c.yaw);
+      if (Math.abs(lx) <= c.hw && Math.abs(lz) <= c.hd) return true;
+    }
+    return false;
   }
 
   claim(x, z, r) {
@@ -5885,6 +6085,10 @@ class Placer {
     if (d.sv) scale *= 1 + (this.rng() - 0.5) * 2 * d.sv;
     // A prop in the bay or halfway up a bridge ramp is wrong however tidily it
     // is spaced, so the site is disqualified before anything else is tested.
+    if (!this.inCourt && this.clearings.length && this._reserved(x, z)) {
+      this.rejected.clearing = (this.rejected.clearing || 0) + 1;
+      return false;
+    }
     if (this.ctx.layout.isWater(x, z)) { this.rejected.water++; return false; }
     if (deckHeight(this.bridges, x, z) > 0.02) { this.rejected.bridge++; return false; }
     // Whatever surface is really here is where this prop stands — and if that
@@ -7319,7 +7523,164 @@ function plazaFurniture(pl, b, r) {
   }
 }
 
+/**
+ * Lay a basketball court into a park block.
+ *
+ * Sited, not scattered: a court needs a flat rectangle with room for a fence
+ * and a run-off, so it only goes into a block that can actually hold one, and
+ * it claims its footprint FIRST so the ordinary park scatter fills in around it
+ * instead of dropping a picnic table on the free-throw line.
+ *
+ * Returns true if a court was built.
+ */
+function courtScene(pl, b, r) {
+  /* The SITE is chosen in cityLayout, not here, and nature keeps it clear.
+     Deciding it here meant deciding it after the park was planted. */
+  const site = b.court;
+  if (!site) return false;
+  const CW = site.cw, CD = site.cd, PAD = site.pad;
+  const yaw = site.yaw;
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  // Local court space -> world. Local +x is the long axis, local +z is across.
+  const X = (lx, lz) => b.x + lx * cs + lz * sn;
+  const Z = (lx, lz) => b.z - lx * sn + lz * cs;
+
+  const gy = pl.ground.at(b.x, b.z);
+  if (gy === null || gy < GROUND_MIN) return false;
+  /* Check the whole footprint, not just the centre. The first build produced
+     four courts with ONE hoop each and one floodlight between them, because
+     each piece was tested only as it was placed and the ends of the court were
+     landing on a path or off the block. A court is all-or-nothing. */
+  for (const [tx, tz] of [[-CW / 2 - 1.2, 0], [CW / 2 + 1.2, 0],
+                          [0, -CD / 2 - PAD], [0, CD / 2 + PAD],
+                          [-CW / 2, -CD / 2], [CW / 2, CD / 2]]) {
+    const g2 = pl.ground.at(X(tx, tz), Z(tx, tz));
+    if (g2 === null || g2 < GROUND_MIN || Math.abs(g2 - gy) > 0.35) return false;
+  }
+
+  /* --- surface and markings ------------------------------------------------
+     One merged mesh. The lines are the difference between a court and a blue
+     rectangle, so they are real geometry at real dimensions rather than a
+     texture the project has no pipeline for. */
+  const m = new M();
+  const line = (lx, lz, w, d) => m.plate(lx, 0.014, lz, w, d);
+  m.col(0x2f6f8f); m.plate(0, 0.004, 0, CW, CD);                    // court
+  m.col(0x2a5f5a); m.plate(0, 0.008, 0, 11.6, 9.0);                 // key surround tint
+  m.col(0xf2f4f2);
+  line(0, -CD / 2 + 0.05, CW, 0.10); line(0, CD / 2 - 0.05, CW, 0.10);   // sidelines
+  line(-CW / 2 + 0.05, 0, 0.10, CD); line(CW / 2 - 0.05, 0, 0.10, CD);   // baselines
+  line(0, 0, 0.10, CD);                                                   // halfway
+  // Centre circle and the two arcs, drawn as short chords.
+  const arc = (cx, R, a0, a1, segs) => {
+    for (let i = 0; i < segs; i++) {
+      const t0 = a0 + (a1 - a0) * (i / segs), t1 = a0 + (a1 - a0) * ((i + 1) / segs);
+      const x0 = cx + Math.cos(t0) * R, z0 = Math.sin(t0) * R;
+      const x1 = cx + Math.cos(t1) * R, z1 = Math.sin(t1) * R;
+      m.beam(x0, 0.014, z0, x1, 0.014, z1, 0.10, 0.006, false);
+    }
+  };
+  arc(0, 1.8, 0, Math.PI * 2, 20);
+  for (const s of [-1, 1]) {
+    const bx = s * (CW / 2 - 1.575);                 // hoop centre
+    arc(bx, 6.75, s > 0 ? Math.PI / 2 : -Math.PI / 2, s > 0 ? Math.PI * 1.5 : Math.PI / 2, 16);
+    // The key: 4.9 m wide, from the baseline to the free-throw line.
+    line(s * (CW / 2 - 2.95), 2.45, 5.8, 0.10);
+    line(s * (CW / 2 - 2.95), -2.45, 5.8, 0.10);
+    line(s * (CW / 2 - 5.8), 0, 0.10, 4.9);
+    arc(s * (CW / 2 - 5.8), 1.8, s > 0 ? Math.PI / 2 : -Math.PI / 2, s > 0 ? Math.PI * 1.5 : Math.PI / 2, 10);
+  }
+  const surf = new THREE.Mesh(m.geometry(), mat('prop'));
+  surf.name = 'basketball-court';
+  surf.position.set(b.x, gy + 0.02, b.z);
+  surf.rotation.y = -yaw;
+  surf.receiveShadow = true;
+  surf.castShadow = false;
+  pl.ctx.addMesh(surf, { group: 'props', decor: true });
+
+  /* --- hoops. Backboard is authored facing +z, so +PI/2 turns it to +x. --- */
+  const before = { ...pl.rejected };
+  pl.inCourt = true;
+  let hoops = 0;
+  for (const s of [-1, 1]) {
+    const lx = s * (CW / 2 + 0.9);
+    if (pl.put('hoopStreet', X(lx, 0), Z(lx, 0),
+      yaw + (s < 0 ? Math.PI / 2 : -Math.PI / 2), 1, null, 0.8)) hoops++;
+  }
+  if (hoops < 2) pl.ctx.stats.courtHalf = (pl.ctx.stats.courtHalf || 0) + 1;
+
+  /* --- fence, with a gap for the gate on the long side nearest the park --- */
+  const hw = CW / 2 + PAD, hd = CD / 2 + PAD;
+  const step = 2.6;
+  for (let lx = -hw + step / 2; lx <= hw; lx += step) {
+    const gate = Math.abs(lx) < step * 1.1;
+    if (!gate) pl.put('fenceChain', X(lx, -hd), Z(lx, -hd), yaw, 1, null, 0.3);
+    pl.put('fenceChain', X(lx, hd), Z(lx, hd), yaw, 1, null, 0.3);
+  }
+  for (let lz = -hd + step / 2; lz <= hd; lz += step) {
+    for (const s of [-1, 1]) {
+      pl.put('fenceChain', X(s * hw, lz), Z(s * hw, lz), yaw + Math.PI / 2, 1, null, 0.3);
+    }
+  }
+
+  /* --- lights on the corners, benches and gear outside the gate ---------- */
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      // Inside the fence line, in the corner run-off. Outside it they were
+      // off the block entirely on the smaller parks.
+      const fx = sx * (hw - 0.9), fz = sz * (hd - 0.9);
+      pl.put('courtFlood', X(fx, fz), Z(fx, fz), 0, 1, null, 0.24);
+    }
+  }
+  // Spectator benches face the court across the touchline.
+  for (let i = -1; i <= 1; i++) {
+    const lx = i * 4.6;
+    pl.putOpen('benchSlat', X(lx, -hd - 1.5), Z(lx, -hd - 1.5), yaw);
+    if (r.chance(0.5)) pl.putOpen('binMesh', X(lx + 2.2, -hd - 1.6), Z(lx + 2.2, -hd - 1.6), yaw);
+  }
+  // Bags, bottles and a stray ball — the litter of a game in progress, and the
+  // starter props a small hole needs if it opens up nearby.
+  /* Gear sits in the run-off between the sideline and the fence, and outside
+     the fence by the benches. The first attempt sampled a 1.5 m strip hard
+     against the fence line and placed almost nothing — the fence claims that
+     ground, and putOpen's jitter pushed the rest into it. */
+  let gear = 0;
+  for (let i = 0; i < 22; i++) {
+    const side = r.chance(0.5) ? -1 : 1;
+    const outside = r.chance(0.4);
+    const lx = (r() - 0.5) * (CW * 0.85);
+    const lz = outside
+      ? side * (hd + 1.0 + r() * 1.4)
+      : side * (CD / 2 + 0.7 + r() * (PAD - 1.4));
+    if (pl.putOpen(r.weighted([['bagBackpack', 5], ['bottleSport', 6], ['bagDuffel', 3]]),
+      X(lx, lz), Z(lx, lz), squared(r))) gear++;
+  }
+  /* put(), not putOpen(): the spot on an open court is already the right one,
+     and putOpen's jitter was walking the ball into the fence claim. */
+  for (let i = 0; i < 5; i++) {
+    const lx = (r() - 0.5) * CW * 0.7, lz = (r() - 0.5) * CD * 0.7;
+    pl.put('ballBasket', X(lx, lz), Z(lx, lz), squared(r), 1, null, 0.14);
+  }
+
+  pl.inCourt = false;
+  const dbg = {};
+  for (const k of Object.keys(pl.rejected)) {
+    const d = pl.rejected[k] - (before[k] || 0);
+    if (d) dbg[k] = d;
+  }
+  (pl.ctx.stats.courtRej || (pl.ctx.stats.courtRej = [])).push(dbg);
+
+  // Tell the crowd pass where to stage the game.
+  (pl.ctx.courts || (pl.ctx.courts = [])).push({
+    x: b.x, z: b.z, y: gy, yaw, w: CW, d: CD, hw, hd,
+  });
+  return true;
+}
+
 function parkFurniture(pl, b, r) {
+  /* A court goes in BEFORE the scatter so it claims its footprint first —
+     otherwise the ordinary park furniture lands on the free-throw line. Not
+     every park: one big enough block in four, so it stays a landmark. */
+  if (b.court) courtScene(pl, b, r);
   const n = Math.round((b.w * b.d) / 108 * DENSITY);
   for (let i = 0; i < n; i++) {
     const x = b.x + (r() - 0.5) * b.w * 0.84;

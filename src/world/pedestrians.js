@@ -1414,6 +1414,32 @@ function coolerGeo() {
  * A rolled sleeping bag and two bundled bags — someone's belongings, kept
  * together the way anyone keeps their things together.
  */
+/**
+ * A municipal outreach board — where to go for help, posted where it is needed.
+ *
+ * Deliberately plain and deliberately official. The scene it stands in is
+ * somebody's life, and the point of putting a service board next to it is that
+ * help exists, not that the scene is decorated.
+ */
+function outreachBoardGeo() {
+  const parts = [];
+  // Two posts and a board. Municipal, square, unremarkable — which is the point.
+  for (const sx of [-0.34, 0.34]) {
+    const post = new THREE.CylinderGeometry(0.034, 0.038, 1.44, 6);
+    post.translate(sx, 0.72, 0);
+    parts.push(hue(post, PALETTE.STEEL_DARK, 1.25));
+  }
+  parts.push(hue(bevBox(0.94, 0.64, 0.045, 0, 1.04, 0, 1.0, 0.012), PALETTE.SIGN_GREEN ?? 0x1f6f5c, 1.0));
+  // A heading and three lines of text, as geometry. Legible as "a notice".
+  parts.push(hue(bevBox(0.74, 0.055, 0.012, 0, 1.27, 0.028, 1.0, 0), PALETTE.FABRIC_WHITE, 1.0));
+  for (let i = 0; i < 3; i++) {
+    parts.push(hue(bevBox(0.56, 0.034, 0.012, -0.07, 1.10 - i * 0.12, 0.028, 1.0, 0),
+      PALETTE.FABRIC_WHITE, 0.86));
+  }
+  parts.push(hue(bevBox(0.18, 0.18, 0.012, 0.31, 0.87, 0.028, 1.0, 0), PALETTE.STUCCO_MINT, 1.1));
+  return ground(BufferGeometryUtils.mergeGeometries(parts, false));
+}
+
 function bedrollGeo() {
   const parts = [];
   // The flattened board underneath. This is the part that actually says
@@ -2036,6 +2062,7 @@ export function buildPedestrians(ctx) {
   placeCrossingQueues(ctx, rng, net, agents, Y_WALK, 180);
   placeWalkers(ctx, rng, paths, agents, Y_WALK,
     Math.max(WALK_FLOOR, TOTAL - agents.length));
+  placeCourtLife(ctx, rng, agents, Y_WALK, 140);
   placeChildren(ctx, rng, agents, 110);
 
   const N = agents.length;
@@ -2799,6 +2826,16 @@ const ARCH_TAICHI = {
 const ARCH_RESTING = {
   key: 'resting', label: 'Local', speed: [0.8, 1.05], tops: TOP_CASUAL,
   longLeg: 0.62, sleeves: 0.30, hat: 0.30, bag: 0.35,
+};
+/** On the court. Sport tops, shorts, no bags, no hats to speak of. */
+const ARCH_BALLER = {
+  key: 'baller', label: 'Player', speed: [1.05, 1.35], tops: TOP_SPORT,
+  longLeg: 0.10, sleeves: 0.04, hat: 0.10,
+};
+/** Watching from the fence line. Ordinary people, ordinary clothes. */
+const ARCH_COURTSIDE = {
+  key: 'courtside', label: 'Spectator', speed: [0.85, 1.15], tops: TOP_CASUAL,
+  longLeg: 0.45, sleeves: 0.22, hat: 0.30, bag: 0.30,
 };
 const ARCH_RESIDENT = ARCHETYPES[0];
 const ARCH_PROMOTER = {
@@ -4334,6 +4371,17 @@ function placeStreetLife(ctx, rng, paths, furniture, field, agents, yWalk, props
             props.push({ kind: 'trolley', x: tx, z: tz, y: yWalk, yaw: a.yaw + 1.57 });
           }
         }
+        /* An outreach board a few metres along the same frontage, facing the
+           footway so it can actually be read. Often, not always — a sign on
+           every corner would be its own kind of untrue. */
+        if (r.chance(0.55)) {
+          const along = a.yaw + Math.PI / 2;
+          const d = 3.2 + r() * 2.6;
+          const ox = p.x + Math.sin(along) * d, oz = p.z + Math.cos(along) * d;
+          if (clear(ox, oz, 0.7)) {
+            props.push({ kind: 'outreachBoard', x: ox, z: oz, y: yWalk, yaw: a.yaw + Math.PI });
+          }
+        }
         // A dog, sometimes. Company, and the reason people stop.
         if (r.chance(0.20)) {
           giveDog(a, r);
@@ -4380,6 +4428,8 @@ const STREET_PROPS = {
   streetTable: { geo: foldTableGeo, label: 'Folding Table', cap: 90, score: 6, tier: 'SMALL' },
   streetCooler: { geo: coolerGeo, label: 'Drinks Cooler', cap: 90, score: 4, tier: 'TINY' },
   bedroll: { geo: bedrollGeo, label: 'Bedroll', cap: 140, score: 4, tier: 'TINY' },
+  outreachBoard: { geo: outreachBoardGeo, label: 'Outreach Point', cap: 60, score: 6,
+    tier: 'SMALL', debris: 0x1f6f5c },
   trolley: { geo: trolleyGeo, label: 'Trolley', cap: 90, score: 5, tier: 'SMALL',
     debris: PALETTE.STEEL_DARK },
   soapbox: { geo: crateGeo, label: 'Crate', cap: 90, score: 3, tier: 'TINY' },
@@ -4547,6 +4597,75 @@ function placeBuskers(ctx, rng, paths, agents, yWalk, cap) {
  * to the adult's frame, so it never drifts, never has to path-find, and stops
  * dead when the adult stops.
  */
+/**
+ * People on and around the basketball courts.
+ *
+ * The courts are real rectangles reserved in cityLayout and built by props.js,
+ * which hands their footprints over on `ctx.courts`. Everyone here is staged
+ * against those coordinates, so nobody stands inside the fence line or on a
+ * hoop's footing.
+ *
+ * HONEST LIMIT: there is no dribble or shoot animation in this rig, so players
+ * use the standing idle. They are positioned as a game though — two loose
+ * teams spread between the keys rather than a ring of people facing nowhere —
+ * which is what actually reads as a game from the air.
+ */
+function placeCourtLife(ctx, rng, agents, yWalk, cap) {
+  const courts = ctx.courts || [];
+  if (!courts.length) return 0;
+  let spent = 0;
+
+  for (const c of courts) {
+    if (spent >= cap) break;
+    const cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+    const X = (lx, lz) => c.x + lx * cs + lz * sn;
+    const Z = (lx, lz) => c.z - lx * sn + lz * cs;
+    const y = Number.isFinite(c.y) ? c.y : yWalk;
+
+    const mk = (arch, lx, lz, faceLx, faceLz, mode) => {
+      if (spent >= cap) return null;
+      const a = makeAgent(rng, arch);
+      a.x = X(lx, lz); a.z = Z(lx, lz); a.y = y;
+      // Face a point in court space, converted to a world yaw.
+      const wx = X(faceLx, faceLz) - a.x, wz = Z(faceLx, faceLz) - a.z;
+      a.yaw = Math.atan2(wx, wz);
+      a.mode = mode;
+      a.role = 'court';
+      a.idleSeed = rng() * 100;
+      a.items = null;
+      a.phoneWalk = false;
+      agents.push(a); spent++;
+      return a;
+    };
+
+    /* --- the game. Two loose teams, weighted toward one end the way a real
+       half-court game is, everyone facing the live basket. --- */
+    const live = rng.chance(0.5) ? 1 : -1;          // which basket is in play
+    const hoopLx = live * (c.w / 2 - 1.6);
+    const n = 6 + Math.floor(rng() * 5);            // 6-10 on court
+    for (let i = 0; i < n; i++) {
+      // Clustered around the live key, with one or two hanging back.
+      const back = i >= n - 2;
+      const lx = back
+        ? -live * (2 + rng() * (c.w * 0.22))
+        : live * (c.w * 0.18 + rng() * (c.w * 0.26));
+      const lz = (rng() - 0.5) * (c.d * 0.62);
+      const a = mk(ARCH_BALLER, lx, lz, hoopLx, 0, MODE.IDLE);
+      if (a) a.size = 0.98 + rng() * 0.10;          // taller on average
+    }
+
+    /* --- watching. Along the touchline inside the fence, facing the court. */
+    const w = 3 + Math.floor(rng() * 5);
+    for (let i = 0; i < w; i++) {
+      const side = rng.chance(0.62) ? -1 : 1;
+      const lz = side * (c.d / 2 + 0.9 + rng() * 0.9);
+      const lx = (rng() - 0.5) * (c.w * 0.8);
+      mk(ARCH_COURTSIDE, lx, lz, lx, 0, MODE.IDLE);
+    }
+  }
+  return spent;
+}
+
 function placeChildren(ctx, rng, agents, cap) {
   const adults = [];
   for (const a of agents) {
@@ -6218,6 +6337,7 @@ export const GEOMETRY_UNDER_TEST = {
   streetTable: foldTableGeo,
   streetCooler: coolerGeo,
   bedroll: bedrollGeo,
+  outreachBoard: outreachBoardGeo,
   trolley: trolleyGeo,
   soapbox: crateGeo,
   signCard: signCardGeo,

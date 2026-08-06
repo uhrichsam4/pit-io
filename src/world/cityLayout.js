@@ -630,6 +630,31 @@ export function buildLayout(seed = 20260803) {
   forceZone(blocks, 30, 330, ZONE.PARK, 'Simpson Park');
   forceZone(blocks, -330, 420, ZONE.PARK, 'Shenandoah Park');
 
+  /* --- reserve basketball-court sites -------------------------------------
+     Decided HERE, before nature or props run, because a court has to be a
+     clearing. Deciding it inside props.js meant deciding it AFTER the park was
+     planted: the first build produced four courts with one hoop each and half
+     a fence, every missing piece rejected for standing where a tree already
+     was. nature.js keeps these rectangles clear at the plant() funnel. */
+  for (const b of blocks) {
+    if (b.zone !== ZONE.PARK) continue;
+    if (b.subtype === 'promenade' || b.subtype === 'dock') continue;
+    const CW = 26, CD = 15, PAD = 2.4;
+    const along = b.w >= b.d;
+    const spanA = along ? b.w : b.d, spanB = along ? b.d : b.w;
+    /* +6, not +2. At the bare minimum the fence corner sat 0.1 m outside the
+       block, on the sidewalk, and half the floodlights were rejected as
+       standing on the road — a court that is exactly as wide as its park has
+       no room for the things around its edge. */
+    if (spanA < CW + PAD * 2 + 6 || spanB < CD + PAD * 2 + 6) continue;
+    if (!makeRNG(b.seed ^ 0xc0021a).chance(0.55)) continue;
+    b.court = {
+      yaw: along ? 0 : Math.PI / 2,
+      cw: CW, cd: CD, pad: PAD,
+      hw: CW / 2 + PAD, hd: CD / 2 + PAD,
+    };
+  }
+
   /* ------------------------------------------------------------ output --- */
   const riverSamples = [];
   for (let x = -S; x <= BAY; x += 40) {
