@@ -37,6 +37,7 @@ import { buildNature } from './nature.js';
 import { buildProps } from './props.js';
 import { buildVehicles } from './vehicles.js';
 import { buildPedestrians } from './pedestrians.js';
+import { buildZoo } from './zoo.js';
 import { buildAnimals } from './animals.js';
 
 // Order matters: pedestrians read the occupancy grid to keep crowds off props
@@ -47,6 +48,10 @@ const MODULES = [
   ['buildings', buildBuildings],
   ['nature', buildNature],
   ['props', buildProps],
+  /* The zoo's built fabric — gates, pens, paths, ponds, back-of-house — goes in
+     with the other ground-claiming passes, BEFORE traffic and crowds so they
+     route around it, and before animals so the pens exist to contain them. */
+  ['zoo', buildZoo],
   ['vehicles', buildVehicles],
   ['pedestrians', buildPedestrians],
   /* Animals last. They need the pens that props.js fenced and the ground that

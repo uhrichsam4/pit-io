@@ -728,11 +728,12 @@ function labelFor(sp, variant) {
  * `Placer._reserved` (props.js:6005). Two different rotations of "the same"
  * rectangle is how a fence ends up 90 degrees out from the animals inside it.
  */
-function makePen(cx, cz, hw, hd, yaw, name) {
+function makePen(cx, cz, hw, hd, yaw, name, kind) {
   return {
     cx, cz, hw, hd, yaw,
     cos: Math.cos(yaw), sin: Math.sin(yaw),
     name: name || '',
+    kind: kind || '',
     area: hw * hd * 4,
     wet: false,
   };
@@ -803,7 +804,12 @@ function insidePen(pen, inset, x, z, slack = 1e-4) {
 function rectToPen(r) {
   if (!r || typeof r !== 'object') return null;
   const yaw = Number.isFinite(r.yaw) ? r.yaw : (Number.isFinite(r.rot) ? r.rot : 0);
-  const name = r.species || r.kind || r.name || r.id || r.label || '';
+  // Both fields, kept apart: `species`/`label` is the pen's NAME and `kind` is
+  // its ground type. Folding them into one string is how a 'water' pen matches
+  // a species word list that happens to contain 'water'.
+  const name = `${r.species || ''} ${r.label || ''} ${r.name || ''} ${r.id || ''}`
+    .toLowerCase().trim();
+  const kind = String(r.kind || '').toLowerCase();
   let cx, cz, hw, hd;
   if (Number.isFinite(r.x) && Number.isFinite(r.z)
       && Number.isFinite(r.hw) && Number.isFinite(r.hd)) {
@@ -823,7 +829,7 @@ function rectToPen(r) {
     return null;
   }
   if (!(hw > 0.5) || !(hd > 0.5)) return null;
-  return makePen(cx, cz, hw, hd, yaw, String(name).toLowerCase());
+  return makePen(cx, cz, hw, hd, yaw, name, kind);
 }
 
 function readZoo(layout) {
@@ -865,11 +871,11 @@ function splitToAtLeast(pens, n, gap) {
     if (nh < 3) break;                  // splitting further yields unusable pens
     const off = half / 2 + gap / 2 - gap / 2;
     const a = along
-      ? makePen(0, 0, nh, p.hd, p.yaw, p.name)
-      : makePen(0, 0, p.hw, nh, p.yaw, p.name);
+      ? makePen(0, 0, nh, p.hd, p.yaw, p.name, p.kind)
+      : makePen(0, 0, p.hw, nh, p.yaw, p.name, p.kind);
     const b = along
-      ? makePen(0, 0, nh, p.hd, p.yaw, p.name)
-      : makePen(0, 0, p.hw, nh, p.yaw, p.name);
+      ? makePen(0, 0, nh, p.hd, p.yaw, p.name, p.kind)
+      : makePen(0, 0, p.hw, nh, p.yaw, p.name, p.kind);
     // Placed in the parent's frame, so a rotated district splits correctly.
     toWorld(p, along ? -off : 0, along ? 0 : -off, _wp);
     a.cx = _wp.x; a.cz = _wp.z;
@@ -881,28 +887,60 @@ function splitToAtLeast(pens, n, gap) {
 }
 
 /**
- * Species -> pen. Named pens win; whatever is left is handed out largest pen
- * to largest animal, which is the only assignment that cannot put an elephant
- * in a budgie cage.
+ * Species -> pen, in the three passes MATCH_ORDER documents.
+ *
+ * Every pass removes the pen it claims, so no two species can be handed the
+ * same rectangle — which would put a herd of zebras and a herd of elephants on
+ * top of each other with both of them correctly contained and the bug looking
+ * like a rendering fault.
  */
 function assignPens(pens) {
   const free = pens.slice();
   const out = {};
-  for (const key of BY_SIZE) {
+  const how = {};
+
+  const take = (key, i, why) => {
+    out[key] = free[i];
+    how[key] = `${free[i].name || free[i].kind || 'pen'} (${why})`;
+    free.splice(i, 1);
+  };
+
+  // 1. by name.
+  for (const key of MATCH_ORDER) {
     const words = PEN_WORDS[key];
     for (let i = 0; i < free.length; i++) {
       const n = free[i].name;
-      if (!n) continue;
-      if (!words.some((w) => n.includes(w))) continue;
-      out[key] = free[i];
-      free.splice(i, 1);
+      if (!n || !words.some((w) => n.includes(w))) continue;
+      take(key, i, 'name');
       break;
     }
   }
+  // 2. by ground kind, largest matching pen first.
+  for (const key of MATCH_ORDER) {
+    if (out[key]) continue;
+    const kinds = PEN_KINDS[key] || [];
+    for (const want of kinds) {
+      let best = -1;
+      for (let i = 0; i < free.length; i++) {
+        if (free[i].kind !== want) continue;
+        if (best < 0 || free[i].area > free[best].area) best = i;
+      }
+      if (best >= 0) { take(key, best, `kind:${want}`); break; }
+    }
+  }
+  // 3. biggest pen left to biggest animal left.
   const need = BY_SIZE.filter((k) => !out[k]);
   free.sort((a, b) => b.area - a.area);
-  for (let i = 0; i < need.length && i < free.length; i++) out[need[i]] = free[i];
-  return out;
+  // The bound is taken BEFORE the loop. Testing `i < free.length` while
+  // shifting `free` inside it advances the cursor and shrinks the list at the
+  // same time, so it stops halfway and half the species silently get no pen —
+  // which is exactly what the self-test caught on the first run.
+  const n = Math.min(need.length, free.length);
+  for (let i = 0; i < n; i++) {
+    out[need[i]] = free[i];
+    how[need[i]] = `${free[i].name || 'pen'} (by size)`;
+  }
+  return { pens: out, how };
 }
 
 /* ============================================================== LOD ===== */
@@ -942,7 +980,13 @@ const _near = [];
  */
 export function buildAnimals(ctx) {
   const { scene, layout, registry } = ctx;
-  const rng = makeRNG(((layout.seed | 0) ^ 0x2007a1) >>> 0);
+  /* cityLayout publishes `zoo.seed` and says outright that every animal and
+     prop pass should branch from it, so that a replicated client reproduces
+     the same herd. Falling back to the world seed keeps this module buildable
+     against a layout that has not adopted it. */
+  const zooSeed = (layout.zoo && Number.isFinite(layout.zoo.seed))
+    ? layout.zoo.seed : layout.seed;
+  const rng = makeRNG(((zooSeed | 0) ^ 0x2007a1) >>> 0);
 
   const st = {
     scene, layout, registry, rng,
@@ -985,7 +1029,8 @@ export function buildAnimals(ctx) {
 
   const PATH = 2.2;                       // strip left between split pens
   const pens = splitToAtLeast(raw.slice(), BY_SIZE.length, PATH);
-  st.pens = assignPens(pens);
+  const assigned = assignPens(pens);
+  st.pens = assigned.pens;
 
   /* Which pens sit near water at all. `layout.isWater` walks the water polys,
      and calling it for sixty animals every frame is a cost the frame budget
@@ -1031,6 +1076,12 @@ export function buildAnimals(ctx) {
     + `${parts.join(', ')} | ${st.pools.length} pools | `
     + `${BY_SIZE.filter((k) => st.pens[k] && st.pens[k].wet).length} pens border water`
   );
+  /* The pen the layout named and the animal actually standing in it. Printed
+     because four of the six disagree by name (see MATCH_ORDER) and a silent
+     mapping is the kind of thing nobody notices until a screenshot shows
+     zebras under a sign reading Gator Swamp. */
+  console.info('[animals] habitat mapping: '
+    + BY_SIZE.filter((k) => assigned.how[k]).map((k) => `${k} -> ${assigned.how[k]}`).join(', '));
   return api;
 }
 
