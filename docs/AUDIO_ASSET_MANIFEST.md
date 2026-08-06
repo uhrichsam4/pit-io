@@ -134,3 +134,34 @@ value.
 ---
 
 ## 6. Subtitles — resolved (see git history)
+
+
+---
+
+## 7. How to verify audio in this project
+
+Five "verified" audio reports in one session turned out to be measuring nothing.
+This is what actually works, so nobody repeats it.
+
+**Do not trust an analyser in headless Chromium.** It reports an AudioContext as
+`running` while rendering no samples. A reference oscillator patched straight
+onto the master bus measured exactly `0.0000`. Every WebAudio-side check —
+gain values, bus levels, `stats.played`, node graphs — can look perfect while
+the game is silent, because none of them observe OUTPUT.
+
+**Do trust `HTMLAudioElement.currentTime`.** It advances only when audio is
+genuinely progressing, and it is readable from a Node-side harness on wall
+clock. That single property is the only reliable automated proof of playback
+found in this project:
+
+```
+from 0 -> 1.347s   paused:false  volume:0.495  muted:false
+verdict: PLAYING
+```
+
+**And when neither is available, ask a human.** The bug that defeated five code
+fixes was settled in one click: the same mp3 played via `new Audio(url)` was
+audible in the same browser at the same moment the engine path was silent. The
+sound-test panel (`Shift+A`) exists for exactly that — it turns "can you hear
+it?" into an answerable question, and a person with ears is a better instrument
+than a headless browser with none.
