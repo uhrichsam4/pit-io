@@ -1,0 +1,738 @@
+/* ===========================================================================
+   THE IN-GAME PHONE  —  src/ui/phone-ui.js
+
+   Loaded by an `import './css/phone.css'` at the top of phone-ui.js, the same
+   way hud.css is loaded by hud.js. index.html hand-links every other css/*.css
+   but will not know about this one, so the import is what makes any of it
+   render at all.
+
+   ---------------------------------------------------------------------------
+   GEOMETRY — AND WHY NOTHING IS ON THE RIGHT
+
+   The minimap (#hud-map) is bottom-right at `right/bottom: 1.05em`, 11.4em
+   square, so its top edge is 12.45em off the bottom. #hud-status owns the right
+   column from 12.9em upward. #phone-rail is the LEFT MIRROR of that column —
+   `left: 1.05em; bottom: 12.9em`, column-reverse so it grows UPWARD — which
+   means the button never moves when a call arrives and nothing here can reach
+   the map. Measured at 375x812 (--s 0.78, 1em = 12.48px):
+
+     minimap        x 219.6..361.9   y 656.6..798.9
+     rail bottom    y 651.0          (12.9em)   -> 5.6px clear of the map
+     rail width     cap 15.2em = 190px          -> 29.6px clear of the right
+                                                   column, which is 12.4em wide
+                                                   on this breakpoint
+
+   The sound-test panel shipped 320px of opaque panel over the middle-right of
+   the play area and had to be narrowed after the fact. This is that lesson
+   written down as arithmetic.
+
+   ---------------------------------------------------------------------------
+   SCALING AND TAP TARGETS
+
+   Everything is authored in `em` against #phone-layer's own
+   `font-size: calc(16px * var(--s, 1))` — the same model styles.css sets out
+   for the HUD, declared here so the phone scales identically whether it is
+   mounted inside #hud-layer or straight into #ui-root. Never put a font-size on
+   a container: em padding on its descendants compounds.
+
+   `--s` floors at 0.78 on a phone, so 1em is 12.48px and a 2.6em control would
+   be 32px — under the minimum. EVERY tap target therefore carries a PX floor of
+   44px (`--ph-tap`), never an em one. That number is also exported from
+   phone-ui.js as TAP_PX so a test can assert against the same value.
+
+   ---------------------------------------------------------------------------
+   COLOUR IS NEVER THE ONLY SIGNAL (spec §6)
+
+   Call states carry a WORD and a GLYPH (Ringing ◉ / In call ● / Missed ✕ /
+   Declined ⊘ / Ended ○); Answer and Dismiss differ in POSITION, LABEL, ICON and
+   BORDER STYLE, not only in hue; unread is a COUNT, not a dot; the mature tag
+   is the word MATURE; every switch prints ON/OFF for itself. Delete every hue
+   in this file and the whole surface still reads.
+
+   ---------------------------------------------------------------------------
+   MOTION — AND WHY THERE IS ALMOST NONE
+
+   Nothing here appears, resizes or becomes legible BY animating. That is a
+   measurement, not a taste: in this project's own headless environment neither
+   CSS transitions nor keyframe animations advance. A control transition on a
+   bare <div> still read its start value 400 ms later, and hud.js's #hud-event
+   banner — which relies on `animation: evtIn .32s forwards` — measures
+   `opacity: 0` under the same probe, i.e. it is invisible in every screenshot
+   this project has ever taken of it.
+
+   Two consequences were designed around:
+     · a panel that FADES in is an invisible panel wherever the timeline
+       stalls, so the phone and the call card are shown by the `hidden`
+       attribute alone;
+     · a container that SCALES in reports every 44px tap target inside it as
+       42.7px for as long as the stall lasts (measured: 44 * 0.97 = 42.68), so
+       no ancestor of a tap target is ever transformed.
+
+   What is left is one decorative pulse on the ringing avatar, whose stalled
+   first frame is a plain static ring — a correct "ringing" indicator either
+   way — and the toggle knob's 160 ms slide, which is cosmetic because the
+   switch's ON/OFF WORD is what carries its state. Both are listed in the
+   @media (prefers-reduced-motion: reduce) block at the foot of the file. The
+   in-app toggle is covered too: settings.js injects a rule that kills
+   animations on `.reduced-motion #ui-root *`, and this layer is always a
+   descendant of #ui-root.
+   ======================================================================== */
+
+#phone-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;            /* the play area stays clickable */
+  z-index: 7;                      /* over #hud-audio (6), under .shell (20) */
+  font-size: calc(16px * var(--s, 1));
+  font-family: var(--font, system-ui), sans-serif;
+  color: var(--txt, #fbf7ef);
+
+  --ph-tap: 44px;                  /* mirrored by TAP_PX in phone-ui.js */
+  --ph-plate: linear-gradient(170deg, rgba(24, 37, 58, .96), rgba(8, 14, 26, .97));
+  --ph-plate-soft: linear-gradient(180deg, rgba(20, 31, 50, .90), rgba(8, 14, 26, .94));
+  --ph-edge: rgba(255, 255, 255, .18);
+  --ph-edge-hi: rgba(255, 255, 255, .34);
+  --ph-lift: 0 0.8em 2.2em rgba(2, 6, 14, .62);
+  --ph-r: 0.85em;
+  --ph-ok: var(--lime, #4dff9e);
+  --ph-no: #ff5470;
+  --ph-hi: var(--aqua, #37e6d5);
+  --ph-warn: var(--sun, #ffc93c);
+
+  /* Where the panel's bottom edge sits: the rail line, plus the phone button's
+     own 44px, plus a hair. Declared as a variable because the panel needs the
+     same number twice — once for `bottom` and once inside the `height` calc,
+     and a calc cannot read back the value of `bottom`. */
+  --ph-bot: calc(12.9em + var(--ph-tap) + 0.45em);
+
+  /* Height of the HUD's right-hand status column, measured from the bottom of
+     the viewport and written by phone-ui.js's ResizeObserver. Only the mobile
+     breakpoint uses it — see the note there. 0px until something measures it,
+     which is also the correct value when there is no HUD to measure. */
+  --ph-clear: 0px;
+}
+
+/* setVisible(false). A separate class from hud.css's `.hud-off .hud-tap` rule
+   so an integrator who mounts outside #hud-layer still has a way to hide it. */
+#phone-layer.ph-hidden { display: none !important; }
+
+#phone-layer :focus-visible {
+  outline: 2px solid var(--ph-hi);
+  outline-offset: 2px;
+  border-radius: 0.4em;
+}
+
+/* ---------------------------------------------------------------------------
+   THE LEFT RAIL
+   ------------------------------------------------------------------------- */
+
+#phone-rail {
+  position: absolute;
+  left: 1.05em;
+  bottom: 12.9em;                  /* == #hud-status, and above the minimap */
+  width: min(18em, calc(100vw - 2.1em));
+  display: flex;
+  flex-direction: column-reverse;  /* button first in the DOM, bottom on screen */
+  align-items: flex-start;
+  gap: 0.4em;
+  pointer-events: none;
+}
+#phone-rail > * { pointer-events: auto; }
+
+/* --- the HUD phone button ------------------------------------------------ */
+.ph-fab {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 0.4em;
+  /* px floors, not em — see the header. 2.6em at --s 0.78 is 32px. */
+  min-height: var(--ph-tap); min-width: var(--ph-tap);
+  padding: 0 0.7em;
+  border: 0; border-radius: 999px;
+  background: var(--ph-plate-soft);
+  box-shadow: 0 0.4em 1.2em rgba(2, 6, 14, .5), inset 0 1px 0 rgba(255, 255, 255, .14);
+  outline: 1px solid var(--ph-edge);
+  color: var(--txt, #fbf7ef);
+  font-family: inherit; cursor: pointer;
+  touch-action: manipulation;
+  transition: transform .14s ease, outline-color .14s ease;
+}
+.ph-fab:hover { outline-color: var(--ph-edge-hi); }
+.ph-fab:active { transform: scale(0.94); }
+.ph-fab[aria-expanded="true"] { outline-color: var(--ph-hi); }
+.ph-fab[aria-expanded="true"] .ph-fab-l { color: var(--ph-hi); }
+.ph-fab-l {
+  font-size: 0.62em; font-weight: 900; letter-spacing: 0.16em;
+  color: var(--dim, rgba(251, 247, 239, .6));
+}
+
+/* The unread badge is a COUNT, not a dot: a red circle tells a player that
+   something happened but not what, and tells a colour-blind player nothing. */
+.ph-badge {
+  position: absolute; top: -0.25em; right: -0.25em;
+  min-width: 18px; height: 18px; padding: 0 4px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  background: var(--hot, #ff3d8b);
+  border: 1.5px solid #0a1220;
+  color: #fff;
+  font-size: 11px; font-weight: 900; line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.ph-badge[hidden] { display: none; }
+.ph-badge.sm {
+  position: static; min-width: 16px; height: 16px; font-size: 10px;
+  border-width: 0;
+}
+
+/* --- the minimised-call chip --------------------------------------------- */
+.ph-chip {
+  display: inline-flex; align-items: center; gap: 0.4em;
+  max-width: 100%;
+  min-height: var(--ph-tap);
+  padding: 0 0.7em 0 0.55em;
+  border: 1px solid var(--ph-ok); border-radius: 999px;
+  background: var(--ph-plate-soft);
+  box-shadow: var(--ph-lift);
+  color: var(--txt, #fbf7ef);
+  font-family: inherit; cursor: pointer;
+  touch-action: manipulation;
+}
+.ph-chip[hidden] { display: none; }
+/* Ringing is a DASHED edge as well as a different hue and a different word. */
+.ph-chip[data-state="ringing"] { border-color: var(--ph-warn); border-style: dashed; }
+.ph-chip-dot { font-size: 0.8em; line-height: 1; color: var(--ph-ok); }
+.ph-chip[data-state="ringing"] .ph-chip-dot { color: var(--ph-warn); }
+.ph-chip-nm {
+  font-size: 0.72em; font-weight: 900; letter-spacing: 0.02em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ph-chip-st {
+  font-size: 0.62em; font-weight: 800; letter-spacing: 0.1em;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  font-variant-numeric: tabular-nums;
+}
+/* No entry animation. A chip that slides in from opacity 0 is a chip that
+   never arrives wherever the timeline is stalled — and this one exists
+   precisely so an ongoing call cannot be lost. */
+
+/* --- the incoming-call card ---------------------------------------------- */
+#phone-call {
+  width: 100%;
+  padding: 0.55em 0.6em 0.6em;
+  border-radius: var(--ph-r);
+  background: var(--ph-plate);
+  border: 1px solid var(--ph-warn);
+  box-shadow: var(--ph-lift);
+}
+/* Present or absent, with nothing in between. See MOTION in the header. */
+#phone-call[hidden] { display: none; }
+
+.ph-call-hd { display: flex; align-items: center; gap: 0.5em; }
+.ph-call-av { flex: none; position: relative; display: block; line-height: 0; }
+/* A ringing caller pulses a ring around the avatar. It is decoration only: the
+   word "Ringing" and the ◉ glyph directly beside it carry the state. */
+.ph-call-av.ring::after {
+  content: ''; position: absolute; inset: -4px;
+  border: 2px solid var(--ph-warn); border-radius: 14px;
+  animation: phRing 1.15s ease-out infinite;
+}
+@keyframes phRing {
+  0%   { opacity: .9; transform: scale(1); }
+  100% { opacity: 0;  transform: scale(1.22); }
+}
+
+.ph-call-tx { display: flex; flex-direction: column; min-width: 0; }
+.ph-call-k {
+  display: flex; align-items: center; gap: 0.35em;
+  font-size: 0.6em; font-weight: 900; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--ph-warn);
+}
+.ph-call-t { font-variant-numeric: tabular-nums; color: var(--txt, #fbf7ef); }
+.ph-call-nm {
+  font-size: 0.92em; font-weight: 900; line-height: 1.15;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ph-call-rl {
+  font-size: 0.62em; font-weight: 700;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* The subtitle. On a fresh clone with no generated voice pack this IS the
+   dialogue, so it is sized to be read rather than glanced at. */
+.ph-call-cap {
+  margin: 0.45em 0 0;
+  padding: 0.4em 0.5em;
+  border-radius: 0.5em;
+  background: rgba(4, 8, 16, .5);
+  border-left: 0.2em solid var(--ph-hi);
+}
+.ph-call-cap p {
+  margin: 0 0 0.25em;
+  font-size: 0.68em; font-weight: 600; line-height: 1.35;
+}
+.ph-call-cap p:last-child { margin-bottom: 0; color: var(--txt, #fbf7ef); }
+.ph-call-cap p:not(:last-child) { color: var(--dim, rgba(251, 247, 239, .6)); }
+.ph-call-off, .ph-call-q {
+  margin: 0.45em 0 0;
+  font-size: 0.58em; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--dimmer, rgba(251, 247, 239, .34));
+}
+
+.ph-call-acts {
+  display: flex; flex-wrap: wrap; gap: 0.35em;
+  margin-top: 0.55em;
+}
+.ph-act {
+  flex: 1 1 auto;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.3em;
+  min-height: var(--ph-tap); min-width: var(--ph-tap);
+  padding: 0 0.6em;
+  border-radius: 0.55em;
+  border: 1px solid var(--ph-edge);
+  background: rgba(255, 255, 255, .06);
+  color: var(--txt, #fbf7ef);
+  font-family: inherit; font-size: 0.72em; font-weight: 800;
+  cursor: pointer; touch-action: manipulation;
+}
+/* Three signals per action: the WORD, the ICON, and the BORDER — solid for the
+   affirmative, dashed for the destructive, dotted for "later". */
+.ph-act.answer  { border-color: var(--ph-ok); color: #eafff5; background: rgba(77, 255, 158, .14); }
+.ph-act.dismiss { border-color: var(--ph-no); border-style: dashed; background: rgba(255, 84, 112, .12); }
+.ph-act.min     { border-style: dotted; }
+.ph-act:active  { transform: scale(0.97); }
+
+/* ---------------------------------------------------------------------------
+   THE PHONE PANEL
+   ------------------------------------------------------------------------- */
+
+#phone-panel {
+  position: absolute;
+  left: 1.05em;
+  /* Sits ABOVE the rail — see --ph-bot. Covering the button would hide the
+     only thing that closes the phone again on a touch screen. */
+  bottom: var(--ph-bot);
+  width: min(20.5em, calc(100vw - 2.1em));
+  height: min(30em, calc(100vh - var(--ph-bot) - 4.6em));
+  min-height: 16em;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  border-radius: 1.3em;
+  background: var(--ph-plate);
+  border: 1px solid var(--ph-edge);
+  box-shadow: var(--ph-lift), inset 0 1px 0 rgba(255, 255, 255, .12);
+  pointer-events: auto;
+  touch-action: pan-y;
+  /* NO transform on this element, ever. It is the ancestor of every tap target
+     in the phone, and a scale on an ancestor shrinks all of them — 44px reads
+     as 42.7px at scale(0.97). See MOTION in the header. */
+}
+#phone-panel[hidden] { display: none; }
+
+/* --- the fictional status bar -------------------------------------------- */
+.ph-status {
+  flex: none;
+  display: flex; align-items: center; gap: 0.4em;
+  padding: 0.4em 0.85em 0.2em;
+  font-size: 0.56em; font-weight: 900; letter-spacing: 0.16em;
+  color: var(--dimmer, rgba(251, 247, 239, .34));
+}
+/* CITYNET is an invented carrier, like the invented "City Response" the voice
+   cast answers to. Nothing here may resemble a real network. */
+.ph-carrier { letter-spacing: 0.2em; }
+.ph-sig { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 9px; }
+.ph-sig i {
+  width: 2px; background: currentColor; border-radius: 1px;
+  opacity: .85;
+}
+.ph-sig i:nth-child(1) { height: 3px; }
+.ph-sig i:nth-child(2) { height: 5px; }
+.ph-sig i:nth-child(3) { height: 7px; }
+.ph-sig i:nth-child(4) { height: 9px; opacity: .3; }
+.ph-clock { margin-left: auto; font-variant-numeric: tabular-nums; }
+.ph-batt {
+  position: relative;
+  width: 16px; height: 9px;
+  border: 1px solid currentColor; border-radius: 2px;
+}
+.ph-batt::after {
+  content: ''; position: absolute; right: -3px; top: 2px;
+  width: 2px; height: 5px; background: currentColor; border-radius: 0 1px 1px 0;
+}
+.ph-batt b { position: absolute; inset: 1.5px; width: 62%; background: currentColor; }
+
+/* --- header --------------------------------------------------------------- */
+.ph-head {
+  flex: none;
+  display: flex; align-items: center; gap: 0.35em;
+  padding: 0.1em 0.5em 0.4em;
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+}
+.ph-title {
+  flex: 1 1 auto; margin: 0;
+  font-size: 0.82em; font-weight: 900; letter-spacing: 0.06em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ph-icon-btn {
+  flex: none;
+  display: grid; place-items: center;
+  width: var(--ph-tap); height: var(--ph-tap);
+  border: 0; border-radius: 999px;
+  background: transparent;
+  color: var(--txt, #fbf7ef);
+  cursor: pointer; touch-action: manipulation;
+}
+.ph-icon-btn:hover { background: rgba(255, 255, 255, .08); }
+.ph-icon-btn[hidden] { display: none; }
+
+/* --- body ----------------------------------------------------------------- */
+.ph-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.35em 0.5em 0.5em;
+}
+.ph-body:focus { outline: none; }        /* it is a scroll container, not a control */
+/* The id scope is NOT decoration: `#phone-layer :focus-visible` above is
+   (1,1,0) and beat a plain `.ph-body:focus-visible` (0,2,0), so the ring was
+   drawn at outline-offset 2px — OUTSIDE the scroll box, where it read as a
+   stray aqua line straight across the panel under the header. Measured, not
+   guessed: computed outline-offset came back as 2px when -2px was written.
+   Inset by 3px it reads as what it is — "arrow keys scroll here". */
+#phone-layer .ph-body:focus-visible {
+  outline: 2px solid var(--ph-hi);
+  outline-offset: -3px;
+  border-radius: 0.5em;
+}
+
+.ph-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25em; }
+
+.ph-row {
+  display: flex; align-items: center; gap: 0.5em;
+  width: 100%;
+  min-height: var(--ph-tap);
+  padding: 0.35em 0.45em;
+  border-radius: 0.6em;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid transparent;
+  text-align: left;
+  color: inherit; font-family: inherit;
+}
+.ph-row-btn { cursor: pointer; touch-action: manipulation; }
+.ph-row-btn:hover { background: rgba(255, 255, 255, .09); border-color: var(--ph-edge); }
+.ph-row-av { flex: none; line-height: 0; }
+.ph-av { display: block; border-radius: 0.42em; }
+.ph-row-tx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.05em; }
+.ph-row-nm {
+  font-size: 0.74em; font-weight: 900; letter-spacing: 0.01em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ph-row-rl {
+  font-size: 0.58em; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ph-hi);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ph-row-sb {
+  font-size: 0.62em; font-weight: 600; line-height: 1.3;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ph-row-sb.wrap { white-space: normal; }
+.ph-row-meta {
+  flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 0.2em;
+}
+.ph-time {
+  font-size: 0.56em; font-weight: 800; letter-spacing: 0.06em;
+  color: var(--dimmer, rgba(251, 247, 239, .34));
+  font-variant-numeric: tabular-nums;
+}
+
+/* Call state inside a row: glyph + word, never a bare colour. */
+.ph-st { display: inline-flex; align-items: center; gap: 0.25em; }
+.ph-st[data-state="missed"]   { color: var(--ph-no); }
+.ph-st[data-state="active"]   { color: var(--ph-ok); }
+.ph-st[data-state="ringing"]  { color: var(--ph-warn); }
+.ph-st[data-state="declined"] { color: var(--dim, rgba(251, 247, 239, .6)); }
+
+.ph-tag {
+  flex: none;
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--ph-edge); border-radius: 0.35em;
+  font-size: max(0.5em, 9px); font-weight: 900; letter-spacing: 0.12em;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  text-transform: uppercase;
+}
+.ph-tag.mature { border-color: var(--ph-warn); color: var(--ph-warn); }
+.ph-tag.urgent { border-color: var(--ph-no); color: var(--ph-no); border-style: dashed; }
+
+/* --- threads -------------------------------------------------------------- */
+.ph-thread { display: flex; flex-direction: column; gap: 0.35em; padding: 0.2em 0.1em; }
+.ph-bub {
+  max-width: 84%;
+  padding: 0.4em 0.55em 0.3em;
+  border-radius: 0.8em;
+  display: flex; flex-direction: column; gap: 0.15em;
+}
+/* Incoming and outgoing differ by SIDE and by CORNER as well as by fill — the
+   three of them together survive greyscale. */
+.ph-bub.in {
+  align-self: flex-start; border-bottom-left-radius: 0.25em;
+  background: rgba(255, 255, 255, .08);
+}
+.ph-bub.out {
+  align-self: flex-end; border-bottom-right-radius: 0.25em;
+  background: rgba(55, 230, 213, .16);
+  border: 1px solid rgba(55, 230, 213, .3);
+}
+.ph-bub-tx { font-size: 0.68em; font-weight: 600; line-height: 1.35; }
+.ph-bub-mt {
+  display: flex; align-items: center; gap: 0.3em; align-self: flex-end;
+  font-size: 0.54em; font-weight: 800;
+  color: var(--dimmer, rgba(251, 247, 239, .34));
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- call detail ---------------------------------------------------------- */
+.ph-detail { padding: 0.2em 0.1em; }
+.ph-detail-hd { display: flex; align-items: center; gap: 0.6em; margin-bottom: 0.6em; }
+.ph-detail-hd > div { display: flex; flex-direction: column; gap: 0.1em; min-width: 0; }
+.ph-detail-hd b { font-size: 0.86em; font-weight: 900; }
+.ph-detail-hd .ph-st { font-size: 0.62em; font-weight: 800; }
+.ph-transcript h3 {
+  margin: 0 0 0.3em;
+  font-size: 0.56em; font-weight: 900; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--dimmer, rgba(251, 247, 239, .34));
+}
+.ph-transcript p {
+  margin: 0 0 0.35em;
+  padding: 0.35em 0.5em;
+  border-left: 0.16em solid var(--ph-hi);
+  background: rgba(255, 255, 255, .04);
+  border-radius: 0 0.4em 0.4em 0;
+  font-size: 0.66em; font-weight: 600; line-height: 1.35;
+}
+
+/* --- alerts --------------------------------------------------------------- */
+.ph-alert {
+  display: flex; align-items: center; gap: 0.5em;
+  min-height: var(--ph-tap);
+  padding: 0.4em 0.45em;
+  border-radius: 0.6em;
+  background: rgba(255, 255, 255, .04);
+  border-left: 0.22em solid var(--ph-hi);
+}
+/* Urgent is a DOUBLE rule and the word URGENT, not just a hotter colour. */
+.ph-alert.high { border-left-color: var(--ph-no); border-left-style: double; border-left-width: 0.3em; }
+.ph-alert-ic { flex: none; color: var(--ph-hi); line-height: 0; }
+.ph-alert.high .ph-alert-ic { color: var(--ph-no); }
+
+/* --- settings ------------------------------------------------------------- */
+.ph-settings { display: flex; flex-direction: column; gap: 0.35em; padding: 0.15em 0.1em; }
+.ph-tg {
+  display: flex; align-items: center; gap: 0.5em;
+  width: 100%;
+  min-height: var(--ph-tap);
+  padding: 0.45em 0.5em;
+  border: 1px solid var(--ph-edge); border-radius: 0.6em;
+  background: rgba(255, 255, 255, .04);
+  color: var(--txt, #fbf7ef);
+  font-family: inherit; text-align: left;
+  cursor: pointer; touch-action: manipulation;
+}
+.ph-tg:hover { background: rgba(255, 255, 255, .08); }
+.ph-tg-tx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1em; }
+.ph-tg-tx b { font-size: 0.72em; font-weight: 900; }
+/* The one-line description of what the switch does. It is not decoration: a
+   Mature Dialogue toggle with no explanation is a toggle nobody can consent to. */
+.ph-tg-d {
+  font-size: max(0.56em, 10px); font-weight: 600; line-height: 1.3;
+  color: var(--dim, rgba(251, 247, 239, .6));
+}
+/* The WORD is the state. The knob is a second, redundant signal — never the
+   only one, because "which side is on" is a convention, not information. */
+.ph-tg-st {
+  flex: none;
+  font-size: max(0.56em, 10px); font-weight: 900; letter-spacing: 0.12em;
+  color: var(--dim, rgba(251, 247, 239, .6));
+}
+.ph-tg[aria-checked="true"] .ph-tg-st { color: var(--ph-warn); }
+.ph-sw {
+  flex: none; position: relative;
+  width: 34px; height: 20px; border-radius: 999px;
+  background: rgba(255, 255, 255, .16);
+  border: 1px solid var(--ph-edge);
+  transition: background .16s ease;
+}
+.ph-sw > i {
+  position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fbf7ef;
+  transition: transform .16s ease;
+}
+.ph-tg[aria-checked="true"] .ph-sw { background: var(--ph-warn); }
+.ph-tg[aria-checked="true"] .ph-sw > i { transform: translateX(14px); }
+
+.ph-note {
+  margin: 0.5em 0 0;
+  font-size: max(0.52em, 9.5px); font-weight: 600; line-height: 1.4;
+  color: var(--dimmer, rgba(251, 247, 239, .34));
+}
+.ph-note code { font-family: ui-monospace, Menlo, monospace; font-size: 0.95em; }
+
+/* --- empty states --------------------------------------------------------- */
+.ph-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.3em;
+  min-height: 8em; padding: 1em 0.8em;
+  text-align: center;
+}
+.ph-empty b { font-size: 0.78em; font-weight: 900; }
+.ph-empty span {
+  font-size: 0.62em; font-weight: 600; line-height: 1.35;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  max-width: 18em;
+}
+
+/* --- tab bar -------------------------------------------------------------- */
+.ph-tabs {
+  flex: none;
+  /* minmax(0, 1fr), not 1fr. A bare `1fr` floors each column at its own
+     min-content width, so "Messages" stole space from "Calls" and the tab bar
+     came out at 43.5 / 25.3 / 30.5 px wide instead of five equal columns.
+     Measured at 812x375 before the fix. */
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.1em;
+  padding: 0.25em 0.25em calc(0.25em + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(255, 255, 255, .1);
+  background: rgba(4, 8, 16, .4);
+}
+.ph-tab {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 0.1em;
+  min-height: var(--ph-tap);
+  padding: 0.2em 0.1em;
+  border: 0; border-radius: 0.5em;
+  background: transparent;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  font-family: inherit; cursor: pointer; touch-action: manipulation;
+}
+.ph-tab:hover { background: rgba(255, 255, 255, .06); }
+/* The selected tab is named by its LABEL going bold and by a bar under it, not
+   by hue alone. */
+.ph-tab[aria-selected="true"] { color: var(--txt, #fbf7ef); background: rgba(255, 255, 255, .09); }
+.ph-tab[aria-selected="true"] .ph-tab-l { font-weight: 900; }
+.ph-tab[aria-selected="true"]::after {
+  content: ''; position: absolute; left: 26%; right: 26%; bottom: 1px;
+  height: 2px; border-radius: 2px; background: var(--ph-hi);
+}
+.ph-tab-l {
+  font-size: max(0.5em, 9px); font-weight: 700; letter-spacing: 0.04em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.ph-tab-b {
+  position: absolute; top: 2px; right: 18%;
+  min-width: 14px; height: 14px; padding: 0 3px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  background: var(--hot, #ff3d8b); color: #fff;
+  font-size: 9px; font-weight: 900; line-height: 1;
+}
+.ph-tab-b[hidden] { display: none; }
+
+.ph-i { display: block; }
+
+/* ---------------------------------------------------------------------------
+   MOBILE  —  375 px is the target, not the edge case.
+
+   At 375x812 the HUD scale floors at --s 0.78, so 1em is 12.48px. Two things
+   have to hold at that width and both are arithmetic, not taste:
+
+     · the rail must clear the right-hand #hud-status column, which is 12.4em
+       (155px) wide on this breakpoint at right:1.05em — so the rail is capped
+       at 15.2em (190px), leaving 29.6px of gap;
+     · the panel must still clear the minimap, so its bottom stays pinned to the
+       same rail line and it grows upward into the empty top half of the screen
+       instead of sideways over the map.
+   ------------------------------------------------------------------------- */
+@media (max-width: 440px) {
+  #phone-rail { width: min(15.2em, calc(100vw - 2.1em)); }
+
+  /* THE ONE PLACE --ph-clear IS USED.
+     Below 440px the panel spans the full width, so it runs straight into
+     #hud-status — the power-up rail and the heat meter, which grow UPWARD from
+     12.9em on the right. Measured at 375x812: the column is 193px tall with two
+     power-ups and heat 3 lit, and the panel's bottom-right corner covered
+     70..143px of it. Those are live, time-critical readouts; a phone panel is
+     not allowed to sit on them.
+     So the panel's bottom edge is the LOWER of the two constraints: its normal
+     rail line, or the top of whatever the status column currently is. The
+     column's height is republished by a ResizeObserver, so this tracks a
+     power-up expiring rather than reserving worst-case space forever. */
+  #phone-layer {
+    --ph-bot: max(calc(12.9em + var(--ph-tap) + 0.45em), calc(var(--ph-clear) + 0.5em));
+  }
+
+  /* Answer takes the full width and sits on its own row: it is the primary
+     action and it belongs under the thumb, not squeezed between two others at
+     58px each. Dismiss and Minimize share the row below it. */
+  .ph-act.answer { flex: 1 1 100%; }
+  .ph-act { font-size: 0.7em; }
+
+  #phone-panel {
+    left: 0.8em; right: 0.8em; width: auto;
+    /* Full width, and the height follows whatever --ph-bot resolved to so the
+       panel never grows off the top of the screen when the status column is
+       tall. 3.2em of headroom keeps it clear of the leaderboard and clock. */
+    height: min(26em, calc(100vh - var(--ph-bot) - 3.2em));
+    min-height: 13em;
+  }
+  .ph-row-nm { font-size: 0.8em; }
+  .ph-row-sb { font-size: 0.68em; }
+  .ph-bub-tx { font-size: 0.74em; }
+  .ph-call-cap p { font-size: 0.74em; }
+  .ph-tab-l { font-size: max(0.48em, 8.5px); }
+}
+
+/* Short viewports — a phone held sideways, where #hud-map shrinks to 8.6em and
+   #hud-size to bottom 0.7em. There is no room for a 26em panel between the
+   leaderboard and the map, so the rail drops and the panel takes the full
+   height it can get while still clearing the (now smaller) minimap. */
+@media (max-height: 620px) {
+  #phone-rail { bottom: 10.2em; }
+  #phone-panel {
+    bottom: calc(10.2em + var(--ph-tap) + 0.45em);
+    height: calc(100vh - 16em);
+    min-height: 10em;
+  }
+  .ph-tg-d { display: none; }            /* the NAME and the WORD still read */
+  .ph-empty { min-height: 5em; }
+}
+
+/* Very short — a phone held sideways at 812x375.
+   The panel is WIDENED here rather than stretched: the first version anchored
+   it top:0.6em/bottom:0.6em, which covered #hud-size (the player's own tier
+   meter, bottom-left at 0.7em) for the whole time the phone was open. Height
+   stays on the rule above, which already stops it 6px short of the phone
+   button; width goes up so the five tabs clear 44px — at 18em they measured
+   38px each on this viewport. */
+@media (max-height: 470px) {
+  #phone-panel { width: min(24em, calc(100vw - 1.6em)); }
+  .ph-status { display: none; }          /* buys back ~18px of body */
+}
+
+/* ---------------------------------------------------------------------------
+   REDUCED MOTION
+
+   Every animation and transition added by this file is listed here. Nothing
+   above uses motion as its only signal, so switching all of it off costs no
+   information: the ringing avatar keeps its word and its glyph, the panel
+   keeps its plate, the switches keep their ON/OFF words.
+   ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  /* The pulse becomes a static ring, which is what it degrades to anyway. */
+  .ph-call-av.ring::after { animation: none; opacity: .9; }
+  .ph-fab, .ph-fab:active, .ph-act:active { transition: none; transform: none; }
+  .ph-icon-btn, .ph-row-btn, .ph-tg { transition: none; }
+  /* The knob jumps instead of sliding. The WORD beside it never moved. */
+  .ph-sw, .ph-sw > i { transition: none; }
+}

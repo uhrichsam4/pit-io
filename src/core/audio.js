@@ -61,6 +61,10 @@
  *                         arc is inferred from the updateAmbience heartbeat.
  *   matchStart() matchEnd(won) countdownBeep(final) rankChange(±1) ui(kind)
  *                         event audio nothing calls yet.
+ *   phoneRing() phoneAnswer() phoneHangup() phoneText() phoneOpen()
+ *   phoneClose()          the in-game phone. phoneRing() is a LOOP and returns
+ *                         a handle; the other five are one-shots returning
+ *                         `this`. answer and hangup stop the ring themselves.
  *
  * Mix control: setVolume, setMuted/toggleMuted, setBalance (music↔sfx),
  * setMusicVolume, setSfxVolume, setVoiceVolume, debugStats.
@@ -392,6 +396,36 @@ function powerupKey(kind) {
 }
 
 /**
+ * The in-game phone's voice, in one table so the ringtone, the answer blip and
+ * the shell all agree about what this device sounds like.
+ *
+ * `ringKey` is the loop registry key. It is a constant rather than a literal at
+ * three call sites because phoneAnswer() and phoneHangup() both have to be able
+ * to find and kill the ring, and a typo in one of those strings would leave a
+ * ringtone playing through an answered call with nothing in the console.
+ *
+ * The cadence is deliberately NOT a real handset's. Two 0.42 s bursts, a short
+ * gap, then 1.9 s of silence: long enough that the phone is clearly waiting for
+ * you rather than alarming at you, and short enough that a player who looked
+ * away hears it again before the moment passes.
+ *
+ * Frequencies are semitones above A2 (see `semi`). 33 and 40 are a minor sixth
+ * apart — close enough to beat against each other like a bell with two strikers,
+ * far enough not to read as a musical interval competing with the score.
+ */
+const PHONE = {
+  ringKey: 'phone:ring',
+  period: 3.20,     // one whole ring cycle, including the silence
+  burst: 0.42,      // each of the two bursts inside a cycle
+  gap: 0.16,        // silence between those two bursts
+  edge: 0.012,      // burst attack/release — long enough not to click
+  trill: 19,        // Hz: the two-tone warble that makes it a bell, not a beep
+  hi: 40, lo: 33,   // the two bell partials
+  body: 16,         // warm low body under the bell
+  buzz: 118,        // the case rattling on a hard surface
+};
+
+/**
  * Section table. `at` is seconds elapsed in the match. The last 30 s is FRENZY
  * because MATCH.FRENZY_AT is 30 — read from config so the two never drift.
  */
@@ -447,6 +481,12 @@ export class Audio {
 
     /* continuous sounds, by key. See _startLoop for why this is a registry. */
     this._loops = new Map();
+    /* cadence envelopes for the ringtone, keyed by shape+phase+sampleRate.
+       Rebuilt whenever the context changes — a buffer belongs to the context
+       that created it, and handing a disposed context's buffer to a new one
+       throws inside start() with a message that names neither. */
+    this._gateBufs = new Map();
+    this._gateCtx = null;
     /* the running bed duck, tracked here and not read back off the param. */
     this._duckTarget = 1;
     this._duckUntil = 0;
@@ -3437,6 +3477,277 @@ export class Audio {
     return this;
   }
 
+  /* ============================================================== phone === */
+
+  /**
+   * The ringtone's cadence, baked into an audio buffer and looped.
+   *
+   * A ring is a RHYTHM, not a tone, and there are only two honest ways to build
+   * one. Scheduling every burst ahead of time means writing thousands of
+   * automation events for a loop whose dead-man's switch is an hour long, and
+   * then cancelling them all on stop. Instead the envelope itself is a signal:
+   * a one-cycle buffer holding the amplitude curve, looped, and connected
+   * straight into a gain's `.gain` param — exactly what `creak()` already does
+   * with its stick-slip modulators, one node per layer, and it stops dead when
+   * the source stops because there is nothing scheduled to cancel.
+   *
+   * @param {number|null} phase 0 or 1 select opposite halves of the two-tone
+   *   warble; null gives the flat burst used by the body and buzz layers.
+   * @returns {AudioBuffer} one full cycle, values in 0..1.
+   */
+  _phoneGate(phase) {
+    const ctx = this.ctx;
+    // A buffer is owned by the context that made it. After dispose()+unlock()
+    // this.ctx is a different object and the old buffers are poison.
+    if (this._gateCtx !== ctx) { this._gateBufs = new Map(); this._gateCtx = ctx; }
+    const rate = ctx.sampleRate;
+    const key = `${phase}|${rate}`;
+    const hit = this._gateBufs.get(key);
+    if (hit) return hit;
+
+    const len = Math.max(1, Math.floor(PHONE.period * rate));
+    const buf = ctx.createBuffer(1, len, rate);
+    const d = buf.getChannelData(0);
+    const starts = [0, PHONE.burst + PHONE.gap];
+    const edge = Math.max(1, Math.floor(PHONE.edge * rate));
+    const burstLen = Math.floor(PHONE.burst * rate);
+
+    for (const s of starts) {
+      const i0 = Math.floor(s * rate);
+      for (let i = 0; i < burstLen && i0 + i < len; i++) {
+        // Raised-cosine ends. A rectangular gate on a 1.1 kHz tone is a click
+        // twice per burst, four times per cycle, forever — the loudest possible
+        // tell that a sound is synthesised.
+        const inN = Math.min(1, i / edge);
+        const outN = Math.min(1, (burstLen - i) / edge);
+        const env = 0.5 - 0.5 * Math.cos(Math.PI * Math.min(inN, outN));
+        let amp = env;
+        if (phase !== null) {
+          // 0.55 ± 0.45, not 1/0: a hard alternation between two partials is a
+          // stutter, a smooth one is a bell being struck twice a beat.
+          const w = Math.cos(2 * Math.PI * PHONE.trill * (i / rate) + (phase ? Math.PI : 0));
+          amp *= 0.55 + 0.45 * w;
+        }
+        d[i0 + i] = amp;
+      }
+    }
+    this._gateBufs.set(key, buf);
+    return buf;
+  }
+
+  /**
+   * The phone ringing. A LOOP, therefore a handle.
+   *
+   * Idempotent by key, registered in `this._loops`, and killed by
+   * `stopAllLoops()` — which matchStart(), matchEnd(), stopMusic() and
+   * dispose() all call. A ringtone that survives a match end is precisely the
+   * leak the spec forbids, and the only reason this one cannot is that it is
+   * built through `_startLoop` like every other continuous sound rather than
+   * being special-cased.
+   *
+   * It sits on the sfx bus, not the ambience bus: `duck()` pulls the bed aside
+   * for warnings and dialogue, and a phone you cannot hear over the weather is
+   * a missed call, not a mix decision.
+   *
+   * @returns {{stop:Function, setIntensity:Function, move:Function, active:boolean}}
+   *   Safe to call `.stop()` on more than once, and safe when audio never
+   *   started — a declined start returns the shared dead handle.
+   */
+  phoneRing() {
+    return this._startLoop(PHONE.ringKey, (fade, t0) => {
+      const ctx = this.ctx;
+      const sources = [], nodes = [];
+
+      // One looping cadence source per envelope shape, all starting together at
+      // t0 so the two bell partials stay in step with each other.
+      const gate = (phase) => {
+        const s = ctx.createBufferSource();
+        s.buffer = this._phoneGate(phase);
+        s.loop = true;
+        sources.push(s);
+        return this._src(s, t0, t0 + LOOP_MAX);
+      };
+
+      /**
+       * One gated layer: source → gate(0 base, cadence-driven) → trim → fade.
+       *
+       * `g.gain.value = 0` is load-bearing. A connection into an AudioParam is
+       * SUMMED WITH the param's intrinsic value, it does not replace it — at
+       * the default 1 the cadence would ride on top of a permanently open gate
+       * and the ringtone would be a continuous tone with a wobble on it.
+       */
+      const layer = (src, phase, amp) => {
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        gate(phase).connect(g.gain);
+        const trim = ctx.createGain();
+        trim.gain.value = amp;
+        src.connect(g); g.connect(trim); trim.connect(fade);
+        nodes.push(g, trim);
+        return g;
+      };
+
+      /* The bell: two partials, warbling in antiphase. */
+      for (const [semis, phase, amp] of [[PHONE.hi, 0, 0.50], [PHONE.lo, 1, 0.42]]) {
+        const o = ctx.createOscillator();
+        o.type = 'triangle';
+        o.frequency.value = this._hz(semi(semis));
+        this._src(o, t0, t0 + LOOP_MAX);
+        sources.push(o);
+        layer(o, phase, amp);
+      }
+
+      /* Body: the resonance of whatever the phone is sitting in. */
+      const bo = ctx.createOscillator();
+      bo.type = 'sine';
+      bo.frequency.value = this._hz(semi(PHONE.body));
+      this._src(bo, t0, t0 + LOOP_MAX);
+      sources.push(bo);
+      layer(bo, null, 0.30);
+
+      /* Buzz: the case against a hard surface. Narrow band, low, quiet — it is
+         the layer you notice only when it is missing. */
+      const n = this._noiseSrc(t0, t0 + LOOP_MAX, 0.5);
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = this._hz(PHONE.buzz);
+      bp.Q.value = 2.2;
+      n.connect(bp);
+      sources.push(n);
+      nodes.push(bp);
+      layer(bp, null, 0.55);
+
+      return {
+        // MEASURED, not guessed. Four layers sum into `fade`, so the peak that
+        // reaches the bus is ~2.9x this number: at 0.105 the ringtone rendered
+        // at 0.303 against 0.075 for a siren and 0.012 for rain — four times the
+        // loudest continuous sound in the game, on a cue that repeats every
+        // 3.2 s until answered. 0.042 puts it at 0.12, level with phoneAnswer
+        // and ui('confirm'), still well above the beds. Re-measure if a layer
+        // is added: see the offline render harness in the report.
+        peak: 0.042,
+        // Fast in, faster out. A ringtone that eases in over 400 ms has already
+        // missed the beat it was cueing, and one that fades for half a second
+        // after you answer is still ringing during the first word.
+        attack: 0.05, release: 0.10,
+        dest: this.sfxBus, sources, nodes,
+      };
+    });
+  }
+
+  /** Kill the ring if it is up. Shared by answer, hangup and the dismiss path. */
+  _stopRing(fade = 0.05) {
+    const live = this._loops.get(PHONE.ringKey);
+    if (live) live.stop(fade);
+    return this;
+  }
+
+  /**
+   * Call accepted. Stops the ring first — the two are one event as far as the
+   * phone UI is concerned, and making the caller remember both is exactly how
+   * powerupEnd() learned to stop its own loop.
+   */
+  phoneAnswer() {
+    this._stopRing(0.04);
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 0.7);
+
+    // The line picking up: a short burst inside the telephone band. The narrow
+    // band IS the telephone — same trick as dispatchChirp().
+    this._swoosh(t0, out, { f0: 2600, f1: 900, dur: 0.05, peak: 0.070, q: 1.6, attack: 0.003 });
+    // Two rising tones = connected. Kept under ui('confirm') so answering a
+    // call never sounds like completing a menu.
+    this._tone(t0 + 0.05, out, { f0: semi(31), dur: 0.09, peak: 0.044, type: 'sine' });
+    this._tone(t0 + 0.12, out, { f0: semi(36), dur: 0.15, peak: 0.050, type: 'sine' });
+    // A breath of open-line hiss so the call feels live rather than finished.
+    this._swoosh(t0 + 0.10, out, { f0: 900, f1: 1500, dur: 0.28, peak: 0.016, q: 0.9, attack: 0.09 });
+
+    // Enough duck to clear the first word. Anything longer belongs to the phone
+    // system, which knows how long the call is: duck(amount, seconds) for a
+    // known line, duckLevel(amount) for a per-frame envelope.
+    this.duck(0.30, 1.1);
+    return this;
+  }
+
+  /** Call over, declined, or missed. The inverse gesture, and the ring dies. */
+  phoneHangup() {
+    this._stopRing(0.04);
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 0.7);
+
+    this._swoosh(t0, out, { f0: 1800, f1: 600, dur: 0.06, peak: 0.052, q: 1.4, attack: 0.003 });
+    // Falling, and a semitone flatter than the answer interval: the two are
+    // heard minutes apart, so they have to be distinguishable in isolation and
+    // not merely as each other's reverse.
+    this._tone(t0 + 0.02, out, { f0: semi(36), dur: 0.10, peak: 0.042, type: 'sine' });
+    this._tone(t0 + 0.09, out, { f0: semi(29), dur: 0.17, peak: 0.048, type: 'sine' });
+    // The handset going down. Low, damped, over in 140 ms.
+    this._tone(t0 + 0.16, out, { f0: 150, f1: 74, dur: 0.14, peak: 0.058, type: 'sine', attack: 0.004 });
+    return this;
+  }
+
+  /**
+   * A text arriving. Short, bright, and THROTTLED: an event that fires three
+   * alerts in one frame would otherwise machine-gun, which is how a
+   * notification sound becomes the first thing a player mutes.
+   */
+  phoneText() {
+    if (!this.ready || !this.enabled) return this;
+    if (!this._throttle('phoneText', 0.22)) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 0.4);
+
+    // Two notes up, 60 ms apart, an interval nothing else in the game uses.
+    this._tone(t0, out, { f0: semi(45), dur: 0.07, peak: 0.036, type: 'triangle' });
+    this._tone(t0 + 0.06, out, { f0: semi(52), dur: 0.12, peak: 0.040, type: 'triangle' });
+    // Air on top. Without it the pair reads as a countdown beep.
+    this._swoosh(t0, out, { f0: 4200, f1: 6800, dur: 0.07, peak: 0.013, q: 2.4, attack: 0.006 });
+    return this;
+  }
+
+  /**
+   * The phone shell coming up or going away. Shared body, mirrored, because
+   * open and close have to be each other's inverse — see `_uiRich`.
+   *
+   * Distinct from ui('menuOpen') by the haptic thud underneath: this is a
+   * device in a hand, not a panel on a screen, and the HUD uses both.
+   */
+  _phoneShell(up) {
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 0.6);
+
+    this._swoosh(t0, out, {
+      f0: up ? 520 : 3000, f1: up ? 3000 : 520, dur: 0.14, peak: 0.036, q: 1.3, attack: 0.010,
+    });
+    // Haptic. A 90 Hz sine for 90 ms is what a phone in a pocket feels like,
+    // and it is the whole reason this is not just the menu sound at a new pitch.
+    this._tone(t0, out, {
+      f0: up ? 90 : 76, f1: up ? 62 : 48, dur: 0.09, peak: 0.052, type: 'sine', attack: 0.003,
+    });
+    [0, 1].forEach((i) => {
+      const s = up ? [34, 41][i] : [41, 34][i];
+      this._tone(t0 + 0.04 + i * 0.05, out, {
+        f0: semi(s), dur: 0.17, peak: up ? 0.034 : 0.028, type: i ? 'sine' : 'triangle',
+      });
+    });
+    return this;
+  }
+
+  /** Phone opened. */
+  phoneOpen() {
+    if (!this.ready || !this.enabled) return this;
+    return this._phoneShell(true);
+  }
+
+  /** Phone dismissed. Does NOT stop a ring — a player can put the phone away
+   *  while it is still ringing, and silencing it then would swallow the call. */
+  phoneClose() {
+    if (!this.ready || !this.enabled) return this;
+    return this._phoneShell(false);
+  }
+
   /* ------------------------------------------------------ richer UI ----- */
 
   /** The UI kinds that need more than one oscillator. See `ui()`. */
@@ -3555,6 +3866,7 @@ export const SOUND_METHODS = [
   'siren', 'dispatchChirp', 'heatUp', 'heatDown', 'containmentPulse',
   'outOfBoundsTick', 'teleport', 'scorePenalty',
   'carTip', 'carSlide', 'clatter', 'creak',
+  'phoneRing', 'phoneAnswer', 'phoneHangup', 'phoneText', 'phoneOpen', 'phoneClose',
 ];
 
 export const audio = new Audio();

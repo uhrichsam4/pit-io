@@ -14,6 +14,8 @@ import { audio } from './core/audio.js';
 import { VoiceSystem } from './audio/voice.js';
 import { install as installPowerups } from './gameplay/powerupGlue.js';
 import { install as installEvents } from './gameplay/eventGlue.js';
+import { install as installPhone } from './phone/phone.js';
+import { mount as mountPhone } from './ui/phone-ui.js';
 import { TIER_LIST } from './config.js';
 import { EntityRegistry, STATE } from './gameplay/entities.js';
 import { Hole } from './gameplay/hole.js';
@@ -392,6 +394,15 @@ export class Game {
     /* Storm + police. Wraps consume.onSwallow to feed Heat, so it must install
        AFTER that callback is assigned or it would wrap undefined. */
     this.events = installEvents(this);
+    /* The phone. Installs after events, because it reads heat tiers and the
+       active event to decide when somebody would plausibly ring you. Its UI is
+       mounted separately so a headless harness can drive the call engine with
+       no DOM at all. */
+    this.phone = installPhone(this);
+    if (this.phone && this.uiRoot) {
+      try { this.phoneUI = mountPhone(this.uiRoot, this.phone); }
+      catch (err) { console.error('[phone] UI mount failed', err); }
+    }
 
     /* Fetch the voice manifest IMMEDIATELY, not on the first gesture.
        It used to load inside armAudio, which fires once and deletes its own

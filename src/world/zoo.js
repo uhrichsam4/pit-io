@@ -1339,6 +1339,129 @@ function insideHabitat(habs, x, z, pad = 0) {
   return null;
 }
 
+/* ================================================== ground sampling ===== */
+
+/**
+ * Anything above this is a wall, a bench top or a kerb, not somewhere to stand.
+ * The same number props.js's own `Ground` uses, and it has to stay the same:
+ * both samplers are answering "what surface is this prop resting on".
+ */
+const GROUND_CEIL = 0.30;
+/**
+ * How far the measured surface may differ from the height the caller named
+ * before we stop believing the sample. Everything built on this site lies
+ * between Y_WALK (0.155) and the pond berm (0.28), so half a metre is a wide
+ * guard — it is here to reject a freak hit, not to trim a real slope.
+ */
+const SURFACE_SNAP = 0.5;
+
+/**
+ * The height of the BUILT surface under a point, over the zoo site only.
+ *
+ * WHY. Every `put` in this file used to name one of two constants — `yGround`
+ * for the pen floors and `yPath` for the paving — and the site is not flat.
+ * nature.js runs before this module and paints the same city blocks with
+ * lawn (Y_WALK+0.015), park paths (+0.045), plaza aprons (+0.07), sandpits and
+ * mulch beds (+0.11); this module then lays its own path deck 55 mm up and a
+ * pond shore that rises to 110 mm. Measured on the shipped seed, that put 33
+ * zoo props up to 90 mm INTO the ground and floated others 55 mm over it —
+ * 10 of the 28 boulders among them, which is exactly the "rocks are in the
+ * ground" defect. A constant cannot describe a surface; only the surface can.
+ *
+ * Same triangle-bucket algorithm as props.js's `Ground`, which is
+ * module-private over there, but WINDOWED to the zoo's own bounding box so the
+ * whole city is not re-walked for a 172 x 150 m site. Instanced meshes are
+ * skipped (they are the props themselves) and so are buildings, for the same
+ * reasons props.js gives.
+ */
+class ZooGround {
+  constructor(scene, x0, z0, x1, z1) {
+    this.cell = 4;
+    this.grid = new Map();
+    this.t = [];
+    this.x0 = x0; this.z0 = z0; this.x1 = x1; this.z1 = z1;
+    const box = new THREE.Box3();
+    scene.traverse((n) => {
+      if (!n.isMesh || n.isInstancedMesh) return;
+      for (let p = n; p; p = p.parent) if (p.name === 'buildings') return;
+      const geo = n.geometry;
+      const pos = geo && geo.attributes && geo.attributes.position;
+      if (!pos) return;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      n.updateWorldMatrix(true, false);
+      box.copy(geo.boundingBox).applyMatrix4(n.matrixWorld);
+      if (box.min.y > GROUND_CEIL) return;
+      if (box.max.x < x0 || box.min.x > x1 || box.max.z < z0 || box.min.z > z1) return;
+      this._add(n, pos, geo.index);
+    });
+  }
+
+  _add(n, pos, idx) {
+    const m = n.matrixWorld.elements;
+    const cnt = idx ? idx.count : pos.count;
+    const t = this.t, c = this.cell;
+    const ax = [0, 0, 0], ay = [0, 0, 0], az = [0, 0, 0];
+    for (let i = 0; i < cnt; i += 3) {
+      let hi = -Infinity;
+      for (let k = 0; k < 3; k++) {
+        const j = idx ? idx.getX(i + k) : i + k;
+        const px = pos.getX(j), py = pos.getY(j), pz = pos.getZ(j);
+        ax[k] = m[0] * px + m[4] * py + m[8] * pz + m[12];
+        ay[k] = m[1] * px + m[5] * py + m[9] * pz + m[13];
+        az[k] = m[2] * px + m[6] * py + m[10] * pz + m[14];
+        if (ay[k] > hi) hi = ay[k];
+      }
+      if (hi > GROUND_CEIL) continue;
+      // Upward-facing only: the underside of a slab is not a surface.
+      const ny = (az[1] - az[0]) * (ax[2] - ax[0]) - (ax[1] - ax[0]) * (az[2] - az[0]);
+      if (ny <= 0) continue;
+      const minx = Math.min(ax[0], ax[1], ax[2]), maxx = Math.max(ax[0], ax[1], ax[2]);
+      const minz = Math.min(az[0], az[1], az[2]), maxz = Math.max(az[0], az[1], az[2]);
+      if (maxx < this.x0 || minx > this.x1 || maxz < this.z0 || minz > this.z1) continue;
+      // The base plane is a handful of city-sized quads; bucketing one of those
+      // would put the whole site in one bucket for nothing — it is below every
+      // surface here anyway.
+      const i0 = Math.floor(minx / c), i1 = Math.floor(maxx / c);
+      const j0 = Math.floor(minz / c), j1 = Math.floor(maxz / c);
+      if (i1 - i0 > 24 || j1 - j0 > 24) continue;
+      const base = t.length;
+      t.push(ax[0], az[0], ay[0], ax[1], az[1], ay[1], ax[2], az[2], ay[2]);
+      for (let i2 = i0; i2 <= i1; i2++) {
+        for (let j2 = j0; j2 <= j1; j2++) {
+          const k = (i2 + 8192) * 20000 + (j2 + 8192);
+          let b = this.grid.get(k);
+          if (!b) { b = []; this.grid.set(k, b); }
+          b.push(base);
+        }
+      }
+    }
+  }
+
+  /** Height of the highest surface under (x,z), or null where there is none. */
+  at(x, z) {
+    const c = this.cell;
+    const b = this.grid.get((Math.floor(x / c) + 8192) * 20000 + (Math.floor(z / c) + 8192));
+    if (!b) return null;
+    const t = this.t;
+    let best = null;
+    for (let n = 0; n < b.length; n++) {
+      const i = b[n];
+      const ax = t[i], az = t[i + 1], bx = t[i + 3], bz = t[i + 4], cx = t[i + 6], cz = t[i + 7];
+      const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+      if (d > -1e-9 && d < 1e-9) continue;
+      const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d;
+      if (l1 < 0 || l1 > 1) continue;
+      const l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d;
+      if (l2 < 0 || l2 > 1) continue;
+      const l3 = 1 - l1 - l2;
+      if (l3 < 0) continue;
+      const y = l1 * t[i + 2] + l2 * t[i + 5] + l3 * t[i + 8];
+      if (best === null || y > best) best = y;
+    }
+    return best;
+  }
+}
+
 /* ==================================================== the placer ======== */
 
 /**
@@ -1357,6 +1480,55 @@ class ZooPlacer {
     this.grid = new Map();
     this.tried = 0;
     this.rejected = { water: 0, road: 0, occupied: 0 };
+    /* Refusals per key. The totals alone cannot tell "the fence run is 40 %
+       longer than the pen" from "one prop kind places nothing at all", and
+       this module has to be able to answer that without a browser. */
+    this.byKey = new Map();
+    /**
+     * The surface sampler, and the heights the call sites name. Set by
+     * buildZoo once its own paths and ponds are on the scene; null-safe, so a
+     * failure to build one degrades to the old flat behaviour rather than
+     * dropping the whole zoo.
+     */
+    this.ground = null;
+    this.surfaces = [y];
+    /** Measured, so the log can say whether the sampler did anything. */
+    this.snapped = 0;
+    this.snapMax = 0;
+    /** Attempts spent sliding a refused prop along its own line. */
+    this.slides = 0;
+  }
+
+  _refuse(key, why) {
+    this.rejected[why]++;
+    let r = this.byKey.get(key);
+    if (!r) { r = { tried: 0, placed: 0, water: 0, road: 0, occupied: 0 }; this.byKey.set(key, r); }
+    r[why]++;
+    return false;
+  }
+
+  /**
+   * The height this prop actually stands at.
+   *
+   * A call site names a height as "the built surface I expect to be on, plus
+   * the lift I want above it" — `yGround`, `yPath`, or `yGround + 0.02` for a
+   * boulder that should sit slightly proud. Keep the LIFT, and take the
+   * SURFACE from what is measurably under (x,z) instead of from the constant.
+   */
+  _surfaceY(x, z, want) {
+    if (!this.ground) return want;
+    const gy = this.ground.at(x, z);
+    if (gy === null) return want;
+    let ref = this.surfaces[0];
+    for (const s of this.surfaces) if (Math.abs(want - s) < Math.abs(want - ref)) ref = s;
+    if (Math.abs(gy - ref) > SURFACE_SNAP) return want;
+    const out = gy + (want - ref);
+    const moved = Math.abs(out - want);
+    if (moved > 0.005) {
+      this.snapped++;
+      if (moved > this.snapMax) this.snapMax = moved;
+    }
+    return out;
   }
 
   _key(i, j) { return (i + 8192) * 20000 + (j + 8192); }
@@ -1399,24 +1571,36 @@ class ZooPlacer {
     // nothing, which is exactly how this codebase has lost whole passes before.
     if (!d) { console.warn(`[zoo] unknown prop key "${key}" — nothing placed`); return false; }
     this.tried++;
+    let r = this.byKey.get(key);
+    if (!r) { r = { tried: 0, placed: 0, water: 0, road: 0, occupied: 0 }; this.byKey.set(key, r); }
+    r.tried++;
     if (d.sv) scale *= 1 + (this.rng() - 0.5) * 2 * d.sv;
     const L = this.ctx.layout;
-    if (L.isWater(x, z)) { this.rejected.water++; return false; }
-    if (L.isRoad(x, z)) { this.rejected.road++; return false; }
+    if (L.isWater(x, z)) return this._refuse(key, 'water');
+    if (L.isRoad(x, z)) return this._refuse(key, 'road');
     const foot = claimR < 0 ? Math.max(0.24, zooContactRadius(key) * scale) : claimR;
     if (foot > 0) {
-      if (!this.free(x, z, foot + 0.06)) { this.rejected.occupied++; return false; }
+      if (!this.free(x, z, foot + 0.06)) return this._refuse(key, 'occupied');
       this.claim(x, z, foot + 0.06);
     }
-    this.items.push({ key, x, z, rot, scale, y: y === null ? this.y : y, foot });
+    r.placed++;
+    this.items.push({ key, x, z, rot, scale, y: this._surfaceY(x, z, y === null ? this.y : y), foot });
     return true;
   }
 
   /** Place at (x,z) or a short way along (ux,uz). A run is a rhythm, not a set
    *  of fixed points — props.js lost a fifth of the city's furniture before it
-   *  learned to slide a refused prop instead of dropping it. */
+   *  learned to slide a refused prop instead of dropping it.
+   *
+   *  Every offset after the first is counted as a SLIDE, not as a site. Without
+   *  that the log said "403 instances of 685 attempts" and read like a 41 %
+   *  failure rate, when most of the shortfall is one bench being offered five
+   *  positions until one of them is free — which is the feature working. */
   putAlong(key, x, z, ux, uz, rot = 0, y = null, scale = 1, claimR = -1) {
+    let first = true;
     for (const t of [0, 1.3, -1.3, 2.6, -2.6]) {
+      if (!first) this.slides++;
+      first = false;
       if (this.put(key, x + ux * t, z + uz * t, rot, y, scale, claimR)) return true;
     }
     return false;
@@ -1942,24 +2126,37 @@ export function buildZoo(ctx) {
   const rng = makeRNG(((ctx.layout.seed | 0) ^ 0x2005e) >>> 0);
   const group = ctx.group('zoo');
 
-  /* GROUND HEIGHT. props.js measures the built surface with its own `Ground`
-     sampler, which is module-private, so this uses the surface CONTRACT the
-     park blocks are built to instead: nature.js lays turf at Y_WALK + 0.015 and
-     a feature apron (court, sandpit, inlay) 55 mm above that. The zoo's paths
-     are feature aprons and everything on them stands at that height. A layout
-     that publishes its own `zoo.y` overrides both. */
+  /* GROUND HEIGHT — the two heights the call sites below NAME.
+     nature.js lays turf at Y_WALK + 0.015 and a feature apron (court, sandpit,
+     inlay) 55 mm above that; the zoo's paths are feature aprons. A layout that
+     publishes its own `zoo.y` overrides both. These stay the nominal pair, but
+     they are no longer the final answer: `ZooGround` below measures the surface
+     actually under each prop and the placer keeps only the LIFT off these two.
+     A constant cannot describe a site nature.js has already painted with lawn,
+     paths, aprons and beds at five different heights. */
   const yGround = zoo.y !== undefined ? zoo.y : ctx.Y_WALK + 0.015;
   const yPath = yGround + 0.055;
 
   const plan = planZoo(ctx, zoo, rng);
   const habs = zoo.habitats;
   const pl = new ZooPlacer(ctx, rng, yGround);
+  pl.surfaces = [yGround, yPath];
 
   const tally = { structures: 0, fences: 0, viewing: 0, amenity: 0, yard: 0, rocks: 0 };
 
   /* ---------------------------------------------------------- 1. paths --- */
   const paths = buildPathMesh(ctx, plan, yPath, group);
   const pondCount = buildPondMesh(ctx, plan.ponds.map((p) => ({ ...p, y: yGround })), group);
+
+  /* The surface sampler, built AFTER this module's own paths and ponds are on
+     the scene and BEFORE the first `put`, so a prop on the path deck or on the
+     pond's cobble berm is measured against the thing it is standing on. The
+     window is the site plus 16 m — the entrance plaza and the service yard sit
+     outside the habitat union. */
+  {
+    const bd = plan.bounds;
+    pl.ground = new ZooGround(ctx.scene, bd.x0 - 16, bd.z0 - 16, bd.x1 + 16, bd.z1 + 16);
+  }
 
   /* ------------------------------------------------------- 2. entrance --- */
   {
@@ -2345,14 +2542,35 @@ export function buildZoo(ctx) {
   const rj = pl.rejected;
   console.info(
     `[zoo] ${habs.length} habitats (${zoo.dropped} unreadable) | ` +
-    `${out.pools} pools / ${out.placed} instances of ${pl.tried} attempts | ` +
+    `${out.pools} pools / ${out.placed} instances of ` +
+    `${pl.tried - pl.slides} sites (+${pl.slides} slide retries) | ` +
     `${summary.structures} structures, ${summary.fences} fence sections, ` +
     `${tally.viewing} viewing pieces, ${tally.amenity} amenities, ` +
     `${tally.yard} yard items, ${tally.rocks} rocks & logs | ` +
     `${summary.paths} path segments (${paths.metres.toFixed(0)} m, ${paths.meshes} meshes), ` +
     `${summary.ponds} ponds${zoo.derivedWater ? ' (water pen derived — layout flagged none)' : ''} | ` +
-    `refused: ${rj.occupied} occupied, ${rj.road} on the carriageway, ${rj.water} in water`
+    `refused: ${rj.occupied} occupied, ${rj.road} on the carriageway, ${rj.water} in water | ` +
+    `${pl.snapped} props set on the measured surface (max ${(pl.snapMax * 100).toFixed(1)} cm)`
   );
+  /* WHICH kinds are being refused, worst first. A bare total cannot separate
+     "a fence run is longer than the pen and the surplus is refused" from "this
+     prop kind places nothing at all", and the second is the failure this
+     codebase keeps shipping in silence. Only kinds that lost a third or more
+     of their attempts are named, so a healthy build prints nothing. */
+  {
+    const bad = [...pl.byKey.entries()]
+      .map(([k, r]) => [k, r, r.tried - r.placed])
+      .filter(([, r, lost]) => lost >= 4 && lost / r.tried >= 0.34)
+      .sort((a, b) => b[2] - a[2]);
+    if (bad.length) {
+      console.info(
+        `[zoo] most-refused kinds: ` + bad.slice(0, 8).map(([k, r, lost]) =>
+          `${k} ${lost}/${r.tried}` +
+          `(${[r.occupied && `${r.occupied} occ`, r.road && `${r.road} road`,
+            r.water && `${r.water} wet`].filter(Boolean).join(', ')})`).join(', ')
+      );
+    }
+  }
   if (_borrowed.miss.length) {
     console.warn(
       `[zoo] props.js models not available, using local stand-ins: ` +
