@@ -44,37 +44,81 @@ const TINT = [
 /** Windows glow warm against a cold city — the whole mood of the map. */
 const WINDOW = /window|glass|glazing|pane/i;
 
-function retint(mat, seen) {
-  if (!mat || seen.has(mat)) return;
-  seen.add(mat);
-  const name = mat.name || '';
-  if (!name) return;
+/**
+ * Exact colours for the street network, by material name.
+ *
+ * Not a regex sweep. materials.js caches by parameter object, so two call sites
+ * that ask for the same thing get the SAME material instance — and a regex that
+ * matched a road overlay recoloured a foliage material with it. The road
+ * overlays came out GREEN. Names are matched exactly and the material is cloned
+ * before it is touched, so nothing leaks between users of a shared instance.
+ */
+const STREET = {
+  // Plowed. Wet near-black asphalt is the strongest cue that a white city is
+  // snowbound rather than merely pale.
+  'streets-road': [0x2f343a, 0.40, 0.14],
+  'streets-tar': [0x24282d, 0.38, 0.16],
+  'streets-buslane': [0x3a3f46, 0.42, 0.12],
+  'streets-wear': [0x3a4046, 0.46, 0.10],
+  'streets-polish': [0x40464d, 0.34, 0.18],
+  'streets-damp': [0x2b3036, 0.28, 0.22],
+  // Markings stay bright, or the road stops being readable.
+  'streets-white': [0xf4efe2, 0.72, 0.0],
+  'streets-yellow': [0xf3c548, 0.72, 0.0],
+  // Everything walkable is under snow.
+  'streets-land': [0xe9eff4, 0.94, 0.0],
+  'streets-colour': [0xdfe7ee, 0.90, 0.0],
+  'streets-hedge': [0x93a89b, 0.90, 0.0],
+};
 
-  if (WINDOW.test(name)) {
-    // Not every window is lit; a fully lit block looks like a stadium.
-    if (mat.emissive) {
-      mat.emissive.setHex(0xffb867);
-      mat.emissiveIntensity = 0.55;
-    }
-    if (mat.color) mat.color.setHex(0x9fb6c4);
-    mat.needsUpdate = true;
-    return;
-  }
+/**
+ * Recolour one material, on a CLONE.
+ *
+ * Mutating a cached material in place is how the road overlays turned green:
+ * the instance was shared with foliage. Cloning costs one material per mesh on
+ * one map and removes the whole class of bug.
+ */
+function retint(mesh, seen) {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const out = [];
+  let changed = false;
+  for (const mat of mats) {
+    if (!mat) { out.push(mat); continue; }
+    const name = mat.name || '';
+    const street = STREET[name];
+    const rule = street ? null : TINT.find(([re]) => re.test(name));
+    const isWindow = !street && WINDOW.test(name);
+    if (!street && !rule && !isWindow) { out.push(mat); continue; }
 
-  for (const [re, hex, opt] of TINT) {
-    if (!re.test(name)) continue;
-    if (mat.color) {
-      // Multiply toward the target rather than replacing, so per-instance
-      // vertex colour variation survives instead of flattening to one shade.
-      const t = new THREE.Color(hex);
-      mat.color.lerp(t, 0.82);
+    let m = seen.get(mat);
+    if (!m) {
+      m = mat.clone();
+      m.name = `${name}-snow`;
+      seen.set(mat, m);
+
+      if (street) {
+        const [hex, rough, metal] = street;
+        m.color.setHex(hex);
+        if ('roughness' in m) m.roughness = rough;
+        if ('metalness' in m) m.metalness = metal;
+      } else if (isWindow) {
+        if (m.emissive) { m.emissive.setHex(0xffb867); m.emissiveIntensity = 0.6; }
+        m.color.setHex(0x9fb6c4);
+      } else {
+        const [, hex, opt] = rule;
+        m.color.lerp(new THREE.Color(hex), 0.82);
+        if (opt && typeof opt.rough === 'number' && 'roughness' in m) m.roughness = opt.rough;
+        if (opt && typeof opt.metal === 'number' && 'metalness' in m) m.metalness = opt.metal;
+      }
+      m.needsUpdate = true;
     }
-    if (opt && typeof opt.rough === 'number' && 'roughness' in mat) mat.roughness = opt.rough;
-    if (opt && typeof opt.metal === 'number' && 'metalness' in mat) mat.metalness = opt.metal;
-    mat.needsUpdate = true;
-    return;
+    out.push(m);
+    changed = true;
   }
+  if (changed) mesh.material = Array.isArray(mesh.material) ? out : out[0];
+  return changed;
 }
+
 
 /**
  * Snow caps on roofs and drifts along the kerbs.
@@ -135,8 +179,11 @@ function accumulate(scene, rng) {
   if (streets) {
     streets.traverse((o) => {
       if (!o.isMesh || !o.geometry || drifts > 900) return;
+      // The walkable ground is `streets-land`, not `sidewalk` — guessing the
+      // name is why this placed ZERO drifts on the first build. retint() has
+      // already run and renamed it, hence the -snow suffix.
       const n = (o.material && o.material.name) || '';
-      if (!/sidewalk|kerb|curb|streets-base/i.test(n)) return;
+      if (!/^streets-(land|colour)(-snow)?$/.test(n)) return;
       o.geometry.computeBoundingBox();
       const bb = o.geometry.boundingBox;
       if (!bb) return;
@@ -188,11 +235,11 @@ function accumulate(scene, rng) {
  *   and a restart rebuilds exactly the same drifts.
  */
 export function applySnow(scene, rng = Math.random) {
-  const seen = new Set();
+  const seen = new Map();          // original material -> its snow clone
+  let touched = 0;
   scene.traverse((o) => {
     if (!o.material) return;
-    const mats = Array.isArray(o.material) ? o.material : [o.material];
-    for (const m of mats) retint(m, seen);
+    if (retint(o, seen)) touched++;
   });
 
   // Cold overcast light. The sky and fog are the difference between "a white
@@ -204,6 +251,6 @@ export function applySnow(scene, rng = Math.random) {
   if (scene.background && scene.background.isColor) scene.background.setHex(0xc4d6e2);
 
   const acc = accumulate(scene, rng);
-  console.info(`[snow] retinted ${seen.size} materials, ${acc.roofs} roof caps, ${acc.drifts} drifts`);
-  return { materials: seen.size, ...acc };
+  console.info(`[snow] ${seen.size} materials cloned across ${touched} meshes, ${acc.roofs} roof caps, ${acc.drifts} drifts`);
+  return { materials: seen.size, meshes: touched, ...acc };
 }
