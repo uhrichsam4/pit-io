@@ -1097,7 +1097,13 @@ export class Game {
       }
 
       h.obTime = (h.obTime || 0) + dt;
-      if (h.isPlayer) this._boundsUI(Math.max(0, BOUNDS_GRACE - h.obTime), nx, nz, h);
+      if (h.isPlayer) {
+        this._boundsUI(Math.max(0, BOUNDS_GRACE - h.obTime), nx, nz, h);
+        /* One tick per whole second, rising in urgency. The 3-2-1 was silent —
+           audio.outOfBoundsTick() existed with zero call sites. */
+        const left = Math.ceil(Math.max(0, BOUNDS_GRACE - h.obTime));
+        if (left !== this._obLastTick) { this._obLastTick = left; audio.outOfBoundsTick(left); }
+      } else if (h.obTime === 0) this._obLastTick = -1;
       if (h.obTime >= BOUNDS_GRACE) this._boundsPenalty(h);
     }
   }
@@ -1122,6 +1128,9 @@ export class Game {
 
     if (h.isPlayer) {
       this._boundsUI(null);
+      this._obLastTick = -1;
+      audio.scorePenalty();
+      audio.teleport();
       if (this.hud) {
         const lost = (before - h.score).toLocaleString('en-US');
         this.hud.pushFeed(`<b>OUT OF BOUNDS</b> — lost ${lost}`, '#ff5470');
@@ -1208,10 +1217,20 @@ export class Game {
 
   _onPhase(p) {
     if (p === PHASE.COUNTDOWN) this.screens.showCountdown(this.match.countdown);
-    if (p === PHASE.PLAYING) this.screens.clear();
+    if (p === PHASE.PLAYING) {
+      this.screens.clear();
+      /* matchStart() and matchEnd() have existed in the audio engine for as
+         long as matches have, with ZERO call sites — the round simply began and
+         ended in silence. Nothing announced either edge. */
+      audio.matchStart();
+    }
     if (p === PHASE.RESULTS) {
       if (this.player) this.player.desiredDir.set(0, 0);
       for (const b of this.bots) b.hole.desiredDir.set(0, 0);
+      audio.matchEnd(!!(this.player && this.match.leader === this.player));
+      /* Every loop must die with the round, or a siren or storm bed carries
+         into the results screen and then into the next match. */
+      if (audio.stopAllLoops) audio.stopAllLoops();
       audio.stopMusic();
       const summary = this._finalSummary();
       this.screens.showResults(summary, this.player, this._grantRewards(summary));
@@ -1639,7 +1658,14 @@ export class Game {
           this.hud.pushFeed(`<b>UNLOCKED</b> — ${TIER_LIST[tier].label}`, '#37e6d5');
         }
       }
-      audio.updateAmbience(this.player.radius);
+      /* Position, not just size. updateAmbience doubles as the listener update
+         (audio.js:1744) and it was being called with the radius alone, so
+         _hasListener stayed false for the whole match and _place() returned
+         `pan: 0, att: 1` for everything. Every sound in the game was playing
+         dead-centre at full volume no matter where it happened — no stereo, no
+         distance falloff, a car tipping over 300 m away exactly as loud as one
+         under your feet. */
+      audio.updateAmbience(this.player.radius, this.player.position.x, this.player.position.z);
     }
 
     // camera

@@ -6,6 +6,7 @@
  * here — a second place that knows about screens is a second place to forget.
  */
 
+import { audio } from './core/audio.js';
 import { Game } from './game.js';
 
 const canvas = document.getElementById('scene');
@@ -13,6 +14,10 @@ const uiRoot = document.getElementById('ui-root');
 
 const game = new Game(canvas, uiRoot);
 window.__GAME__ = game;
+/* The audio engine is a module singleton with no reference on Game, which made
+   "why is nothing playing?" unanswerable from a test harness — you could see the
+   game state but not whether a single sound had been triggered. */
+window.__AUDIO__ = audio;
 
 /** The crash card is the last thing standing, so it must not itself be a bug. */
 function esc(s) {
