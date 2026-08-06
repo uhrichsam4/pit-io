@@ -1,4 +1,30 @@
 
+/* ===========================================================================
+   HUD OVERLAYS — out-of-bounds warning, voice captions, power-up rail, heat
+   meter, city-event banner and the in-match audio mixer.
+
+   Loaded by an `import './css/hud.css'` at the top of src/ui/hud.js. index.html
+   links every other css/*.css by hand but never linked this one, so the import
+   is what makes any of it render at all.
+
+   SCALING. Everything inside #hud-layer is authored in `em` against that
+   layer's font-size: calc(16px * var(--s)) — the same model styles.css sets out.
+   The two exceptions are stated where they occur: `.vo-captions` is appended to
+   <body>, not to the HUD layer, so it has no --s to inherit; and every tap
+   target carries a px floor, because --s bottoms out at 0.78 on a phone and
+   2.6em of that is 32px, which is under the 44px minimum.
+
+   COLOUR IS NEVER THE ONLY SIGNAL (spec §6). Each power-up has an icon glyph
+   AND a border style; each heat tier has a number, a word and a glyph; the
+   countdown prints digits next to its ring; the event banner names itself.
+   Delete every hue in this file and it all still reads.
+
+   MOTION. Every animation below is switched off in the
+   @media (prefers-reduced-motion: reduce) block at the foot of the file, and
+   the in-app "Reduced motion" toggle already covers #ui-root descendants via
+   the rule settings.js injects. Nothing here communicates through motion alone.
+   ======================================================================== */
+
 /* ---------------------------------------------------------------------------
    Out-of-bounds warning.
 
@@ -33,3 +59,610 @@
   50%      { transform: scale(1.13); }
 }
 @media (prefers-reduced-motion: reduce) { .ob-warn .ob-num { animation: none; } }
+
+
+/* ---------------------------------------------------------------------------
+   VOICE CAPTIONS
+
+   hud.showCaption() appends `.vo-captions` to document.body, NOT to #hud-layer,
+   so there is no --s here and no `em` model to inherit — these are px, clamped
+   against the viewport.
+
+   Captions are the accessibility path for the whole voice pack and they are the
+   ONLY form the dialogue takes in a build with no generated mp3s, so they are
+   styled to be readable over a bright city rather than to be pretty: solid
+   plate, heavy weight, generous line height. `html.no-subtitles` is the
+   subtitles switch in the audio panel — hiding here catches anything already on
+   screen, which is why hud.js does not need to touch showCaption() itself.
+   ------------------------------------------------------------------------- */
+.vo-captions {
+  position: fixed; left: 50%; bottom: 12vh;
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  width: min(46rem, calc(100vw - 24px));
+  pointer-events: none; z-index: 55;
+  font-family: var(--font, system-ui), sans-serif;
+}
+html.no-subtitles .vo-captions { display: none; }
+
+.vo-cap {
+  max-width: 100%;
+  padding: 6px 13px 7px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(12, 20, 34, .90), rgba(6, 10, 20, .94));
+  border: 1px solid rgba(255, 255, 255, .17);
+  box-shadow: 0 6px 22px rgba(2, 6, 14, .55);
+  color: #fbf7ef;
+  font-size: clamp(13px, 3.4vw, 16px);
+  font-weight: 600; line-height: 1.35;
+  text-align: center; text-wrap: balance;
+  opacity: 0; transform: translateY(6px);
+  transition: opacity .18s ease, transform .18s ease;
+}
+.vo-cap.on { opacity: 1; transform: translateY(0); }
+.vo-cap b { color: #ffc93c; font-weight: 900; }
+/* The glyph says whether a line was HEARD or only read — a caption with no
+   audio behind it should not pretend otherwise. */
+.vo-cap .vo-ic { margin-right: 6px; opacity: .85; }
+
+
+/* ---------------------------------------------------------------------------
+   CITY EVENT BANNER  —  #hud-event
+
+   Compact, top of screen, under the clock. Carries the event's icon, its name,
+   an optional sub-line and a countdown in whole seconds plus a draining bar.
+   `.has-evt` on the layer pushes #hud-frenzy down: styles.css parks that at
+   top:6.5em, which is exactly where this sits.
+   ------------------------------------------------------------------------- */
+#hud-event {
+  position: absolute; top: 5.35em; left: 50%;
+  transform: translateX(-50%) translateY(-0.5em) scale(0.96);
+  z-index: 3;
+  display: none; align-items: center; gap: 0.55em;
+  max-width: min(26em, calc(100vw - 1.6em));
+  padding: 0.36em 0.7em 0.42em 0.55em;
+  border-radius: 0.7em;
+  background: linear-gradient(180deg, rgba(20, 31, 50, .92), rgba(8, 14, 26, .95));
+  border: 1px solid var(--ec, #5fd8ff);
+  box-shadow: 0 0.5em 1.6em rgba(2, 6, 14, .55), inset 0 1px 0 rgba(255, 255, 255, .12);
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+#hud-event.on {
+  display: flex;
+  animation: evtIn .32s var(--ease, ease) forwards;
+}
+@keyframes evtIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-0.5em) scale(0.96); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+}
+
+#hud-event .ev-ic { font-size: 1.15em; line-height: 1; flex: none; }
+#hud-event .ev-tx { display: flex; flex-direction: column; min-width: 0; }
+#hud-event .ev-nm {
+  font-size: 0.72em; font-weight: 900; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--txt, #fbf7ef);
+  overflow: hidden; text-overflow: ellipsis;
+}
+#hud-event .ev-sub {
+  font-size: 0.62em; font-weight: 700; color: var(--dim, rgba(251, 247, 239, .6));
+  overflow: hidden; text-overflow: ellipsis;
+}
+#hud-event .ev-cd {
+  flex: none; display: flex; align-items: baseline; gap: 0.06em;
+  margin-left: 0.2em; padding-left: 0.55em;
+  border-left: 1px solid rgba(255, 255, 255, .16);
+  font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1;
+}
+#hud-event .ev-n { font-size: 1.1em; font-weight: 900; color: var(--ec, #5fd8ff); }
+#hud-event .ev-u { font-size: 0.62em; font-weight: 800; color: var(--dim, rgba(251, 247, 239, .6)); }
+/* An event with no countdown (the "CLEARING" notice) must not show a stale 0. */
+#hud-event.nocount .ev-cd, #hud-event.nocount .ev-bar { display: none; }
+
+#hud-event .ev-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 0.17em;
+  background: rgba(255, 255, 255, .12);
+}
+#hud-event .ev-bar > b {
+  display: block; height: 100%; background: var(--ec, #5fd8ff);
+  transform-origin: left center;
+}
+/* Under five seconds the whole banner pulses AND the digits go bold-italic —
+   two signals, so the urgency survives with the animation switched off. */
+#hud-event.soon { animation: evtSoon .8s ease-in-out infinite; }
+#hud-event.soon .ev-n { font-style: italic; }
+#hud-event.soon .ev-cd::after {
+  content: '!'; font-size: 0.9em; font-weight: 900; color: var(--ec, #5fd8ff);
+}
+@keyframes evtSoon {
+  0%, 100% { border-color: var(--ec, #5fd8ff); }
+  50%      { border-color: rgba(255, 255, 255, .85); }
+}
+/* The end notice is a different SHAPE, not a different colour: dashed edge. */
+#hud-event[data-kind="end"] { border-style: dashed; }
+
+/* Move the frenzy banner out from under this one. Two ids beat the single-id
+   rule in styles.css, so this wins wherever the sheets happen to land. */
+#hud-layer.has-evt #hud-frenzy { top: 9.1em; }
+
+
+/* ---------------------------------------------------------------------------
+   RIGHT-HAND STATUS COLUMN  —  #hud-status
+
+   Anchored above the minimap and grows UPWARD, so the audio button (last child,
+   therefore bottom-most) never moves when a power-up appears.
+
+   WHY NOT BOTTOM-LEFT, which looks emptier: #hud-tierup parks itself at
+   `left: 1.05em; bottom: 9.4em` for 2.4 s on every single tier unlock, and it
+   would cover a power-up rail exactly when the player is most likely to be
+   reading one.
+   ------------------------------------------------------------------------- */
+#hud-status {
+  position: absolute; right: 1.05em; bottom: 12.9em;
+  z-index: 3;
+  width: 13.8em; max-width: calc(100vw - 2.1em);
+  display: flex; flex-direction: column; align-items: stretch; gap: 0.34em;
+  pointer-events: none;
+}
+
+/* --- power-up rail ------------------------------------------------------- */
+#hud-pow { display: none; flex-direction: column; gap: 0.3em; }
+#hud-pow.on { display: flex; }
+
+.pu-row {
+  display: flex; align-items: center; gap: 0.45em;
+  padding: 0.3em 0.4em 0.3em 0.5em;
+  border-radius: 0.6em;
+  background: linear-gradient(180deg, rgba(20, 31, 50, .86), rgba(8, 14, 26, .92));
+  border: 1px solid rgba(255, 255, 255, .15);
+  /* The accent is a THICK LEFT RULE whose STYLE differs per power-up. That is
+     the colour-blind read: ring = solid, cone = dashed, octa = dotted. */
+  border-left: 0.26em solid var(--pc, #fff);
+  box-shadow: 0 0.4em 1.2em rgba(2, 6, 14, .45);
+  animation: puIn .26s var(--ease-back, ease-out) both;
+}
+.pu-row[data-shape="cone"] { border-left-style: dashed; }
+.pu-row[data-shape="octa"] { border-left-style: dotted; }
+.pu-row.out { animation: puOut .3s ease forwards; }
+@keyframes puIn {
+  from { opacity: 0; transform: translateX(0.8em); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes puOut {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(0.9em); }
+}
+
+.pu-row .pu-ic {
+  flex: none; width: 1.35em; text-align: center;
+  font-size: 1.05em; line-height: 1; color: var(--pc, #fff);
+  text-shadow: 0 0 0.5em var(--pc, #fff);
+}
+.pu-row .pu-tx { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.pu-row .pu-nm {
+  font-size: 0.66em; font-weight: 900; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--txt, #fbf7ef);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The description is the accessible detail (it is also on the row's
+   aria-label) and the pickup card prints it at a readable size. Here it is a
+   single clipped line, and it is the first thing dropped on a narrow phone —
+   0.55em of a 12.5px em is 7px, which this project has already learned is not
+   text, it is texture. */
+.pu-row .pu-ds {
+  font-size: 0.58em; font-weight: 600; line-height: 1.25;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.pu-row .pu-ring {
+  position: relative; flex: none;
+  width: 2.3em; height: 2.3em;
+  display: grid; place-items: center;
+}
+.pu-row .pu-ring svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  transform: rotate(-90deg);           /* 12 o'clock start, like a stopwatch */
+}
+.pu-row .pu-trk { fill: none; stroke: rgba(255, 255, 255, .16); stroke-width: 3.4; }
+.pu-row .pu-arc {
+  fill: none; stroke: var(--pc, #fff); stroke-width: 3.4; stroke-linecap: round;
+  transition: stroke-dashoffset .2s linear;
+}
+.pu-row .pu-sec {
+  position: relative;
+  font-size: 0.78em; font-weight: 900; line-height: 1;
+  color: var(--txt, #fbf7ef);
+  font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1;
+}
+/* Last four seconds. The doubled rule is the signal that survives greyscale
+   and reduced motion; the flash is a bonus for everyone else. */
+.pu-row.low { border-left-style: double; border-left-width: 0.34em; }
+.pu-row.low .pu-sec { animation: puBeat .7s ease-in-out infinite; }
+
+@keyframes puBeat {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.22); }
+}
+
+/* --- heat meter ---------------------------------------------------------- */
+#hud-heat {
+  display: none;
+  padding: 0.36em 0.5em 0.42em;
+  border-radius: 0.6em;
+  background: linear-gradient(180deg, rgba(20, 31, 50, .86), rgba(8, 14, 26, .92));
+  border: 1px solid rgba(255, 255, 255, .15);
+  box-shadow: 0 0.4em 1.2em rgba(2, 6, 14, .45);
+  --hc: #7dffbe;
+}
+#hud-heat.on { display: block; }
+#hud-heat[data-tier="1"] { --hc: #ffc93c; }
+#hud-heat[data-tier="2"] { --hc: #ff9430; }
+/* Tier 3 gets a heavier edge as well as a hotter hue — the top of the meter is
+   readable as "different" without seeing the colour at all. */
+#hud-heat[data-tier="3"] { --hc: #ff5a4d; border-color: #ff5a4d; border-width: 2px; }
+#hud-heat.bump { animation: heatBump .5s var(--ease-back, ease-out); }
+@keyframes heatBump {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+#hud-heat .ht-hd { display: flex; align-items: baseline; gap: 0.36em; }
+#hud-heat .ht-ic { font-size: 0.85em; line-height: 1; color: var(--hc); }
+#hud-heat .ht-k {
+  font-size: 0.66em; font-weight: 900; letter-spacing: 0.14em;
+  color: var(--txt, #fbf7ef);
+}
+#hud-heat .ht-v {
+  font-size: 0.62em; font-weight: 800; letter-spacing: 0.1em;
+  color: var(--hc); margin-left: auto;
+}
+
+#hud-heat .ht-seg {
+  position: relative;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.2em;
+  margin: 0.34em 0 0.5em;
+}
+/* Filled vs hollow is a SHAPE difference: the tier is countable at a glance
+   in greyscale, which a single coloured bar never is. */
+#hud-heat .ht-seg > i {
+  height: 0.42em; min-height: 4px; border-radius: 0.14em;
+  border: 1px solid rgba(255, 255, 255, .34);
+  background: transparent;
+}
+#hud-heat .ht-seg > i.lit {
+  background: var(--hc); border-color: var(--hc);
+  box-shadow: 0 0 0.5em var(--hc);
+}
+/* The raw 0..1 meter under the segments — how close the NEXT tier is. */
+#hud-heat .ht-seg::after {
+  content: ''; position: absolute; left: 0; bottom: -0.3em;
+  height: 0.14em; width: var(--hv, 0%); max-width: 100%;
+  background: var(--hc); border-radius: 1em;
+  transition: width .25s linear;
+}
+#hud-heat .ht-hint {
+  font-size: 0.58em; font-weight: 600; line-height: 1.3;
+  color: var(--dim, rgba(251, 247, 239, .6));
+}
+
+/* --- audio button -------------------------------------------------------- */
+#hud-audio-btn {
+  align-self: flex-end;
+  display: inline-flex; align-items: center; gap: 0.4em;
+  /* px floors, not em: --s bottoms out at 0.78 on a phone and 2.6em of that is
+     32px — below the 44px minimum tap target. */
+  min-height: 44px; min-width: 44px;
+  padding: 0 0.7em; border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(20, 31, 50, .9), rgba(8, 14, 26, .95));
+  box-shadow: 0 0.4em 1.2em rgba(2, 6, 14, .5), inset 0 1px 0 rgba(255, 255, 255, .14);
+  outline: 1px solid rgba(255, 255, 255, .18);
+  color: var(--txt, #fbf7ef);
+  font-family: inherit; cursor: pointer;
+  pointer-events: auto; touch-action: manipulation;
+  transition: transform .14s ease, outline-color .14s ease;
+}
+#hud-audio-btn:hover { outline-color: rgba(255, 255, 255, .4); }
+#hud-audio-btn:active { transform: scale(0.94); }
+#hud-audio-btn:focus-visible { outline: 2px solid var(--aqua, #37e6d5); outline-offset: 2px; }
+#hud-audio-btn .ab-ic { font-size: 1em; line-height: 1; }
+#hud-audio-btn .ab-lbl {
+  font-size: 0.62em; font-weight: 900; letter-spacing: 0.16em;
+  color: var(--dim, rgba(251, 247, 239, .6));
+}
+#hud-audio-btn[aria-expanded="true"] { outline-color: var(--aqua, #37e6d5); }
+#hud-audio-btn[aria-expanded="true"] .ab-lbl { color: var(--aqua, #37e6d5); }
+
+
+/* ---------------------------------------------------------------------------
+   POWER-UP PICKUP / END CARDS  —  #hud-powbanner
+
+   High and central: the player is looking at their hole, not at the corner,
+   in the second a power-up is collected. Two states, told apart by a KICKER
+   WORD, an ARROW GLYPH and a BORDER STYLE — never by hue alone.
+   ------------------------------------------------------------------------- */
+#hud-powbanner {
+  position: absolute; left: 50%; top: 24%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex; flex-direction: column; align-items: center; gap: 0.4em;
+  width: max-content; max-width: min(24em, calc(100vw - 1.6em));
+  pointer-events: none;
+}
+.pb-card {
+  display: flex; align-items: center; gap: 0.6em;
+  padding: 0.45em 0.95em 0.5em 0.7em;
+  border-radius: 0.75em;
+  background: linear-gradient(180deg, rgba(22, 34, 54, .94), rgba(8, 14, 26, .96));
+  border: 2px solid var(--pc, #fff);
+  /* Plain shadow first: if a browser cannot parse the accent glow the card
+     still keeps its lift, instead of the whole declaration being dropped. */
+  box-shadow: 0 0.7em 2em rgba(2, 6, 14, .6);
+  opacity: 0; transform: translateY(0.6em) scale(0.92);
+  transition: opacity .2s ease, transform .24s var(--ease-back, ease-out);
+}
+@supports (box-shadow: 0 0 1em color-mix(in srgb, red 35%, transparent)) {
+  .pb-card {
+    box-shadow: 0 0.7em 2em rgba(2, 6, 14, .6),
+                0 0 1.4em color-mix(in srgb, var(--pc, #fff) 35%, transparent);
+  }
+}
+.pb-card.on { opacity: 1; transform: translateY(0) scale(1); }
+.pb-card.out { opacity: 0; transform: translateY(-0.5em) scale(0.97); }
+.pb-card[data-kind="end"] {
+  border-style: dashed;
+  box-shadow: 0 0.6em 1.6em rgba(2, 6, 14, .55);
+}
+
+.pb-card .pb-ic {
+  flex: none; font-size: 1.7em; line-height: 1; color: var(--pc, #fff);
+  text-shadow: 0 0 0.6em var(--pc, #fff);
+}
+.pb-card[data-kind="end"] .pb-ic { opacity: 0.55; text-shadow: none; }
+.pb-card .pb-tx { display: flex; flex-direction: column; min-width: 0; }
+.pb-card .pb-k {
+  font-size: 0.58em; font-weight: 900; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--dim, rgba(251, 247, 239, .6));
+}
+.pb-card .pb-nm {
+  font-size: 1.05em; font-weight: 900; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--txt, #fbf7ef); line-height: 1.1;
+}
+.pb-card .pb-sub {
+  font-size: 0.64em; font-weight: 700; line-height: 1.3;
+  color: var(--dim, rgba(251, 247, 239, .6));
+  max-width: 18em;
+}
+
+
+/* ---------------------------------------------------------------------------
+   IN-MATCH AUDIO MIXER  —  #hud-audio
+
+   Master / Music / Effects / Voices, plus mute-all, mute-voices and subtitles.
+   Values go straight at the audio singleton and are persisted under
+   'miami-devour:audio:v1'; see hud.js for why music and sfx are also mirrored
+   into the meta profile.
+   ------------------------------------------------------------------------- */
+#hud-audio {
+  /* Sits ABOVE the button that opens it: 12.9em is the column's own bottom,
+     plus the button's 44px tap floor and a hair of gap. Covering the trigger
+     would hide the only thing that closes the panel again on a phone. */
+  position: absolute; right: 1.05em; bottom: calc(12.9em + 50px);
+  z-index: 6;
+  width: min(19em, calc(100vw - 2.1em));
+  /* Clears the leaderboard above it (~14em from the top) as well as its own
+     bottom offset. Anything taller than that scrolls inside the panel. */
+  max-height: calc(100vh - 27em - 50px);
+  overflow-y: auto; overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0.6em 0.7em 0.7em;
+  border-radius: 0.9em;
+  background: linear-gradient(170deg, rgba(24, 37, 58, .96), rgba(8, 14, 26, .97));
+  border: 1px solid rgba(255, 255, 255, .2);
+  box-shadow: 0 1em 2.6em rgba(2, 6, 14, .7);
+  color: var(--txt, #fbf7ef);
+  pointer-events: auto; touch-action: pan-y;
+  opacity: 0; transform: translateY(0.5em) scale(0.97);
+  transform-origin: bottom right;
+  transition: opacity .18s ease, transform .2s var(--ease, ease);
+}
+#hud-audio.on { opacity: 1; transform: translateY(0) scale(1); }
+#hud-audio[hidden] { display: none; }
+
+#hud-audio .au-hd {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0.5em;
+}
+#hud-audio .au-hd b {
+  font-size: 0.68em; font-weight: 900; letter-spacing: 0.2em; text-transform: uppercase;
+  color: var(--dim, rgba(251, 247, 239, .6));
+}
+#hud-audio .au-x {
+  min-width: 34px; min-height: 34px;
+  display: grid; place-items: center;
+  border: 1px solid rgba(255, 255, 255, .2); border-radius: 999px;
+  background: rgba(255, 255, 255, .06);
+  color: var(--txt, #fbf7ef);
+  font: inherit; font-size: 0.8em; cursor: pointer;
+}
+#hud-audio .au-x:focus-visible { outline: 2px solid var(--aqua, #37e6d5); outline-offset: 2px; }
+
+#hud-audio .au-row { margin-bottom: 0.55em; }
+#hud-audio .au-lbl {
+  display: flex; align-items: center; gap: 0.4em;
+  margin-bottom: 0.22em;
+}
+#hud-audio .au-ic { flex: none; font-size: 0.9em; line-height: 1; width: 1.3em; text-align: center; }
+#hud-audio .au-nm {
+  flex: 1 1 auto;
+  font-size: 0.72em; font-weight: 800; letter-spacing: 0.04em;
+}
+#hud-audio .au-out {
+  font-size: 0.68em; font-weight: 900;
+  font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1;
+  color: var(--aqua, #37e6d5);
+}
+
+/* Native <input type=range>, restyled. Native because it is the control every
+   screen reader, keyboard and switch device already understands; a div with a
+   drag handler is not a slider however it looks. */
+#hud-audio .au-sl {
+  -webkit-appearance: none; appearance: none;
+  display: block; width: 100%;
+  height: 30px;                 /* the TAP TARGET; the visible track is smaller */
+  margin: 0; padding: 0;
+  background: transparent; cursor: pointer;
+  touch-action: pan-y;
+}
+#hud-audio .au-sl::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(90deg,
+    var(--aqua, #37e6d5) 0 var(--v, 0%), rgba(255, 255, 255, .18) var(--v, 0%) 100%);
+}
+#hud-audio .au-sl::-moz-range-track {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(90deg,
+    var(--aqua, #37e6d5) 0 var(--v, 0%), rgba(255, 255, 255, .18) var(--v, 0%) 100%);
+}
+#hud-audio .au-sl::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 22px; height: 22px; margin-top: -8px;
+  border-radius: 50%; border: 2px solid #0a1220;
+  background: #fbf7ef;
+  box-shadow: 0 2px 8px rgba(2, 6, 14, .6);
+}
+#hud-audio .au-sl::-moz-range-thumb {
+  width: 22px; height: 22px;
+  border-radius: 50%; border: 2px solid #0a1220;
+  background: #fbf7ef;
+  box-shadow: 0 2px 8px rgba(2, 6, 14, .6);
+}
+#hud-audio .au-sl:focus-visible { outline: 2px solid var(--aqua, #37e6d5); outline-offset: 3px; }
+
+#hud-audio .au-tgs {
+  display: flex; flex-direction: column; gap: 0.3em;
+  margin-top: 0.6em; padding-top: 0.55em;
+  border-top: 1px solid rgba(255, 255, 255, .12);
+}
+#hud-audio .au-tg {
+  display: flex; align-items: center; gap: 0.4em;
+  width: 100%; min-height: 44px;
+  padding: 0.2em 0.45em;
+  border: 1px solid rgba(255, 255, 255, .14); border-radius: 0.55em;
+  background: rgba(255, 255, 255, .04);
+  color: var(--txt, #fbf7ef);
+  font: inherit; text-align: left; cursor: pointer;
+  touch-action: manipulation;
+}
+#hud-audio .au-tg:focus-visible { outline: 2px solid var(--aqua, #37e6d5); outline-offset: 2px; }
+/* The WORD is the state. The knob is a second, redundant signal — never the
+   only one, because "which side is on" is a convention, not information. */
+#hud-audio .au-state {
+  margin-left: auto;
+  font-size: 0.6em; font-weight: 900; letter-spacing: 0.14em;
+  color: var(--dim, rgba(251, 247, 239, .6));
+}
+#hud-audio .au-tg[aria-checked="true"] .au-state { color: var(--sun, #ffc93c); }
+#hud-audio .au-tg .sw {
+  flex: none; width: 34px; height: 20px; border-radius: 999px;
+  background: rgba(255, 255, 255, .16);
+  border: 1px solid rgba(255, 255, 255, .2);
+  position: relative; transition: background .16s ease;
+}
+#hud-audio .au-tg .sw > i {
+  position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fbf7ef; transition: transform .16s ease;
+}
+#hud-audio .au-tg[aria-checked="true"] .sw { background: var(--sun, #ffc93c); }
+#hud-audio .au-tg[aria-checked="true"] .sw > i { transform: translateX(14px); }
+
+#hud-audio .au-note {
+  margin: 0.6em 0 0;
+  font-size: 0.56em; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--dimmer, rgba(251, 247, 239, .34));
+  text-align: center;
+}
+
+/* game.js hides the HUD by writing opacity on #hud-layer, and an element at
+   opacity 0 still takes taps. hud.js's _watchVisibility() stamps this class so
+   the one interactive control in the layer cannot be hit while invisible. */
+#hud-layer.hud-off .hud-tap { display: none !important; }
+
+
+/* ---------------------------------------------------------------------------
+   MOBILE — 375 px is the target, not the edge case.
+
+   At 375x812 the HUD scale --s floors at 0.78, so 1em is 12.48px. The right
+   column is trimmed and the power-up description (7px at that scale) is
+   dropped: the name, the icon, the border style and the digits all remain, so
+   nothing that the accessibility rule counts on is lost.
+   ------------------------------------------------------------------------- */
+@media (max-width: 440px) {
+  #hud-status { width: 12.4em; }
+  .pu-row .pu-ds { display: none; }
+  .pu-row .pu-nm { font-size: 0.7em; }
+  #hud-heat .ht-hint { font-size: 0.62em; }
+  #hud-audio {
+    /* Anchor to both edges rather than to the button: a 19em popover beside a
+       12.4em column would otherwise hang off the left edge on a small phone. */
+    left: 0.8em; right: 0.8em; width: auto;
+    transform-origin: bottom center;
+  }
+  #hud-audio .au-nm { font-size: 0.8em; }
+  #hud-audio .au-out { font-size: 0.76em; }
+  #hud-audio .au-state { font-size: 0.66em; }
+  #hud-powbanner { top: 22%; max-width: calc(100vw - 1.2em); }
+  .pb-card .pb-nm { font-size: 0.95em; }
+  #hud-event { max-width: calc(100vw - 1.2em); }
+  #hud-event .ev-sub { display: none; }
+}
+
+/* Short viewports — a phone held sideways.
+
+   There is no room on the right for a popover between the leaderboard and the
+   minimap: the honest arithmetic leaves about 50 px of scroller, which is not a
+   control surface. So the mixer drops to the bottom of the screen and covers
+   the minimap while it is open. Losing the map for the two seconds a slider is
+   being dragged is a far smaller cost than an unusable panel. */
+@media (max-height: 620px) {
+  #hud-powbanner { top: 15%; }
+  #hud-heat .ht-hint { display: none; }   /* the WORD and the count still read */
+  #hud-audio {
+    bottom: 1.05em;
+    max-height: calc(100vh - 2.6em);
+  }
+}
+
+
+/* ---------------------------------------------------------------------------
+   REDUCED MOTION
+
+   Every animation added by this file is listed here. Nothing above uses motion
+   as its only signal, so switching all of it off costs no information: the
+   power-up rail keeps its doubled border and its digits, the event banner keeps
+   its "!" and its italics, the heat meter keeps its filled segments.
+   ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  #hud-event.on { animation: none; opacity: 1; transform: translateX(-50%); }
+  #hud-event.soon { animation: none; border-color: #fff; }
+  .pu-row, .pu-row.out { animation: none; }
+  .pu-row.out { opacity: 0; }
+  .pu-row.low .pu-sec { animation: none; }
+  .pu-row .pu-arc { transition: none; }
+  #hud-heat.bump { animation: none; }
+  #hud-heat .ht-seg::after { transition: none; }
+  .pb-card { transition: opacity .12s linear; transform: none; }
+  .pb-card.on { transform: none; }
+  .pb-card.out { transform: none; }
+  #hud-audio { transition: opacity .12s linear; transform: none; }
+  #hud-audio.on { transform: none; }
+  #hud-audio-btn { transition: none; }
+  #hud-audio-btn:active { transform: none; }
+  #hud-audio .au-tg .sw, #hud-audio .au-tg .sw > i { transition: none; }
+  .vo-cap { transition: opacity .12s linear; transform: none; }
+  .vo-cap.on { transform: none; }
+}

@@ -137,6 +137,24 @@ try {
   }
 } catch { /* no matchMedia: animate, which is the pre-existing behaviour */ }
 
+/**
+ * Coerce whatever the gameplay side calls a colour into something CSS accepts.
+ *
+ * NOT COSMETIC PARANOIA: POWERUPS[id].color is a THREE hex NUMBER (0x37e6d5)
+ * and .css is the string beside it; cityEvents' def.color is a string. Feeding
+ * the number straight into a custom property writes `--pc: 3663061`, which is
+ * silently invalid — the row falls back to white and nobody sees an error.
+ * This file has already shipped one class of bug that fails exactly that
+ * quietly.
+ */
+function cssColor(v, fallback) {
+  if (typeof v === 'string' && v) return v;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return `#${((v >>> 0) & 0xffffff).toString(16).padStart(6, '0')}`;
+  }
+  return fallback;
+}
+
 function reduceMotion() {
   if (_prefersReduce) return true;
   return typeof document !== 'undefined'
@@ -1079,7 +1097,7 @@ export class HUD {
       sec: el.querySelector('.pu-sec'),
       name: String((p && p.name) || fb.name || id.toUpperCase()),
       icon: String((p && p.icon) || fb.icon || '★'),
-      css: String((p && (p.css || p.color)) || fb.css || '#ffffff'),
+      css: cssColor((p && p.css) ?? (p && p.color), fb.css || '#ffffff'),
       description: String((p && p.description) || fb.description || ''),
       remaining: 0, duration: 1, frac: 1,
       shownSec: -1, shownPct: -1,
@@ -1175,7 +1193,7 @@ export class HUD {
     const card = document.createElement('div');
     card.className = 'pb-card';
     card.dataset.kind = end ? 'end' : 'get';
-    card.style.setProperty('--pc', String(info.color || info.css || fb.css || '#ffffff'));
+    card.style.setProperty('--pc', cssColor(info.css ?? info.color, fb.css || '#ffffff'));
     const sub = end
       ? 'Boost expired'
       : (secs ? `${secs}s${desc ? ' &middot; ' : ''}` : '') + escapeHtml(desc);
@@ -1343,7 +1361,7 @@ export class HUD {
     this._evtShownSecs = -1;
 
     this.evtEl.dataset.kind = String(info.kind || 'alert');
-    this.evtEl.style.setProperty('--ec', String(info.color || '#5fd8ff'));
+    this.evtEl.style.setProperty('--ec', cssColor(info.color, '#5fd8ff'));
     this.evtIc.textContent = String(info.icon || '⚠');
     this.evtNm.textContent = name;
     this.evtSub.textContent = String(info.sub || '');
@@ -1410,7 +1428,7 @@ export class HUD {
     const x = (m.x + WORLD.SIZE) * P;
     const y = (m.z + WORLD.SIZE) * P;
     const r = Math.max(7 * k, (Number(m.r) || 60) * P);
-    const col = String(m.color || '#5fd8ff');
+    const col = cssColor(m.color, '#5fd8ff');
     const pulse = reduceMotion() ? 0.55 : 0.5 + 0.5 * Math.sin(this._now * 2.1);
 
     c.save();

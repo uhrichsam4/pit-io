@@ -136,6 +136,9 @@ class PowerupGlue {
     // that game.js has clamped to 1/20 s.
     const inner = g.stepSimulation.bind(g);
     this._innerStep = inner;
+    // Whether stepSimulation was the prototype method or somebody else's own
+    // property. uninstall() has to put back what it found, not a bound copy.
+    this._stepWasOwn = Object.prototype.hasOwnProperty.call(g, 'stepSimulation');
     this._patchedStep = (dt) => {
       // BEFORE the tick: the radius Mass Surge is lending must already be in
       // place when hole.update() springs the drawn opening and when
@@ -156,7 +159,10 @@ class PowerupGlue {
     this.teardown();
     // Only unwrap if nothing else wrapped us afterwards — restoring the inner
     // function over a later wrapper would silently delete that system instead.
-    if (g.stepSimulation === this._patchedStep) g.stepSimulation = this._innerStep;
+    if (g.stepSimulation === this._patchedStep) {
+      if (this._stepWasOwn) g.stepSimulation = this._innerStep;
+      else delete g.stepSimulation;      // uncover Game.prototype.stepSimulation
+    }
     g.consume.reachHook = this._prevReach ?? null;
     g.consume.pullHook = this._prevPull ?? null;
     g.consume.pullLimit = this._prevLimit ?? 0;
@@ -194,9 +200,10 @@ class PowerupGlue {
   /**
    * Match over, restart, or back to the lobby.
    *
-   * "No residue" means all four of these. An earlier version of this cleanup
-   * only called clearAll() and left the player's hole carrying a shadowed speed
-   * getter and a 15% radius into the results screen.
+   * "No residue" means every one of these, and they are listed separately
+   * because clearAll() alone is not enough: it empties the power-up system but
+   * leaves the player's hole carrying a shadowed speed getter, a 15% radius and
+   * a wind loop into the results screen.
    */
   teardown() {
     for (const hole of Array.from(this._boosted)) this._unpatchSpeed(hole);
@@ -253,8 +260,13 @@ class PowerupGlue {
 
     this._feedback(dt);
 
-    // The HUD row for active power-ups belongs to whoever owns hud.js. Probed,
-    // never required: this must not break the build if that method never lands.
+    // The active-power-up rail. Probed, never required — hud.js belongs to
+    // another pass and this must not break if the method is ever renamed.
+    // Called every frame with the full list, which is the shape hud.js asks
+    // for: it diffs, and a row that stops being listed is what makes it fire
+    // the end notification. Nothing calls it after the match ends because the
+    // HUD is hidden in RESULTS and hud.reset() wipes the rail for the next
+    // round — announcing three expiries over the results card would be noise.
     const hud = g.hud;
     if (hud && typeof hud.setPowerups === 'function' && g.player) {
       hud.setPowerups(this.sys.activeFor(g.player));
@@ -399,19 +411,15 @@ class PowerupGlue {
       audio.powerupSpawn(p.x, p.z);
     };
 
-    sys.onPickup = (hole, def) => {
+    // (hole, def, state) — `state` carries the ACTUAL duration, which is not
+    // def.duration once Vacuum Boost's EXTEND stacking has lengthened it.
+    sys.onPickup = (hole, def, st) => {
       if (!hole || !hole.isPlayer) return;      // a bot's pickup is not a cue
       audio.powerupPickup(def.id);
       // The continuous bed. Idempotent by kind in core/audio.js, so collecting
       // a second Vacuum Boost extends the timer and changes nothing here.
       this._loops.set(def.id, audio.powerupLoop(def.id));
-      const hud = this.game.hud;
-      if (hud) {
-        hud.pushFeed(
-          `<b>${def.icon} ${def.name}</b> — ${Math.round(def.duration)}s`,
-          def.css, 'powerup'
-        );
-      }
+      this._banner(def, st);
     };
 
     sys.onExpire = (hole, def) => {
@@ -420,9 +428,33 @@ class PowerupGlue {
       // making the caller remember both is how a wind bed outlives its boost.
       audio.powerupEnd(def.id);
       this._loops.delete(def.id);
-      const hud = this.game.hud;
-      if (hud) hud.pushFeed(`<b>${def.name}</b> ended`, def.css, 'powerup');
+      // No end notification is pushed from here on purpose. The row vanishing
+      // out of setPowerups() is what makes hud.js announce it, and hud.js
+      // dedupes a second one within 1.5 s — so pushing one as well would be
+      // either a duplicate card or a silent dependency on that dedupe window.
     };
+  }
+
+  /**
+   * The pickup card: `VACUUM BOOST — 30s`.
+   *
+   * hud.js owns the presentation and ships showPowerupBanner() for exactly
+   * this. Both calls are probed rather than assumed: hud.js belongs to another
+   * pass, and a power-up must never be lost to a HUD method that has not landed
+   * yet — hence the kill-feed fallback, which is verified to exist.
+   */
+  _banner(def, st) {
+    const hud = this.game.hud;
+    if (!hud) return;
+    const seconds = Math.round(st && st.duration ? st.duration : def.duration);
+    if (typeof hud.showPowerupBanner === 'function') {
+      hud.showPowerupBanner({
+        id: def.id, kind: 'get', name: def.name, icon: def.icon,
+        css: def.css, description: def.description, seconds,
+      });
+    } else if (typeof hud.pushFeed === 'function') {
+      hud.pushFeed(`<b>${def.icon} ${def.name}</b> — ${seconds}s`, def.css, 'powerup');
+    }
   }
 
   /**

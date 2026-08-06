@@ -133,8 +133,15 @@ const STORM_GRADE = {
  * the visible frame instead of being spread over a 520 m city and never seen.
  * ========================================================================== */
 const RAIN = {
-  /** Hard ceiling on drops. RAIN_QUALITY.high asks for 2600; this is the cap. */
-  MAX: 2200,
+  /**
+   * THIS RENDERER'S CEILING, whatever the quality tier asks for.
+   * RAIN_QUALITY.high requests 2600, but the whole vertex buffer is re-uploaded
+   * every frame (needsUpdate is all-or-nothing on a BufferAttribute), and 1600
+   * drops is already a downpour at this camera distance. 1600 * 6 floats is a
+   * 38 KB upload per frame — less than one small texture — where 2600 was 62 KB
+   * for rain nobody could count.
+   */
+  MAX: 1600,
   /** Volume half-extent in metres, XZ. Comfortably wider than the frame. */
   HALF: 78,
   /** Volume height. Drops wrap modulo this. */
@@ -299,8 +306,14 @@ export class EventGlue {
     this._debris = [];
     /** Consumable -> debris item id, for the claim on swallow. */
     this._debrisOf = new Map();
-    /** unit id -> THREE.Group */
+    /** unit id -> view. */
     this._unitViews = new Map();
+    /** kind -> [view], recycled. Bounded by HEAT.MAX_UNITS in practice. */
+    this._viewPool = new Map();
+    /** Rounds played since install; part of the offline RNG seed. */
+    this._matchIndex = 0;
+    /** Consecutive update() throws. Three and the glue disarms for good. */
+    this._crashes = 0;
     /** unit id -> siren loop handle */
     this._sirens = new Map();
     /** Pooled ground decals for u.mark. */
@@ -362,8 +375,9 @@ export class EventGlue {
       /* AFTER the sim: holes have already moved this frame, so a response unit
          intercepts where the player IS, not where they were, and a debris
          Consumable created this frame is never queried before it is registered. */
-      try { this.update(dt); }
-      catch (err) { console.error('[eventGlue] update failed; systems disarmed', err); this._panic(); }
+      if (this._crashes >= 3) return;
+      try { this.update(dt); this._crashes = 0; }
+      catch (err) { this._crashes++; console.error('[eventGlue] update failed', err); this._panic(); }
     };
 
     /* resetWorld() runs at the top of startMatch(), BEFORE match.start() flips
@@ -399,11 +413,16 @@ export class EventGlue {
     this.dispose();
   }
 
-  /** Last resort: a throw inside update() must not take the match loop down. */
+  /**
+   * Last resort: a throw inside update() must not take the match loop down.
+   * Tear down whatever was half-built, and after three consecutive failures the
+   * wrapper stops calling update() at all — a system that crashes every frame
+   * floods the console and costs more than the feature is worth.
+   */
   _panic() {
     try { this._teardown(); } catch (err) { void err; }
-    this.events.schedule.enabled = false;
     this._armed = false;
+    if (this._crashes >= 3) console.error('[eventGlue] disarmed after 3 failures');
   }
 
   /* ---------------------------------------------------------------- frame -- */
@@ -527,15 +546,16 @@ export class EventGlue {
     for (const view of this._unitViews.values()) this._retireView(view);
     this._unitViews.clear();
 
-    /* 6. Stop OUR sirens by handle, then sweep by prefix: audio.js keys sirens
-       `siren:<id>` and a unit that died in a frame we did not see would
-       otherwise leave one wailing over the results screen. */
+    /* 6. Every siren this file started, by handle.
+       DELIBERATELY NOT audio.stopAllLoops(): that is the verified sledgehammer
+       and it would also cut the power-up beds another module owns. Every siren
+       handle is held in this map from the frame it starts — _syncUnits stops
+       and forgets one the instant its unit leaves heat.units() — so the map is
+       the complete set and there is nothing for a sweep to find. */
     for (const h of this._sirens.values()) { try { h.stop(0.35); } catch (err) { void err; } }
     this._sirens.clear();
     if (typeof audio.loopCount === 'function' && audio.loopCount('siren:') > 0) {
-      /* No per-prefix stop exists; stopAllLoops is the verified one and is
-         correct here — a teardown means nothing continuous may survive. */
-      try { audio.stopAllLoops(0.35); } catch (err) { void err; }
+      console.warn('[eventGlue] a siren outlived its handle — investigate, do not sweep');
     }
 
     /* 7. */
@@ -557,6 +577,11 @@ export class EventGlue {
     this._teardown();
     for (const view of this._unitViews.values()) this._retireView(view);
     this._unitViews.clear();
+    for (const pool of this._viewPool.values()) {
+      for (const v of pool) { if (v.group.parent) v.group.parent.remove(v.group); }
+      pool.length = 0;
+    }
+    this._viewPool.clear();
     for (const m of this._marks) { if (m.parent) m.parent.remove(m); }
     this._marks.length = 0;
     if (this._rain) {
@@ -985,8 +1010,14 @@ export class EventGlue {
    */
   _applyBarrierNudge(dt, holes) {
     if (!this.heat.units().length) return;
+    /* Online, remote holes are interpolated from the server every frame and
+       nudging one just fights the interpolator for a frame and loses. The
+       server is the authority on where a peer is; this only leans the hole this
+       client actually owns. */
+    const localOnly = !!this.game.net;
     for (const h of holes) {
       if (!h || h.alive === false || h.spawnGrace > 0) continue;
+      if (localOnly && !h.isPlayer) continue;
       this.heat.steerAt(h.position.x, h.position.z, _push);
       if (_push.x === 0 && _push.z === 0) continue;
       h.position.x += _push.x * dt;
@@ -1045,7 +1076,7 @@ export class EventGlue {
     for (const u of units) {
       let view = views.get(u.id);
       if (!view) {
-        view = this._unitView(u.kind);
+        view = this._takeView(u.kind);
         if (!view) continue;
         views.set(u.id, view);
         if (this.scene) this.scene.add(view.group);
@@ -1077,10 +1108,32 @@ export class EventGlue {
     void dt;
   }
 
+  /**
+   * A body for this kind, recycled if one is free.
+   *
+   * POOLED, not rebuilt: a tier-3 roster cycles units all match, and each build
+   * mints two new lightbar materials (they cannot be shared — the whole point
+   * of the per-unit `siren` phase is that six cruisers do NOT flash in
+   * lockstep). Unpooled, that is an unbounded material list and an unbounded
+   * `_owned.mat` array by the end of a long round.
+   */
+  _takeView(kind) {
+    const free = this._viewPool.get(kind);
+    if (free && free.length) return free.pop();
+    return this._buildView(kind);
+  }
+
   _retireView(view) {
     if (!view) return;
     view.group.visible = false;
     if (view.group.parent) view.group.parent.remove(view.group);
+    if (view.charge) view.charge.visible = false;
+    const kind = view.kind;
+    let free = this._viewPool.get(kind);
+    if (!free) { free = []; this._viewPool.set(kind, free); }
+    /* Bounded: the roster can never want more than MAX_UNITS at once, so a pool
+       deeper than that is dead memory. */
+    if (free.length < HEAT.MAX_UNITS && free.indexOf(view) < 0) free.push(view);
   }
 
   /* ---- ground decals for u.mark ---------------------------------------- */
@@ -1224,11 +1277,19 @@ export class EventGlue {
    * ugly one, and "a new kind silently placed nothing" is the exact failure
    * this codebase keeps repeating.
    */
-  _unitView(kind) {
+  _buildView(kind) {
     const spec = RESPONSE[kind];
     const group = new THREE.Group();
     group.name = `response-${kind}`;
-    const view = { group, lampA: null, lampB: null, charge: null };
+    const view = { kind, group, lampA: null, lampB: null, charge: null };
+    /** A lamp material is per-unit by design; see _takeView. */
+    const lamp = (hex, intensity = 0.05) => {
+      const m = new THREE.MeshStandardMaterial({
+        color: hex, emissive: hex, emissiveIntensity: intensity, roughness: 0.4,
+      });
+      this._owned.mat.push(m);
+      return m;
+    };
 
     const body = this._mat('unit-body', { color: UNIT_COL.BODY });
     const trim = this._mat('unit-trim', { color: UNIT_COL.TRIM });
@@ -1255,13 +1316,8 @@ export class EventGlue {
       this._part(group, this._box('cruiser-stripe', 1.93, 0.26, 2.6), trim, 0, 0.66, 0.2);
       wheels(1.9, 4.5, 0.34);
       const lampGeo = this._box('lamp', 0.42, 0.16, 0.3);
-      view.lampA = this._part(group, lampGeo,
-        new THREE.MeshStandardMaterial({ color: UNIT_COL.LIGHT_A, emissive: UNIT_COL.LIGHT_A, emissiveIntensity: 0.05, roughness: 0.4 }),
-        -0.34, 1.76, -0.1);
-      view.lampB = this._part(group, lampGeo,
-        new THREE.MeshStandardMaterial({ color: UNIT_COL.LIGHT_B, emissive: UNIT_COL.LIGHT_B, emissiveIntensity: 0.05, roughness: 0.4 }),
-        0.34, 1.76, -0.1);
-      this._owned.mat.push(view.lampA.material, view.lampB.material);
+      view.lampA = this._part(group, lampGeo, lamp(UNIT_COL.LIGHT_A), -0.34, 1.76, -0.1);
+      view.lampB = this._part(group, lampGeo, lamp(UNIT_COL.LIGHT_B), 0.34, 1.76, -0.1);
     } else if (kind === 'barrier') {
       /* A safety barrier, not a wall: waist high, striped, and obviously
          movable. It has to read as "the city would rather you didn't", not as
@@ -1274,13 +1330,9 @@ export class EventGlue {
       for (const sx of [-1, 1]) {
         this._part(group, this._box('barrier-leg', 0.12, 1.0, 0.62), trim, sx * 1.06, 0.5, 0);
       }
-      const beacon = new THREE.MeshStandardMaterial({
-        color: UNIT_COL.BARRIER, emissive: UNIT_COL.BARRIER, emissiveIntensity: 0.05, roughness: 0.4,
-      });
-      view.lampA = this._part(group, this._cyl('beacon', 0.1, 0.1, 0.18, 8), beacon, -1.06, 1.1, 0);
-      view.lampB = this._part(group, this._cyl('beacon', 0.1, 0.1, 0.18, 8), beacon.clone(), 1.06, 1.1, 0);
-      view.lampB.material = view.lampB.material.clone();
-      this._owned.mat.push(view.lampA.material, view.lampB.material);
+      const beaconGeo = this._cyl('beacon', 0.1, 0.1, 0.18, 8);
+      view.lampA = this._part(group, beaconGeo, lamp(UNIT_COL.BARRIER), -1.06, 1.1, 0);
+      view.lampB = this._part(group, beaconGeo, lamp(UNIT_COL.BARRIER), 1.06, 1.1, 0);
     } else if (kind === 'spotter') {
       this._part(group, this._box('spotter-body', 2.3, 1.3, 6.0), body, 0, 1.0, 0);
       this._part(group, this._box('spotter-cab', 2.1, 0.9, 1.9), glass, 0, 2.0, -1.9);
@@ -1288,11 +1340,8 @@ export class EventGlue {
          spotlight would need a real light in the rig and this is a truck, not a
          lighting change. */
       this._part(group, this._cyl('mast', 0.09, 0.09, 2.4, 8), trim, 0, 2.6, 1.6);
-      const lamp = new THREE.MeshStandardMaterial({
-        color: UNIT_COL.LAMP, emissive: UNIT_COL.LAMP, emissiveIntensity: 2.2, roughness: 0.35,
-      });
-      this._owned.mat.push(lamp);
-      this._part(group, this._box('spotter-lamp', 0.6, 0.42, 0.3), lamp, 0, 3.75, 1.6);
+      this._part(group, this._box('spotter-lamp', 0.6, 0.42, 0.3),
+        lamp(UNIT_COL.LAMP, 2.2), 0, 3.75, 1.6);
       wheels(2.3, 6.0, 0.44);
     } else if (kind === 'containment') {
       this._part(group, this._box('cont-body', 2.6, 1.5, 6.8), body, 0, 1.1, 0);
@@ -1391,6 +1440,14 @@ export class EventGlue {
         console.warn(`[eventGlue] no shape for debris kind '${it.kind}'; using a crate`);
       }
     }
+    /* SHADOW BUDGET. Every one of these is a standalone mesh, i.e. its own draw
+       call in the shadow pass — the rest of the city's small props are
+       instanced and get one call for thousands. Four clusters of up to fifteen
+       items is ~60 objects; at 3-4 parts each that would be ~220 extra shadow
+       draws for a handful of crates. One caster per item (the body, always
+       child 0) keeps them grounded for the cost of 60. */
+    g.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    if (g.children[0]) g.children[0].castShadow = true;
     return g;
   }
 

@@ -13,6 +13,7 @@ import { OcclusionSystem } from './render/occlusion.js';
 import { audio } from './core/audio.js';
 import { VoiceSystem } from './audio/voice.js';
 import { install as installPowerups } from './gameplay/powerupGlue.js';
+import { install as installEvents } from './gameplay/eventGlue.js';
 import { TIER_LIST } from './config.js';
 import { EntityRegistry, STATE } from './gameplay/entities.js';
 import { Hole } from './gameplay/hole.js';
@@ -371,6 +372,9 @@ export class Game {
        so it must run after this.consume exists. It is idempotent — a second
        call replaces the first rather than stacking two wrappers. */
     this.powerups = installPowerups(this);
+    /* Storm + police. Wraps consume.onSwallow to feed Heat, so it must install
+       AFTER that callback is assigned or it would wrap undefined. */
+    this.events = installEvents(this);
 
     const armAudio = () => {
       audio.unlock();
