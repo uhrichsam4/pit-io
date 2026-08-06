@@ -83,6 +83,10 @@ const RING_CLOSED_AT = 0.88;
  * LOBBY_MAX_WAIT in server/server.js — the offline lobby has to feel the same
  * as the online one.
  */
+/** What counts as a person for proximity dialogue. Mirrors the `person` matcher
+ *  in modes.js so the two cannot drift apart about what a pedestrian is. */
+const PERSON_RX = /ped|person|tourist|worker|office|jogger|cyclist|busker|vendor|crowd|diner|waiter|child|kid|baller|courtside|resting|local/i;
+
 /** Seconds outside the ring before the penalty lands. */
 const BOUNDS_GRACE = 3;
 
@@ -316,6 +320,46 @@ export class Game {
       else if (c.tier && c.tier.id >= 3) cat = 'propEaten';
       else if (Math.random() < 0.05) cat = 'notice';
       if (cat) this.voice.say(cat, { x: c.position.x, z: c.position.z });
+    };
+
+    /**
+     * PROXIMITY DIALOGUE — people react to the hole ARRIVING, not only to being
+     * eaten.
+     *
+     * The swallow trigger below fires when something is consumed, which meant
+     * the only way to hear anybody was to destroy them. Walking a hole down a
+     * crowded street produced silence, which is the opposite of the brief:
+     * pedestrians are supposed to notice at a distance, look, point and panic.
+     *
+     * Cheap on purpose. It samples on a timer rather than every frame, walks
+     * the consumable list once, and stops at the first person close enough —
+     * the VoiceSystem's own cooldowns and its hard three-line cap do the rest
+     * of the rationing, so this only has to avoid being expensive.
+     */
+    this._voiceProx = (dt) => {
+      if (!this.voice || !this.player || !this.player.alive) return;
+      this._proxT = (this._proxT || 0) - dt;
+      if (this._proxT > 0) return;
+      this._proxT = 1.1;                       // sample about once a second
+
+      const p = this.player.position;
+      // Scales with the hole: a 2 m opening is noticed late, a 20 m one early.
+      const reach = Math.min(46, 11 + this.player.radius * 2.2);
+      const r2 = reach * reach;
+      let best = null, bestD2 = r2;
+      for (const c of this.allConsumables) {
+        if (!c || c.state !== STATE.IDLE) continue;
+        if (!PERSON_RX.test(c.kind || '')) continue;
+        const dx = c.position.x - p.x, dz = c.position.z - p.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bestD2) { bestD2 = d2; best = c; }
+      }
+      if (!best) return;
+
+      // Close enough to be alarming versus merely noticed. Two registers, so a
+      // crowd sounds like people at different distances rather than a chorus.
+      const near = bestD2 < (reach * 0.45) ** 2;
+      this.voice.say(near ? 'flee' : 'notice', { x: best.position.x, z: best.position.z });
     };
 
     this.consume.onSwallow = (hole, c, gained, remote) => {
@@ -1578,7 +1622,7 @@ export class Game {
       this._clampToIsland();
       if (this.net && this.player) this.net.update(this.player, t);
       this.effects.update(dt);
-      if (this.voice) this.voice.update(dt);
+      if (this.voice) { this.voice.update(dt); this._voiceProx(dt); }
       return;
     }
 
