@@ -856,59 +856,64 @@ export class HUD {
    *
    * Newest at the bottom, three at most, each expiring on its own ttl.
    */
+  /**
+   * NPC dialogue subtitles.
+   *
+   * Captions are not decoration: the voice pack is generated offline and may be
+   * absent entirely (fresh clone, no key, generator never run), in which case
+   * this is the ONLY form the dialogue takes. `c.spoken` only picks the glyph.
+   *
+   * EACH ROW OWNS ITS OWN REMOVAL. The first version kept a shared `_caps`
+   * array and one interval that compared every row's deadline against
+   * performance.now(). It removed rows ~200 ms after they appeared while
+   * reporting nine seconds of life remaining — two clocks and a shared array
+   * that had to agree, and they did not. A per-row setTimeout has no shared
+   * state to disagree with, so the bug cannot recur, and it is less code.
+   */
   showCaption(c) {
     if (!c || !c.text) return;
-    if (!this._capWrap) {
+    if (!this._capWrap || !document.body.contains(this._capWrap)) {
       const el = document.createElement('div');
       el.className = 'vo-captions';
       document.body.appendChild(el);
       this._capWrap = el;
-      this._caps = [];
     }
+    const wrap = this._capWrap;
+
+    // At most three on screen: oldest out first, so the newest is always read.
+    while (wrap.childElementCount >= 3) {
+      const first = wrap.firstElementChild;
+      if (!first) break;
+      if (first._capT) clearTimeout(first._capT);
+      first.remove();
+    }
+
     const row = document.createElement('div');
     row.className = 'vo-cap';
     const who = c.castName ? '<b>' + escapeHtml(c.castName) + '</b> ' : '';
     row.innerHTML = '<span class="vo-ic">' + (c.spoken ? '\u{1F5E3}' : '\u{1F4AC}')
       + '</span>' + who + escapeHtml(c.text);
-    this._capWrap.appendChild(row);
-    void row.offsetWidth;               // reflow, so the entry transition runs
+    wrap.appendChild(row);
+    void row.offsetWidth;                 // reflow, so the entry transition runs
     row.classList.add('on');
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    this._caps.push({ row, until: now + Math.max(1200, (c.ttl || 2.6) * 1000) });
-    while (this._caps.length > 3) {
-      const old = this._caps.shift();
-      if (old && old.row) old.row.remove();
-      this._capDbg = (this._capDbg || { added: 0, evicted: 0, expired: 0 });
-      this._capDbg.evicted++;
-    }
-    this._capDbg = (this._capDbg || { added: 0, evicted: 0, expired: 0 });
-    this._capDbg.added++;
-    if (!this._capTimer) {
-      this._capTimer = setInterval(() => {
-        const t = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        for (let i = this._caps.length - 1; i >= 0; i--) {
-          if (this._caps[i].until > t) continue;
-          const r = this._caps.splice(i, 1)[0];
-          this._capDbg = (this._capDbg || { added: 0, evicted: 0, expired: 0 });
-          this._capDbg.expired++;
-          (this._capDbg.at || (this._capDbg.at = [])).push({
-            until: Math.round(r.until), t: Math.round(t), overdueBy: Math.round(t - r.until),
-          });
-          r.row.classList.remove('on');
-          setTimeout(() => r.row.remove(), 220);
-        }
-        if (!this._caps.length) { clearInterval(this._capTimer); this._capTimer = null; }
-      }, 160);
-    }
+
+    // Long enough to read even a short line. ttl arrives in SECONDS.
+    const ms = Math.max(2200, (Number(c.ttl) > 0 ? Number(c.ttl) : 2.6) * 1000);
+    row._capT = setTimeout(() => {
+      row.classList.remove('on');
+      row._capT = setTimeout(() => row.remove(), 240);
+    }, ms);
   }
 
   /** Wipe every caption, so none survives a match restart. */
   clearCaptions() {
-    if (this._capTimer) { clearInterval(this._capTimer); this._capTimer = null; }
-    if (this._caps) for (const c of this._caps) c.row.remove();
-    this._caps = [];
+    const wrap = this._capWrap;
+    if (!wrap) return;
+    for (const row of Array.from(wrap.children)) {
+      if (row._capT) clearTimeout(row._capT);
+      row.remove();
+    }
   }
-
 
   pushFeed(text, color = '#ffffff', kind = 'kill') {
     const el = document.createElement('div');
