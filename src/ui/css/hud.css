@@ -670,8 +670,12 @@ html.no-subtitles .vo-captions { display: none; }
 /* Sound-test panel (Shift+A). Utilitarian on purpose: it is a diagnostic the
    owner drives with their ears, not a shipped surface. */
 #sfx-test {
-  position: fixed; right: 12px; top: 12px; z-index: 9999;
-  width: min(320px, 46vw); max-height: 86vh; overflow-y: auto;
+  /* Narrow, and clear of the minimap in the bottom-right. The first version was
+     320px of opaque panel over the middle-right of the play area, which is
+     where the city actually is. */
+  position: fixed; right: 10px; top: 10px; z-index: 9999;
+  width: min(210px, 34vw); max-height: 62vh; overflow-y: auto;
+  opacity: 0.94;
   background: rgba(10, 12, 18, .95); border: 1px solid #39404a; border-radius: 6px;
   padding: 10px 12px 12px; color: #e8ecf2;
   font: 12px/1.4 ui-monospace, Menlo, monospace;
@@ -681,9 +685,9 @@ html.no-subtitles .vo-captions { display: none; }
 #sfx-test #sfx-x { background: #3a2029; border-color: #6b3040; }
 #sfx-rows { display: flex; flex-direction: column; gap: 3px; }
 #sfx-test button {
-  font: inherit; text-align: left; cursor: pointer;
+  font: 11px/1.25 ui-monospace, Menlo, monospace; text-align: left; cursor: pointer;
   background: #1d2430; color: #dfe6ee; border: 1px solid #39404a;
-  border-radius: 3px; padding: 5px 8px;
+  border-radius: 3px; padding: 3px 6px;
 }
 #sfx-test button:hover { background: #27303e; }
 #sfx-test button:focus-visible { outline: 2px solid #7fd4ff; outline-offset: 1px; }

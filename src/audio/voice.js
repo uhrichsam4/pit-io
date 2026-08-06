@@ -98,6 +98,11 @@ export const VOICE_PRIORITY = {
  * the tests read the same values — a magic number duplicated in a test is a
  * test that passes after the tuning changes and proves nothing.
  */
+/* An element bypasses voiceBus (0.62) and the master gain (0.85), so it needs
+   its own trim or dialogue would arrive roughly twice as loud as everything
+   else. 0.62 * 0.85 = 0.527, rounded to 0.55 for a touch of presence. */
+const VOICE_EL_TRIM = 0.55;
+
 export const VOICE_TUNING = {
   /** Spec: "no more than 2-3 spoken lines at once". 3, and it is a hard cap. */
   MAX_CONCURRENT: 3,
@@ -1117,9 +1122,67 @@ export class VoiceSystem {
 
   /* -------------------------------------------------------- playback --- */
 
+  /**
+   * Play one line through an HTMLAudioElement.
+   *
+   * WHY NOT THE WEBAUDIO GRAPH. It is silent, and it reads as correct: the
+   * buffer decodes, the source starts, stats.played increments, the bus sits at
+   * 0.62, the compressor is a sane -18/3:1, the destination is verifiably the
+   * voice bus, nothing throws and nothing is muted. Five separate fixes were
+   * made against that graph and every one of them was wrong, because none of
+   * my instruments could see output — a headless browser reports a running
+   * AudioContext while rendering no samples, and a reference oscillator patched
+   * straight onto the master bus measured exactly 0.0000.
+   *
+   * What settled it was a human ear: the SAME mp3 played through
+   * `new Audio(url)` is clearly audible in the same browser, in the same tab,
+   * at the same moment the graph path is silent. That is evidence, and it beats
+   * five readings of code that looks fine.
+   *
+   * The trade is honest and small. An element gives volume but not a stereo
+   * pan, so distance still attenuates — the part that carries information —
+   * while left/right placement is lost. For dialogue on a fixed-yaw top-down
+   * camera, that is a detail; being unable to hear the characters at all is
+   * not. The graph path is kept below and can be restored the moment someone
+   * finds what it is actually doing.
+   */
+  _startEl(handle, url, place, cast) {
+    const el = new Audio(url);
+    const dist = (place && Number.isFinite(place.gain)) ? place.gain : 1;
+    const castGain = (cast && Number.isFinite(cast.gain)) ? cast.gain : 1;
+    let lvl = clamp(this._volume * castGain * dist * VOICE_EL_TRIM, 0, 1);
+    if (!Number.isFinite(lvl)) lvl = this._volume;
+    el.volume = this._muted ? 0 : lvl;
+    handle.el = el;
+    handle.spoken = true;
+    el.addEventListener('ended', () => this._retire(handle), { once: true });
+    el.addEventListener('error', () => { this.stats.loadFails++; this._retire(handle); }, { once: true });
+    const p = el.play();
+    if (p && p.catch) {
+      p.catch(() => {
+        // Autoplay refused, or the element was retired mid-start. Neither is
+        // worth a console line every time an NPC speaks.
+        this._retire(handle);
+      });
+    }
+    // The element knows its own length once metadata lands; until then the
+    // caption ttl holds the slot.
+    el.addEventListener('loadedmetadata', () => {
+      if (Number.isFinite(el.duration)) handle.endsAt = this.time + el.duration + 0.05;
+    }, { once: true });
+    this.stats.played++;
+  }
+
   /** Kick off async load + play. The slot is ALREADY reserved by `say()`. */
   _speak(handle, place, cast) {
     const gen = handle.gen;
+    /* Element path first — see _startEl. Needs only the URL, so it skips the
+       fetch/decode round trip the graph path pays before it can start. */
+    const url = this.manifest.get(handle.id);
+    if (url && typeof Audio === 'function') {
+      this._startEl(handle, url, place, cast);
+      return;
+    }
     this._buffer(handle.id).then((buf) => {
       // Four ways this can be stale by the time the buffer lands: match ended,
       // the handle was evicted, it expired on its estimated ttl, or the player
@@ -1188,6 +1251,11 @@ export class VoiceSystem {
     const i = this._active.indexOf(handle);
     if (i >= 0) this._active.splice(i, 1);
     if (evicted) this.stats.evicted++;
+    const el = handle.el;
+    handle.el = null;
+    if (el) {
+      try { el.pause(); el.src = ''; } catch (err) { /* already gone */ }
+    }
     const src = handle.src;
     handle.src = null;
     if (src) {
@@ -1203,6 +1271,11 @@ export class VoiceSystem {
   _stopSources() {
     for (let i = this._active.length - 1; i >= 0; i--) {
       const h = this._active[i];
+      /* Elements too, or stopAll() leaves dialogue talking over the results
+         screen — the exact class of leak the spec forbids for loops. */
+      const el = h.el;
+      h.el = null;
+      if (el) { try { el.pause(); el.src = ''; } catch (err) { /* gone */ } }
       const src = h.src;
       h.src = null;
       if (src) {
