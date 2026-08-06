@@ -1085,8 +1085,10 @@ const ZOO_DEFS = {
     mat: 'metal', debris: P.SIGN_GREEN,
   },
   zooBuggy: {
-    g: gZooBuggy, tier: T.MEDIUM, r: 1.30, h: 2.00, label: 'Keeper Buggy',
-    shadow: true, keepShadow: true, tint: [0xffffff, 0xd8f0d8, 0xf0ecd0], debris: 0x2f6a4c,
+    // No `keepShadow`: pools.js reserves that for things that MOVE, and this
+    // one is parked. At 1.99 m it clears the 1.8 m shadow cut on its own.
+    g: gZooBuggy, tier: T.MEDIUM, r: 1.35, h: 1.99, label: 'Keeper Buggy',
+    shadow: true, tint: [0xffffff, 0xd8f0d8, 0xf0ecd0], debris: 0x2f6a4c,
   },
 
   /* borrowed from props.js — see borrowModel for why these are separate pools */
@@ -1807,6 +1809,16 @@ export function buildZoo(ctx) {
     return empty;
   }
 
+  /* Per-build state, cleared here rather than at module scope. A restart calls
+     buildWorld again with a FRESH PropLibrary, so a borrow that failed last
+     time may succeed this time and vice versa — carrying the old answer over
+     would have the warning below lying about the build you are looking at. The
+     geometry and contact caches are NOT cleared: those are pure functions of
+     the builders and rebuilding them every restart is wasted milliseconds. */
+  _borrowed.hit.length = 0;
+  _borrowed.miss.length = 0;
+  _matCache.clear();
+
   const rng = makeRNG(((ctx.layout.seed | 0) ^ 0x2005e) >>> 0);
   const group = ctx.group('zoo');
 
@@ -1979,7 +1991,12 @@ export function buildZoo(ctx) {
       // 2.98 m pitch, not 2.55: a rail section measures 1.36 m of contact, so
       // at 2.55 every second one landed inside its neighbour's claim.
       const lx = (i - (nRail - 1) / 2) * 2.98;
-      if (pl.putAlong('zooRail', VX(lx, -1.5), VZ(lx, -1.5), c, -s, v.yawOut, yPath)) rails++;
+      /* claimR 0.75, not the measured 1.36. A rail is three posts and two
+         tubes: the circle through its end posts is almost entirely air, and
+         reserving it made the rail unplaceable at the one spot it belongs —
+         1.9 m off a fence line that has already claimed 1.4 m. Measured on a
+         small site: zero rails and zero boards at the honest claim. */
+      if (pl.putAlong('zooRail', VX(lx, -1.5), VZ(lx, -1.5), c, -s, v.yawOut, yPath, 1, 0.75)) rails++;
     }
     tally.viewing += rails;
 
@@ -1987,7 +2004,8 @@ export function buildZoo(ctx) {
     const nBoard = v.span > 16 ? 2 : 1;
     for (let i = 0; i < nBoard; i++) {
       const lx = (i - (nBoard - 1) / 2) * 3.1 + (rng() - 0.5) * 0.6;
-      if (pl.putAlong('zooInfoBoard', VX(lx, 0.9), VZ(lx, 0.9), c, -s, inward + (rng() - 0.5) * 0.3, yPath)) {
+      if (pl.putAlong('zooInfoBoard', VX(lx, 0.9), VZ(lx, 0.9), c, -s,
+        inward + (rng() - 0.5) * 0.3, yPath, 1, 0.55)) {
         tally.viewing++;
       }
     }

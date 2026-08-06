@@ -670,24 +670,26 @@ const SPECIES = {
 const BY_SIZE = ['elephant', 'giraffe', 'zebra', 'monkey', 'penguin', 'bird'];
 
 /**
- * Species -> habitat, and the one place this module has to negotiate with
- * somebody else's decision.
+ * Species -> habitat.
  *
- * cityLayout.ZOO_SPECIES names its six pens giraffe, flamingo, alligator,
- * panther, capybara and macaw; this module was commissioned to build penguin,
- * monkey, zebra, giraffe, elephant and birds. Two of the six agree by name,
- * four do not, and NOBODY GETS TO CHANGE THE OTHER FILE — so the mismatch is
- * resolved here, explicitly, and printed at build time rather than left to
- * whatever order the pens happened to come back in.
+ * The keys in cityLayout.ZOO_SPECIES are a contract with the keys in SPECIES
+ * below, and cityLayout says so in its own comment. This resolver exists
+ * anyway, because the contract was BROKEN once already and nothing threw when
+ * it was: the first ZOO_SPECIES was a Miami roster — flamingo, alligator,
+ * panther, capybara, macaw — matched to these six by list index, which put
+ * elephants in the Gator Swamp under a sign that said Gator Swamp. Silent, and
+ * only visible in a screenshot. So the mapping is resolved on names, checked
+ * three ways, and PRINTED at build time.
  *
- * Resolution runs in three passes and stops at the first that answers:
- *   1. the pen's own `species` / `label` against the word list below. The
- *      species' REAL name is always first in its list, so if ZOO_SPECIES is
- *      ever renamed to this module's six, every pen still lands correctly and
- *      nothing here has to change.
- *   2. `kind` — 'grass' | 'water' | 'rock' | 'aviary'. cityLayout:88 states
- *      outright that kind is the contract the animal module switches on, so it
- *      is the durable hook and the name matching above is the courtesy.
+ * Three passes, first one to answer wins:
+ *   1. the pen's own `species`/`label` against the word list. The species' real
+ *      key is always first in its list, so the healthy case is a direct hit.
+ *      The stale Miami names are kept as aliases: if that table is ever
+ *      reverted, the zoo degrades to a sensible animal in each habitat instead
+ *      of an arbitrary one.
+ *   2. `kind` — 'grass' | 'water' | 'rock' | 'aviary'. cityLayout:87 names kind
+ *      as the contract the animal module switches on, so it is the durable
+ *      hook and the name matching above is the courtesy.
  *   3. largest pen left to largest animal remaining.
  *
  * The order this list is walked in is the resolution order, and it is NOT
@@ -875,7 +877,9 @@ function splitToAtLeast(pens, n, gap) {
     const half = (along ? p.hw : p.hd);
     const nh = half / 2 - gap / 2;
     if (nh < 3) break;                  // splitting further yields unusable pens
-    const off = half / 2 + gap / 2 - gap / 2;
+    // Child centre. It is `nh + gap/2`, which reduces to exactly half/2 —
+    // written the short way, because the long way reads as an error.
+    const off = half / 2;
     const a = along
       ? makePen(0, 0, nh, p.hd, p.yaw, p.name, p.kind)
       : makePen(0, 0, p.hw, nh, p.yaw, p.name, p.kind);
@@ -1046,13 +1050,17 @@ export function buildAnimals(ctx) {
     const pen = st.pens[key];
     if (!pen) continue;
     pen.wet = penTouchesWater(layout, pen);
+    pen.ponds = pondsIn(built, pen);
   }
 
-  /* Park lawn height. nature.js plants at Y_WALK + 0.015 (nature.js:6735) and
-     the animals stand on the same surface. A pen laid on a raised apron would
-     sit 55 mm low, which the contact-AO ramp hides completely; a wrong Y_WALK
-     would not, so it is read from ctx rather than assumed. */
-  const groundY = (ctx.Y_WALK ?? 0.155) + 0.015;
+  /* GROUND HEIGHT, taken from the module that actually built the surface.
+     zoo.js publishes `ctx.zoo.y` — the height it laid its pens, paths and pond
+     rims at (zoo.js:1831) — and standing the animals on anything else means
+     standing them on a surface nobody built. The fallback is the same
+     expression zoo.js falls back to, so the two cannot drift apart. */
+  const built = ctx.zoo;
+  const groundY = (built && Number.isFinite(built.y))
+    ? built.y : (ctx.Y_WALK ?? 0.155) + 0.015;
 
   const MAX_ANIMALS = 64;                 // hard ceiling on the per-frame cost
   for (const key of BY_SIZE) {
@@ -1083,9 +1091,11 @@ export function buildAnimals(ctx) {
     + `${BY_SIZE.filter((k) => st.pens[k] && st.pens[k].wet).length} pens border water`
   );
   /* The pen the layout named and the animal actually standing in it. Printed
-     because four of the six disagree by name (see MATCH_ORDER) and a silent
-     mapping is the kind of thing nobody notices until a screenshot shows
-     zebras under a sign reading Gator Swamp. */
+     because this pairing has silently gone wrong once already (see
+     MATCH_ORDER): a wrong mapping throws nothing, renders fine, and is only
+     visible as animals standing under a sign for a different species. A `(by
+     size)` in this line means a pen was NOT matched by name and somebody
+     should look at ZOO_SPECIES. */
   console.info('[animals] habitat mapping: '
     + BY_SIZE.filter((k) => assigned.how[k]).map((k) => `${k} -> ${assigned.how[k]}`).join(', '));
   return api;
@@ -1099,6 +1109,41 @@ function penInset(pen, sp) {
   const cap = Math.min(pen.hw, pen.hd) * 0.42;
   const inset = Math.min(want, cap);
   return (pen.hw - inset > sp.foot * 0.8 && pen.hd - inset > sp.foot * 0.8) ? inset : 0;
+}
+
+/**
+ * The ponds zoo.js dug inside this pen.
+ *
+ * `layout.isWater` knows nothing about them — it answers for the bay, the
+ * river and the basins, and a pond zoo.js excavated inside a pen is none of
+ * those. So a giraffe would have walked straight through open water that the
+ * only water test in this module says is dry ground.
+ *
+ * They are ELLIPSES: zoo.js sweeps radius `r` in x and `r * sq` in z
+ * (zoo.js:1790), so a circular test would either let an animal into the narrow
+ * ends or lock it out of ground it can stand on.
+ */
+function pondsIn(built, pen) {
+  const out = [];
+  if (!built || !Array.isArray(built.ponds)) return out;
+  for (const p of built.ponds) {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.r)) continue;
+    // Centre inside the pen: a pond belongs to exactly one habitat.
+    if (!insidePen(pen, 0, p.x, p.z, p.r)) continue;
+    out.push({ x: p.x, z: p.z, rx: p.r, rz: p.r * (Number.isFinite(p.sq) ? p.sq : 1) });
+  }
+  return out;
+}
+
+/** Would this animal's body be standing in one of them? */
+function inPond(ponds, x, z, foot) {
+  for (let i = 0; i < ponds.length; i++) {
+    const p = ponds[i];
+    const ax = (x - p.x) / (p.rx + foot);
+    const az = (z - p.z) / (p.rz + foot);
+    if (ax * ax + az * az < 1) return true;
+  }
+  return false;
 }
 
 /** Nine samples across the pen. One wet sample and the pen pays the runtime test. */
@@ -1183,6 +1228,10 @@ function spawnSpecies(ctx, st, sp, pen, inset, groundY, n) {
       geometry: sp.geo(variant),
       material: animalMat(),
     }), {
+      // A shared scratch vector is safe HERE and only because both consumers
+      // clone it: pools.add does `position.clone()` into slotPos (pools.js:134)
+      // and Consumable does the same into `.position` (entities.js:41). Nothing
+      // downstream keeps this reference, so the next animal may reuse it.
       position: _v3.set(x, groundY, z),
       rotationY: yaw,
       scale,
@@ -1953,7 +2002,45 @@ export function __selftest() {
     })());
   }
 
-  /* --- 6. no zoo in the layout means no animals, and no crash ------------ */
+  /* --- 6. a monkey climbs a real prop, and comes down when it is eaten --- */
+  {
+    const c6 = mkCtx();
+    // A registry that offers one climbable object wherever it is asked.
+    const rock = {
+      position: new THREE.Vector3(0, 0.17, 0),
+      height: 1.6, radius: 0.9, kind: 'boulder', state: STATE.IDLE,
+    };
+    c6.registry.query = (x, z, r, out) => {
+      out.length = 0;
+      rock.position.set(x, 0.17, z);       // dead centre of whichever pen asks
+      out.push(rock);
+      return out;
+    };
+    const zoo6 = buildAnimals(c6);
+    const s6 = zoo6._state;
+    const monkeys = s6.animals.filter((a) => a.sp.key === 'monkey');
+    ok('monkeys found a perch to climb', monkeys.length > 0 && !!monkeys[0].perches,
+      monkeys.length);
+    // Drive one onto it directly rather than waiting on the 10%/s dice roll.
+    const mk = monkeys[0];
+    mk.perch = mk.perches[0];
+    mk.perchY = mk.perches[0].y;
+    mk.perchT = 30;
+    mk.x = mk.perches[0].x; mk.z = mk.perches[0].z;
+    for (let i = 0; i < 120; i++) zoo6.update(1 / 30, []);
+    ok('a monkey gets off the ground', mk.y > mk.baseY + 0.4, mk.y - mk.baseY);
+    ok('and no higher than the thing it is standing on',
+      mk.y <= mk.perchY + 0.12, `${mk.y} vs ${mk.perchY}`);
+    // Now eat the rock out from under it.
+    rock.state = STATE.GONE;
+    for (let i = 0; i < 120; i++) zoo6.update(1 / 30, []);
+    ok('the rock going down brings the monkey down with it',
+      mk.climb === 0 && mk.y < mk.baseY + 0.12, `${mk.climb} / ${mk.y - mk.baseY}`);
+    ok('and it never left its pen while climbing',
+      s6.animals.every((a) => insidePen(a.pen, a.inset, a.x, a.z, 1e-3)));
+  }
+
+  /* --- 7. no zoo in the layout means no animals, and no crash ------------ */
   {
     const c2 = mkCtx();
     c2.layout.zoo = null;
