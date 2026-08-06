@@ -475,6 +475,57 @@ export class EventGlue {
       this._purgeAt = g.clock.elapsedTime + 1;
       this._purgeRespawns();
     }
+
+    this._syncHud();
+  }
+
+  /**
+   * Drive the HUD surfaces for Heat and the active event.
+   *
+   * These existed on both sides and were connected on neither: hud.js had
+   * setHeat/setEventBanner/setEventMarker, this glue tracked all the state they
+   * need, and nothing called across. A Heat meter that never moves is worse
+   * than no Heat meter, because it reads as "you are safe".
+   *
+   * Everything here is null-guarded — the HUD may not exist in a headless
+   * harness, and an older HUD may not have these methods at all.
+   */
+  _syncHud() {
+    const g = this.game;
+    const hud = g.hud;
+    const me = g.player;
+    if (!hud || !me) return;
+
+    if (typeof hud.setHeat === 'function') {
+      const tier = this.heat.tierOf ? this.heat.tierOf(me) : 0;
+      const value = this.heat.heatOf ? this.heat.heatOf(me) : 0;
+      // Only on change: setHeat rebuilds DOM, and this runs every frame.
+      if (tier !== this._hudHeatTier || Math.abs(value - (this._hudHeatVal || 0)) > 0.01) {
+        this._hudHeatTier = tier;
+        this._hudHeatVal = value;
+        hud.setHeat({ tier, value });
+      }
+    }
+
+    const ev = this.events.active ? this.events.active() : null;
+    const id = ev ? (ev.id || ev.def && ev.def.id || 'event') : null;
+    if (id !== this._hudEventId) {
+      this._hudEventId = id;
+      if (!ev) {
+        if (typeof hud.clearEventBanner === 'function') hud.clearEventBanner();
+        if (typeof hud.setEventMarker === 'function') hud.setEventMarker(null);
+      }
+    }
+    if (ev && typeof hud.setEventBanner === 'function') {
+      hud.setEventBanner({
+        id,
+        name: ev.name || (ev.def && ev.def.name) || 'Event',
+        seconds: Math.max(0, Math.ceil(ev.remaining != null ? ev.remaining : 0)),
+      });
+    }
+    if (ev && typeof hud.setEventMarker === 'function' && ev.zone) {
+      hud.setEventMarker({ x: ev.zone.x, z: ev.zone.z, r: ev.zone.r || 60 });
+    }
   }
 
   /* --------------------------------------------------------- match seams -- */
@@ -699,9 +750,19 @@ export class EventGlue {
     const k = STORM_LIMITS.CLOUD_DARKNESS_MAX > 0
       ? clamp(env.cloudDarkness / STORM_LIMITS.CLOUD_DARKNESS_MAX, 0, 1)
       : 0;
-    if (Math.abs(k - this._gradeK) > STORM_GRADE.EPSILON || (k === 0 && this._gradeK > 0)) {
-      this._gradeK = k;
-      this._pushGrade(k);
+    /* TOUCH THE GRADE ONLY WHILE A STORM IS ACTUALLY DARKENING THE SKY.
+       setBiomeGrade is a single global slot, and writing "the map's own grade"
+       into it on every calm frame would silently clobber any other module that
+       had installed one of its own. Enter on the first non-zero, leave exactly
+       once on the way back to zero, and otherwise do not exist. */
+    if (k > 0) {
+      if (Math.abs(k - this._gradeK) > STORM_GRADE.EPSILON) {
+        this._gradeK = k;
+        this._pushGrade(k);
+      }
+    } else if (this._gradeK > 0) {
+      this._gradeK = 0;
+      this._pushGrade(0);
     }
 
     /* --- lightning ------------------------------------------------------- *
