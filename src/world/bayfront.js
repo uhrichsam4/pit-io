@@ -29,9 +29,28 @@ import * as THREE from 'three';
 import { solid, ground, Textures } from '../core/materials.js';
 import { M } from './props.js';
 import { specimen } from './nature.js';
+import { GEOMETRY_UNDER_TEST as PED } from './pedestrians.js';
 import { makeRNG } from '../core/rng.js';
 
 const TAU = Math.PI * 2;
+
+/**
+ * DENSITY.
+ *
+ * The spawn island is the ONLY thing on screen — buildBayfront hides the entire
+ * city while it is up — so the budget that normally has to cover 27,000
+ * consumables across a square kilometre goes to one 350 m park. The city's
+ * per-kind triangle limits do not apply here and following them anyway is what
+ * made the first pass look thin.
+ */
+const D = {
+  canopy: 900,        // shade trees
+  understory: 900,
+  grass: 5200,        // tufts and ground cover
+  palmsWalk: 92,      // baywalk rows
+  palmsPlaza: 60,
+  crowd: 240,
+};
 
 /**
  * The island's bounds. A circle, deliberately: the match already owns a
@@ -97,7 +116,7 @@ function polygon(m, pts, y, close = true) {
 }
 
 /** An annular band — path rings, plaza edges, the fountain's steps. */
-function ring(m, cx, cz, y, rIn, rOut, segs = 48, from = 0, to = TAU) {
+function ring(m, cx, cz, y, rIn, rOut, segs = 72, from = 0, to = TAU) {
   const step = (to - from) / segs;
   for (let i = 0; i < segs; i++) {
     const a0 = from + i * step, a1 = from + (i + 1) * step;
@@ -152,8 +171,8 @@ function buildGround(m, lawn, pave, water, sandM) {
   /* --- rock revetment: the whole eastern shore is armoured, not beach --- */
   m.col(P.ROCK);
   const shore = [];
-  for (let i = 0; i <= 26; i++) {
-    const t = i / 26;
+  for (let i = 0; i <= 70; i++) {
+    const t = i / 70;
     const z = -180 + t * 370;
     const x = 152 + Math.sin(t * 3.1) * 9 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 14;
     shore.push([x, z]);
@@ -162,9 +181,9 @@ function buildGround(m, lawn, pave, water, sandM) {
     const [x0, z0] = shore[i], [x1, z1] = shore[i + 1];
     strip(m, x0, z0, x1, z1, 11, 0.05);
     // Boulders, so the edge is not a clean line from above.
-    if (i % 2 === 0) {
-      m.box(x0 + 4, 0, z0, 3.4, 1.5 + (i % 3) * 0.4, 3.0);
-    }
+    // Boulders every station, varied, so the revetment reads as rock.
+    m.box(x0 + 3 + (i % 3), 0, z0, 2.6 + (i % 4) * 0.5, 1.2 + (i % 5) * 0.35, 2.4 + (i % 3) * 0.5);
+    if (i % 3 === 0) m.box(x0 + 6.5, 0, z0 + 2, 2.2, 1.1, 2.0);
   }
 
   /* --- the baywalk, just inland of the rocks --------------------------- */
@@ -294,7 +313,7 @@ function buildAmphitheatre(m) {
 function buildFountain(m, pave) {
   const cx = 96, cz = 74;
   pave.col(0xd9a288);
-  ring(pave, cx, cz, 0.08, 21, 60, 64);
+  ring(pave, cx, cz, 0.08, 21, 60, 96);
   pave.col(0xb7876c);
   ring(pave, cx, cz, 0.085, 56, 60, 64);       // darker outer band
   ring(pave, cx, cz, 0.09, 21, 23, 64);        // and an inner kerb
@@ -311,8 +330,8 @@ function buildFountain(m, pave) {
 
   /* Concentric water. Three tones stepping inward and slightly down, which is
      exactly how the real basin reads from the air. */
-  m.col(0x3fbf9a); ring(m, cx, cz, 0.5, 12.6, 16.4, 56);
-  m.col(0x2aa98a); ring(m, cx, cz, 0.44, 8.6, 12.6, 48);
+  m.col(0x3fbf9a); ring(m, cx, cz, 0.5, 12.6, 16.4, 84);
+  m.col(0x2aa98a); ring(m, cx, cz, 0.44, 8.6, 12.6, 72);
   m.col(0xd8efe6); ring(m, cx, cz, 0.50, 7.4, 8.6, 48);   // the white weir ring
   m.col(0x1f8f78); ring(m, cx, cz, 0.38, 3.0, 7.4, 40);
 
@@ -439,7 +458,7 @@ function dress(group, rng) {
   );
   // Even coverage, not one clump: sample the whole park rectangle and reject,
   // rather than a radial spray that piles everything at one centre.
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < D.canopy; i++) {
     const x = -160 + rng() * 300;
     const z = -190 + rng() * 380;
     if (!clear(x, z)) continue;
@@ -451,23 +470,23 @@ function dress(group, rng) {
     put(rng() < 0.06 ? pick(FLOWER) : pick(CANOPY), x, z, 0.85 + rng() * 0.55);
   }
   // A second belt along the western boulevard edge.
-  for (let i = 0; i < 40; i++) {
-    put(pick(CANOPY), -150 + rng() * 18, -190 + rng() * 380, 0.8 + rng() * 0.4);
+  for (let i = 0; i < 120; i++) {
+    put(pick(CANOPY), -152 + rng() * 22, -190 + rng() * 380, 0.8 + rng() * 0.4);
   }
 
   /* --- palms: the signature planting ----------------------------------- */
   const PALM = ['royalA', 'royalB', 'coconutA', 'coconutB', 'queenPalm', 'sabal', 'washingtonia'];
   // Double row down the baywalk, evenly spaced — the photos show them regular.
-  for (let i = 0; i < 46; i++) {
-    const t = i / 46;
+  for (let i = 0; i < D.palmsWalk; i++) {
+    const t = i / D.palmsWalk;
     const bx = 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13;
     const bz = -174 + t * 356;
     put(PALM[i % PALM.length], bx + 3, bz, 0.95 + rng() * 0.3);
     if (i % 2 === 0) put(PALM[(i + 3) % PALM.length], bx - 14, bz + 3, 0.9 + rng() * 0.3);
   }
   // Ring around the fountain apron, as in the close aerial.
-  for (let i = 0; i < 30; i++) {
-    const a = (i / 30) * TAU;
+  for (let i = 0; i < D.palmsPlaza; i++) {
+    const a = (i / D.palmsPlaza) * TAU;
     put(PALM[i % PALM.length], 96 + Math.cos(a) * 63, 74 + Math.sin(a) * 63, 0.95 + rng() * 0.25);
   }
   // Avenue of royals along the promenade.
@@ -484,7 +503,7 @@ function dress(group, rng) {
   // with sand-coloured paths.
   const UNDER = ['shrub', 'shrub', 'shrub', 'arecaClump', 'fanShort', 'sago', 'traveller'];
   const BLOOM = ['hibiscus', 'bougain', 'croton'];
-  for (let i = 0; i < 260; i++) {
+  for (let i = 0; i < D.understory; i++) {
     const a = rng() * TAU, rr = Math.sqrt(rng());
     const x = -50 + Math.cos(a) * rr * 110, z = 25 + Math.sin(a) * rr * 135;
     if (!clear(x, z)) continue;
@@ -494,7 +513,7 @@ function dress(group, rng) {
   }
   // Grass tufts and low cover, scattered thickly — this is what stops a lawn
   // reading as a flat green plane from the gameplay camera.
-  for (let i = 0; i < 1400; i++) {
+  for (let i = 0; i < D.grass; i++) {
     const a = rng() * TAU, rr = Math.sqrt(rng());
     const x = -50 + Math.cos(a) * rr * 118, z = 20 + Math.sin(a) * rr * 145;
     if (!clear(x, z)) continue;
@@ -676,6 +695,242 @@ function buildMonuments(m) {
   }
 }
 
+
+/**
+ * The Tina Hills Pavilion.
+ *
+ * The white fabric shell on the south lawn — in every aerial it is a cluster of
+ * peaked sails over a low stage, with a shallow arc of stepped seating facing
+ * it. Much smaller than the main amphitheatre and quite different in character:
+ * that one is dark concrete and seating, this one is white and floats.
+ */
+function buildPavilion(m) {
+  const cx = -104, cz = 74;
+
+  // Stage deck.
+  m.col(P.CONCRETE);
+  ring(m, cx, cz, 0.35, 0, 13, 28, -0.5, Math.PI + 0.5);
+  m.col(P.CONCRETE_DK);
+  ring(m, cx, cz, 0.15, 12.4, 13.6, 28, -0.5, Math.PI + 0.5);
+
+  // Four masts carrying a run of peaked sails, the shape the photos show.
+  const peaks = [[-8, -3, 7.5], [0, -5, 9.0], [8, -3, 7.5]];
+  for (const [ox, oz, ph] of peaks) {
+    m.col(P.STEEL).tube(cx + ox, cz + oz, [[0, 0.34], [ph, 0.24]], 6);
+    m.col(P.WHITE);
+    // A sail is a cone pulled down to four corners, not a flat disc — that
+    // droop between the masts is the whole look.
+    const R = 7.2;
+    for (let i = 0; i < 8; i++) {
+      const a0 = (i / 8) * TAU, a1 = ((i + 1) / 8) * TAU;
+      const sag = 0.55;
+      m.tri(
+        [cx + ox, ph + 0.6, cz + oz],
+        [cx + ox + Math.cos(a0) * R, ph - 2.4 - Math.abs(Math.sin(a0 * 2)) * sag, cz + oz + Math.sin(a0) * R],
+        [cx + ox + Math.cos(a1) * R, ph - 2.4 - Math.abs(Math.sin(a1 * 2)) * sag, cz + oz + Math.sin(a1) * R]
+      );
+    }
+  }
+
+  // The shallow arc of steps facing it.
+  for (let i = 0; i < 4; i++) {
+    const rIn = 17 + i * 3.4, y = 0.25 + i * 0.42;
+    m.col(i % 2 ? P.CONCRETE : P.CONCRETE_DK);
+    ring(m, cx, cz, y, rIn, rIn + 3.2, 24, 0.35, Math.PI - 0.35);
+  }
+}
+
+/**
+ * The Metromover viaduct along Biscayne Boulevard.
+ *
+ * Two pale concrete guideway beams on round columns, running the length of the
+ * park's western edge, with a station where the promenade meets the boulevard.
+ * It is in the background of most of the reference photos and it is the single
+ * clearest cue that this park is in Downtown Miami rather than anywhere else.
+ */
+function buildMetromover(m) {
+  const X = -214;           // just west of the boulevard
+  const Y = 9.6;            // deck height
+  const z0 = -206, z1 = 206;
+
+  m.col(0xc4c8c6);
+  // Columns on a regular bay, each with a flared head.
+  for (let z = z0; z <= z1; z += 19) {
+    m.tube(X, z, [[0, 1.5], [Y - 1.6, 1.25]], 10);
+    m.prism(X, z, [[Y - 1.6, 4.4, 3.2], [Y - 0.5, 5.6, 3.8]]);
+  }
+  /* Twin guideway beams and their running rails.
+     box() CENTRES on the z it is given. Passing the start of the run put each
+     412 m beam half off the north end of the island and left the columns
+     standing under nothing — the viaduct had no deck at all. */
+  const zc = (z0 + z1) / 2, zl = z1 - z0;
+  for (const off of [-2.4, 2.4]) {
+    m.col(0xd2d6d3);
+    m.box(X + off - 1.7, Y - 0.5, zc, 3.4, 1.5, zl);
+    m.col(0x9aa09c);
+    m.box(X + off - 1.9, Y + 1.0, zc, 0.5, 0.5, zl);
+    m.box(X + off + 1.4, Y + 1.0, zc, 0.5, 0.5, zl);
+  }
+
+  /* The station: a barrel-vault canopy on a platform, with a lift tower. */
+  const sz = 40;
+  m.col(0xd8dbd8).box(X - 7, Y + 1.0, sz, 14, 0.5, 34);
+  m.col(0xbfc4c1);
+  for (let i = 0; i <= 12; i++) {
+    const a0 = Math.PI * (i / 12), a1 = Math.PI * ((i + 1) / 12);
+    const R = 8.4, cy = Y + 4.2;
+    m.quad(
+      [X + Math.cos(a0) * R, cy + Math.sin(a0) * 3.4, sz - 17],
+      [X + Math.cos(a1) * R, cy + Math.sin(a1) * 3.4, sz - 17],
+      [X + Math.cos(a1) * R, cy + Math.sin(a1) * 3.4, sz + 17],
+      [X + Math.cos(a0) * R, cy + Math.sin(a0) * 3.4, sz + 17]
+    );
+  }
+  // Lift / stair tower, the tall grey slab in the reference.
+  m.col(0xb6bbb8).box(X + 7, 0, sz, 6.5, Y + 7, 10);
+  m.col(0x39424a).box(X + 7.2, 2, sz - 3.4, 6.1, 8, 6.6);
+  // Stair run down to the pavement.
+  m.col(0xc4c8c6);
+  for (let i = 0; i < 12; i++) {
+    m.box(X + 14, i * 0.85, sz - 4 + i * 1.6, 5, 0.9, 1.7);
+  }
+
+  // A car sitting in the station — small, red, and unmistakably a Mover.
+  m.col(0xdedede).box(X - 2.2 - 1.6, Y + 1.5, sz, 3.2, 3.2, 18);
+  m.col(0xc23b32).box(X - 2.2 - 1.7, Y + 3.4, sz, 3.4, 0.9, 18);
+  m.col(0x2b3238).box(X - 2.2 - 1.75, Y + 2.4, sz, 3.5, 1.4, 16);
+}
+
+
+/**
+ * A stylised standing figure, built once and instanced.
+ *
+ * pedestrians.js exposes its parts, but composing a standing pose out of eight
+ * separate part geometries per person is a lot of matrix work for a crowd that
+ * never animates. One low-poly body at the game's own level of abstraction is
+ * cheaper, reads correctly at the distance anyone sees it, and takes its colour
+ * per instance so a crowd is not a hundred identical clones.
+ */
+function figureGeometry() {
+  const f = new M();
+  f.col(0xffffff);
+  f.tube(0, 0, [[0, 0.10], [0.44, 0.085]], 5);              // legs, together
+  f.tube(0.09, 0, [[0, 0.09], [0.44, 0.075]], 5);
+  f.prism(0, 0, [[0.44, 0.40, 0.24], [0.62, 0.44, 0.26], [1.16, 0.40, 0.23]]);  // torso
+  f.prism(0, 0, [[1.16, 0.30, 0.20], [1.26, 0.22, 0.18]]);  // shoulders/neck
+  f.tube(0, 0, [[1.26, 0.145], [1.52, 0.135], [1.60, 0.09]], 6);   // head
+  for (const sx of [-0.26, 0.26]) {                          // arms
+    f.tube(sx, 0, [[0.52, 0.07], [1.14, 0.075]], 5);
+  }
+  return f.geometry();
+}
+
+/**
+ * Promenade life. The reference photos are never empty: the baywalk always has
+ * walkers, joggers, people at the rail, a food cart, pigeons on the paving.
+ * Static instances, not agents — this is a waiting room, and a crowd that
+ * wanders would need collision against a park that has none.
+ */
+function crowd(group, rng) {
+  const mat = solid({ name: 'bayfront-crowd', vertexColors: true, roughness: 0.78, metalness: 0.02 });
+  const SKIN = [0xe8c39a, 0xd9a878, 0xb07a4e, 0x8a5a36, 0xf0d3b4];
+  const WEAR = [0xff6b8a, 0x37e6d5, 0xffd25e, 0xf2f4f2, 0x4dd2ff, 0xff9f43, 0x9b7bff, 0x6fdc8c];
+
+  /** Points along the baywalk, which is where the photos are busiest. */
+  const spots = [];
+  for (let i = 0; i < D.crowd * 0.45; i++) {
+    const t = i / (D.crowd * 0.45);
+    const bx = 141 - Math.pow(Math.abs(t - 0.45) * 2, 2) * 13;
+    spots.push([bx - 4 - rng() * 6, -170 + t * 348 + (rng() - 0.5) * 5]);
+  }
+  // The fountain apron and the great promenade.
+  for (let i = 0; i < D.crowd * 0.25; i++) {
+    const a = rng() * TAU, r = 26 + rng() * 30;
+    spots.push([96 + Math.cos(a) * r, 74 + Math.sin(a) * r]);
+  }
+  for (let i = 0; i < D.crowd * 0.2; i++) {
+    const t = rng();
+    spots.push([-150 + t * 230, 96 - t * 22 + (rng() - 0.5) * 16]);
+  }
+  // Amphitheatre steps and the pavilion lawn.
+  for (let i = 0; i < D.crowd * 0.13; i++) {
+    const a = Math.PI * 0.5 + (rng() - 0.5) * 2.2, r = 30 + rng() * 40;
+    spots.push([-8 + Math.cos(a) * r, -78 + Math.sin(a) * r]);
+  }
+
+  const geo = figureGeometry();
+  const inst = new THREE.InstancedMesh(geo, mat, spots.length);
+  inst.castShadow = true;
+  inst.receiveShadow = false;
+  inst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(spots.length * 3), 3);
+  const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(),
+    _p = new THREE.Vector3(), _s = new THREE.Vector3(), _ax = new THREE.Vector3(0, 1, 0);
+  const _c = new THREE.Color();
+  spots.forEach(([x, z], i) => {
+    _q.setFromAxisAngle(_ax, rng() * TAU);
+    _p.set(x, 0, z);
+    const h = 0.92 + rng() * 0.22;                  // adults and a few children
+    _s.set(h * (0.94 + rng() * 0.12), h, h * (0.94 + rng() * 0.12));
+    inst.setMatrixAt(i, _m.compose(_p, _q, _s));
+    _c.setHex(rng() < 0.42 ? SKIN[(rng() * SKIN.length) | 0] : WEAR[(rng() * WEAR.length) | 0]);
+    inst.instanceColor.setXYZ(i, _c.r, _c.g, _c.b);
+  });
+  inst.instanceMatrix.needsUpdate = true;
+  inst.instanceColor.needsUpdate = true;
+  inst.name = 'bayfront-crowd';
+  group.add(inst);
+
+  /* Birds and dogs, straight from pedestrians.js — already modelled, already
+     in the right style, and a waterfront with no pigeons on it looks sterile. */
+  const extras = [
+    ['pigeon', 46, 0.9, [[96, 74, 44], [120, -60, 30], [40, 150, 26]]],
+    ['dogShort', 5, 1.0, [[70, 150, 22]]],
+    ['dogLean', 4, 1.0, [[-60, 60, 26]]],
+  ];
+  for (const [key, n, sc, zones] of extras) {
+    const g = PED[key] && PED[key]();
+    if (!g) continue;
+    const im = new THREE.InstancedMesh(g, mat, n);
+    im.castShadow = true;
+    for (let i = 0; i < n; i++) {
+      const [zx, zz, zr] = zones[i % zones.length];
+      const a = rng() * TAU, r = Math.sqrt(rng()) * zr;
+      _q.setFromAxisAngle(_ax, rng() * TAU);
+      _p.set(zx + Math.cos(a) * r, 0, zz + Math.sin(a) * r);
+      _s.set(sc, sc, sc);
+      im.setMatrixAt(i, _m.compose(_p, _q, _s));
+    }
+    im.instanceMatrix.needsUpdate = true;
+    im.name = `bayfront-${key}`;
+    group.add(im);
+  }
+
+  /* Vendor kit on the promenade — the food trucks and carts show up in the
+     photo set more than once. */
+  const kit = [
+    ['streetTable', [[104, 40], [86, 112], [-40, 92]]],
+    ['streetCooler', [[106, 43], [-38, 95]]],
+    ['trolley', [[88, 110]]],
+    ['tripod', [[122, -30], [110, 120]]],
+  ];
+  for (const [key, at] of kit) {
+    const g = PED[key] && PED[key]();
+    if (!g) continue;
+    const im = new THREE.InstancedMesh(g, mat, at.length);
+    im.castShadow = true;
+    at.forEach(([x, z], i) => {
+      _q.setFromAxisAngle(_ax, rng() * TAU);
+      _p.set(x, 0, z); _s.set(1, 1, 1);
+      im.setMatrixAt(i, _m.compose(_p, _q, _s));
+    });
+    im.instanceMatrix.needsUpdate = true;
+    im.name = `bayfront-${key}`;
+    group.add(im);
+  }
+
+  return spots.length;
+}
+
 /* --------------------------------------------------------------- build --- */
 
 /**
@@ -715,6 +970,8 @@ export function buildBayfront(scene) {
   buildSouth(m, rng);
   buildMonuments(m);
   buildSkyline(m, rng);
+  buildPavilion(m);
+  buildMetromover(m);
 
   /**
    * Planar UVs from world XZ.
@@ -773,7 +1030,8 @@ export function buildBayfront(scene) {
   }), 'shell', true);
 
   const n = dress(group, rng);
-  console.info(`[bayfront] spawn island: ${n} plants and props placed`);
+  const people = crowd(group, rng);
+  console.info(`[bayfront] spawn island: ${n} plants and props, ${people} people`);
 
   // Spawn ring: on the great lawn, spread so nobody lands on a landmark or on
   // top of somebody else.
