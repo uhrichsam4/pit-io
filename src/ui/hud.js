@@ -97,7 +97,12 @@ const AUDIO_PREFS_KEY = 'miami-devour:audio:v1';
  * mix the meta Settings screen would have shown.
  */
 const AUDIO_DEFAULTS = {
-  master: 1, music: 0.6, sfx: 0.9, voice: 1,
+  /* 0.85, matching Audio's own `this._volume` (audio.js:408). hud.js is the ONLY
+     caller of audio.setVolume, and the constructor pushes these prefs
+     unconditionally — so a default of 1 here silently made the whole game
+     louder for every player on first load, and the first slider drag persisted
+     that over the shipped level for good. */
+  master: 0.85, music: 0.6, sfx: 0.9, voice: 1,
   muted: false, voicesMuted: false, subtitles: true,
 };
 
@@ -1527,6 +1532,18 @@ export class HUD {
    * into profile.data.settings so the two surfaces cannot disagree.
    */
   _installAudioSettings() {
+    /* Keep the game's input out of the mixer.
+       input.js listens for keydown on WINDOW and preventDefaults the arrows and
+       Space with no target check, so a focused volume slider could not be
+       arrowed at all — while `keys.add(e.code)` still ran and the hole drove
+       off underneath the panel. Worse, input.js skips preventDefault on
+       e.repeat, so a HELD arrow moved the slider and a tap did nothing, which
+       reads as a broken control rather than a captured key.
+       Escape is deliberately let through so _onDocKey can still close this. */
+    this._panelKeyGuard = (e) => {
+      if (e.key === 'Escape') return;
+      if (/^Arrow/.test(e.code) || e.code === 'Space') e.stopPropagation();
+    };
     const slider = (r, v) => {
       const pct = Math.round(v * 100);
       return `
@@ -1554,6 +1571,9 @@ export class HUD {
     this.audioPanel.innerHTML =
       '<div class="au-hd"><b>Audio</b>' +
       '<button class="au-x" type="button" aria-label="Close audio settings">&#10005;</button></div>' +
+
+    // Bubble phase, so it runs before input.js's window listener sees the key.
+    this.audioPanel.addEventListener('keydown', this._panelKeyGuard);
       AUDIO_SLIDERS.map((r) => slider(r, p[r.key])).join('') +
       '<div class="au-tgs">' + AUDIO_TOGGLES.map((t) => toggle(t, !!p[t.key])).join('') + '</div>' +
       '<p class="au-note">Saved on this device.</p>';
