@@ -76,6 +76,27 @@ export const STYLE = {
   STUCCO: 'stucco',   // painted pastel infill
 };
 
+/** Display name stamped on every block the zoo covers. */
+export const ZOO_NAME = 'Miami Metrozoo';
+
+/**
+ * The six pens, in descending order of how much ground the animal wants.
+ *
+ * The index is the AREA RANK of the slot the grid hands us, not a position:
+ * the giraffe always ends up in the biggest pen and the aviary in the
+ * smallest, whatever shape the road grid leaves behind on a given seed.
+ * `kind` is the contract props.js and the animal module switch on — grass,
+ * water, rock, aviary — so all four surfaces are represented on purpose.
+ */
+export const ZOO_SPECIES = [
+  { species: 'giraffe', kind: 'grass', label: 'Giraffe Paddock' },
+  { species: 'flamingo', kind: 'water', label: 'Flamingo Lagoon' },
+  { species: 'alligator', kind: 'water', label: 'Gator Swamp' },
+  { species: 'panther', kind: 'rock', label: 'Panther Ridge' },
+  { species: 'capybara', kind: 'grass', label: 'Capybara Lawn' },
+  { species: 'macaw', kind: 'aviary', label: 'Macaw Aviary' },
+];
+
 const { STREET, AVENUE, BOULEVARD } = ROAD_CLASS;
 
 /** Road half-width per class. Boulevards get four lanes plus a median. */
@@ -630,6 +651,51 @@ export function buildLayout(seed = 20260803) {
   forceZone(blocks, 30, 330, ZONE.PARK, 'Simpson Park');
   forceZone(blocks, -330, 420, ZONE.PARK, 'Shenandoah Park');
 
+  /**
+   * True on any driveable surface: carriageway, service alley, diagonal cut.
+   *
+   * Hoisted out of the returned object because the zoo reservation below has
+   * to ask the question BEFORE the layout object exists. The returned
+   * `isRoad()` delegates here so there is exactly one definition — a second
+   * copy that forgot about `alleys` is precisely how you get a habitat pen
+   * laid across a service lane and every fence post in it silently rejected.
+   */
+  const isRoadAt = (x, z) => {
+    for (const r of roadsX) if (Math.abs(x - r.pos) < r.half) return true;
+    for (const r of roadsZ) if (Math.abs(z - r.pos) < r.half) return true;
+    for (const a of alleys) {
+      if (Math.abs(x - a.x) < a.w / 2 && Math.abs(z - a.z) < a.d / 2) return true;
+    }
+    for (const d of diagonals) if (onDiagonal(d, x, z)) return true;
+    return false;
+  };
+  /* Stricter than the exported isWater(): no bridge exemption. A bridge deck
+     is dry, but it is not ground you may fence a rhino onto. */
+  const isWetAt = (x, z) => x > BAY || inRiverWater(x, z) || inPoly(x, z);
+
+  /* --- reserve the ZOO DISTRICT -------------------------------------------
+     Same rule as the basketball courts below, one order of magnitude bigger,
+     and for the same reason: a habitat pen IS a clearing, and a clearing
+     chosen after nature.js has run is a pen full of trees whose fence, gate
+     and feed trough all come back rejected as `occupied`. The court survived
+     that mistake missing a few floodlights. A zoo would not survive it at all.
+
+     THE SITE CANNOT BE ONE BLOCK, and no amount of wishing changes that. The
+     largest road-free rectangle anywhere on this map is 74 x 59 m — that is
+     the widest span pair X_PLAN and Z_PLAN produce — and a zoo wants roughly
+     200 x 150. So the site is a 2 x 2 group of road-free cells and the two
+     avenues crossing it stay public carriageway. Every pen, path and plaza
+     below is placed strictly INSIDE a cell; nothing is ever laid across a
+     road, an alley or the Metrorail diagonal.
+
+     The leftover ground the pens cannot use is deliberately left OUT of the
+     contract. That is where nature.js is allowed to plant, and it is what
+     makes this read as a park with animals in it rather than a car park with
+     fences round it. */
+  const zoo = reserveZoo({
+    blocks, xSpans, zSpans, alleys, isRoadAt, isWetAt, S, BAY,
+  });
+
   /* --- reserve basketball-court sites -------------------------------------
      Decided HERE, before nature or props run, because a court has to be a
      clearing. Deciding it inside props.js meant deciding it AFTER the park was
@@ -639,6 +705,12 @@ export function buildLayout(seed = 20260803) {
   for (const b of blocks) {
     if (b.zone !== ZONE.PARK) continue;
     if (b.subtype === 'promenade' || b.subtype === 'dock') continue;
+    /* The zoo re-zones its own blocks to PARK so buildings.js leaves them
+       alone, which makes every one of them a court candidate. A half-court
+       stamped through the middle of the gator swamp is not the joke it
+       sounds like: the court claims the same ground the pen needs and one of
+       the two loses its pieces at random. */
+    if (b.zoo) continue;
     const CW = 26, CD = 15, PAD = 2.4;
     const along = b.w >= b.d;
     const spanA = along ? b.w : b.d, spanB = along ? b.d : b.w;
@@ -672,6 +744,8 @@ export function buildLayout(seed = 20260803) {
     channels,
     waterPolys,
     brickellKey: KEY,
+    /** The zoo district, or null if no site on this seed qualified. */
+    zoo,
     districts: {
       brickell: { z0: riverBot, z1: S },
       downtown: { z0: -S, z1: riverTop },
@@ -692,15 +766,7 @@ export function buildLayout(seed = 20260803) {
     named: { brickellAve, biscayne, flagler, brickellCity, miamiAve, bayshoreX },
 
     /** True if (x,z) is on a driveable surface (roads, alleys, diagonals). */
-    isRoad(x, z) {
-      for (const r of roadsX) if (Math.abs(x - r.pos) < r.half) return true;
-      for (const r of roadsZ) if (Math.abs(z - r.pos) < r.half) return true;
-      for (const a of alleys) {
-        if (Math.abs(x - a.x) < a.w / 2 && Math.abs(z - a.z) < a.d / 2) return true;
-      }
-      for (const d of diagonals) if (onDiagonal(d, x, z)) return true;
-      return false;
-    },
+    isRoad: isRoadAt,
 
     /** True over open water: the bay, the river channel, basins and cuts. */
     isWater(x, z) {
@@ -1033,6 +1099,303 @@ function forceZone(blocks, x, z, zone, name) {
   best.heightClass = HEIGHT_CLASS.GROUND;
   best.floors = 0;
   best.setback = 0;
+}
+
+/* =========================================================================
+ * ZOO DISTRICT
+ * =========================================================================
+ * Everything below is PURE DATA produced before any content module runs. See
+ * the call site in buildLayout() for why it has to happen there and not in
+ * props.js, and for why the site spans two carriageways.
+ */
+
+/** Interval helpers. `lo`/`hi` are edges, never centres — centres are what
+ *  turn a 6 m alley into a 3 m one halfway through a refactor. */
+function freeRuns(bars, min, max, minRun) {
+  const out = [];
+  let cur = min;
+  for (const b of bars.slice().sort((p, q) => p.lo - q.lo)) {
+    if (b.hi <= cur) continue;
+    if (b.lo >= max) break;
+    if (b.lo - cur >= minRun) out.push({ lo: cur, hi: Math.min(b.lo, max) });
+    cur = Math.max(cur, b.hi);
+  }
+  if (max - cur >= minRun) out.push({ lo: cur, hi: max });
+  return out;
+}
+
+/**
+ * Edge-rect -> the {x,z,w,d} centre-and-size shape the rest of the game uses.
+ *
+ * Shrinks by `eps` and snaps to a 1 cm grid, and BOTH halves of that matter.
+ * The first cut just rounded to 2 dp, and three rectangles came back sitting
+ * 3 mm inside a service alley: isRoad() answered true, so every prop on that
+ * edge would have been rejected with no error anywhere. Rounding a placement
+ * rectangle may only ever move its edges INWARD.
+ *
+ * eps 0 is for descriptive metadata only — the site bounding box, which
+ * nothing places against and which reads better as a round number.
+ */
+function zRect(s, eps = 0.01) {
+  const x0 = Math.ceil((s.x0 + eps) * 100) / 100;
+  const x1 = Math.floor((s.x1 - eps) * 100) / 100;
+  const z0 = Math.ceil((s.z0 + eps) * 100) / 100;
+  const z1 = Math.floor((s.z1 - eps) * 100) / 100;
+  return {
+    x: +((x0 + x1) / 2).toFixed(3),
+    z: +((z0 + z1) / 2).toFixed(3),
+    w: +(x1 - x0).toFixed(2),
+    d: +(z1 - z0).toFixed(2),
+  };
+}
+
+/**
+ * Choose the zoo district and lay out its pens, paths, plaza and yard.
+ *
+ * Returns null when no site on this seed qualifies — CALLERS MUST HANDLE THAT.
+ * A zoo half in the bay is worse than no zoo, so every filter here fails
+ * closed rather than shuffling the site somewhere it does not belong.
+ */
+function reserveZoo({ blocks, xSpans, zSpans, alleys, isRoadAt, isWetAt, S, BAY }) {
+  /* -- 1. the site: the best 2 x 2 group of road-free cells -------------- */
+  const MIN_W = 140, MIN_D = 110, EDGE = 30, BAY_BUFFER = 90;
+  let site = null, bestScore = -Infinity;
+
+  for (let i = 0; i + 1 < xSpans.length; i++) {
+    for (let j = 0; j + 1 < zSpans.length; j++) {
+      const x0 = xSpans[i].lo, x1 = xSpans[i + 1].hi;
+      const z0 = zSpans[j].lo, z1 = zSpans[j + 1].hi;
+      if (x1 - x0 < MIN_W || z1 - z0 < MIN_D) continue;
+      // Inset from the world edge, and a long way back from the bay: the zoo
+      // must not eat the waterfront sightline, and half a zoo hanging off the
+      // edge of the playable square is a bug report, not a district.
+      if (x0 < -S + EDGE || z0 < -S + EDGE || z1 > S - EDGE) continue;
+      if (x1 > BAY - BAY_BUFFER) continue;
+
+      /* 4 m sample sweep. It counts the ground that is actually usable, so an
+         alley or the Metrorail diagonal slicing the site costs it exactly the
+         land it costs. ANY water disqualifies outright: zSpans contains one
+         180 m band (SE 4 St to SE 5 St) that is mostly the Miami River, and
+         it is by far the largest candidate on the board. */
+      let land = 0, wet = false;
+      for (let x = x0 + 2; x < x1 && !wet; x += 4) {
+        for (let z = z0 + 2; z < z1; z += 4) {
+          if (isWetAt(x, z)) { wet = true; break; }
+          if (!isRoadAt(x, z)) land++;
+        }
+      }
+      if (wet) continue;
+
+      let heavy = 0, green = 0, blocked = false;
+      for (const b of blocks) {
+        if (b.x < x0 || b.x > x1 || b.z < z0 || b.z > z1) continue;
+        // Never over the seawall, never on the Key, never on top of a hero.
+        if (b.subtype === 'promenade' || b.subtype === 'dock'
+            || b.district === DISTRICT.WATERFRONT
+            || (b.landmark && !b._open)) { blocked = true; break; }
+        heavy += b.area * (b.heightPotential || 0);
+        if (b.zone === ZONE.PARK || b.zone === ZONE.PLAZA) green += b.area;
+      }
+      if (blocked) continue;
+
+      /* Usable land first, a strong pull toward ground that is already green,
+         and a 3x penalty on height potential. That last term is what keeps
+         the zoo out of the CBD: flattening a tower cluster to build it is the
+         one change here you would notice from every camera in the game. */
+      const score = land * 16 + 1.4 * green - 3.0 * heavy;
+      if (score > bestScore) {
+        bestScore = score;
+        site = {
+          x0, x1, z0, z1,
+          xs: [xSpans[i], xSpans[i + 1]],
+          zs: [zSpans[j], zSpans[j + 1]],
+        };
+      }
+    }
+  }
+  if (!site) return null;
+
+  const cx = (site.x0 + site.x1) / 2, cz = (site.z0 + site.z1) / 2;
+
+  /* -- 2. the ground the zoo actually owns ------------------------------- */
+  /* Cells are cut back to their ALLEY-FREE sub-rectangles. isRoad() reports
+     true on a service alley, so a pen laid across one has every fence post,
+     gate and trough in that strip rejected on the carriageway test — the
+     silent, zero-error-message failure this whole reservation exists to
+     prevent. An alley that only crosses part of a cell is still treated as a
+     full-length barrier: over-claiming here costs planting land, and planting
+     land is the thing we are trying to give away. */
+  const MIN_CELL = 26;
+  const cells = [];
+  for (const xs of site.xs) {
+    for (const zs of site.zs) {
+      const xBars = [], zBars = [];
+      for (const a of alleys) {
+        const ax0 = a.x - a.w / 2, ax1 = a.x + a.w / 2;
+        const az0 = a.z - a.d / 2, az1 = a.z + a.d / 2;
+        if (ax1 <= xs.lo || ax0 >= xs.hi || az1 <= zs.lo || az0 >= zs.hi) continue;
+        if (a.w <= a.d) xBars.push({ lo: ax0, hi: ax1 });
+        else zBars.push({ lo: az0, hi: az1 });
+      }
+      for (const xr of freeRuns(xBars, xs.lo, xs.hi, MIN_CELL)) {
+        for (const zr of freeRuns(zBars, zs.lo, zs.hi, MIN_CELL)) {
+          cells.push({ x0: xr.lo, x1: xr.hi, z0: zr.lo, z1: zr.hi });
+        }
+      }
+    }
+  }
+  if (cells.length < 2) return null;
+
+  /* -- 3. eight slots: six pens, an entrance plaza, a service yard ------- */
+  // PERIM is the walkable margin left inside every cell edge, so no fence ever
+  // lands on the kerb — the +6 lesson from the basketball court, generalised.
+  const PERIM = 4.5, PATH = 6.5;
+  const slots = cells.map((c) => ({
+    x0: c.x0 + PERIM, x1: c.x1 - PERIM, z0: c.z0 + PERIM, z1: c.z1 - PERIM,
+  }));
+  const gaps = [];
+  const A = (s) => (s.x1 - s.x0) * (s.z1 - s.z0);
+  let minPen = 18;
+  while (slots.length < 8) {
+    slots.sort((a, b) => A(b) - A(a));
+    let k = -1;
+    for (let n = 0; n < slots.length; n++) {
+      const s = slots[n];
+      const long = Math.max(s.x1 - s.x0, s.z1 - s.z0);
+      if ((long - PATH) / 2 >= minPen) { k = n; break; }
+    }
+    // Nothing left worth halving. Relax the minimum once or twice rather than
+    // shipping a four-pen zoo, but never below 11 m — a pen you cannot walk an
+    // animal into reads as a planter.
+    if (k < 0) { if (minPen <= 11) break; minPen -= 3.5; continue; }
+    const s = slots[k];
+    if (s.x1 - s.x0 >= s.z1 - s.z0) {
+      const m = (s.x0 + s.x1) / 2;
+      gaps.push({ x0: m - PATH / 2, x1: m + PATH / 2, z0: s.z0, z1: s.z1 });
+      slots.splice(k, 1, { ...s, x1: m - PATH / 2 }, { ...s, x0: m + PATH / 2 });
+    } else {
+      const m = (s.z0 + s.z1) / 2;
+      gaps.push({ x0: s.x0, x1: s.x1, z0: m - PATH / 2, z1: m + PATH / 2 });
+      slots.splice(k, 1, { ...s, z1: m - PATH / 2 }, { ...s, z0: m + PATH / 2 });
+    }
+  }
+  if (slots.length < 8) return null;
+
+  /* -- 4. roles ----------------------------------------------------------- */
+  const dist = (s) => Math.hypot((s.x0 + s.x1) / 2 - cx, (s.z0 + s.z1) / 2 - cz);
+  /* The two roads CROSSING the site are the biggest ones touching it — the
+     outer four are ordinary streets. So the gate belongs on the crossing at
+     the site centre, which is also where the path network converges. */
+  slots.sort((a, b) => dist(a) - dist(b));
+  const entranceSlot = slots.shift();
+  /* Service yard: smallest slot left, furthest out. Deliveries at the back. */
+  slots.sort((a, b) => (Math.round(A(a)) - Math.round(A(b))) || (dist(b) - dist(a)));
+  const yardSlot = slots.shift();
+  /* Pens biggest first so ZOO_SPECIES' size order always holds. Ties are
+     broken on z then x and NOT left to sort stability: two 29.25 x 21.25 pens
+     really can come out bit-identical, and "whichever the engine happened to
+     compare first" is not a thing multiplayer replication can agree on. */
+  slots.sort((a, b) => (Math.round(A(b)) - Math.round(A(a)))
+    || (a.z0 - b.z0) || (a.x0 - b.x0));
+
+  /* -- 5. the anchor block's seed owns every remaining decision ----------- */
+  let anchor = null, ad = Infinity;
+  for (const b of blocks) {
+    if (b.x < site.x0 || b.x > site.x1 || b.z < site.z0 || b.z > site.z1) continue;
+    const d = Math.hypot(b.x - cx, b.z - cz);
+    if (d < ad) { ad = d; anchor = b; }
+  }
+  const zooSeed = anchor ? anchor.seed : 1;
+  const rng = makeRNG(zooSeed ^ 0x200a1d);
+
+  /* Jitter is a SHRINK, never a grow — 0..1.5 m off each side independently.
+     A grow would push a pen onto the path it is supposed to be separated by,
+     and nothing downstream would tell you. */
+  const jitter = (s) => ({
+    x0: s.x0 + rng.range(0, 1.5), x1: s.x1 - rng.range(0, 1.5),
+    z0: s.z0 + rng.range(0, 1.5), z1: s.z1 - rng.range(0, 1.5),
+  });
+
+  const habitats = slots.slice(0, 6).map((s, i) => ({
+    id: `zoo-${ZOO_SPECIES[i].species}`,
+    species: ZOO_SPECIES[i].species,
+    label: ZOO_SPECIES[i].label,
+    kind: ZOO_SPECIES[i].kind,
+    ...zRect(jitter(s)),
+  }));
+
+  /* Cap the plaza and the yard, and slide the plaza toward the crossing so the
+     gate faces the avenue instead of floating in the middle of its slot. */
+  const cap = (s, maxW, maxD, pull) => {
+    const w = Math.min(s.x1 - s.x0, maxW), d = Math.min(s.z1 - s.z0, maxD);
+    let mx = (s.x0 + s.x1) / 2, mz = (s.z0 + s.z1) / 2;
+    if (pull) {
+      mx += Math.sign(cx - mx) * Math.min(Math.abs(cx - mx), (s.x1 - s.x0 - w) / 2);
+      mz += Math.sign(cz - mz) * Math.min(Math.abs(cz - mz), (s.z1 - s.z0 - d) / 2);
+    }
+    return zRect({ x0: mx - w / 2, x1: mx + w / 2, z0: mz - d / 2, z1: mz + d / 2 });
+  };
+  const entrance = { ...cap(entranceSlot, 30, 22, true), yaw: 0 };
+  const yard = cap(yardSlot, 22, 16, false);
+
+  /* -- 6. the path network ------------------------------------------------ */
+  /* The split gaps, plus the two margins of each cell that FACE the crossing.
+     The outward-facing two are left off the list on purpose: they stay
+     plantable, so nature.js screens the zoo from the street with trees rather
+     than fencing it in a bald ring. */
+  // NOT `gaps.map(zRect)`: map hands the callback (value, index, array) and
+  // the index would land in zRect's `eps`, shrinking rect n by n metres. It
+  // cost 6 m off the last path before anyone noticed.
+  const paths = gaps.map((g) => zRect(g));
+  for (const c of cells) {
+    const mx = (c.x0 + c.x1) / 2, mz = (c.z0 + c.z1) / 2;
+    paths.push(zRect(mx < cx
+      ? { x0: c.x1 - PERIM, x1: c.x1, z0: c.z0, z1: c.z1 }
+      : { x0: c.x0, x1: c.x0 + PERIM, z0: c.z0, z1: c.z1 }));
+    paths.push(zRect(mz < cz
+      ? { x0: c.x0, x1: c.x1, z0: c.z1 - PERIM, z1: c.z1 }
+      : { x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z0 + PERIM }));
+  }
+
+  /* -- 7. flag the covered blocks ---------------------------------------- */
+  const covered = [];
+  for (const b of blocks) {
+    if (b.x < site.x0 || b.x > site.x1 || b.z < site.z0 || b.z > site.z1) continue;
+    b.zoo = true;
+    /* Re-zone to PARK or buildings.js drops a parking garage in the gator
+       swamp. Its dispatch is a switch on b.zone and PARK is the one value
+       that falls through to "nature and props own this ground" — but every
+       other field a builder reads has to come down with it, or a block that
+       renders nothing still claims six storeys of setback and podium. */
+    b.zone = ZONE.PARK;
+    b.subtype = 'zoo';
+    b.landmark = b.landmark || ZOO_NAME;
+    b.heightClass = HEIGHT_CLASS.GROUND;
+    b.floors = 0;
+    b.setback = 0;
+    b.hasPodium = false;
+    b.podiumH = 0;
+    b.parcels = null;
+    b.streetLife = Math.max(b.streetLife, 0.55);
+    covered.push(b);
+  }
+
+  return {
+    name: ZOO_NAME,
+    /** Site bounding box. Axis-aligned, hence yaw 0 — kept so consumers can
+     *  use the same rotated-rect test they already use for b.court. */
+    ...zRect(site, 0),
+    yaw: 0,
+    /** Seed every animal/prop pass should branch from, for replication. */
+    seed: zooSeed,
+    /** The road-free rectangles the zoo owns. Fence lines live on these. */
+    cells: cells.map((c) => zRect(c)),
+    habitats,
+    paths,
+    entrance,
+    yard,
+    blockCount: covered.length,
+  };
 }
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);

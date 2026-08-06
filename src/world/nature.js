@@ -7873,13 +7873,42 @@ export function speciesKeys() { return Object.keys(SPECIES); }
 /* ======================================================================== */
 
 export function buildNature(ctx) {
-  /* Court and habitat footprints, plus a little margin so a canopy does not
-     overhang the baseline. */
-  setClearings(ctx.layout.blocks.flatMap((b) => {
+  /* Court footprints, plus a little margin so a canopy does not overhang the
+     baseline. */
+  const clearings = ctx.layout.blocks.flatMap((b) => {
     const out = [];
     if (b.court) out.push({ x: b.x, z: b.z, yaw: b.court.yaw, hw: b.court.hw + 1.6, hd: b.court.hd + 1.6 });
     return out;
-  }));
+  });
+
+  /* The zoo, and NOT as one 172 x 150 keep-out — that is the whole point of
+     it. Only the six pens, the path network, the entrance plaza and the
+     service yard are reserved; everything between them stays plantable, so
+     the district reads as a park with animals in it rather than a car park
+     with fences round it. On the shipped seed that leaves roughly 6,000 m² of
+     ground inside the zoo where trees are not just allowed but wanted.
+
+     Margins are deliberately tighter than the court's 1.6 m. A canopy leaning
+     over a fence is exactly the overlap we want here; all we need is for the
+     pen FLOOR and the paved routes to stay open for props.js to build on.
+
+     The yard is on the list even though nothing lives in it. props.js runs
+     after nature.js, so an unreserved yard loses its sheds and crates to
+     trees that got there first — the identical failure that cost the first
+     basketball court its hoops. All zoo rectangles are axis-aligned, hence
+     yaw 0: cityLayout picks the site off the road-free span grid, which is
+     axis-aligned by construction. */
+  const zoo = ctx.layout.zoo;
+  if (zoo) {
+    const keep = (r, pad) => clearings.push({
+      x: r.x, z: r.z, yaw: 0, hw: r.w / 2 + pad, hd: r.d / 2 + pad,
+    });
+    for (const h of zoo.habitats) keep(h, 0.8);
+    for (const p of zoo.paths) keep(p, 0.3);
+    keep(zoo.entrance, 1.0);
+    keep(zoo.yard, 1.0);
+  }
+  setClearings(clearings);
   const { layout } = ctx;
   const B = new Buckets();
 

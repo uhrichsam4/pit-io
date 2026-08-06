@@ -217,6 +217,10 @@ export class Game {
     this.island = buildBayfront(eng.scene);
 
     this.trafficUpdate = eng.scene.userData.trafficUpdate || null;
+    /* Zoo animals, published by animals.js the same way vehicles.js publishes
+       traffic. Null when the seed produced no zoo site, which is a legal
+       outcome — reserveZoo fails closed rather than putting a zoo in the bay. */
+    this.animalUpdate = eng.scene.userData.animalUpdate || null;
     this.pedestrianUpdate = eng.scene.userData.pedestrianUpdate || null;
     this.waterUniforms = eng.scene.userData.waterUniforms || null;
 
@@ -1566,6 +1570,10 @@ export class Game {
     }
 
     if (this.trafficUpdate) this.trafficUpdate(dt);
+    /* Animals get the live hole list so they can flee. They are clamped to
+       their own pens inside animals.js — containment is not this loop's job,
+       and doing it here would let any other caller bypass it. */
+    if (this.animalUpdate) this.animalUpdate(dt, this.holes);
     if (this.pedestrianUpdate) this.pedestrianUpdate(dt);
     if (phase === PHASE.PLAYING || phase === PHASE.COUNTDOWN) {
       if (phase === PHASE.PLAYING && this.player && this.player.alive && !this.devCam) {
