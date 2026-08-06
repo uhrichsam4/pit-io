@@ -11,6 +11,7 @@ import { Effects } from './render/effects.js';
 import { updateHoleUniforms } from './render/groundShader.js';
 import { OcclusionSystem } from './render/occlusion.js';
 import { audio } from './core/audio.js';
+import { VoiceSystem } from './audio/voice.js';
 import { TIER_LIST } from './config.js';
 import { EntityRegistry, STATE } from './gameplay/entities.js';
 import { Hole } from './gameplay/hole.js';
@@ -288,7 +289,24 @@ export class Game {
     this._wireNet();
 
     this._tierReached = 0;
+    /* Dialogue triggers. Driven off the REAL swallow event rather than a timer,
+       so people react to what actually happened to them. The VoiceSystem owns
+       all the rate limiting — per-line and per-voice cooldowns, a hard cap of
+       three concurrent lines, and a distance cutoff — so calling this on every
+       swallow is safe; it drops what it cannot afford. */
+    this._voiceFor = (hole, c) => {
+      if (!this.voice || !hole || !hole.isPlayer || !c) return;
+      const kind = c.kind || '';
+      let cat = null;
+      if (/car|sedan|suv|taxi|van|truck|bus|pickup|scooter|motor/i.test(kind)) cat = 'carDanger';
+      else if (/hoop|ballBasket|fenceChain|courtFlood/i.test(kind)) cat = 'court';
+      else if (c.tier && c.tier.id >= 3) cat = 'propEaten';
+      else if (Math.random() < 0.05) cat = 'notice';
+      if (cat) this.voice.say(cat, { x: c.position.x, z: c.position.z });
+    };
+
     this.consume.onSwallow = (hole, c, gained, remote) => {
+      this._voiceFor(hole, c);
       if (this.net && !remote && hole.isPlayer) this.net.reportAte(c.id);
       if (c.tier.id >= 5 && this.hud) {
         this.hud.pushFeed(
@@ -335,9 +353,27 @@ export class Game {
     };
 
     // Browsers only allow audio after a gesture, so arm it on the first one.
+    /* NPC dialogue. Built here but SILENT until a gesture unlocks the audio
+       context, and fully functional as captions even if the voice pack was
+       never generated — which is the state anyone gets on a fresh clone, so it
+       is a first-class path rather than an error case. */
+    this.voice = new VoiceSystem({
+      rng: Math.random,
+      getListener: () => (this.player
+        ? { x: this.player.position.x, z: this.player.position.z, radius: this.player.radius }
+        : null),
+      onCaption: (c) => { if (this.hud && this.hud.showCaption) this.hud.showCaption(c); },
+      onCaptionClear: () => { if (this.hud && this.hud.clearCaptions) this.hud.clearCaptions(); },
+    });
+
     const armAudio = () => {
       audio.unlock();
       audio.startMusic();
+      // Route dialogue through the engine's own voice bus so the master, mute
+      // and ducking controls reach it too — a second independent output would
+      // ignore every one of them.
+      if (audio.ctx) this.voice.attachContext(audio.ctx, audio.voiceBus || null);
+      this.voice.load('audio/voice/manifest.json');
       window.removeEventListener('pointerdown', armAudio);
       window.removeEventListener('keydown', armAudio);
     };
@@ -1472,6 +1508,7 @@ export class Game {
       this._clampToIsland();
       if (this.net && this.player) this.net.update(this.player, t);
       this.effects.update(dt);
+      if (this.voice) this.voice.update(dt);
       return;
     }
 

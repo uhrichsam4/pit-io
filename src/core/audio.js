@@ -63,13 +63,55 @@
  *                         event audio nothing calls yet.
  *
  * Mix control: setVolume, setMuted/toggleMuted, setBalance (music↔sfx),
- * setMusicVolume, setSfxVolume, debugStats.
+ * setMusicVolume, setSfxVolume, setVoiceVolume, debugStats.
+ *
+ * ---------------------------------------------------------------------------
+ * POWER-UPS, EVENTS, POLICE, VOICES (the second half of the file)
+ *
+ * Three things were added to the graph for them, all of them additive:
+ *
+ *   bedDuck   sits under music + ambience ONLY. `duck(amount, seconds)` drives
+ *             it, which is how a warning, a match start or a spoken line pushes
+ *             the non-essential bed aside without also dipping the sfx that the
+ *             player is being warned ABOUT. (`evtDuck`, the old sidechain, still
+ *             ducks literally everything — that is what a tower collapsing wants
+ *             and it is deliberately a different node.) `dialogDuck` is the same
+ *             idea in series, driven CONTINUOUSLY by `duckLevel()` for callers
+ *             that compute their own envelope per frame.
+ *   voiceBus  NPC / dispatch dialogue, wired straight into the DC trap so it
+ *             bypasses both ducks. A voice line must not duck itself, and the
+ *             one thing a player has to be able to hear over a storm is words.
+ *   _loops    a Map of key → loop handle. Every continuous sound in the game
+ *             (vacuum wind, storm, rain, sirens) is keyed, so a second call for
+ *             the same key returns the SAME handle instead of stacking a second
+ *             voice, and `stopAllLoops()` can prove a finished match went quiet.
+ *             stopMusic(), matchStart(), matchEnd() and dispose() all call it.
+ *
+ * Every loop fades in and out, is bounded by a dead-man's stop time, and is
+ * registered in `_live` like everything else, so `debugStats().liveSources`
+ * still tells the truth.
  */
 
 import { MATCH, CAMERA } from '../config.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+
+/**
+ * A numeric argument arriving from another module, coerced or replaced.
+ *
+ * This is not defensive programming for its own sake. `clamp(NaN, 0, 1)` is
+ * NaN, and every WebAudio setter THROWS on a non-finite value — halfway through
+ * building a voice, after some nodes are connected and before their envelopes
+ * are written. Measured on the offline harness: a single `heatUp(NaN)` left an
+ * un-enveloped gain node at unity feeding the bus and pushed the render peak to
+ * 2.09, i.e. one bad number from a caller turned into full-scale distortion for
+ * everyone. A bad number has to degrade to the default, never to a throw.
+ */
+function num(v, d) {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : d;
+}
 
 /** Deterministic RNG so a match's music is reproducible (and testable). */
 function mulberry32(a) {
@@ -279,6 +321,75 @@ const SFX_TRIM = 2.7;
 // The bed sat only 2 dB under the swallows in the render, which buried both the
 // cascade tail and the collapse. It belongs well behind the action.
 const AMB_TRIM = 0.34;
+/**
+ * Voices are pre-normalised speech assets: peaks near full scale and a crest
+ * factor of maybe 12 dB. At the sfx trim a single line would be the loudest
+ * thing in the game by 8 dB. 0.62 puts a normalised line a shade ABOVE a
+ * swallow — dialogue has to win, just not by shouting — and keeps the bus's
+ * arithmetic peak (0.62 × voiceVol) inside the soft clipper's linear region.
+ */
+const VOICE_TRIM = 0.62;
+
+/**
+ * Backstop on the loop registry. The per-key rule already bounds the real count
+ * (3 power-ups + storm + rain + SIREN_CAP = 8 worst case); this only catches a
+ * caller that invents a fresh key every frame, which would otherwise add a
+ * permanent noise source per frame.
+ */
+const LOOP_CAP = 10;
+/** Concurrency cap from the mixing rules. Four wailing sirens is a headache. */
+const SIREN_CAP = 3;
+/**
+ * Dead-man's switch on every looping source. A loop that somehow escapes both
+ * stopAllLoops() and dispose() still stops itself after an hour instead of
+ * running for the life of the tab.
+ */
+const LOOP_MAX = 3600;
+/** Spoken lines on top of each other. The spec asks for 2–3; 3 is the cap. */
+const VOICE_CAP = 3;
+
+/**
+ * The handle every loop-shaped call returns when it declines to make a sound
+ * (not ready, muted, over a cap). Frozen and shared: callers store it, call
+ * `.stop()` on it later and must never crash, and they must never be able to
+ * mutate the shared instance into something that looks alive.
+ */
+const DEAD_LOOP = Object.freeze({
+  key: null,
+  active: false,
+  stop() { return this; },
+  move() { return this; },
+  setIntensity() { return this; },
+});
+
+/**
+ * kind → the sonic identity of a power-up. `root` is semitones above A2 (see
+ * `semi`), `wind` the centre of its loop bed, `sweep` which way its pickup
+ * gesture moves: Vacuum Boost inhales (down), Turbo Drain accelerates (up),
+ * Mass Surge swells (down, an octave lower and far slower).
+ */
+const POWERUP_VOICE = {
+  vacuum: { root: 22, arp: [0, 7, 12], sweep: -1, wind: 420, q: 3.2, sub: 46, rate: 0.6 },
+  turbo: { root: 29, arp: [0, 4, 7, 12], sweep: 1, wind: 2200, q: 1.0, sub: 74, rate: 1.5 },
+  mass: { root: 17, arp: [0, 5, 12], sweep: -1, wind: 210, q: 0.9, sub: 34, rate: 0.4 },
+  generic: { root: 24, arp: [0, 7, 12], sweep: 1, wind: 800, q: 1.4, sub: 55, rate: 0.9 },
+};
+
+/**
+ * Spec names → keys. The gameplay modules are written by other hands and will
+ * call this with whatever their config object holds ('Vacuum Boost', 'vacuum',
+ * 'VACUUM_BOOST'), and a wrong key here fails SILENTLY — it just plays the
+ * generic sound and nobody notices the boost lost its identity.
+ */
+const POWERUP_ALIAS = {
+  vacuum: 'vacuum', vacuumboost: 'vacuum', biggersuck: 'vacuum', suck: 'vacuum',
+  turbo: 'turbo', turbodrain: 'turbo', speed: 'turbo', speedboost: 'turbo',
+  mass: 'mass', masssurge: 'mass', growth: 'mass', growthburst: 'mass', grow: 'mass',
+};
+function powerupKey(kind) {
+  if (!kind) return 'generic';
+  return POWERUP_ALIAS[String(kind).toLowerCase().replace(/[^a-z]/g, '')] || 'generic';
+}
 
 /**
  * Section table. `at` is seconds elapsed in the match. The last 30 s is FRENZY
@@ -298,6 +409,10 @@ export class Audio {
     this._muted = false;
     this._musicVol = 0.50;
     this._sfxVol = 1.0;
+    // Dialogue defaults to full: it is the one bus a player turns DOWN, never
+    // up, and the trim below it already sets its place in the mix.
+    this._voiceVol = 1.0;
+    this._voicesMuted = false;
 
     // Seeded, not Math.random: it makes the whole synth reproducible, which is
     // the only way an offline render can be compared against another one and
@@ -330,8 +445,20 @@ export class Audio {
     this._musicTimer = null;
     this._explicitMatchState = false;
 
+    /* continuous sounds, by key. See _startLoop for why this is a registry. */
+    this._loops = new Map();
+    /* the running bed duck, tracked here and not read back off the param. */
+    this._duckTarget = 1;
+    this._duckUntil = 0;
+    /* last-fired time per throttle key — the concurrency cap for one-shots. */
+    this._throttled = new Map();
+    /* spoken lines currently in flight, for the 3-at-once cap. */
+    this._voicesLive = [];
+
     this.stats = {
       created: 0, stopped: 0, stolen: 0, folded: 0, peakVoices: 0, notes: 0,
+      loopsStarted: 0, loopsStopped: 0, loopsDropped: 0,
+      voicesPlayed: 0, voicesDropped: 0, throttled: 0,
     };
   }
 
@@ -418,6 +545,28 @@ export class Audio {
     this.evtDuck.gain.value = 1;
     this.evtDuck.connect(this.dcTrap);
 
+    // Bed sidechain — music + ambience only, and NOT the sfx bus. `duck()`
+    // drives this one. The distinction is the whole reason it is a separate
+    // node: when a storm warning fires, or an NPC shouts, the thing that must
+    // get out of the way is the bed, while the sfx the player is being warned
+    // about have to stay exactly as loud as they were. Ducking through evtDuck
+    // instead would have quietened the warning along with everything else.
+    this.bedDuck = ctx.createGain();
+    this.bedDuck.gain.value = 1;
+
+    // A SECOND bed duck, in series, driven continuously instead of scheduled.
+    // src/audio/voice.js deliberately does not reach into this graph: it
+    // publishes `voice.duckAmount` as a plain 0..1 getter and expects the
+    // integrator to apply it every frame. That cannot share a param with
+    // `duck()`, whose hold-and-release schedule would be cancelled and rebuilt
+    // sixty times a second. Two nodes in series multiply, which is the correct
+    // composition for two independent duck sources anyway: a voice line during
+    // a storm warning ducks the bed by both, not by the louder of the two.
+    this.dialogDuck = ctx.createGain();
+    this.dialogDuck.gain.value = 1;
+    this.bedDuck.connect(this.dialogDuck);
+    this.dialogDuck.connect(this.evtDuck);
+
     /* --- sfx ----------------------------------------------------------- */
     // Glue, not limiting: it pulls a lone traffic cone up toward the music and
     // holds a block-wide collapse together. This one WANTS its makeup gain.
@@ -446,10 +595,29 @@ export class Audio {
     this.verb.connect(this.fxReturn);
     this.fxReturn.connect(this.evtDuck);
 
+    /* --- voices --------------------------------------------------------- */
+    // Straight into the DC trap: past bedDuck AND past evtDuck. A spoken line
+    // is the one thing in the mix that must not be ducked, least of all by the
+    // duck it triggers itself. Its reverb send is a different matter — that
+    // returns through evtDuck on purpose, so a collapse pulls the ROOM out from
+    // under a line while leaving the words at full level. That is how dialogue
+    // stays intelligible in a busy frame without being mixed louder.
+    this.voiceGlue = ctx.createDynamicsCompressor();
+    this.voiceGlue.threshold.value = -18;
+    this.voiceGlue.knee.value = 16;
+    this.voiceGlue.ratio.value = 3.0;
+    this.voiceGlue.attack.value = 0.004;
+    this.voiceGlue.release.value = 0.20;
+    this.voiceGlue.connect(this.dcTrap);
+
+    this.voiceBus = ctx.createGain();
+    this.voiceBus.gain.value = this._voicesMuted ? 0 : this._voiceVol * VOICE_TRIM;
+    this.voiceBus.connect(this.voiceGlue);
+
     /* --- ambience ------------------------------------------------------ */
     this.ambBus = ctx.createGain();
     this.ambBus.gain.value = this._sfxVol * AMB_TRIM;
-    this.ambBus.connect(this.evtDuck);
+    this.ambBus.connect(this.bedDuck);
 
     /* --- music --------------------------------------------------------- */
     this.musicOut = ctx.createGain();
@@ -471,7 +639,7 @@ export class Audio {
     this.musicGlue.release.value = 0.16;
     this.musicOut.connect(this.musicHP);
     this.musicHP.connect(this.musicGlue);
-    this.musicGlue.connect(this.evtDuck);
+    this.musicGlue.connect(this.bedDuck);
 
     this.musicDuck = ctx.createGain();   // per-kick pump (drums bypass it)
     this.musicDuck.gain.value = 1;
@@ -598,6 +766,103 @@ export class Audio {
     return this;
   }
 
+  /**
+   * Dialogue level. A separate bus from sfx because the settings screen ships a
+   * separate slider for it (spec §4) and because players who keep the game on
+   * in the background turn speech down long before they turn effects down.
+   */
+  setVoiceVolume(v) {
+    this._voiceVol = clamp(num(v, 1), 0, 1.5);
+    if (this.voiceBus) {
+      const p = this.voiceBus.gain;
+      // Same trap setMusicVolume documents: `duck()` and playVoice() both ramp
+      // params, and a live ramp elsewhere must not resurrect an old level.
+      p.cancelScheduledValues(this._now());
+      p.value = this._voicesMuted ? 0 : this._voiceVol * VOICE_TRIM;
+    }
+    return this;
+  }
+  getVoiceVolume() { return this._voiceVol; }
+
+  /** "Mute voices" is its own toggle in the spec, distinct from a 0 slider. */
+  setVoicesMuted(m) {
+    this._voicesMuted = !!m;
+    if (this.voiceBus) {
+      this.voiceBus.gain.value = this._voicesMuted ? 0 : this._voiceVol * VOICE_TRIM;
+    }
+    // Silencing the bus would leave lines "playing" against the concurrency
+    // cap, so muting also drops anything already in flight.
+    if (this._voicesMuted) this.stopVoices();
+    return this;
+  }
+  isVoicesMuted() { return this._voicesMuted; }
+
+  /**
+   * Push the non-essential bed (music + world ambience) out of the way.
+   * The voice system drives this for every line; warnings, stings and the match
+   * start use it too. sfx are deliberately untouched — see `bedDuck`.
+   *
+   * @param {number} amount 0..1, how far down (0.35 ≈ -3.7 dB)
+   * @param {number} seconds how long to hold before releasing
+   */
+  duck(amount = 0.35, seconds = 0.8) {
+    if (!this.ready || !this.bedDuck) return this;
+    const p = this.bedDuck.gain;
+    const now = this._now();
+    const hold = Math.max(0.05, num(seconds, 0.8));
+    const want = clamp(1 - num(amount, 0.35), 0.08, 1);
+
+    // Overlapping ducks take the DEEPER target and the LATER release, and both
+    // are tracked HERE rather than read back off the param.
+    //
+    // Reading `p.value` looks like the obvious way to find the running duck,
+    // and it is wrong: an AudioParam does not move until the graph runs, so two
+    // ducks fired in the same frame — a warning and its sting, thunder plus the
+    // voice line reacting to it — both see 1.0. Measured on the offline
+    // harness: duck(0.6) immediately followed by duck(0.1) left the bed at 93%
+    // instead of 40%, because the shallow one cancelled the deep one's schedule
+    // and then "restored" a level that had never dropped.
+    const pending = this._duckUntil > now ? this._duckTarget : 1;
+    const target = Math.min(want, pending);
+    const until = Math.max(this._duckUntil, now + hold);
+    this._duckTarget = target;
+    this._duckUntil = until;
+
+    // The anchor still comes from the param: mid-release it is the only honest
+    // answer, and the same-frame case it gets wrong (1.0) is also the case
+    // where the previous ramp has not audibly started.
+    const cur = clamp(p.value === undefined ? 1 : p.value, 0.05, 1);
+    p.cancelScheduledValues(now);
+    p.setValueAtTime(cur, now);
+    p.linearRampToValueAtTime(target, now + 0.05);
+    p.setValueAtTime(target, until);
+    // Slow release. A fast one is audible as the bed "coming back", which reads
+    // as a mistake; 0.45 s puts it under the threshold of notice.
+    p.linearRampToValueAtTime(1, until + 0.45);
+    return this;
+  }
+
+  /**
+   * The continuous form of the same idea, safe to call every frame.
+   *
+   * `src/audio/voice.js` computes its own duck envelope and publishes it as
+   * `voice.duckAmount` (0..1) rather than touching this graph, so the wiring is
+   * literally `audio.duckLevel(voice.duckAmount)` in the frame loop. It rides a
+   * separate node from `duck()` for the reason documented on `dialogDuck`, and
+   * it reuses `_set`, which drops writes that would not change anything —
+   * without that, a duck of zero would still schedule an automation event per
+   * frame for the entire match.
+   *
+   * If you drive this, pass `duck: 0` to `playVoice()` so a line is not ducked
+   * for twice.
+   */
+  duckLevel(amount) {
+    if (!this.ready || !this.dialogDuck) return this;
+    const target = clamp(1 - clamp(num(amount, 0), 0, 1), 0.08, 1);
+    this._set(this.dialogDuck.gain, target, this._now(), 0.05);
+    return this;
+  }
+
   /* ------------------------------------------------------ node helpers -- */
 
   _now() { return this.ctx.currentTime; }
@@ -693,6 +958,42 @@ export class Audio {
   }
 
   /**
+   * Where a world point sits relative to the listener: {pan, att, wet, dist}.
+   *
+   * Extracted from `_pan` because the long-lived positional chains (a patrol
+   * car's siren, which moves for twenty seconds) cannot use the pooled one —
+   * the pool would recycle the chain out from under them — and two copies of
+   * the camera-yaw maths is exactly how a stereo image ends up mirrored in one
+   * of them and nobody notices for a month.
+   */
+  _placement(x, z, spread = 1) {
+    // Only place a sound in the world once someone has told us where the
+    // listener is. Otherwise an object at (110, 230) would be measured against
+    // a listener still sitting at the origin and attenuated into silence —
+    // which is precisely what would happen the first time a caller starts
+    // passing Consumables without also passing the hole position.
+    // A non-finite coordinate is treated as "no position", not as an error.
+    // game.js's own _validateSpawn rejects NaN positions, which is evidence
+    // they occur; here one would propagate through the pan maths into
+    // setValueAtTime and throw mid-voice, leaving a half-built graph running.
+    if (!this._hasListener || !Number.isFinite(x) || !Number.isFinite(z)) {
+      return { pan: 0, att: 1, wet: 0.7, dist: 0 };
+    }
+    const dx = x - this._lx, dz = z - this._lz;
+    const d = Math.hypot(dx, dz);
+    // Frame half-width at the ground, from the follow camera's own rule.
+    const half = Math.max(14, (CAMERA.DIST_BASE + this._lr * CAMERA.DIST_PER_R) * 0.5);
+    // Screen-right in world XZ for the fixed camera yaw (see engine.js).
+    const yaw = CAMERA.YAW * Math.PI / 180;
+    return {
+      pan: clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) / half, -1, 1) * 0.75 * spread,
+      att: clamp(1.15 - d / (half * 2.6), 0.05, 1),
+      wet: clamp(0.25 + d / (half * 1.6), 0.2, 1.1),
+      dist: d,
+    };
+  }
+
+  /**
    * Pooled {distance gain → stereo pan → sfxBus} chain, plus a reverb send that
    * grows with distance. Voices connect into `ch.g` and forget about it.
    */
@@ -716,27 +1017,11 @@ export class Audio {
     ch.freeAt = until + 0.08;
     this._panBusy.push(ch);
 
-    let att = 1, pan = 0, wet = 0.7;
-    // Only place a sound in the world once someone has told us where the
-    // listener is. Otherwise an object at (110, 230) would be measured against
-    // a listener still sitting at the origin and attenuated into silence —
-    // which is precisely what would happen the first time a caller starts
-    // passing Consumables without also passing the hole position.
-    if (this._hasListener && x !== undefined && x !== null) {
-      const dx = x - this._lx, dz = z - this._lz;
-      const d = Math.hypot(dx, dz);
-      // Frame half-width at the ground, from the follow camera's own rule.
-      const half = Math.max(14, (CAMERA.DIST_BASE + this._lr * CAMERA.DIST_PER_R) * 0.5);
-      // Screen-right in world XZ for the fixed camera yaw (see engine.js).
-      const yaw = CAMERA.YAW * Math.PI / 180;
-      pan = clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) / half, -1, 1) * 0.75 * spread;
-      att = clamp(1.15 - d / (half * 2.6), 0.05, 1);
-      wet = clamp(0.25 + d / (half * 1.6), 0.2, 1.1);
-    }
+    const pl = this._placement(x, z, spread);
     const t = this._now();
-    ch.g.gain.setValueAtTime(att, t);
-    ch.send.gain.setValueAtTime(wet * 0.35, t);
-    if (ch.p) ch.p.pan.setValueAtTime(pan, t);
+    ch.g.gain.setValueAtTime(pl.att, t);
+    ch.send.gain.setValueAtTime(pl.wet * 0.35, t);
+    if (ch.p) ch.p.pan.setValueAtTime(pl.pan, t);
     return ch.g;
   }
 
@@ -1306,9 +1591,20 @@ export class Audio {
     return this;
   }
 
-  /** Generic UI blip. kind: 'click' | 'hover' | 'back'. */
+  /**
+   * Generic UI blip.
+   * kind: 'click' | 'hover' | 'back'  — the original three, byte-identical.
+   *       'menuOpen' | 'menuClose' | 'confirm' | 'error'  — added for the
+   *       screens the meta layer grew. They branch out below rather than being
+   *       folded into the one-oscillator path, because a two-layer sound cannot
+   *       be expressed as "the click but at another pitch" and pretending it
+   *       can is how every UI ends up sounding like the same beep.
+   */
   ui(kind = 'click') {
     if (!this.ready || !this.enabled) return this;
+    if (kind === 'menuOpen' || kind === 'menuClose' || kind === 'confirm' || kind === 'error') {
+      return this._uiRich(kind);
+    }
     const ctx = this.ctx;
     const t0 = this._now() + 0.004;
     const out = this._pan(null, null, t0 + 0.35);
@@ -1349,6 +1645,25 @@ export class Audio {
     b.connect(bg); bg.connect(out);
     this._src(b, t0 + 0.55, t0 + 1.05);
 
+    // Belt and braces on the restart rule: whatever the previous round left
+    // running is gone before this one makes a sound. Fast fade — a storm from
+    // the last match audibly dying over the new match's downbeat would be a
+    // worse bug than the one it is fixing.
+    this.stopAllLoops(0.08);
+    this.stopVoices();
+    // The bed duck is a hold-and-release schedule; a match that started while
+    // one was pending would begin with the music quietly climbing back up.
+    // dialogDuck is reset too: it is driven from outside, and if the previous
+    // round ended mid-line nothing would ever push it back to unity.
+    for (const n of [this.bedDuck, this.dialogDuck]) {
+      if (!n) continue;
+      const p = n.gain;
+      p.cancelScheduledValues(t0);
+      p.setValueAtTime(1, t0);
+    }
+    this._duckTarget = 1;
+    this._duckUntil = 0;
+
     this._explicitMatchState = true;
     this._newMatch(this._now());
     return this;
@@ -1388,6 +1703,12 @@ export class Audio {
       this._src(det, t0, t0 + 3.1);
     }
     this._crash(t0, 0.5, out);
+    // The round is over: every bed goes with it, slowly enough to feel like a
+    // resolution rather than a cut. (stopMusic() does this too — matchEnd is
+    // not currently called by game.js, and whichever one the orchestrator wires
+    // up, the guarantee has to hold.)
+    this.stopAllLoops(1.2);
+    this.stopVoices();
     return this;
   }
 
@@ -1621,6 +1942,13 @@ export class Audio {
   stopMusic() {
     if (this._musicTimer) { clearInterval(this._musicTimer); this._musicTimer = null; }
     this._mus = null;
+    // game.js calls stopMusic() and nothing else when the match reaches
+    // RESULTS, so this is the one call site that is guaranteed to run at the
+    // end of every round. A siren or a storm bed surviving into the results
+    // screen is the exact failure the spec's checklist tests for, so the loops
+    // go down here too — with a slow fade, because this is a graceful ending.
+    this.stopAllLoops(0.6);
+    this.stopVoices();
     return this;
   }
 
@@ -2030,6 +2358,1128 @@ export class Audio {
     this._src(o, t, t + dur + 0.05);
   }
 
+  /* ======================================= gesture + loop primitives ==== */
+
+  /**
+   * One filtered-noise gesture — the workhorse behind every whoosh, swell,
+   * wind fall and rush in the section below. Three nodes, one call, which is
+   * what keeps twenty new effects from turning into two thousand lines.
+   *
+   * @returns {number} when it finishes, so gestures can be chained.
+   */
+  _swoosh(t0, dest, { f0, f1, dur, peak, q = 1.2, type = 'bandpass', attack, rate = 1 }) {
+    const ctx = this.ctx;
+    const src = this._noiseSrc(t0, t0 + dur + 0.08, rate);
+    const f = ctx.createBiquadFilter();
+    f.type = type;
+    f.Q.value = q;
+    f.frequency.setValueAtTime(this._hz(f0), t0);
+    f.frequency.exponentialRampToValueAtTime(this._hz(f1), t0 + dur);
+    const g = ctx.createGain();
+    // Default attack is a quarter of the gesture and never under 8 ms. The
+    // mixing rules forbid jump scares, and a 1 ms attack on a wideband noise
+    // burst IS a jump scare no matter how quiet you make it.
+    this._hit(g, t0, peak, attack === undefined ? Math.min(0.09, dur * 0.25) : attack, dur);
+    src.connect(f); f.connect(g); g.connect(dest);
+    return t0 + dur;
+  }
+
+  /** One decaying pitched tone, optionally gliding to `f1`. */
+  _tone(t0, dest, { f0, f1, dur, peak, type = 'triangle', attack = 0.004, detune = 0 }) {
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.detune.value = detune;
+    o.frequency.setValueAtTime(this._hz(f0), t0);
+    if (f1 !== undefined) o.frequency.exponentialRampToValueAtTime(this._hz(f1), t0 + dur);
+    const g = this.ctx.createGain();
+    this._hit(g, t0, peak, attack, dur);
+    o.connect(g); g.connect(dest);
+    this._src(o, t0, t0 + dur + 0.06);
+    return o;
+  }
+
+  /** A modulator wired into an AudioParam, registered so it dies with the loop. */
+  _lfo(t0, hz, depth, target, type = 'sine') {
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.frequency.value = hz;
+    const g = this.ctx.createGain();
+    g.gain.value = depth;
+    o.connect(g); g.connect(target);
+    this._src(o, t0, t0 + LOOP_MAX);
+    return o;
+  }
+
+  /**
+   * Minimum interval per effect key. This is the "strict concurrency cap" the
+   * mixing rules ask for, applied to the effects that a physics or AI system
+   * can fire dozens of times a second: three cars sliding is texture, thirty is
+   * white noise, and the thirty cost thirty times the nodes to sound worse.
+   *
+   * @returns {boolean} true when the caller may play.
+   */
+  _throttle(key, gap) {
+    const now = this._now();
+    const last = this._throttled.get(key);
+    if (last !== undefined && now - last < gap) { this.stats.throttled++; return false; }
+    this._throttled.set(key, now);
+    return true;
+  }
+
+  /**
+   * Start a keyed loop — or hand back the one already running under that key.
+   *
+   * Idempotence is the entire point. `powerupLoop('vacuum')` is called from a
+   * state machine that can re-enter (a second Vacuum Boost picked up while the
+   * first still ticks, a hot reload, a rejoin), and the spec is explicit that
+   * no loop may stack or survive a restart. One key, one voice; every handle
+   * lives in `this._loops`, so `stopAllLoops()` can prove the match ended
+   * silent instead of hoping it did.
+   *
+   * @param {string} key
+   * @param {(fade: GainNode, t0: number) => object} build must connect its
+   *   graph INTO `fade` and return
+   *   { sources[], nodes[], peak, attack, release, dest, chain }.
+   *   It must NOT connect `fade` itself — _startLoop owns that edge and the
+   *   envelope on it, which is what makes every loop stoppable the same way.
+   * @returns {{stop:Function, move:Function, setIntensity:Function, active:boolean}}
+   */
+  _startLoop(key, build) {
+    if (!this.ready || !this.enabled) return DEAD_LOOP;
+    const live = this._loops.get(key);
+    if (live && live.active) return live;
+    if (this._loops.size >= LOOP_CAP) { this.stats.loopsDropped++; return DEAD_LOOP; }
+
+    const ctx = this.ctx;
+    const t0 = this._now();
+    const fade = ctx.createGain();
+    fade.gain.setValueAtTime(0.0001, t0);
+
+    const spec = build(fade, t0) || {};
+    const peak = Math.max(0.0002, spec.peak === undefined ? 0.10 : spec.peak);
+    const attack = Math.max(0.02, spec.attack === undefined ? 0.40 : spec.attack);
+    const release = Math.max(0.03, spec.release === undefined ? 0.35 : spec.release);
+    fade.connect(spec.dest || this.ambBus);
+    // Every loop fades IN. A bed that arrives at full level is both the jump
+    // scare the mixing rules forbid and the single loudest tell that a sound
+    // is a loop rather than the world.
+    fade.gain.exponentialRampToValueAtTime(peak, t0 + attack);
+
+    const handle = {
+      key,
+      active: true,
+      /** 0..1.5 against the loop's own peak: storm strength, boost charge. */
+      setIntensity: (v) => {
+        if (!handle.active) return handle;
+        const t = this._now();
+        const p = fade.gain;
+        // Read, cancel, re-anchor. Letting a setTargetAtTime overlap the fade-in
+        // ramp leaves two automations fighting over the same window and the
+        // result differs between engines.
+        const at = Math.max(0.0001, p.value);
+        p.cancelScheduledValues(t);
+        p.setValueAtTime(at, t);
+        p.setTargetAtTime(Math.max(0.0002, peak * clamp(num(v, 1), 0, 1.5)), t, 0.25);
+        return handle;
+      },
+      /** Positional loops only (sirens); a no-op on the non-positional beds. */
+      move: (x, z) => { if (spec.chain) spec.chain.move(x, z); return handle; },
+      stop: (fadeOut) => {
+        if (!handle.active) return handle;
+        handle.active = false;
+        if (this._loops.get(key) === handle) this._loops.delete(key);
+        this.stats.loopsStopped++;
+        const t = this._now();
+        const f = Math.max(0.03, fadeOut === undefined ? release : fadeOut);
+        const p = fade.gain;
+        // Read the running value before cancelling: cancelScheduledValues drops
+        // the pending ramp but does not pin the param, so ramping to zero from
+        // an un-anchored value steps first and clicks.
+        const at = Math.max(0.0001, p.value);
+        p.cancelScheduledValues(t);
+        p.setValueAtTime(at, t);
+        p.exponentialRampToValueAtTime(0.0001, t + f);
+        const end = t + f + 0.05;
+        // Re-scheduling stop() on an already-scheduled source is legal and the
+        // last call wins — that is how the LOOP_MAX dead-man's switch set at
+        // start time gets pulled forward to "now, plus the release".
+        for (const s of spec.sources || []) {
+          try { s.stop(end); } catch (e) { /* already stopped */ }
+        }
+        // Disconnect only on a real-time context. setTimeout runs on WALL clock,
+        // and an OfflineAudioContext rendering 60 s in 300 ms would tear the
+        // graph down in the middle of the release it is still rendering.
+        if (!this._external && typeof setTimeout === 'function') {
+          setTimeout(() => {
+            for (const n of spec.nodes || []) { try { n.disconnect(); } catch (e) { /* noop */ } }
+            try { fade.disconnect(); } catch (e) { /* noop */ }
+          }, (f + 0.25) * 1000);
+        }
+        return handle;
+      },
+    };
+    this._loops.set(key, handle);
+    this.stats.loopsStarted++;
+    return handle;
+  }
+
+  /**
+   * A NON-pooled positional chain for sounds that outlive the pan pool's
+   * recycler: a patrol car's siren is audible for twenty seconds and moves the
+   * whole time, and `_pan` would hand its chain to a swallow after 80 ms.
+   */
+  _liveChain(x, z, spread = 1) {
+    const ctx = this.ctx;
+    const g = ctx.createGain();
+    const send = ctx.createGain();
+    let p = null;
+    if (ctx.createStereoPanner) {
+      p = ctx.createStereoPanner();
+      g.connect(p); p.connect(this.sfxBus);
+    } else {
+      g.connect(this.sfxBus);          // ancient Safari: mono, still audible
+    }
+    g.connect(send); send.connect(this.fxSend);
+    const chain = {
+      g, p, send,
+      nodes: p ? [g, p, send] : [g, send],
+      move: (nx, nz) => {
+        const pl = this._placement(nx, nz, spread);
+        const t = this._now();
+        // setTargetAtTime, not setValueAtTime: a car crossing the screen moves
+        // every frame, and a stepped pan/gain at 60 Hz is 60 clicks a second.
+        g.gain.setTargetAtTime(pl.att, t, 0.06);
+        send.gain.setTargetAtTime(pl.wet * 0.30, t, 0.12);
+        if (p) p.pan.setTargetAtTime(pl.pan, t, 0.06);
+      },
+    };
+    const pl0 = this._placement(x, z, spread);
+    g.gain.value = pl0.att;
+    send.gain.value = pl0.wet * 0.30;
+    if (p) p.pan.value = pl0.pan;
+    return chain;
+  }
+
+  /**
+   * Stop every continuous sound. Called from stopMusic(), matchStart(),
+   * matchEnd() and dispose(), because "no audio loops continue after match
+   * restart" is on the spec's test checklist and the only way to pass it
+   * reliably is to have exactly one place that knows what is running.
+   */
+  stopAllLoops(fade = 0.30) {
+    // Snapshot: every stop() deletes its own key, and mutating a Map while
+    // iterating it skips entries.
+    for (const h of Array.from(this._loops.values())) {
+      try { h.stop(fade); } catch (e) { /* a dead context must not throw */ }
+    }
+    this._loops.clear();
+    return this;
+  }
+
+  /** How many loops are live (diagnostics, and the police system's own cap). */
+  loopCount(prefix) {
+    if (!prefix) return this._loops.size;
+    let n = 0;
+    for (const k of this._loops.keys()) if (k.indexOf(prefix) === 0) n++;
+    return n;
+  }
+
+  /* ============================================================ voices === */
+
+  /**
+   * Play a pre-generated dialogue buffer on the voice bus.
+   *
+   * The voice assets themselves are produced offline and server-side (the key
+   * never reaches the client — spec §Security), so all this module does is own
+   * the playback policy: a hard cap of three lines at once, distance placement,
+   * and an automatic bed duck for the length of the line.
+   *
+   * @param {AudioBuffer} buffer decoded line
+   * @param {{x?:number, z?:number, gain?:number, duck?:number, rate?:number}} opts
+   * @returns {object} handle with .stop()
+   */
+  playVoice(buffer, opts = {}) {
+    if (!this.ready || !this.enabled || !buffer || this._voicesMuted) return DEAD_LOOP;
+    const now = this._now();
+    // Sweep first, or a cap that filled up once stays full forever.
+    for (let i = this._voicesLive.length - 1; i >= 0; i--) {
+      if (this._voicesLive[i].until <= now) this._voicesLive.splice(i, 1);
+    }
+    // Drop, never queue. A queued line arrives after the thing it is reacting
+    // to has left the screen, which is worse than not saying it at all.
+    if (this._voicesLive.length >= VOICE_CAP) { this.stats.voicesDropped++; return DEAD_LOOP; }
+
+    const ctx = this.ctx;
+    const rate = clamp(num(opts.rate, 1), 0.5, 2);
+    const dur = buffer.duration / rate;
+    const out = this.voiceChain(opts.x, opts.z, now + dur + 0.15);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    const level = clamp(num(opts.gain, 1), 0, 1.4);
+    // 8 ms in / 25 ms out. Speech assets are trimmed to the waveform and a hard
+    // start on a voiced consonant clicks; this is short enough not to eat the
+    // transient that makes a line intelligible.
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.linearRampToValueAtTime(level, now + 0.008);
+    g.gain.setValueAtTime(level, now + Math.max(0.05, dur - 0.025));
+    g.gain.linearRampToValueAtTime(0.0001, now + dur);
+    src.connect(g); g.connect(out);
+    this._src(src, now, now + dur + 0.05);
+
+    const rec = { until: now + dur, src };
+    this._voicesLive.push(rec);
+    this.stats.voicesPlayed++;
+    // Key lines duck the bed. Shallow by default: dialogue in this game is
+    // colour, and a half-second -6 dB hole in the music for every "nope nope
+    // nope" would be far more distracting than the line itself.
+    this.duck(num(opts.duck, 0.24), dur);
+
+    return {
+      key: 'voice',
+      active: true,
+      stop: () => {
+        const t = this._now();
+        g.gain.cancelScheduledValues(t);
+        g.gain.setValueAtTime(Math.max(0.0001, g.gain.value), t);
+        g.gain.linearRampToValueAtTime(0.0001, t + 0.05);
+        try { src.stop(t + 0.06); } catch (e) { /* already done */ }
+        rec.until = 0;
+        return this;
+      },
+      move: () => this,
+      setIntensity: () => this,
+    };
+  }
+
+  /**
+   * A positional route into the voice bus, for a caller that wants to build its
+   * own dialogue voice (a synthesised placeholder line, a radio-filtered
+   * dispatch read) instead of handing over a buffer.
+   *
+   * Note this is a fresh chain per call rather than the pooled one: voice
+   * chains are rare (three at once, by policy) and pooling them would put
+   * dialogue and sfx on the same recycled node.
+   */
+  voiceChain(x, z, until, spread = 0.7) {
+    const ctx = this.ctx;
+    const chain = this._liveChain(x, z, spread);
+    // Re-point it at the voice bus. _liveChain wires to sfxBus by default,
+    // which is right for sirens and wrong for words.
+    try { chain.g.disconnect(); } catch (e) { /* fresh node */ }
+    if (chain.p) { chain.g.connect(chain.p); try { chain.p.disconnect(); } catch (e) { /* noop */ } chain.p.connect(this.voiceBus); }
+    else chain.g.connect(this.voiceBus);
+    chain.g.connect(chain.send);
+    // Dialogue gets a fraction of the room everything else gets. A reverberant
+    // voice is an unintelligible voice, and these lines are one second long.
+    chain.send.gain.value = chain.send.gain.value * 0.35;
+    if (!this._external && typeof setTimeout === 'function' && until !== undefined) {
+      const ms = Math.max(200, (until - this._now() + 0.4) * 1000);
+      setTimeout(() => { for (const n of chain.nodes) { try { n.disconnect(); } catch (e) { /* noop */ } } }, ms);
+    }
+    return chain.g;
+  }
+
+  /** Cut every line in flight (mute, match end, teleport). */
+  stopVoices() {
+    const t = this.ready ? this._now() : 0;
+    for (const v of this._voicesLive) {
+      try { v.src.stop(t + 0.04); } catch (e) { /* already stopped */ }
+    }
+    this._voicesLive.length = 0;
+    return this;
+  }
+
+  /* ========================================================= power-ups === */
+
+  /**
+   * A pickup materialising in the world. Positional and quiet on purpose: this
+   * fires for every spawn on the map, most of them off screen, so distance
+   * attenuation is doing most of the work of deciding whether you hear it.
+   */
+  powerupSpawn(x, z) {
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(x, z, t0 + 1.0);
+    // Two soft bells a fifth apart, the second doubled an octave up: the
+    // "something appeared" gesture, borrowed from every collectible ever, and
+    // deliberately NOT the same interval as levelUp's fanfare.
+    const root = semi(31);
+    [[0, 0.0, 0.045], [7, 0.075, 0.038], [19, 0.075, 0.016]].forEach(([s, d, amp]) => {
+      this._tone(t0 + d, out, {
+        f0: root * Math.pow(2, s / 12), dur: 0.42 - d, peak: amp, type: 'sine', attack: 0.006,
+      });
+    });
+    // A breath of shimmer underneath so it reads as an object arriving rather
+    // than as a UI beep that happens to be panned.
+    this._swoosh(t0, out, { f0: 1800, f1: 5200, dur: 0.34, peak: 0.030, q: 2.4 });
+    return this;
+  }
+
+  /**
+   * Collected. Per-kind identity: Vacuum Boost inhales, Turbo Drain launches,
+   * Mass Surge swells. Same three layers each time (gesture, arpeggio, body)
+   * so they are recognisably siblings rather than three unrelated sounds.
+   */
+  powerupPickup(kind) {
+    if (!this.ready || !this.enabled) return this;
+    const v = POWERUP_VOICE[powerupKey(kind)];
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 1.4);
+    const root = semi(v.root);
+
+    // 1. the gesture — down for a suction power-up, up for a speed one.
+    if (v.sweep < 0) {
+      this._swoosh(t0, out, { f0: 5000, f1: 240, dur: 0.36, peak: 0.115, q: 1.5, rate: 0.9 });
+    } else {
+      this._swoosh(t0, out, { f0: 300, f1: 6200, dur: 0.30, peak: 0.105, q: 1.7, rate: 1.2 });
+    }
+
+    // 2. the arpeggio — the part a player will hum back at you.
+    v.arp.forEach((s, i) => {
+      const t = t0 + 0.16 + i * 0.055;
+      const f = root * Math.pow(2, s / 12);
+      this._tone(t, out, { f0: f, dur: 0.34 + i * 0.05, peak: 0.075, type: 'triangle' });
+      this._tone(t, out, { f0: f * 2, dur: 0.22, peak: 0.026, type: 'square' });
+    });
+
+    // 3. the body. Without it the pickup is all treble and lands nowhere.
+    this._tone(t0 + 0.14, out, {
+      f0: v.sub * 2.6, f1: v.sub, dur: 0.34, peak: 0.17, type: 'sine', attack: 0.005,
+    });
+    // Bed only: the pickup should stand out from the music, not from the world.
+    this.duck(0.30, 0.55);
+    return this;
+  }
+
+  /**
+   * The continuous body of an active power-up. Idempotent by kind — picking up
+   * a second Vacuum Boost extends the timer in the gameplay layer and changes
+   * nothing here, which is exactly what "no loop may stack" means.
+   *
+   * @returns {object} handle: .stop([fade]) .setIntensity(0..1.5) .active
+   */
+  powerupLoop(kind) {
+    const key = powerupKey(kind);
+    const v = POWERUP_VOICE[key];
+    return this._startLoop(`powerup:${key}`, (fade, t0) => {
+      const ctx = this.ctx;
+      const sources = [], nodes = [];
+
+      // The swirl: a resonant band walking around the centre frequency. Two
+      // modulators at incommensurate rates, because one LFO at 0.4 Hz is a
+      // recognisable period and a player hears it as a fault within ten
+      // seconds. 0.37 and 0.113 do not line up for over four minutes.
+      const src = this._noiseSrc(t0, t0 + LOOP_MAX, v.rate);
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = this._hz(v.wind);
+      f.Q.value = v.q;
+      sources.push(src, this._lfo(t0, 0.37, v.wind * 0.34, f.frequency));
+      sources.push(this._lfo(t0, 0.113, v.wind * 0.16, f.frequency, 'triangle'));
+      src.connect(f); f.connect(fade);
+      nodes.push(f);
+
+      // A body tone so the bed has weight and not just hiss. Amplitude-
+      // modulated rather than static: a held sine reads as a fault tone.
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = this._hz(v.sub);
+      const og = ctx.createGain();
+      og.gain.value = 0.34;
+      sources.push(o, this._lfo(t0, key === 'mass' ? 0.9 : 0.23, 0.16, og.gain));
+      o.connect(og); og.connect(fade);
+      this._src(o, t0, t0 + LOOP_MAX);
+      nodes.push(og);
+
+      return {
+        // 30 s of continuous sound. Anything that reads as "loud enough" in a
+        // two-second audition is fatiguing by second twenty, so this sits under
+        // the ambience bed and is meant to be noticed by its absence.
+        peak: key === 'turbo' ? 0.075 : 0.105,
+        attack: 0.35, release: 0.45,
+        dest: this.ambBus, sources, nodes,
+      };
+    });
+  }
+
+  /**
+   * Power-down. Also stops the matching loop — the two are one event as far as
+   * the gameplay layer is concerned, and making the caller remember both is how
+   * a wind bed ends up outliving its boost.
+   */
+  powerupEnd(kind) {
+    const key = powerupKey(kind);
+    const live = this._loops.get(`powerup:${key}`);
+    if (live) live.stop(0.35);
+    if (!this.ready || !this.enabled) return this;
+    const v = POWERUP_VOICE[key];
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 1.0);
+    const root = semi(v.root);
+
+    // Spin-down: pitch and brightness falling together, which is what "the
+    // machine switched off" sounds like in every language.
+    this._tone(t0, out, {
+      f0: root, f1: root * 0.42, dur: 0.5, peak: 0.075, type: 'triangle', attack: 0.008,
+    });
+    this._tone(t0, out, {
+      f0: root * 1.5, f1: root * 0.63, dur: 0.42, peak: 0.030, type: 'sine', attack: 0.01,
+    });
+    this._swoosh(t0, out, { f0: 2600, f1: 340, dur: 0.45, peak: 0.055, q: 1.1 });
+    // A soft closing thud, so the end is an event and not just a fade.
+    this._tone(t0 + 0.34, out, { f0: 96, f1: 44, dur: 0.22, peak: 0.09, type: 'sine' });
+    return this;
+  }
+
+  /* ============================================================ events === */
+
+  /**
+   * "Something is about to happen." Deliberately a public-address chime rather
+   * than an alarm: it fires before every event and an alarm three times a match
+   * trains players to dread the sound instead of reading it.
+   */
+  eventWarning() {
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.005;
+    const out = this._pan(null, null, t0 + 1.8);
+    // Rising perfect fourth, 40 ms attack. The slow attack is the difference
+    // between "attention please" and a car alarm.
+    [[0, 0.0], [5, 0.20]].forEach(([s, d]) => {
+      const f = semi(29) * Math.pow(2, s / 12);
+      this._tone(t0 + d, out, { f0: f, dur: 0.55, peak: 0.085, type: 'sine', attack: 0.04 });
+      this._tone(t0 + d, out, { f0: f * 2, dur: 0.35, peak: 0.028, type: 'triangle', attack: 0.05 });
+      this._tone(t0 + d, out, { f0: f * 0.5, dur: 0.6, peak: 0.045, type: 'sine', attack: 0.05 });
+    });
+    // Long duck: the point of a warning is that you hear what comes after it.
+    this.duck(0.40, 1.5);
+    return this;
+  }
+
+  /**
+   * "It is happening NOW" — the banner sting. Bolder than the warning and
+   * harmonically unresolved, so it pulls forward instead of closing.
+   * @param {string} [kind] optional event id; only shifts the root, so two
+   *   different events are distinguishable without needing two sounds.
+   */
+  eventSting(kind) {
+    if (!this.ready || !this.enabled) return this;
+    const ctx = this.ctx;
+    const t0 = this._now() + 0.005;
+    const out = this._pan(null, null, t0 + 2.2);
+    // Deterministic per-name offset: same event, same note, every match.
+    let h = 0;
+    if (kind) for (let i = 0; i < String(kind).length; i++) h = (h * 31 + String(kind).charCodeAt(i)) | 0;
+    const root = semi(12 + (Math.abs(h) % 5));
+
+    // Short riser into the hit — 0.28 s, just enough to make the stab land.
+    this._swoosh(t0, out, { f0: 400, f1: 4800, dur: 0.28, peak: 0.075, q: 2.6, attack: 0.2 });
+
+    const hit = t0 + 0.28;
+    for (const s of [0, 7, 12, 15]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = this._hz(root * Math.pow(2, s / 12));
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.Q.value = 2.5;
+      lp.frequency.setValueAtTime(this._hz(4200), hit);
+      lp.frequency.exponentialRampToValueAtTime(this._hz(600), hit + 0.7);
+      const g = ctx.createGain();
+      this._hit(g, hit, 0.055, 0.004, 0.75);
+      o.connect(lp); lp.connect(g); g.connect(out);
+      this._src(o, hit, hit + 0.85);
+    }
+    this._tone(hit, out, { f0: 120, f1: 42, dur: 0.5, peak: 0.19, type: 'sine' });
+    this._crash(hit, 0.32, out);
+    this.duck(0.45, 1.1);
+    return this;
+  }
+
+  /** The storm rolling in: wind rising, one distant roll, sky closing over. */
+  stormStart() {
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.005;
+    const out = this._pan(null, null, t0 + 3.4);
+    // Wind arriving over two seconds. Slow: weather does not have a transient.
+    this._swoosh(t0, out, { f0: 240, f1: 900, dur: 1.9, peak: 0.10, q: 1.3, attack: 1.5, rate: 0.5 });
+    // A pressure drop under it — the cinematic part, one octave in two seconds.
+    this._tone(t0, out, { f0: 132, f1: 46, dur: 1.8, peak: 0.10, type: 'sine', attack: 0.5 });
+    this.thunder(0.85);
+    this.duck(0.40, 2.2);
+    return this;
+  }
+
+  /**
+   * The storm bed: gusting wind plus a low pressure rumble.
+   * Idempotent; `.setIntensity(0..1.5)` follows the event's own intensity curve
+   * so the storm can build and abate without restarting anything.
+   */
+  stormLoop() {
+    return this._startLoop('storm', (fade, t0) => {
+      const ctx = this.ctx;
+      const sources = [], nodes = [];
+
+      // Gusts. The rate pair (0.07 / 0.113 Hz) is chosen to be mutually
+      // irrational-ish: their beat period is over four minutes, longer than a
+      // Classic match, so the wind never audibly repeats within one round.
+      const wn = this._noiseSrc(t0, t0 + LOOP_MAX, 0.45);
+      const wf = ctx.createBiquadFilter();
+      wf.type = 'bandpass';
+      wf.frequency.value = this._hz(320);
+      wf.Q.value = 1.5;
+      sources.push(wn);
+      sources.push(this._lfo(t0, 0.07, 190, wf.frequency, 'triangle'));
+      sources.push(this._lfo(t0, 0.113, 95, wf.frequency));
+      // Gust amplitude, not just gust colour: real wind changes level, and
+      // level is what a player actually perceives as weather.
+      const wg = ctx.createGain();
+      wg.gain.value = 0.62;
+      sources.push(this._lfo(t0, 0.09, 0.36, wg.gain, 'triangle'));
+      wn.connect(wf); wf.connect(wg); wg.connect(fade);
+      nodes.push(wf, wg);
+
+      // Pressure: everything under 90 Hz, very quiet, felt more than heard.
+      const rn = this._noiseSrc(t0, t0 + LOOP_MAX, 0.3);
+      const rf = ctx.createBiquadFilter();
+      rf.type = 'lowpass';
+      rf.frequency.value = this._hz(90);
+      rf.Q.value = 0.8;
+      const rg = ctx.createGain();
+      rg.gain.value = 0.5;
+      sources.push(rn);
+      rn.connect(rf); rf.connect(rg); rg.connect(fade);
+      nodes.push(rf, rg);
+
+      // Storms arrive over seconds, not milliseconds.
+      return { peak: 0.155, attack: 2.0, release: 2.5, dest: this.ambBus, sources, nodes };
+    });
+  }
+
+  /** Storm over: wind falls away, one last far roll, both beds released. */
+  stormEnd() {
+    const storm = this._loops.get('storm');
+    if (storm) storm.stop(2.5);
+    const rain = this._loops.get('rain');
+    if (rain) rain.stop(3.0);
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.005;
+    const out = this._pan(null, null, t0 + 2.6);
+    this._swoosh(t0, out, { f0: 820, f1: 190, dur: 1.6, peak: 0.065, q: 1.2, attack: 0.35, rate: 0.5 });
+    // A far, soft roll to punctuate the end. Not a crack: the storm is leaving.
+    this.thunder(0.95);
+    return this;
+  }
+
+  /**
+   * @param {number} distance 0 = overhead crack, 1 = a roll on the horizon.
+   *
+   * One method, not two, because the whole point is the continuum: the storm
+   * event can walk the distance down as it centres on the player and the sound
+   * gets closer without ever switching identity.
+   */
+  thunder(distance = 0.6) {
+    if (!this.ready || !this.enabled) return this;
+    // Hard rate limit. Thunder is the loudest thing this module makes and two
+    // overlapping rolls do not sound like a storm, they sound like distortion.
+    if (!this._throttle('thunder', 0.9)) return this;
+    const d = clamp(num(distance, 0.6), 0, 1);
+    const near = 1 - d;
+    const t0 = this._now() + 0.005;
+    const dur = 1.1 + d * 2.4;
+    // No position: thunder is the whole sky. `_pan(null, null)` also gives the
+    // full 0.7 reverb send, which is most of what makes it sound enormous
+    // rather than merely loud — and loud is what the mixing rules forbid.
+    const out = this._pan(null, null, t0 + dur + 1.2, 0.4);
+
+    // 1. the crack. Only near thunder has one; distance is a low-pass filter.
+    if (near > 0.12) {
+      this._swoosh(t0, out, {
+        f0: 2600 + near * 3000, f1: 380, dur: 0.16 + d * 0.3,
+        // 10 ms minimum attack even directly overhead. A 1 ms wideband
+        // transient at this level is the jump scare the spec rules out.
+        peak: 0.115 * Math.pow(near, 1.3), q: 0.8, type: 'highpass',
+        attack: 0.010 + d * 0.05, rate: 1.3,
+      });
+    }
+    // 2. the body, sweeping down and darkening.
+    this._swoosh(t0 + 0.02, out, {
+      f0: 420 - d * 180, f1: 62, dur: dur * 0.8,
+      peak: 0.135 - d * 0.045, q: 0.7, type: 'lowpass',
+      attack: 0.04 + d * 0.5, rate: 0.5,
+    });
+    // 3. the boom you feel.
+    this._tone(t0 + 0.01, out, {
+      f0: 68 - d * 18, f1: 24, dur: dur * 0.85,
+      peak: 0.115 * (1 - d * 0.45), type: 'sine', attack: 0.02 + d * 0.30,
+    });
+    // 4. the roll — scattered low grains so the tail has events in it.
+    this._grains(t0 + 0.2, out, {
+      gain: 0.055 + d * 0.03, freq: 150 - d * 55, q: 0.8,
+      count: 9 + Math.round(d * 12), dur: dur, spread: 1.5,
+    });
+    // Push the bed, don't raise the roof: ducking is how this reads as big.
+    this.duck(0.30 + near * 0.22, dur * 0.6);
+    return this;
+  }
+
+  /** Rain bed. Idempotent; intensity follows the storm's own curve. */
+  rainLoop() {
+    return this._startLoop('rain', (fade, t0) => {
+      const ctx = this.ctx;
+      const sources = [], nodes = [];
+
+      // Hiss — the individual drops, as a spectrum rather than as events.
+      const hn = this._noiseSrc(t0, t0 + LOOP_MAX, 1.25);
+      const hf = ctx.createBiquadFilter();
+      hf.type = 'highpass';
+      hf.frequency.value = this._hz(1100);
+      const hg = ctx.createGain();
+      hg.gain.value = 0.55;
+      sources.push(hn, this._lfo(t0, 0.053, 220, hf.frequency, 'triangle'));
+      hn.connect(hf); hf.connect(hg); hg.connect(fade);
+      nodes.push(hf, hg);
+
+      // Roar — rain on roads and awnings, the part that says "heavy".
+      const rn = this._noiseSrc(t0, t0 + LOOP_MAX, 0.8);
+      const rf = ctx.createBiquadFilter();
+      rf.type = 'bandpass';
+      rf.frequency.value = this._hz(430);
+      rf.Q.value = 0.6;
+      const rg = ctx.createGain();
+      rg.gain.value = 0.42;
+      sources.push(rn, this._lfo(t0, 0.081, 0.14, rg.gain));
+      rn.connect(rf); rf.connect(rg); rg.connect(fade);
+      nodes.push(rf, rg);
+
+      // Rain is the most fatiguing loop in any game. It gets the longest fade
+      // and the lowest peak of anything here, and it still reads as rain
+      // because it is broadband — level is not what sells it.
+      return { peak: 0.095, attack: 2.6, release: 3.0, dest: this.ambBus, sources, nodes };
+    });
+  }
+
+  /* ============================================================ police === */
+
+  /**
+   * A patrol siren. Positional and moving: the handle's `.move(x, z)` should be
+   * called from the vehicle's update, which is what turns it from a sound into
+   * information about where the response unit actually is.
+   *
+   * @param {string} kind 'wail' (slow sweep) | 'yelp' (fast) | 'hilo' (two-tone)
+   * @param {number} x world position
+   * @param {number} z
+   * @param {string|number} [id] one siren per id, so a fleet can each have their
+   *   own. Defaults to `kind`, which is the right thing for a single unit.
+   * @returns {object} handle: .move(x,z) .stop([fade]) .setIntensity(v)
+   */
+  siren(kind = 'wail', x = 0, z = 0, id) {
+    if (!this.ready || !this.enabled) return DEAD_LOOP;
+    const k = String(kind || 'wail').toLowerCase();
+    const key = `siren:${id === undefined ? k : id}`;
+    const live = this._loops.get(key);
+    // Idempotent AND useful: the second call repositions the siren already
+    // running under this id rather than making a second one.
+    if (live && live.active) { live.move(x, z); return live; }
+    if (this.loopCount('siren:') >= SIREN_CAP) return DEAD_LOOP;
+
+    return this._startLoop(key, (fade, t0) => {
+      const ctx = this.ctx;
+      const sources = [], nodes = [];
+      const chain = this._liveChain(x, z, 1.1);
+
+      // Sweep shape IS the siren's identity: a slow triangle is an American
+      // wail, a fast sawtooth is a yelp, a square is the European two-tone.
+      const shape = k === 'yelp' ? { hz: 3.4, type: 'sawtooth', lo: 660, span: 380 }
+        : k === 'hilo' ? { hz: 1.35, type: 'square', lo: 620, span: 300 }
+          : { hz: 0.28, type: 'triangle', lo: 620, span: 470 };
+
+      const base = shape.lo + shape.span * 0.5;
+      const mix = ctx.createGain();
+      mix.gain.value = 1;
+      // Two oscillators a beat apart. A single square is a test tone; the beat
+      // is what makes it read as a horn with a body.
+      for (const [type, det, amp] of [['square', 0, 0.5], ['sawtooth', 9, 0.28]]) {
+        const o = ctx.createOscillator();
+        o.type = type;
+        o.detune.value = det;
+        o.frequency.value = this._hz(base);
+        const og = ctx.createGain();
+        og.gain.value = amp;
+        o.connect(og); og.connect(mix);
+        this._src(o, t0, t0 + LOOP_MAX);
+        sources.push(o);
+        nodes.push(og);
+        sources.push(this._lfo(t0, shape.hz, shape.span * 0.5, o.frequency, shape.type));
+      }
+      // Roll the top off. A raw square siren is all 5 kHz and it is the single
+      // most fatiguing thing you can put in a mix; a real horn is a resonator.
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = this._hz(2400);
+      lp.Q.value = 1.1;
+      mix.connect(lp); lp.connect(fade);
+      nodes.push(mix, lp, ...chain.nodes);
+
+      return {
+        // Low, and further attenuated by distance in the chain. Three of these
+        // at the cap still sit under one swallow.
+        peak: 0.032, attack: 0.25, release: 0.5,
+        dest: chain.g, sources, nodes, chain,
+      };
+    });
+  }
+
+  /** Radio squelch + a blip. The "dispatch is talking about you" punctuation. */
+  dispatchChirp(x, z) {
+    if (!this.ready || !this.enabled) return this;
+    if (!this._throttle('chirp', 0.45)) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(x, z, t0 + 0.5);
+    // Band-limited noise burst = the squelch tail of a radio keying up. The
+    // narrow band (700–2400 Hz) is the whole trick: it is a telephone filter,
+    // and a telephone filter is what makes anything sound like a radio.
+    this._swoosh(t0, out, { f0: 2400, f1: 900, dur: 0.075, peak: 0.075, q: 1.1, attack: 0.004 });
+    this._tone(t0 + 0.01, out, { f0: 1560, dur: 0.05, peak: 0.045, type: 'square', attack: 0.002 });
+    this._tone(t0 + 0.07, out, { f0: 1170, dur: 0.06, peak: 0.038, type: 'square', attack: 0.002 });
+    // Squelch off — the little burst of hiss when the key is released.
+    this._swoosh(t0 + 0.14, out, { f0: 1800, f1: 2600, dur: 0.05, peak: 0.030, q: 0.8, attack: 0.004 });
+    return this;
+  }
+
+  /**
+   * Heat went up. @param {number} tier 1..3 — brighter, busier and lower as the
+   * response escalates, so the tier is audible without reading the HUD.
+   */
+  heatUp(tier = 1) {
+    if (!this.ready || !this.enabled) return this;
+    const n = clamp(Math.round(num(tier, 1)), 1, 3);
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 1.4);
+    const root = semi(24 + n * 2);
+    // Rising minor third, doubled: "up" without being a reward. levelUp() is
+    // the major-key sound in this game and Heat must not be mistaken for it.
+    [[0, 0.0], [3, 0.09]].forEach(([s, d]) => {
+      const f = root * Math.pow(2, s / 12);
+      this._tone(t0 + d, out, { f0: f, dur: 0.36, peak: 0.070, type: 'square', attack: 0.006 });
+      this._tone(t0 + d, out, { f0: f * 0.5, dur: 0.42, peak: 0.045, type: 'triangle', attack: 0.008 });
+    });
+    // Tier 2+ gets the alert double-blip, tier 3 a low pulse under it.
+    if (n >= 2) {
+      [0, 0.13].forEach((d) => {
+        this._tone(t0 + 0.30 + d, out, { f0: semi(38), dur: 0.09, peak: 0.048, type: 'square' });
+      });
+    }
+    if (n >= 3) this._tone(t0 + 0.28, out, { f0: 110, f1: 40, dur: 0.6, peak: 0.135, type: 'sine' });
+    this.duck(0.20 + n * 0.07, 0.7);
+    return this;
+  }
+
+  /** Heat cooled off. Quiet, resolving downward — relief, not a reward. */
+  heatDown() {
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 0.9);
+    [[5, 0.0], [0, 0.10]].forEach(([s, d]) => {
+      const f = semi(26) * Math.pow(2, s / 12);
+      this._tone(t0 + d, out, { f0: f, dur: 0.42, peak: 0.042, type: 'sine', attack: 0.01 });
+    });
+    this._swoosh(t0, out, { f0: 1400, f1: 500, dur: 0.4, peak: 0.022, q: 1.4 });
+    return this;
+  }
+
+  /**
+   * The arcade containment gadget landing — foam, not a firearm. A wobbled
+   * low-pass drop and a soft splat: deliberately cartoon, deliberately
+   * non-violent, and short enough that being hit is information, not a punish.
+   */
+  containmentPulse(x, z) {
+    if (!this.ready || !this.enabled) return this;
+    if (!this._throttle('containment', 0.22)) return this;
+    const ctx = this.ctx;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(x, z, t0 + 0.9);
+
+    // The wub. A saw through a low-pass whose cutoff is itself modulated at
+    // 17 Hz — fast enough to be timbre rather than tremolo, which is the
+    // difference between "gadget" and "alarm".
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(this._hz(180), t0);
+    o.frequency.exponentialRampToValueAtTime(this._hz(58), t0 + 0.4);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.Q.value = 7;
+    lp.frequency.setValueAtTime(this._hz(1600), t0);
+    lp.frequency.exponentialRampToValueAtTime(this._hz(220), t0 + 0.42);
+    const wob = ctx.createOscillator();
+    wob.type = 'sine';
+    wob.frequency.value = 17;
+    const wobG = ctx.createGain();
+    wobG.gain.value = 260;
+    wob.connect(wobG); wobG.connect(lp.frequency);
+    const g = ctx.createGain();
+    this._hit(g, t0, 0.105, 0.008, 0.45);
+    o.connect(lp); lp.connect(g); g.connect(out);
+    this._src(o, t0, t0 + 0.55);
+    this._src(wob, t0, t0 + 0.55);
+
+    // The splat: damp, dull, over in 120 ms. Foam has no ring.
+    this._swoosh(t0, out, { f0: 900, f1: 200, dur: 0.13, peak: 0.075, q: 0.6, type: 'lowpass', attack: 0.005 });
+    this._grains(t0 + 0.05, out, { gain: 0.035, freq: 700, q: 0.9, count: 5, dur: 0.22, spread: 1.2 });
+    return this;
+  }
+
+  /* ======================================================== match cues === */
+
+  /**
+   * Out-of-bounds countdown. @param {number} n seconds left (3, 2, 1, then 0).
+   * Pitch, brightness and density all climb together as n falls; at 0 it turns
+   * into a down-hit, because that is the moment the count stopped being a
+   * warning and started being a consequence.
+   */
+  outOfBoundsTick(n = 3) {
+    if (!this.ready || !this.enabled) return this;
+    const k = clamp(Math.round(num(n, 3)), 0, 6);
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 1.2);
+
+    if (k <= 0) {
+      // Time up: a falling tritone and a body hit. Unpleasant on purpose, but
+      // still under the level of a collapse — this is a rule, not a disaster.
+      this._tone(t0, out, { f0: semi(30), f1: semi(18), dur: 0.5, peak: 0.10, type: 'square' });
+      this._tone(t0, out, { f0: 130, f1: 40, dur: 0.55, peak: 0.16, type: 'sine' });
+      this._swoosh(t0, out, { f0: 2400, f1: 300, dur: 0.45, peak: 0.06, q: 1.0 });
+      this.duck(0.45, 0.8);
+      return this;
+    }
+    // urgency 0 at n=3, 1 at n=1 — three ticks that are audibly a sequence.
+    const u = clamp((3 - k) / 2, 0, 1);
+    const f = semi(31 + u * 7);
+    this._tone(t0, out, { f0: f, dur: 0.13 + u * 0.05, peak: 0.065 + u * 0.045, type: 'square' });
+    this._tone(t0, out, { f0: f * 0.5, dur: 0.16, peak: 0.030 + u * 0.03, type: 'triangle' });
+    // The final tick doubles: two beeps read as "now", one reads as "soon".
+    if (k <= 1) {
+      this._tone(t0 + 0.12, out, { f0: f * 1.5, dur: 0.16, peak: 0.075, type: 'square' });
+      this.duck(0.30, 0.5);
+    }
+    return this;
+  }
+
+  /** Yanked back in bounds / respawned: sucked out, then reassembled. */
+  teleport() {
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 1.4);
+    // Out: everything collapses to a point.
+    this._swoosh(t0, out, { f0: 5200, f1: 180, dur: 0.22, peak: 0.105, q: 2.0, attack: 0.02 });
+    this._tone(t0, out, { f0: 420, f1: 60, dur: 0.24, peak: 0.055, type: 'triangle' });
+    // 60 ms of nothing. The gap is the teleport; without it this is a whoosh.
+    const back = t0 + 0.30;
+    this._swoosh(back, out, { f0: 300, f1: 7200, dur: 0.28, peak: 0.085, q: 2.4, attack: 0.02 });
+    [0, 7, 12].forEach((s, i) => {
+      this._tone(back + 0.12 + i * 0.03, out, {
+        f0: semi(36) * Math.pow(2, s / 12), dur: 0.35, peak: 0.040, type: 'sine', attack: 0.004,
+      });
+    });
+    return this;
+  }
+
+  /** Points taken. A small disappointment, not a punishment. */
+  scorePenalty() {
+    if (!this.ready || !this.enabled) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 0.8);
+    // Falling minor second — the most "wrong" interval there is — but quiet,
+    // short and low-passed. A player who is already losing points does not
+    // also need to be shouted at.
+    [[1, 0.0], [0, 0.11]].forEach(([s, d]) => {
+      const f = semi(21 + s);
+      this._tone(t0 + d, out, { f0: f, dur: 0.30, peak: 0.055, type: 'triangle', attack: 0.006 });
+      this._tone(t0 + d, out, { f0: f, dur: 0.26, peak: 0.020, type: 'sawtooth', attack: 0.008, detune: -14 });
+    });
+    // Deflating tail.
+    this._swoosh(t0 + 0.08, out, { f0: 700, f1: 220, dur: 0.34, peak: 0.030, q: 1.6 });
+    return this;
+  }
+
+  /* ========================================================== physics ==== */
+
+  /**
+   * A car losing its footing on the rim: suspension unloading, then metal
+   * taking weight it was not designed to take.
+   */
+  carTip(x, z) {
+    if (!this.ready || !this.enabled) return this;
+    if (this._slot(this._now(), 0.03, 0.30) < 0) return this;
+    const t0 = this._now() + 0.004;
+    const out = this._pan(x, z, t0 + 1.3);
+    const load = this._load();
+    // Suspension: a low tone bending DOWN as the weight transfers.
+    this._tone(t0, out, { f0: 96, f1: 52, dur: 0.55, peak: 0.115 * load, type: 'sine', attack: 0.02 });
+    // The body groan — two inharmonic partials, which is what "sheet metal"
+    // means; a harmonic pair would read as a musical note.
+    this._tone(t0 + 0.05, out, { f0: 305, f1: 240, dur: 0.5, peak: 0.045 * load, type: 'triangle' });
+    this._tone(t0 + 0.05, out, { f0: 305 * 2.76, f1: 240 * 2.76, dur: 0.35, peak: 0.022 * load, type: 'sine' });
+    // Something on the chassis letting go.
+    this._grains(t0 + 0.18, out, {
+      gain: 0.055 * load, freq: 2600, q: 2.2, count: 6, dur: 0.4, spread: 1.8,
+    });
+    return this;
+  }
+
+  /**
+   * Tyres and underbody dragging across kerb and tarmac.
+   * @param {number} [speed] 0..1, scales brightness and length.
+   */
+  carSlide(x, z, speed = 0.5) {
+    if (!this.ready || !this.enabled) return this;
+    if (!this._throttle('carSlide', 0.13)) return this;
+    const s = clamp(num(speed, 0.5), 0, 1);
+    const t0 = this._now() + 0.004;
+    const dur = 0.22 + s * 0.4;
+    const out = this._pan(x, z, t0 + dur + 0.3);
+    const load = this._load();
+    // A moving formant, not a static band: a scrape whose filter does not move
+    // is a hiss, and the movement is the only cue for how fast it is going.
+    this._swoosh(t0, out, {
+      f0: 900 + s * 1500, f1: 500 + s * 700, dur,
+      peak: (0.045 + s * 0.05) * load, q: 4.5, attack: 0.03, rate: 0.9 + s * 0.5,
+    });
+    // Rubber judder underneath — the low end that stops it sounding like paper.
+    this._swoosh(t0, out, {
+      f0: 220, f1: 150, dur: dur * 0.9, peak: 0.035 * load, q: 1.2, type: 'lowpass', attack: 0.04,
+    });
+    return this;
+  }
+
+  /**
+   * Street furniture going over: a bin, a rack of chairs, a sign.
+   * @param {number} [size] 0..1 — lowers the pitch and stretches the tumble.
+   */
+  clatter(size = 0.4, x, z) {
+    if (!this.ready || !this.enabled) return this;
+    const now = this._now();
+    // One slot for the whole event, not one per tick: the roll is scheduled
+    // internally, and taking a slot per impact would eat the swallow grid.
+    if (this._slot(now, 0.03, 0.28) < 0) return this;
+    const s = clamp(num(size, 0.4), 0, 1);
+    const t0 = now + 0.004;
+    const dur = 0.35 + s * 0.55;
+    const out = this._pan(x, z, t0 + dur + 0.4);
+    const load = this._load();
+    const n = 4 + Math.round(this._rnd() * 3 + s * 3);
+    let t = t0;
+    for (let i = 0; i < n; i++) {
+      // Decelerating tumble: bounces get closer together and quieter, which is
+      // what gravity does and what a uniformly-spaced roll conspicuously fails
+      // to do — evenly spaced impacts read as a machine, not an accident.
+      const k = i / n;
+      const amp = (0.055 + s * 0.03) * Math.pow(1 - k, 1.1) * (0.5 + this._rnd() * 0.7) * load;
+      const f = (620 - s * 380) * Math.pow(2, (this._rnd() - 0.5) * 1.2);
+      this._tone(t, out, { f0: f, f1: f * 0.72, dur: 0.07 + s * 0.05, peak: amp, type: 'triangle' });
+      this._swoosh(t, out, {
+        f0: f * 3.4, f1: f * 2.2, dur: 0.045, peak: amp * 0.8, q: 1.6, attack: 0.001,
+      });
+      t += 0.045 + this._rnd() * (0.10 - k * 0.06) + s * 0.02;
+      if (t > t0 + dur) break;
+    }
+    return this;
+  }
+
+  /**
+   * Structure under load — the warning a building gives before it goes.
+   * @param {number} [size] 0..1 — bigger is lower and slower.
+   */
+  creak(x, z, size = 0.5) {
+    if (!this.ready || !this.enabled) return this;
+    if (!this._throttle('creak', 0.4)) return this;
+    const ctx = this.ctx;
+    const s = clamp(num(size, 0.5), 0, 1);
+    const t0 = this._now() + 0.004;
+    const dur = 0.7 + s * 0.9;
+    const out = this._pan(x, z, t0 + dur + 0.4);
+    const load = this._load();
+
+    // A creak is stick-slip: the surface grips, releases, grips again. That is
+    // an irregular AMPLITUDE modulation on a resonant tone — modulating pitch
+    // instead gives a siren, and modulating nothing gives a hum.
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    const f0 = 210 - s * 120;
+    o.frequency.setValueAtTime(this._hz(f0), t0);
+    o.frequency.linearRampToValueAtTime(this._hz(f0 * (1.18 + s * 0.2)), t0 + dur);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = this._hz(f0 * 3.2);
+    bp.Q.value = 9;
+    const g = ctx.createGain();
+    this._hit(g, t0, 0.06 * load, 0.10, dur);
+    // Two modulators, 9.3 and 14.7 Hz, so the stick-slip never falls into a
+    // regular buzz — a single-rate tremolo at this depth sounds like a fault.
+    const m1 = ctx.createOscillator();
+    m1.type = 'sawtooth'; m1.frequency.value = 9.3 + s * 3;
+    const m2 = ctx.createOscillator();
+    m2.type = 'sine'; m2.frequency.value = 14.7;
+    const mg = ctx.createGain();
+    mg.gain.value = 0.035 * load;
+    m1.connect(mg); m2.connect(mg); mg.connect(g.gain);
+    o.connect(bp); bp.connect(g); g.connect(out);
+    this._src(o, t0, t0 + dur + 0.1);
+    this._src(m1, t0, t0 + dur + 0.1);
+    this._src(m2, t0, t0 + dur + 0.1);
+
+    // Dust and grit falling out of the joint.
+    this._grains(t0 + dur * 0.4, out, {
+      gain: 0.03 * load, freq: 3200, q: 2.4, count: 7, dur: dur * 0.6, spread: 2.0,
+    });
+    return this;
+  }
+
+  /* ------------------------------------------------------ richer UI ----- */
+
+  /** The UI kinds that need more than one oscillator. See `ui()`. */
+  _uiRich(kind) {
+    const t0 = this._now() + 0.004;
+    const out = this._pan(null, null, t0 + 0.7);
+    if (kind === 'menuOpen' || kind === 'menuClose') {
+      const up = kind === 'menuOpen';
+      // A panel sliding: a short filtered sweep plus a soft two-note figure in
+      // the direction of travel. Same material both ways, reversed — that is
+      // what makes open and close feel like one another's inverse.
+      this._swoosh(t0, out, {
+        f0: up ? 700 : 2600, f1: up ? 2600 : 700, dur: 0.16, peak: 0.045, q: 1.4, attack: 0.012,
+      });
+      [0, 1].forEach((i) => {
+        const s = up ? [0, 7][i] : [7, 0][i];
+        this._tone(t0 + i * 0.045, out, {
+          f0: semi(31) * Math.pow(2, s / 12), dur: 0.16, peak: 0.038, type: 'sine',
+        });
+      });
+      return this;
+    }
+    if (kind === 'confirm') {
+      // Rising major third + octave: the shortest "yes" that still has a chord
+      // in it. Kept under the levelUp fanfare so the two never compete.
+      [[0, 0.0], [4, 0.05], [12, 0.10]].forEach(([s, d]) => {
+        this._tone(t0 + d, out, {
+          f0: semi(33) * Math.pow(2, s / 12), dur: 0.26 - d, peak: 0.050, type: 'triangle',
+        });
+      });
+      this._swoosh(t0, out, { f0: 2200, f1: 5000, dur: 0.2, peak: 0.022, q: 2.2 });
+      return this;
+    }
+    // error: a low, flat, damped double-thud. No dissonant screech — an error
+    // sound that startles gets the volume slider turned down, and then nothing
+    // else in the game is audible either.
+    [0, 0.11].forEach((d) => {
+      this._tone(t0 + d, out, { f0: semi(13), dur: 0.20, peak: 0.055, type: 'square', attack: 0.005 });
+      this._tone(t0 + d, out, { f0: semi(13) * 0.5, dur: 0.24, peak: 0.045, type: 'sine', attack: 0.006 });
+    });
+    return this;
+  }
+
   /* ======================================================= diagnostics == */
 
   /** Everything a test or a dev overlay needs to judge the graph's health. */
@@ -2050,12 +3500,31 @@ export class Audio {
       muted: this._muted,
       musicVolume: this._musicVol,
       sfxVolume: this._sfxVol,
+      voiceVolume: this._voiceVol,
+      voicesMuted: this._voicesMuted,
+      // The loop registry is the thing a restart test asserts on: after a
+      // match ends this must be 0 and `loops` must be empty.
+      liveLoops: this._loops.size,
+      loops: Array.from(this._loops.keys()),
+      loopsStarted: this.stats.loopsStarted,
+      loopsStopped: this.stats.loopsStopped,
+      loopsDropped: this.stats.loopsDropped,
+      liveVoices: this._voicesLive.length,
+      voicesPlayed: this.stats.voicesPlayed,
+      voicesDropped: this.stats.voicesDropped,
+      throttled: this.stats.throttled,
+      bedDuck: this.bedDuck ? this.bedDuck.gain.value : 1,
+      dialogDuck: this.dialogDuck ? this.dialogDuck.gain.value : 1,
     };
   }
 
   /** Tear the whole graph down (used by tests; harmless in the game). */
   dispose() {
     this.stopMusic();
+    // stopMusic() already fades the loops out; dispose is not a graceful
+    // ending, so take them down immediately and drop the registry with them.
+    this.stopAllLoops(0.02);
+    this.stopVoices();
     for (const n of [this._rumbleSrc, this._subOsc, this._subLfo, this._windSrc, this._windLfo]) {
       if (n) { try { n.stop(); } catch (e) { /* already stopped */ } }
     }

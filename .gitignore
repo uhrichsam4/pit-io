@@ -23,3 +23,4 @@ shots/
 secrets/
 # Generated voice audio is large and rebuildable from the line library.
 public/audio/voice/
+samples/

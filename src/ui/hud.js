@@ -38,6 +38,18 @@ export const uiState = {
   reset() { this.bestMeal = null; },
 };
 
+/**
+ * Caption text comes from a data file but is injected as innerHTML beside a
+ * bold speaker name, so it gets escaped. Cheap, and it lets a line contain an
+ * apostrophe or an ampersand without breaking the row.
+ */
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"\']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+
 export class HUD {
   constructor(root, camera) {
     this.camera = camera;
@@ -552,6 +564,61 @@ export class HUD {
    * @param {string} [kind] 'clock' | 'lead' | 'tier' | 'kill' — match.js tags
    *   its escalation lines, so clock ticks can sit quieter than a kill.
    */
+  /**
+   * NPC dialogue subtitles.
+   *
+   * Captions are not a nice-to-have here: the voice pack is generated offline
+   * and may be absent entirely (fresh clone, no key, generation never run), in
+   * which case this is the ONLY form the dialogue takes. So it renders the same
+   * whether or not a sound played — `c.spoken` only changes the speaker glyph.
+   *
+   * Newest at the bottom, three at most, each expiring on its own ttl.
+   */
+  showCaption(c) {
+    if (!c || !c.text) return;
+    if (!this._capWrap) {
+      const el = document.createElement('div');
+      el.className = 'vo-captions';
+      document.body.appendChild(el);
+      this._capWrap = el;
+      this._caps = [];
+    }
+    const row = document.createElement('div');
+    row.className = 'vo-cap';
+    const who = c.castName ? '<b>' + escapeHtml(c.castName) + '</b> ' : '';
+    row.innerHTML = '<span class="vo-ic">' + (c.spoken ? '\u{1F5E3}' : '\u{1F4AC}')
+      + '</span>' + who + escapeHtml(c.text);
+    this._capWrap.appendChild(row);
+    void row.offsetWidth;               // reflow, so the entry transition runs
+    row.classList.add('on');
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this._caps.push({ row, until: now + Math.max(1200, (c.ttl || 2.6) * 1000) });
+    while (this._caps.length > 3) {
+      const old = this._caps.shift();
+      if (old && old.row) old.row.remove();
+    }
+    if (!this._capTimer) {
+      this._capTimer = setInterval(() => {
+        const t = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        for (let i = this._caps.length - 1; i >= 0; i--) {
+          if (this._caps[i].until > t) continue;
+          const r = this._caps.splice(i, 1)[0];
+          r.row.classList.remove('on');
+          setTimeout(() => r.row.remove(), 220);
+        }
+        if (!this._caps.length) { clearInterval(this._capTimer); this._capTimer = null; }
+      }, 160);
+    }
+  }
+
+  /** Wipe every caption, so none survives a match restart. */
+  clearCaptions() {
+    if (this._capTimer) { clearInterval(this._capTimer); this._capTimer = null; }
+    if (this._caps) for (const c of this._caps) c.row.remove();
+    this._caps = [];
+  }
+
+
   pushFeed(text, color = '#ffffff', kind = 'kill') {
     const el = document.createElement('div');
     el.className = 'feed-item';
