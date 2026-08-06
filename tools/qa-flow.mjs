@@ -191,8 +191,17 @@ const pvp = await pg.evaluate(async () => {
     if (g.match._setPhase) g.match._setPhase('playing');
     else g.match.phase = 'playing';
   }
-  for (let i = 0; i < 600; i++) { g.match.update(1/60); }
-  return { eaten, respawned: bot.alive, keptFraction: before ? +(bot.score / before).toFixed(2) : -1,
+  /* Just past the respawn, not far past it. RESPAWN_TIME is 2.6 s (156 frames)
+     and RESPAWN_GRACE is 5 s (300 more), so driving 600 frames respawns the
+     victim AND lets its grace expire — which is correct behaviour reported as a
+     failure. Stop as soon as it is back, then sample. */
+  let framesRun = 0;
+  for (let i = 0; i < 600; i++) {
+    g.match.update(1/60); framesRun++;
+    if (bot.alive) break;
+  }
+  return { eaten, respawned: bot.alive, framesRun,
+           keptFraction: before ? +(bot.score / before).toFixed(2) : -1,
            respawnDry: !g.layout.isWater(bot.position.x, bot.position.z),
            farFromKiller: Math.hypot(bot.position.x - p.position.x, bot.position.z - p.position.z) > 40,
            hasGrace: bot.spawnGrace > 0 };
@@ -203,7 +212,7 @@ if (!pvp.skipped) {
   check('victim keeps ~50%', Math.abs(pvp.keptFraction - 0.5) < 0.12, 'kept ' + pvp.keptFraction);
   check('respawn is dry', pvp.respawnDry, String(pvp.respawnDry));
   check('respawn away from killer', pvp.farFromKiller, String(pvp.farFromKiller));
-  check('respawn grace applied', pvp.hasGrace, String(pvp.hasGrace));
+  check('respawn grace applied', pvp.hasGrace, `${pvp.hasGrace} after ${pvp.framesRun} frames`);
 }
 
 // ---- 6. OUT OF BOUNDS ------------------------------------------------------
