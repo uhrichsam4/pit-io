@@ -339,6 +339,16 @@ export function createPostChain(renderer, scene, camera) {
     passes.smaa = null;
   }
 
+  /**
+   * A BIOME bias, applied on top of the time-of-day look.
+   *
+   * setLook() is called every frame the sun moves, so a one-off grade written
+   * into the uniforms is stomped on the next frame. A biome is not a moment in
+   * the day — it is a property of the whole map — so it rides over the top of
+   * whatever the clock is doing instead of competing with it.
+   */
+  let biome = null;
+
   /** Write the current look (time-of-day over GRADE) into the live passes. */
   function writeLook() {
     if (passes.bloom) {
@@ -360,6 +370,15 @@ export function createPostChain(renderer, scene, camera) {
     u.uDither.value = pick('dither');
     u.uToneStart.value = pick('toneStart');
     u.uToneDesat.value = pick('toneDesat');
+
+    if (biome) {
+      if (biome.saturation != null) u.uSaturation.value *= biome.saturation;
+      if (biome.temperature != null) u.uTemperature.value += biome.temperature;
+      if (biome.exposure != null) u.uExposure.value *= biome.exposure;
+      if (biome.contrast != null) u.uContrast.value *= biome.contrast;
+      if (biome.shadowTint) u.uShadowTint.value.set(...biome.shadowTint);
+      if (biome.highlightTint) u.uHighlightTint.value.set(...biome.highlightTint);
+    }
   }
 
   /**
@@ -368,6 +387,12 @@ export function createPostChain(renderer, scene, camera) {
    */
   function setLook(next) {
     look = next;
+    writeLook();
+  }
+
+  /** Install a per-map colour bias. Pass null to clear it. */
+  function setBiomeGrade(next) {
+    biome = next;
     writeLook();
   }
 
@@ -412,5 +437,5 @@ export function createPostChain(renderer, scene, camera) {
     composer.renderTarget2.dispose();
   }
 
-  return { composer, passes, stats, applyQuality, setLook, tuneAO, setSize, dispose };
+  return { composer, passes, stats, applyQuality, setLook, setBiomeGrade, tuneAO, setSize, dispose };
 }

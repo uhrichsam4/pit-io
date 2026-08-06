@@ -19,6 +19,8 @@ import { Input } from './gameplay/input.js';
 import { spawnBots } from './gameplay/ai.js';
 import { Match, PHASE } from './gameplay/match.js';
 import { getMode } from './gameplay/modes.js';
+import { activeMap } from './gameplay/maps.js';
+import { applySnow } from './world/snow.js';
 import { buildWorld } from './world/worldBuild.js';
 import { buildBayfront } from './world/bayfront.js';
 import { HUD, uiState } from './ui/hud.js';
@@ -151,7 +153,15 @@ export class Game {
     // replicating the world.
     this.netCfg = readNetConfig();
     this.net = null;
-    let worldSeed = 20260803;
+    /**
+     * Which city this page load is building. Offline the map's own seed picks
+     * the layout; in a room the SERVER's seed wins, because every client has to
+     * build a byte-identical city for id-based replication to work — but the
+     * biome is still a local choice, so a snow room is snowy for whoever picked
+     * it without desynchronising anyone.
+     */
+    this.map = activeMap();
+    let worldSeed = this.map.seed;
     if (this.netCfg.enabled) {
       this.screens.showLoading(`Joining “${this.netCfg.room}”…`);
       const net = new NetClient(this.netCfg);
@@ -182,6 +192,18 @@ export class Game {
      * The spawn island. Built once and parked far off the city grid, hidden
      * until somebody is waiting in a room — see enterIsland().
      */
+    /** Biome pass. Runs on the finished city; see src/world/snow.js. */
+    if (this.map.biome === 'snow') {
+      applySnow(eng.scene, makeRNG(worldSeed ^ 0x50a1));
+    }
+    // The colour grade is what actually sells the biome — see maps.js.
+    if (this.map.grade && eng.post && eng.post.setBiomeGrade) {
+      eng.post.setBiomeGrade(this.map.grade);
+    }
+    if (this.map.timeOfDay != null && eng.setTimeOfDay) {
+      eng.setTimeOfDay(this.map.timeOfDay);
+    }
+
     this.island = buildBayfront(eng.scene);
 
     this.trafficUpdate = eng.scene.userData.trafficUpdate || null;
