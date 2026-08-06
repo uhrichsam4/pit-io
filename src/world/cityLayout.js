@@ -1367,8 +1367,41 @@ function reserveZoo({ blocks, xSpans, zSpans, alleys, isRoadAt, isWetAt, S, BAY 
       : { x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z0 + PERIM }));
   }
 
+  /* -- 6b. LAST GATE: no placement rectangle may sit on carriageway --------
+     The cell cutback above subtracts `alleys`, and xSpans/zSpans are road-free
+     by construction for the orthogonal grid — but isRoadAt ALSO returns true on
+     the Metrorail diagonal, and nothing here subtracts that. The diagonal is
+     the one road class that survives into a finished cell.
+
+     Measured: 14 of seeds 1..300 (4.7%) put a pen or a path on live road.
+     Both shipped maps are clean (20260803 and 77120451 sample zero road), so
+     this never showed in testing — but server.js gives every multiplayer room
+     a random seed, so roughly one room in twenty-one would have had a giraffe
+     paddock straddling a carriageway, with traffic driving through it and
+     every fence post silently rejected for standing on the road.
+
+     Sampled rather than solved: cutting a rotated diagonal out of an
+     axis-aligned rect properly is a much larger change, and this module's
+     stated contract is that it FAILS CLOSED. A seed with no legal zoo gets no
+     zoo, which is the same outcome the site filter already produces on a
+     cramped map, and every caller already handles null. */
+  const onRoad = (r) => {
+    if (!r) return false;
+    const hw = (r.w ?? (r.x1 - r.x0)) / 2, hd = (r.d ?? (r.z1 - r.z0)) / 2;
+    const cx = r.x ?? (r.x0 + r.x1) / 2, cz = r.z ?? (r.z0 + r.z1) / 2;
+    for (let i = -2; i <= 2; i++) {
+      for (let j = -2; j <= 2; j++) {
+        if (isRoadAt(cx + (i / 2) * hw * 0.98, cz + (j / 2) * hd * 0.98)) return true;
+      }
+    }
+    return false;
+  };
+  for (const r of [...habitats, ...paths, entrance, yard]) {
+    if (onRoad(r)) return null;
+  }
+
   /* -- 7. flag the covered blocks ---------------------------------------- */
-  const covered = [];
+  const covered = []; 
   for (const b of blocks) {
     if (b.x < site.x0 || b.x > site.x1 || b.z < site.z0 || b.z > site.z1) continue;
     b.zoo = true;
