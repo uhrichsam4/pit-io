@@ -336,9 +336,17 @@ export class Game {
         this._trackChallenge(c);
       }
       if (hole.isPlayer) {
-        if (c.crumbles || c.tier.id >= 6) audio.crumble(Math.min(1, c.radius / 22));
-        else audio.chomp(Math.min(1, c.radius / 5));
+        /* swallow() is the richer entry point: it runs _describe() on the real
+           Consumable — material, mass, tier — and routes to _collapse or _light
+           itself. The old split threw all of that away and passed a bare number,
+           so a wooden bench and a glass storefront made the same noise. */
+        audio.swallow(c, { remote });
         if (c.tier.id >= 6) this.engine.flash(0.18, 0xffe6b0);
+      } else if (!remote) {
+        /* Rivals make noise too, positioned, so you can hear one working nearby.
+           The scheduler's own slot allocator caps concurrency, so this cannot
+           storm the mixer. */
+        audio.swallow(c, { distant: true });
       }
     };
     this.consume.onHoleEaten = (a, b) => {

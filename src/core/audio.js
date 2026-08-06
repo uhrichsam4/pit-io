@@ -3537,7 +3537,84 @@ export class Audio {
   }
 }
 
+/**
+ * Every method that is supposed to make a noise during play.
+ *
+ * This list is the CONTRACT, and it exists because of a real failure: fifteen
+ * effects were written into this engine and never called by anything. Nothing
+ * threw, nothing logged, the build was clean, and the game shipped with police
+ * sirens as the only audible cue. A sound with no call site is indistinguishable
+ * from a sound that works, unless something counts.
+ */
+export const SOUND_METHODS = [
+  'ui', 'swallow', 'chomp', 'crumble', 'levelUp', 'devourPlayer', 'death',
+  'countdownBeep', 'rankChange', 'matchStart', 'matchEnd',
+  'powerupSpawn', 'powerupPickup', 'powerupLoop', 'powerupEnd',
+  'eventWarning', 'eventSting', 'stormStart', 'stormLoop', 'stormEnd',
+  'thunder', 'rainLoop',
+  'siren', 'dispatchChirp', 'heatUp', 'heatDown', 'containmentPulse',
+  'outOfBoundsTick', 'teleport', 'scorePenalty',
+  'carTip', 'carSlide', 'clatter', 'creak',
+];
+
 export const audio = new Audio();
+
+/* --------------------------------------------------- coverage tracking --- */
+/**
+ * Count every sound as it fires, so "was this ever triggered?" is answerable.
+ *
+ * Wrapping is done here rather than inside the class so the hot path in the
+ * class itself stays exactly as written — this is one extra property write per
+ * sound, on methods that are already allocating oscillators.
+ */
+audio._fired = Object.create(null);
+audio._missing = [];
+for (const name of SOUND_METHODS) {
+  const fn = audio[name];
+  if (typeof fn !== 'function') {
+    // The method named in the contract does not exist. This is the
+    // powerupStart/powerupPickup class of bug — a name that misses falls
+    // through to a generic click and nobody notices.
+    audio._missing.push(name);
+    continue;
+  }
+  const bound = fn.bind(audio);
+  audio[name] = function trackedSound(...args) {
+    audio._fired[name] = (audio._fired[name] || 0) + 1;
+    return bound(...args);
+  };
+}
+
+/**
+ * What has actually made a noise, and what never has.
+ *
+ * `never` is the interesting field: anything in it is either genuinely
+ * unreachable in this session, or has no call site at all. Compare it against
+ * what you just did in game.
+ */
+audio.coverage = function coverage() {
+  const fired = [], never = [];
+  for (const name of SOUND_METHODS) {
+    (audio._fired[name] ? fired : never).push(name);
+  }
+  return {
+    ok: audio._missing.length === 0,
+    missingMethods: audio._missing.slice(),
+    firedCount: fired.length,
+    total: SOUND_METHODS.length,
+    fired: fired.map((n) => `${n}\u00d7${audio._fired[n]}`),
+    never,
+  };
+};
+
+if (audio._missing.length) {
+  console.error(
+    `[audio] ${audio._missing.length} method(s) named in SOUND_METHODS do not `
+    + `exist: ${audio._missing.join(', ')}. A caller using one of these names `
+    + `will silently play nothing.`
+  );
+}
+
 
 // Handle for the dev harness, the automated audio tests and the browser
 // console — the project already publishes window.DEV for exactly this reason.

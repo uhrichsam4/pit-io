@@ -535,6 +535,16 @@ export class EventGlue {
     /* setHeat dedupes internally on tier and on whole percent, but it is still
        a call and a couple of property reads per frame; gate it here too. */
     if (tier === this._hudHeatTier && Math.abs(value - (this._hudHeatVal || 0)) <= 0.005) return;
+    /* The tier CHANGE is what deserves a sound, not the meter creeping.
+       heatUp/heatDown had no call sites at all, so escalation was silent and
+       the only warning was a bar the player is not looking at. `-1` is the
+       initial value, so the first real tier is announced but the constructor's
+       own -1 -> 0 settle is not. */
+    const prev = this._hudHeatTier;
+    if (tier !== prev && prev >= 0) {
+      if (tier > prev) audio.heatUp(tier);
+      else audio.heatDown();
+    }
     this._hudHeatTier = tier;
     this._hudHeatVal = value;
     hud.setHeat({ tier, value });
@@ -618,6 +628,12 @@ export class EventGlue {
        the complete set and there is nothing for a sweep to find. */
     for (const h of this._sirens.values()) { try { h.stop(0.35); } catch (err) { void err; } }
     this._sirens.clear();
+    /* The weather beds are held the same way and for the same reason: a storm
+       loop that outlives its match plays under the results screen and then
+       under the next round. */
+    for (const k of ['_stormBed', '_rainBed']) {
+      if (this[k]) { try { this[k].stop(0.4); } catch (err) { void err; } this[k] = null; }
+    }
     if (typeof audio.loopCount === 'function' && audio.loopCount('siren:') > 0) {
       console.warn('[eventGlue] a siren outlived its handle — investigate, do not sweep');
     }
@@ -679,9 +695,27 @@ export class EventGlue {
        line, per cast, a global start gap, a burst damper and a hard three-line
        concurrency cap — so this just says what happened and lets it drop what
        it cannot afford. */
+    /* The SOUND of the event, not just the words. eventWarning, eventSting,
+       stormStart/stormLoop/stormEnd and rainLoop all existed in the engine with
+       ZERO call sites — the storm arrived in silence with a banner. */
+    if (payload.kind === 'start') {
+      audio.eventWarning();
+      audio.eventSting();
+    }
     if (payload.id === TROPICAL_STORM.id) {
-      if (payload.kind === 'start') this._say('stormStart');
-      else if (payload.kind === 'end') this._say('stormEnd');
+      if (payload.kind === 'start') {
+        this._say('stormStart');
+        audio.stormStart();
+        // Beds, not one-shots: held handles so teardown can stop them. A loop
+        // that survives a match is the specific failure the spec calls out.
+        if (!this._stormBed) this._stormBed = audio.stormLoop();
+        if (!this._rainBed) this._rainBed = audio.rainLoop();
+      } else if (payload.kind === 'end') {
+        this._say('stormEnd');
+        audio.stormEnd();
+        if (this._stormBed) { try { this._stormBed.stop(1.2); } catch (e) { void e; } this._stormBed = null; }
+        if (this._rainBed) { try { this._rainBed.stop(1.2); } catch (e) { void e; } this._rainBed = null; }
+      }
     }
 
     if (typeof this.onBanner === 'function') { this.onBanner(payload); return; }

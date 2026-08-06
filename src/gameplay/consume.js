@@ -60,6 +60,7 @@
 import * as THREE from 'three';
 import { HOLE, MATCH } from '../config.js';
 import { STATE, BACKING } from './entities.js';
+import { audio } from '../core/audio.js';
 
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -593,6 +594,23 @@ export class ConsumeSystem {
     // Otherwise keep the last direction: normalising a zero vector is how an
     // object that has slid to the exact centre starts spinning on the spot.
 
+    /* THE MOMENT IT GOES. This is the single point where a standing object
+       becomes an unstable one, so it is the only honest place to put the sound
+       of it starting to go over — a timer or a distance test would fire for
+       things that never actually move. carTip/carSlide/clatter/creak all
+       existed in the engine with ZERO call sites; this is where three of them
+       belong. Positional, so you hear which side of you it happened on. */
+    if (c.state !== STATE.WOBBLE) {
+      const k = (c.kind || '');
+      const x = c.position.x, z = c.position.z;
+      if (/car|sedan|suv|taxi|van|truck|bus|pickup|hatch|sport|convert|police|ambul/i.test(k)) {
+        audio.carTip(x, z);
+      } else if (c.crumbles || (c.tier && c.tier.id >= 5)) {
+        audio.creak(x, z, Math.min(1, c.radius / 14));
+      } else if (c.tier && c.tier.id <= 1) {
+        audio.clatter(Math.min(1, Math.max(0.15, c.radius / 2)), x, z);
+      }
+    }
     c.state = STATE.WOBBLE;
     this.attracted.add(c);
   }
