@@ -37,7 +37,9 @@ const LOBBY_TARGET = 15;
 /** ...and nobody waits longer than this for it, however quiet the world is. */
 const LOBBY_MAX_WAIT = 30;
 const INTERMISSION = 10;
-const PVP_RATIO = 1.18;
+/* Must match HOLE.PVP_RATIO in src/config.js. If the two disagree the client
+   shows a kill the server refuses, or vice versa. */
+const PVP_RATIO = 1.10;
 const PVP_REWARD = 0.62;
 const PORT = Number(process.env.PORT || 8787);
 
@@ -220,7 +222,7 @@ class Room {
         setTimeout(() => {
           if (this.clients.has(victim.id)) {
             victim.alive = true;
-            victim.score = Math.round(victim.score * 0.45);
+            victim.score = Math.round(victim.score * 0.50);
             victim.r = 1.15;
           }
         }, 2600);

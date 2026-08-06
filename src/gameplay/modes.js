@@ -57,7 +57,10 @@ export const MODES = [
     ],
     icon: '🕳️',
     accent: '#ff3d8b',
-    duration: 150,
+    /* 4:00. Every surface that shows a match length — the mode card, the HUD
+       clock, the escalation callouts, the end screen — reads this, so changing
+       the number here is the whole change. */
+    duration: 240,
     startRadius: 2,
     botCount: 7,
     teams: 0,

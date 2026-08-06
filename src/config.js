@@ -144,7 +144,10 @@ export const HOLE = {
    * tight: it means the leaderboard's top two are almost always within eating
    * distance of each other, which is where the tension lives.
    */
-  PVP_RATIO: 1.22,
+  /* 1.10 — "clearly bigger" is 10% of RADIUS, not of score. 1.22 meant a hole
+     on 110k could sit on top of one on 100k and nothing happened, which reads
+     as the rule being broken rather than as a near miss. */
+  PVP_RATIO: 1.10,
   /**
    * Fraction of the victim's score awarded to the eater.
    * Lowered from 0.62 after measurement: at 0.62 a kill paid for itself twice
@@ -164,7 +167,8 @@ export const HOLE = {
    * enforces this constant afterwards, so the two cannot disagree — but
    * pointing game.js at HOLE.RESPAWN_KEEP is a one-word tidy-up.
    */
-  RESPAWN_KEEP: 0.70,
+  /* Being eaten costs HALF. 0.70 made a kill barely worth taking. */
+  RESPAWN_KEEP: 0.50,
   /**
    * Hard floor on a respawn, as a fraction of the CURRENT FIELD MEDIAN score.
    * This is the anti-spiral: die at t=130 with nothing and you still come back

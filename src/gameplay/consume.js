@@ -1156,7 +1156,17 @@ export class ConsumeSystem {
         if (i === j) continue;
         const b = holes[j];
         if (!b.alive) continue;
-        if (a.radius < b.radius * HOLE.PVP_RATIO) continue;
+        /* TRUE radius, not the drawn one. Both are clamped to MAX_RADIUS in the
+           late game, and comparing clamped values there says every large hole
+           is the same size as every other — which is precisely when players
+           notice they cannot eat someone visibly smaller. */
+        if (a.trueRadius < b.trueRadius * HOLE.PVP_RATIO) continue;
+        /* Respawn immunity. HOLE.RESPAWN_GRACE has existed since respawns did,
+           and NOTHING checked it here — so a player who had just been eaten,
+           halved and teleported could be eaten again the moment they landed,
+           by anyone who followed them. The grace also protects the eater from
+           farming a spawn. */
+        if (b.spawnGrace > 0) continue;
         const dx = a.position.x - b.position.x;
         const dz = a.position.z - b.position.z;
         if (Math.hypot(dx, dz) > a.radius * 0.85) continue;

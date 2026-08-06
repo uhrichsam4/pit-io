@@ -77,6 +77,9 @@ const RING_CLOSED_AT = 0.88;
  * LOBBY_MAX_WAIT in server/server.js — the offline lobby has to feel the same
  * as the online one.
  */
+/** Seconds outside the ring before the penalty lands. */
+const BOUNDS_GRACE = 3;
+
 const LOBBY_WAIT = 30;
 /** ...and how many players would make it start early, if there were any. */
 const LOBBY_TARGET = 15;
@@ -595,6 +598,14 @@ export class Game {
       return { ok: false, why: 'water', props: 0 };
     }
     if (x > WORLD.BAY_EDGE - 12) return { ok: false, why: 'bay', props: 0 };
+    /* Inside the ring, with margin. Without this the out-of-bounds penalty
+       respawned players OUTSIDE the boundary it had just punished them for
+       crossing, restarting the countdown on landing — an inescapable loop. */
+    const ring = this.shrink;
+    if (ring && ring.radius &&
+        Math.hypot(x - ring.cx, z - ring.cz) > ring.radius * 0.72) {
+      return { ok: false, why: 'outside-ring', props: 0 };
+    }
 
     /* Somewhere to START. A hole opens at 2 m and can only take litter, so a
        spawn is only good if there is litter within a few seconds of it. This is
@@ -983,21 +994,133 @@ export class Game {
       this.ringGlow.scale.set(s.radius, 1, s.radius);
       this.ringLine.scale.set(s.radius, 1, s.radius);
     }
+    if (k > 0) this._updateBounds(dt, s);
+  }
 
+  /**
+   * The ring is a WARNING, not a wall.
+   *
+   * It used to snap every hole back to the rim and multiply its velocity by 0.2
+   * on the same frame — every frame. Standing on the boundary therefore meant
+   * being teleported onto the line and having your speed destroyed repeatedly,
+   * which is exactly the "permanently stuck on the red circle" report: you were
+   * not blocked from turning around, you were being re-pinned faster than you
+   * could accelerate away.
+   *
+   * Now you may leave. Outside, drag builds with depth so it feels wrong to be
+   * there, a 3-2-1 clock runs, and driving back in cancels it. Only at zero is
+   * there a consequence, and the consequence never leaves you stranded: half
+   * your score, and a validated dry respawn you control immediately.
+   */
+  _updateBounds(dt, s) {
     for (const h of this.holes) {
-      if (!h.alive) continue;
+      if (!h.alive) { h.obTime = 0; continue; }
       const dx = h.position.x - s.cx;
       const dz = h.position.z - s.cz;
       const d = Math.hypot(dx, dz);
-      // Measured to the hole's own rim, so a 30 m hole is not half outside.
       const lim = Math.max(8, s.radius - h.radius);
-      if (d <= lim) continue;
-      const inv = lim / (d || 1);
-      h.position.x = s.cx + dx * inv;
-      h.position.z = s.cz + dz * inv;
-      h.velocity.x *= 0.2;
-      h.velocity.z *= 0.2;
-      h.syncVisual();
+
+      if (d <= lim) {
+        // Back inside. Cancel, do not decay — returning must be an immediate
+        // reprieve or the countdown reads as unfair.
+        if (h.obTime) { h.obTime = 0; if (h.isPlayer) this._boundsUI(null); }
+        continue;
+      }
+
+      const over = d - lim;
+      const nx = dx / (d || 1), nz = dz / (d || 1);
+
+      /* Outward motion is resisted, inward motion is not. This is what makes
+         turning around work: heading back toward the city you keep full speed,
+         so the fix for being outside is always available and always effective. */
+      const outward = h.velocity.x * nx + h.velocity.z * nz;
+      if (outward > 0) {
+        const bite = Math.min(1, over / 45) * 0.85 + 0.15;
+        h.velocity.x -= nx * outward * bite;
+        h.velocity.z -= nz * outward * bite;
+      }
+      // A gentle pull home, never a teleport.
+      h.velocity.x -= nx * Math.min(over, 30) * 0.22 * dt;
+      h.velocity.z -= nz * Math.min(over, 30) * 0.22 * dt;
+
+      // Hard stop well outside, so nobody drives to the horizon during the 3s.
+      if (over > 120) {
+        h.position.x = s.cx + nx * (lim + 120);
+        h.position.z = s.cz + nz * (lim + 120);
+        h.syncVisual();
+      }
+
+      h.obTime = (h.obTime || 0) + dt;
+      if (h.isPlayer) this._boundsUI(Math.max(0, BOUNDS_GRACE - h.obTime), nx, nz, h);
+      if (h.obTime >= BOUNDS_GRACE) this._boundsPenalty(h);
+    }
+  }
+
+  /**
+   * Ran out of time outside. Halve the score, put them somewhere real, and
+   * hand control straight back — the one thing this must never do is produce
+   * another stuck player.
+   */
+  _boundsPenalty(h) {
+    h.obTime = 0;
+    const before = h.score;
+    /* reset() is the one path that rewrites score, radius, display radius and
+       tier together. Assigning this.score alone leaves the hole drawn at its
+       old size and eating at its old tier. */
+    const p = this._spawnPoint(Math.floor(this.match.elapsed * 7) + 13);
+    h.reset(p.x, p.z, Math.round(before * 0.5));
+    h.spawnGrace = Math.max(h.spawnGrace || 0, HOLE.RESPAWN_GRACE);
+    h.alive = true;
+    h.respawnAt = 0;
+    h.syncVisual();
+
+    if (h.isPlayer) {
+      this._boundsUI(null);
+      if (this.hud) {
+        const lost = (before - h.score).toLocaleString('en-US');
+        this.hud.pushFeed(`<b>OUT OF BOUNDS</b> — lost ${lost}`, '#ff5470');
+      }
+      this.effects.addShake(0.5);
+    }
+    this.effects.puff(
+      new THREE.Vector3(p.x, 1.2, p.z), h.color.getHex(), 30, h.radius * 1.1, 8, 1.2, 1.0
+    );
+  }
+
+  /**
+   * The warning itself: seconds remaining plus an arrow that points back at the
+   * city, rotated into SCREEN space so it agrees with what the camera shows.
+   * `null` hides it.
+   */
+  _boundsUI(secs, nx, nz, h) {
+    let el = this._obEl;
+    if (secs == null) { if (el) el.classList.remove('on'); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'ob-warn';
+      el.innerHTML = '<div class="ob-arrow">\u2191</div>'
+        + '<div class="ob-num"></div>'
+        + '<div class="ob-cap">RETURN TO THE CITY</div>';
+      document.body.appendChild(el);
+      this._obEl = el;
+      this._obNum = el.querySelector('.ob-num');
+      this._obArrow = el.querySelector('.ob-arrow');
+    }
+    el.classList.add('on');
+    this._obNum.textContent = String(Math.max(1, Math.ceil(secs)));
+
+    // Direction home in screen space: the angle between where the camera looks
+    // and where safety is. Without this the arrow points at a world direction
+    // the player has no way to map onto their screen.
+    // this.engine.camera — game.js has no `camera` of its own, and reading one
+    // threw every frame the warning was up, which would have taken the whole
+    // out-of-bounds system down with it.
+    const cam = this.engine && this.engine.camera;
+    if (cam) {
+      const fx = cam.position.x - h.position.x;
+      const fz = cam.position.z - h.position.z;
+      const ang = Math.atan2(-nx, -nz) - Math.atan2(fx, fz);
+      this._obArrow.style.transform = `rotate(${ang}rad)`;
     }
   }
 

@@ -1,0 +1,35 @@
+
+/* ---------------------------------------------------------------------------
+   Out-of-bounds warning.
+
+   Centred and large on purpose: it is the only thing on screen that costs you
+   half your score if ignored, and the player is by definition looking at empty
+   terrain when it appears. The arrow is rotated from game.js into SCREEN space,
+   so "up" always means "the way you are facing is home".
+   ------------------------------------------------------------------------- */
+.ob-warn {
+  position: fixed; left: 50%; top: 46%;
+  transform: translate(-50%, -50%) scale(0.9);
+  display: grid; justify-items: center; gap: 2px;
+  pointer-events: none; opacity: 0; z-index: 60;
+  transition: opacity .18s ease, transform .18s ease;
+  font-family: var(--font-display, system-ui), sans-serif;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, .85);
+}
+.ob-warn.on { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+.ob-warn .ob-arrow {
+  font-size: 52px; line-height: 1; color: #fff;
+  filter: drop-shadow(0 0 12px #ff2d55);
+}
+.ob-warn .ob-num {
+  font-size: 92px; line-height: .95; font-weight: 900; color: #ff5470;
+  animation: ob-beat .95s ease-in-out infinite;
+}
+.ob-warn .ob-cap {
+  font-size: 13px; letter-spacing: .22em; font-weight: 800; color: #ffd7de;
+}
+@keyframes ob-beat {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.13); }
+}
+@media (prefers-reduced-motion: reduce) { .ob-warn .ob-num { animation: none; } }

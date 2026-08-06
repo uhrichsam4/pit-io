@@ -651,11 +651,29 @@ export class Hole {
 
   /** Score -> radius curve. */
   static radiusFor(score) {
-    return Math.min(
-      HOLE.MAX_RADIUS,
-      HOLE.START_RADIUS * Math.pow(1 + score / HOLE.GROWTH_K, HOLE.GROWTH_P)
-    );
+    return Math.min(HOLE.MAX_RADIUS, Hole.trueRadiusFor(score));
   }
+
+  /**
+   * Radius WITHOUT the MAX_RADIUS clamp — the hole's true size.
+   *
+   * radiusFor() clamps because a hole that keeps growing eventually swallows
+   * the camera and the map. But the clamp destroys ordering at the top: two
+   * players on 100k and 110k are both pinned to MAX_RADIUS, so a rule that
+   * says "you must be 10% bigger by radius" can never fire between them, and a
+   * clearly larger player simply cannot eat a smaller one. That is the reported
+   * bug, and it gets WORSE the better you are playing.
+   *
+   * So size comparisons use this, which is strictly increasing in score, while
+   * everything physical — the drawn opening, the swallow test, the camera —
+   * keeps using the clamped value.
+   */
+  static trueRadiusFor(score) {
+    return HOLE.START_RADIUS * Math.pow(1 + score / HOLE.GROWTH_K, HOLE.GROWTH_P);
+  }
+
+  /** This hole's true, unclamped size. See trueRadiusFor. */
+  get trueRadius() { return Hole.trueRadiusFor(this.score); }
 
   get speed() {
     return HOLE.BASE_SPEED * Math.pow(this.radius / HOLE.START_RADIUS, -HOLE.SPEED_P) *
