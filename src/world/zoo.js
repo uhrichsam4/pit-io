@@ -1639,39 +1639,118 @@ function planZoo(ctx, zoo, rng) {
     { n: 's', x: cx, z: z1, dx: 0, dz: 1 },
     { n: 'n', x: cx, z: z0, dx: 0, dz: -1 },
   ];
+  /** Shortest walk from (x,z) along (dx,dz) to a carriageway, or Infinity. */
+  const roadRun = (x, z, dx, dz, lim = 52) => {
+    for (let t = 2; t <= lim; t += 1.5) if (L.isRoad(x + dx * t, z + dz * t)) return t;
+    return Infinity;
+  };
   let best = null;
   for (const e of EDGES) {
-    let dist = Infinity;
-    for (let t = 3; t <= 48; t += 2) {
-      if (L.isRoad(e.x + e.dx * t, e.z + e.dz * t)) { dist = t; break; }
-    }
+    const dist = roadRun(e.x, e.z, e.dx, e.dz, 48);
     if (!best || dist < best.dist) best = { ...e, dist };
   }
 
-  const entrance = zoo.entrance && numOf(zoo.entrance.x) !== undefined
+  /* THE GATE FACES THE STREET, AND THE LAYOUT CANNOT TELL US WHICH ONE.
+     `zoo.entrance` is an axis-aligned RECTANGLE, so its `yaw: 0` means "not
+     rotated" — it is not a facing. Taking it as one pointed every front gate
+     due south whatever was actually outside it. The facing is derived instead:
+     march out of the plaza centre in the four directions and take the shortest
+     walk to a carriageway, which is the avenue the visitor arrives on. */
+  const eRect = zoo.entrance && numOf(zoo.entrance.x) !== undefined
     ? {
       x: zoo.entrance.x, z: numOf(zoo.entrance.z, zoo.entrance.cz) ?? cz,
-      yaw: numOf(zoo.entrance.yaw, zoo.entrance.rot) ?? yawTo(best.dx, best.dz),
+      w: numOf(zoo.entrance.w, zoo.entrance.width) ?? 26,
+      d: numOf(zoo.entrance.d, zoo.entrance.depth) ?? 20,
     }
-    : { x: best.x + best.dx * 6.5, z: best.z + best.dz * 6.5, yaw: yawTo(best.dx, best.dz) };
-
-  // Hub: the centroid of the pens, pulled a little toward the gate, and pushed
-  // clear of any pen it happens to land inside.
-  let hub = {
-    x: cx + (entrance.x - cx) * 0.22,
-    z: cz + (entrance.z - cz) * 0.22,
+    : { x: best.x + best.dx * 6.5, z: best.z + best.dz * 6.5, w: 26, d: 20 };
+  let eFace = { dx: best.dx, dz: best.dz, dist: best.dist };
+  for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const d = roadRun(eRect.x, eRect.z, dx, dz);
+    if (d < eFace.dist) eFace = { dx, dz, dist: d };
+  }
+  const entrance = {
+    x: eRect.x, z: eRect.z, w: eRect.w, d: eRect.d,
+    // An explicit non-zero yaw from the layout is a real facing; honour it.
+    yaw: (numOf(zoo.entrance && zoo.entrance.yaw) || 0) !== 0
+      ? zoo.entrance.yaw : yawTo(eFace.dx, eFace.dz),
+    // Half-width of the frontage the flanking walls may run along.
+    span: ((eFace.dx !== 0 ? eRect.d : eRect.w) / 2) - 1.0,
   };
-  let guard = 0;
-  while (guard++ < 24) {
-    const h = insideHabitat(habs, hub.x, hub.z, 3.2);
-    if (!h) break;
-    const dx = hub.x - h.x, dz = hub.z - h.z;
-    const len = Math.hypot(dx, dz) || 1;
-    hub = { x: hub.x + (dx / len) * 4.5, z: hub.z + (dz / len) * 4.5 };
+
+  const yard = zoo.yard && numOf(zoo.yard.x) !== undefined
+    ? { x: zoo.yard.x, z: numOf(zoo.yard.z) ?? cz, w: numOf(zoo.yard.w) ?? 16, d: numOf(zoo.yard.d) ?? 12 }
+    : null;
+
+  /* --- the path graph -------------------------------------------------- */
+  const nodes = [];
+  const segments = [];
+  const link = (a, b, w, tone) => {
+    if (Math.hypot(b.x - a.x, b.z - a.z) > 0.4) {
+      segments.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, w, tone });
+    }
+  };
+
+  /* THE CORRIDORS ARE GIVEN, NOT INVENTED.
+     cityLayout reserves a set of rectangles as `zoo.paths`; they are road-free
+     by construction and nature.js keeps them free of trees. An invented
+     hub-and-spoke plan ignored both, and measured against the real layout on
+     three seeds it was a genuine mess: 74% of the paving fell outside the
+     reserved corridors, 12 samples in 176 ran straight through a pen, and 434
+     of 996 prop placements were refused because the spokes crossed live
+     carriageway. Pave what the layout reserved and all three go away. */
+  const reserved = zoo.pathRects;
+  for (const r of reserved) {
+    const alongX = r.w >= r.d;
+    const w = Math.max(1.6, Math.min(alongX ? r.d : r.w, PATH_W * 1.7));
+    // Pull each end in by half a width: `strip` overruns by that much to close
+    // its joints, so a corridor drawn to its full length would spill out of
+    // the rectangle the layout reserved.
+    const half = Math.max(0.5, (alongX ? r.w : r.d) / 2 - w * 0.5);
+    const a = alongX ? { x: r.x - half, z: r.z } : { x: r.x, z: r.z - half };
+    const b = alongX ? { x: r.x + half, z: r.z } : { x: r.x, z: r.z + half };
+    link(a, b, w, 0xcdc0a2);
+    for (const p of [a, b]) nodes.push({ x: p.x, z: p.z, r: w * 0.6, kind: 'corridor' });
   }
 
-  /* Viewing point per pen: the midpoint of whichever side faces the hub, pushed
-     3.4 m out so the crowd stands off the fence rather than inside the pen. */
+  /** Closest point on the network built so far. */
+  const snap = (x, z) => {
+    let bp = null, bd = Infinity;
+    for (const s of segments) {
+      const dx = s.bx - s.ax, dz = s.bz - s.az;
+      const L2 = dx * dx + dz * dz || 1;
+      let t = ((x - s.ax) * dx + (z - s.az) * dz) / L2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = s.ax + dx * t, pz = s.az + dz * t;
+      const d = Math.hypot(px - x, pz - z);
+      if (d < bd) { bd = d; bp = { x: px, z: pz, d }; }
+    }
+    return bp;
+  };
+
+  /* No reserved corridors (a layout that publishes only pens): fall back to a
+     hub the pens can all be reached from. Kept because `readZoo` accepts far
+     less than cityLayout currently emits, and a zoo with no paths at all is
+     worse than a zoo with invented ones. */
+  let hub = null;
+  if (!segments.length) {
+    hub = { x: cx + (entrance.x - cx) * 0.22, z: cz + (entrance.z - cz) * 0.22 };
+    let guard = 0;
+    while (guard++ < 24) {
+      const h = insideHabitat(habs, hub.x, hub.z, 3.2);
+      if (!h) break;
+      const dx = hub.x - h.x, dz = hub.z - h.z;
+      const len = Math.hypot(dx, dz) || 1;
+      hub = { x: hub.x + (dx / len) * 4.5, z: hub.z + (dz / len) * 4.5 };
+    }
+    nodes.push({ x: hub.x, z: hub.z, r: 5.2, kind: 'hub' });
+    link({ x: entrance.x, z: entrance.z }, hub, PATH_W * 1.35, 0xd4c7a8);
+  }
+  const anchor = (x, z) => (hub ? { x: hub.x, z: hub.z, d: Math.hypot(x - hub.x, z - hub.z) } : snap(x, z));
+
+  /* Viewing point per pen: the midpoint of whichever side faces the path
+     network, pushed 3.2 m out so the crowd stands off the fence. Choosing the
+     side by distance to the NETWORK rather than to a notional centre is what
+     puts every viewing zone on ground somebody actually walks past. */
   const views = [];
   for (const h of habs) {
     const sides = [
@@ -1682,96 +1761,76 @@ function planZoo(ctx, zoo, rng) {
     ];
     let pick = null, bestD = Infinity;
     for (const s of sides) {
-      const p = habPoint(h, s.lx, s.lz);
-      const d = Math.hypot(p.x - hub.x, p.z - hub.z);
-      if (d < bestD) { bestD = d; pick = { ...s, p }; }
+      const o = habPoint(h, s.lx + s.out[0] * 3.2, s.lz + s.out[1] * 3.2);
+      if (L.isRoad(o.x, o.z) || L.isWater(o.x, o.z)) continue;
+      const a = anchor(o.x, o.z);
+      const d = a ? a.d : Math.hypot(o.x - cx, o.z - cz);
+      if (d < bestD) { bestD = d; pick = { ...s, p: habPoint(h, s.lx, s.lz), o }; }
     }
-    const o = habPoint(h, pick.lx + pick.out[0] * 3.4, pick.lz + pick.out[1] * 3.4);
+    // Every side on a road or in the water: fall back to the first, so a pen
+    // still gets its rail rather than silently getting nothing.
+    if (!pick) {
+      const s = sides[0];
+      pick = { ...s, p: habPoint(h, s.lx, s.lz), o: habPoint(h, s.lx, s.lz + 3.2) };
+    }
     views.push({
-      hab: h,
-      side: pick,
-      // The fence-line midpoint, and the standing point out in front of it.
+      hab: h, side: pick,
       fx: pick.p.x, fz: pick.p.z,
-      x: o.x, z: o.z,
-      // Yaw that turns a prop's +z face AWAY from the pen (rails, boards and
-      // benches all face the visitor's back, so they take this + PI where they
-      // must look inward).
-      yawOut: yawTo(o.x - pick.p.x, o.z - pick.p.z),
+      x: pick.o.x, z: pick.o.z,
+      // Turns a prop's +z face AWAY from the pen. Rails take this; anything
+      // meant to be read looking into the pen takes this + PI.
+      yawOut: yawTo(pick.o.x - pick.p.x, pick.o.z - pick.p.z),
       span: pick.span,
     });
   }
-  views.sort((a, b) => Math.atan2(a.z - hub.z, a.x - hub.x) - Math.atan2(b.z - hub.z, b.x - hub.x));
 
-  // Yard: the corner furthest from the gate, outside every pen.
-  let yard = zoo.yard && numOf(zoo.yard.x) !== undefined
-    ? { x: zoo.yard.x, z: numOf(zoo.yard.z) ?? cz, w: numOf(zoo.yard.w) ?? 16, d: numOf(zoo.yard.d) ?? 12 }
+  // Spurs: entrance, each viewing point and the yard onto the network.
+  const spur = (from, w, tone, kind) => {
+    nodes.push({ x: from.x, z: from.z, r: Math.max(2.6, w * 0.9), kind });
+    const a = anchor(from.x, from.z);
+    if (a && a.d > 0.8) link(from, a, w, tone);
+  };
+  spur(entrance, PATH_W * 1.35, 0xd4c7a8, 'entrance');
+  for (const v of views) spur({ x: v.x, z: v.z }, PATH_W * 0.9, 0xcdc0a2, 'view');
+  if (yard) spur(yard, PATH_W * 0.9, 0xb9ae95, 'yard');
+
+  /* Exit: the far end of the walk. With reserved corridors that is simply the
+     corridor endpoint furthest from the gate — no second street frontage has
+     to be invented, and the visitor leaves where the circuit actually ends. */
+  let exit = zoo.exit && numOf(zoo.exit.x) !== undefined
+    ? { x: zoo.exit.x, z: numOf(zoo.exit.z) ?? cz, yaw: numOf(zoo.exit.yaw) || 0 }
     : null;
-  if (!yard) {
+  if (!exit) {
+    let far = null, farD = -1;
+    for (const n of nodes) {
+      if (n.kind !== 'corridor') continue;
+      const d = Math.hypot(n.x - entrance.x, n.z - entrance.z);
+      if (d > farD) { farD = d; far = n; }
+    }
+    if (far) {
+      // Face it away from the network, so its walls read as a boundary rather
+      // than as a second gate standing in the middle of a footpath.
+      const a = anchor(far.x, far.z);
+      const dx = a ? far.x - a.x : entrance.x - far.x;
+      const dz = a ? far.z - a.z : entrance.z - far.z;
+      exit = { x: far.x, z: far.z, yaw: yawTo(dx, dz) || yawTo(far.x - entrance.x, far.z - entrance.z) };
+    } else {
+      const ee = EDGES.find((q) => q.n !== best.n && (q.dx === 0) !== (best.dx === 0)) || best;
+      exit = { x: ee.x + ee.dx * 5.0, z: ee.z + ee.dz * 5.0, yaw: yawTo(ee.dx, ee.dz) };
+    }
+  }
+  nodes.push({ x: exit.x, z: exit.z, r: 3.0, kind: 'exit' });
+
+  const yardOut = yard || (() => {
     let far = null, farD = -1;
     for (const [px, pz] of [[x0 + 9, z0 + 8], [x1 - 9, z0 + 8], [x0 + 9, z1 - 8], [x1 - 9, z1 - 8]]) {
       const d = Math.hypot(px - entrance.x, pz - entrance.z);
       if (d > farD && !insideHabitat(habs, px, pz, 5)) { farD = d; far = { x: px, z: pz }; }
     }
-    if (!far) far = { x: x0 - 10, z: z0 - 8 };
-    yard = { x: far.x, z: far.z, w: 16, d: 12 };
-  }
-  yard.yaw = yawTo(hub.x - yard.x, hub.z - yard.z);
-
-  // Exit: a second, plainer gate on the edge next to the entrance, so the loop
-  // has somewhere to end that is not where it started.
-  const exitEdge = EDGES.find((e) => e.n !== best.n && (e.dx === 0) !== (best.dx === 0)) || best;
-  const exit = zoo.exit && numOf(zoo.exit.x) !== undefined
-    ? { x: zoo.exit.x, z: numOf(zoo.exit.z) ?? cz, yaw: numOf(zoo.exit.yaw) ?? yawTo(exitEdge.dx, exitEdge.dz) }
-    : { x: exitEdge.x + exitEdge.dx * 5.0, z: exitEdge.z + exitEdge.dz * 5.0, yaw: yawTo(exitEdge.dx, exitEdge.dz) };
-
-  /* --- the path graph -------------------------------------------------- */
-  const nodes = [
-    { x: entrance.x, z: entrance.z, r: 4.4, kind: 'entrance' },
-    { x: hub.x, z: hub.z, r: 5.2, kind: 'hub' },
-    { x: exit.x, z: exit.z, r: 3.4, kind: 'exit' },
-    { x: yard.x, z: yard.z, r: 3.0, kind: 'yard' },
-  ];
-  const segments = [];
-  const link = (a, b, w, tone) => segments.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, w, tone });
-
-  /* A spoke that runs straight through a neighbouring pen is a path through a
-     lion. Two elbow candidates, offset either side of the straight line; take
-     whichever samples clear. Cheap, and it fixes the only routing failure this
-     topology can produce. */
-  const clearRun = (a, b) => {
-    for (let t = 0.1; t <= 0.9; t += 0.1) {
-      if (insideHabitat(habs, a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, 1.2)) return false;
-    }
-    return true;
-  };
-  const route = (a, b, w, tone) => {
-    if (clearRun(a, b)) { link(a, b, w, tone); return; }
-    const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
-    let dx = b.x - a.x, dz = b.z - a.z;
-    const len = Math.hypot(dx, dz) || 1;
-    dx /= len; dz /= len;
-    for (const s of [1, -1]) {
-      const e = { x: mx - dz * len * 0.42 * s, z: mz + dx * len * 0.42 * s, r: 2.6, kind: 'bend' };
-      if (clearRun(a, e) && clearRun(e, b)) {
-        nodes.push(e); link(a, e, w, tone); link(e, b, w, tone); return;
-      }
-    }
-    link(a, b, w, tone);   // nowhere clean to go: the direct run still connects
-  };
-
-  route(nodes[0], nodes[1], PATH_W * 1.35, 0xd4c7a8);          // gate approach, wide
-  for (const v of views) {
-    nodes.push({ x: v.x, z: v.z, r: 3.0, kind: 'view', view: v });
-    route(nodes[1], { x: v.x, z: v.z }, PATH_W, 0xcdc0a2);
-  }
-  // The ring: consecutive viewing points, which is what makes a visit a circuit
-  // rather than eight there-and-back trips to the same junction.
-  for (let i = 0; i < views.length && views.length > 2; i++) {
-    const a = views[i], b = views[(i + 1) % views.length];
-    route({ x: a.x, z: a.z }, { x: b.x, z: b.z }, PATH_W * 0.82, 0xc6b99c);
-  }
-  route(nodes[1], nodes[2], PATH_W, 0xcdc0a2);                  // hub -> exit
-  route(nodes[1], nodes[3], PATH_W * 0.9, 0xb9ae95);            // hub -> yard (service)
+    return { x: (far || { x: x0 - 10 }).x, z: (far || { z: z0 - 8 }).z, w: 16, d: 12 };
+  })();
+  const ya = anchor(yardOut.x, yardOut.z);
+  yardOut.yaw = ya ? yawTo(ya.x - yardOut.x, ya.z - yardOut.z) : yawTo(cx - yardOut.x, cz - yardOut.z);
 
   /* --- ponds ------------------------------------------------------------ */
   let wets = habs.filter((h) => h.water);

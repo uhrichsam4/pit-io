@@ -611,6 +611,8 @@ function birdGeo(v) {
  *   fleeR     how far away a hole has to be before this animal stops caring
  *   herd      followers loosely track the first of their species
  *   perch     may climb something in its pen (monkeys, and only monkeys)
+ *   wades     may stand in the pond zoo.js dug in its pen. A penguin in the
+ *             water is the point of a penguin; a giraffe in it is a bug
  *   per       square metres of pen per animal; min/max bracket the result
  */
 const SPECIES = {
@@ -624,21 +626,21 @@ const SPECIES = {
        Verified against worldBuild.measureGeometry in __selftest. */
     tier: TIER.LARGE, score: 62, foot: 2.10, scale: [0.94, 1.08],
     speed: 0.62, run: 2.1, turn: 1.1, fleeR: 26, herd: true, perch: false,
-    gaitK: 1.5, bob: 0.045, roll: 0.020, pitch: 0.010,
+    gaitK: 1.5, bob: 0.045, roll: 0.020, pitch: 0.010, wades: false,
     pause: [2.4, 5.0], per: 150, min: 2, max: 5,
   },
   giraffe: {
     key: 'giraffe', geo: giraffeGeo, variants: 2, label: 'Giraffe',
     tier: TIER.LARGE, score: 50, foot: 1.05, scale: [0.92, 1.10],
     speed: 0.85, run: 2.7, turn: 1.4, fleeR: 24, herd: false, perch: false,
-    gaitK: 1.9, bob: 0.060, roll: 0.026, pitch: 0.012,
+    gaitK: 1.9, bob: 0.060, roll: 0.026, pitch: 0.012, wades: false,
     pause: [2.0, 4.5], per: 95, min: 2, max: 6,
   },
   zebra: {
     key: 'zebra', geo: zebraGeo, variants: 2, label: 'Zebra',
     tier: TIER.MEDIUM, score: 18, foot: 0.90, scale: [0.92, 1.08],
     speed: 1.15, run: 4.3, turn: 2.6, fleeR: 22, herd: true, perch: false,
-    gaitK: 2.6, bob: 0.055, roll: 0.030, pitch: 0.018,
+    gaitK: 2.6, bob: 0.055, roll: 0.030, pitch: 0.018, wades: false,
     pause: [1.0, 3.2], per: 46, min: 3, max: 9,
   },
   penguin: {
@@ -646,14 +648,14 @@ const SPECIES = {
     tier: TIER.SMALL, score: 6, foot: 0.30, scale: [0.90, 1.08],
     speed: 0.52, run: 1.6, turn: 3.4, fleeR: 12, herd: true, perch: false,
     // The waddle. Roll is six times anything else in the file, on purpose.
-    gaitK: 5.4, bob: 0.030, roll: 0.150, pitch: 0.020,
+    gaitK: 5.4, bob: 0.030, roll: 0.150, pitch: 0.020, wades: true,
     pause: [0.8, 3.0], per: 15, min: 6, max: 16,
   },
   monkey: {
     key: 'monkey', geo: monkeyGeo, variants: 2, label: 'Monkey',
     tier: TIER.SMALL, score: 8, foot: 0.28, scale: [0.90, 1.10],
     speed: 1.55, run: 3.6, turn: 5.5, fleeR: 16, herd: false, perch: true,
-    gaitK: 6.0, bob: 0.075, roll: 0.040, pitch: 0.030,
+    gaitK: 6.0, bob: 0.075, roll: 0.040, pitch: 0.030, wades: false,
     pause: [0.3, 1.6], per: 24, min: 4, max: 10,
   },
   bird: {
@@ -661,7 +663,7 @@ const SPECIES = {
     // The crane variant gets its own kill-feed name; see labelFor().
     tier: TIER.SMALL, score: 7, foot: 0.34, scale: [0.92, 1.08],
     speed: 0.48, run: 2.3, turn: 3.0, fleeR: 14, herd: true, perch: false,
-    gaitK: 4.2, bob: 0.038, roll: 0.055, pitch: 0.016,
+    gaitK: 4.2, bob: 0.038, roll: 0.055, pitch: 0.016, wades: true,
     pause: [1.4, 4.4], per: 13, min: 6, max: 18,
   },
 };
@@ -1046,11 +1048,23 @@ export function buildAnimals(ctx) {
      and calling it for sixty animals every frame is a cost the frame budget
      does not have — so it is asked ONCE per pen here, and only pens that can
      possibly reach water pay for the test at runtime. */
+  /* What zoo.js actually built — ponds, ground height. Declared BEFORE any
+     reader; see the note on the loop below. */
+  const zooBuilt = ctx.zoo;
+
+  /* `built` is READ here, so it must be declared above this loop. It was not,
+     and the only reason this never threw is that the pen keys did not match the
+     habitat names — every iteration hit `continue` before reaching the read.
+     Aligning the species roster made the names match, the loop body ran for the
+     first time, and a temporal dead zone that had been sitting here all along
+     took the whole animals module down with it. Fixing one bug uncovering
+     another is the normal shape of this; leaving the declaration below its use
+     would just re-arm it for whoever changes the names next. */
   for (const key of BY_SIZE) {
     const pen = st.pens[key];
     if (!pen) continue;
     pen.wet = penTouchesWater(layout, pen);
-    pen.ponds = pondsIn(built, pen);
+    pen.ponds = pondsIn(zooBuilt, pen);
   }
 
   /* GROUND HEIGHT, taken from the module that actually built the surface.
@@ -1058,9 +1072,8 @@ export function buildAnimals(ctx) {
      rims at (zoo.js:1831) — and standing the animals on anything else means
      standing them on a surface nobody built. The fallback is the same
      expression zoo.js falls back to, so the two cannot drift apart. */
-  const built = ctx.zoo;
-  const groundY = (built && Number.isFinite(built.y))
-    ? built.y : (ctx.Y_WALK ?? 0.155) + 0.015;
+  const groundY = (zooBuilt && Number.isFinite(zooBuilt.y))
+    ? zooBuilt.y : (ctx.Y_WALK ?? 0.155) + 0.015;
 
   const MAX_ANIMALS = 64;                 // hard ceiling on the per-frame cost
   for (const key of BY_SIZE) {
@@ -1196,6 +1209,9 @@ function spawnSpecies(ctx, st, sp, pen, inset, groundY, n) {
   const minSep = sp.foot * 2.1;
   const placed = [];
   let leader = null;
+  // Only a land species in a pen that HAS a pond pays for the pond test, which
+  // for the shipped seeds is one habitat out of six and usually none.
+  const dryOnly = !sp.wades && pen.ponds && pen.ponds.length > 0;
 
   for (let i = 0; i < n; i++) {
     /* Rejection sampling with a low try count. A herd is meant to LOOK like a
@@ -1213,6 +1229,7 @@ function spawnSpecies(ctx, st, sp, pen, inset, groundY, n) {
       // A land animal never STARTS in water either, which is what makes the
       // "revert to the last position" rule in the tick safe by induction.
       if (pen.wet && st.layout.isWater(_wp.x, _wp.z)) continue;
+      if (dryOnly && inPond(pen.ponds, _wp.x, _wp.z, sp.foot)) continue;
       x = _wp.x; z = _wp.z; ok = true;
       break;
     }
@@ -1273,6 +1290,7 @@ function spawnSpecies(ctx, st, sp, pen, inset, groundY, n) {
       offX: 0, offZ: 0,
       perches: perches && perches.length ? perches : null,
       perch: null, perchY: groundY, perchT: 0, climb: 0,
+      ponds: dryOnly ? pen.ponds : null,
     };
     if (sp.herd) {
       if (!leader) leader = a;
@@ -1518,6 +1536,16 @@ function stepAnimal(st, a, dt, holes) {
     a.pause = 0.35;
     retarget(st, a);
   }
+  /* THE POND, which `isWater` does not know about — it answers for the bay and
+     the river, and zoo.js dug this one inside the pen after the layout was
+     decided. `a.ponds` is null for every species allowed in the water and for
+     every pen without one, so the common case costs a null check. */
+  if (a.ponds && inPond(a.ponds, nx, nz, sp.foot)) {
+    nx = a.x;
+    nz = a.z;
+    a.pause = 0.3;
+    retarget(st, a);
+  }
   a.x = nx;
   a.z = nz;
 
@@ -1664,7 +1692,8 @@ function resetAnimals(st) {
  * non-zero one names exactly which invariant survived the restart.
  */
 function residueOf(st) {
-  let outsidePen = 0, notIdle = 0, moved = 0, fleeing = 0, climbing = 0, inWater = 0;
+  let outsidePen = 0, notIdle = 0, moved = 0, fleeing = 0, climbing = 0;
+  let inWater = 0, inPonds = 0;
   for (let i = 0; i < st.animals.length; i++) {
     const a = st.animals[i];
     if (!insidePen(a.pen, a.inset, a.x, a.z, 1e-3)) outsidePen++;
@@ -1675,10 +1704,11 @@ function residueOf(st) {
     if (a.climb > 0 || a.perch) climbing++;
     if (a.pen.wet && st.layout && typeof st.layout.isWater === 'function'
         && st.layout.isWater(a.x, a.z)) inWater++;
+    if (a.ponds && inPond(a.ponds, a.x, a.z, a.sp.foot)) inPonds++;
   }
   return {
     animals: st.animals.length,
-    outsidePen, notIdle, moved, fleeing, climbing, inWater,
+    outsidePen, notIdle, moved, fleeing, climbing, inWater, inPonds,
   };
 }
 
@@ -2000,6 +2030,40 @@ export function __selftest() {
       const r2 = built.residue();
       return r2.moved === 0 && r2.notIdle === 0 && r2.outsidePen === 0;
     })());
+  }
+
+  /* --- 5b. a pond zoo.js dug is a hole in the pen, not a puddle ---------- */
+  {
+    const c5 = mkCtx();
+    /* zoo.js publishes ctx.zoo AFTER it builds, and animals runs after zoo, so
+       this is what the module really sees. The pond is put dead centre of the
+       whole site so it lands in whichever pens straddle the middle. */
+    c5.zoo = {
+      y: 0.19,
+      ponds: [{ x: 0, z: 0, r: 9, sq: 0.75, y: 0.09 },
+        { x: -50, z: -30, r: 7, sq: 1.0, y: 0.09 }],
+    };
+    const z5 = buildAnimals(c5);
+    const s5 = z5._state;
+    ok('the built ground height is taken from ctx.zoo.y',
+      s5.animals.every((a) => Math.abs(a.baseY - 0.19) < 1e-9),
+      s5.animals[0] && s5.animals[0].baseY);
+    const dry = s5.animals.filter((a) => a.ponds);
+    const wet = s5.animals.filter((a) => a.sp.wades);
+    ok('some land animal is guarded against a pond in its pen', dry.length > 0, dry.length);
+    ok('penguins and birds are NOT guarded — the water is theirs',
+      wet.every((a) => !a.ponds));
+    ok('nothing spawned in a pond it may not enter',
+      dry.every((a) => !inPond(a.ponds, a.x, a.z, a.sp.foot)));
+    // Drive them at the ponds with a hole on the far side of each.
+    for (let i = 0; i < 600; i++) {
+      z5.update(0.2, [{ position: { x: -70, z: 0 }, radius: 40, alive: true }]);
+      z5.update(0.2, [{ position: { x: 70, z: 0 }, radius: 40, alive: true }]);
+    }
+    ok('and none walked into one while fleeing across it',
+      z5.residue().inPonds === 0, JSON.stringify(z5.residue()));
+    ok('and containment still held throughout',
+      z5.residue().outsidePen === 0);
   }
 
   /* --- 6. a monkey climbs a real prop, and comes down when it is eaten --- */
