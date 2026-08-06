@@ -37,6 +37,7 @@ import { buildNature } from './nature.js';
 import { buildProps } from './props.js';
 import { buildVehicles } from './vehicles.js';
 import { buildPedestrians } from './pedestrians.js';
+import { buildAnimals } from './animals.js';
 
 // Order matters: pedestrians read the occupancy grid to keep crowds off props
 // and they share the road network's signal phases with traffic, so they run
@@ -48,6 +49,11 @@ const MODULES = [
   ['props', buildProps],
   ['vehicles', buildVehicles],
   ['pedestrians', buildPedestrians],
+  /* Animals last. They need the pens that props.js fenced and the ground that
+     everything before them claimed, and — unlike every other module here — they
+     MOVE, so they must not be competing for occupancy with a pass that has not
+     run yet. A no-op when the seed produced no zoo site. */
+  ['animals', buildAnimals],
 ];
 
 

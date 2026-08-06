@@ -1343,9 +1343,11 @@ function reserveZoo({ blocks, xSpans, zSpans, alleys, isRoadAt, isWetAt, S, BAY 
      The outward-facing two are left off the list on purpose: they stay
      plantable, so nature.js screens the zoo from the street with trees rather
      than fencing it in a bald ring. */
-  // NOT `gaps.map(zRect)`: map hands the callback (value, index, array) and
-  // the index would land in zRect's `eps`, shrinking rect n by n metres. It
-  // cost 6 m off the last path before anyone noticed.
+  // NOT `gaps.map(zRect)`. map hands its callback (value, index, array), so
+  // the index lands in zRect's `eps` and rect n shrinks by n metres a side —
+  // silently, because a smaller rectangle passes every containment test we
+  // have. It took 2 m off one cell and 6 m off another before a road sweep
+  // showed the cell areas drifting. Same trap in `cells.map` below.
   const paths = gaps.map((g) => zRect(g));
   for (const c of cells) {
     const mx = (c.x0 + c.x1) / 2, mz = (c.z0 + c.z1) / 2;
