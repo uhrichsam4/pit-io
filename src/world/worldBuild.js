@@ -173,6 +173,9 @@ export function buildWorld(scene, registry, renderer, seed = 20260803) {
       const pool = props.pool(key, factory, opts.capacity || 3000, {
         castShadow: opts.castShadow !== false,
         receiveShadow: opts.receiveShadow ?? false,
+        // Exempts the pool from the height-based shadow cull in pools.js.
+        // Anything that MOVES sets this; a parked bench does not.
+        keepShadow: !!opts.keepShadow,
         color: opts.hex !== undefined && opts.hex !== null,
       });
       const pos = opts.position;

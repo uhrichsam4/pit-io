@@ -3276,6 +3276,10 @@ function spawn(ctx, state, type, vi, x, surfaceY, z, rotY, dynamic) {
     dynamic,
     castShadow: true,
     receiveShadow: true,
+    // A sedan is 1.4 m tall and would fail pools.js's height-based shadow cull,
+    // but a car's shadow is what puts it ON the road instead of hovering above
+    // it — and it moves, so the eye follows it. Vehicles always cast.
+    keepShadow: true,
     debrisColor: spec.paint ?? spec.hull ?? 0xffffff,
   });
   if (c) {

@@ -18,6 +18,14 @@
  * the upload to exactly the rows that changed.
  */
 
+/**
+ * Below this height a static prop stops casting. Set from the measured shadow
+ * pass, not from taste: everything under it in the caster list was street
+ * furniture whose shadow is a few pixels at the gameplay camera.
+ */
+const SHADOW_MIN_HEIGHT = 1.8;
+
+
 import * as THREE from 'three';
 
 const _m4 = new THREE.Matrix4();
@@ -47,6 +55,13 @@ export class InstancedProp {
     this.mesh = new THREE.InstancedMesh(geometry, material, capacity);
     this.mesh.name = `inst-${this.name}`;
     this.mesh.castShadow = opts.castShadow ?? true;
+    /**
+     * Exempt from the height-based shadow cull. A sedan is 1.4 m tall and would
+     * fail it, but a car's shadow is the thing that makes it look like it is ON
+     * the road rather than hovering over it — and unlike a bench it MOVES, so
+     * the eye tracks it. Anything that moves sets this.
+     */
+    this.keepShadow = !!opts.keepShadow;
     this.mesh.receiveShadow = opts.receiveShadow ?? true;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
@@ -216,19 +231,38 @@ export class InstancedProp {
    *
    * @returns {{disabled:boolean, height:number, saved:number}}
    */
+  /**
+   * Should this pool cast a shadow at all?
+   *
+   * MEASURED, not guessed. perf-audit reports the shadow pass at 3.6 M of the
+   * frame's 9.25 M triangles — 39% of all triangle work, spent rendering the
+   * scene a second time. The caster list was topped by street furniture:
+   * benches at 78 k, planters at 63 k, hydrants at 61 k, trolleys at 39 k.
+   *
+   * At this game's camera — 40 m up at 54 degrees — a 0.8 m hydrant casts a
+   * shadow a few pixels across. A bench casts a smudge. Neither is worth a
+   * tenth of a million triangles a frame, and turning them off is invisible
+   * unless you are looking for it. What DOES read, and is kept: anything tall
+   * enough to throw a shadow with length (trees, palms, lamp columns, poles),
+   * anything that moves (every vehicle), and every building.
+   *
+   * The old rule only caught FLAT things — under 12 cm — which is why a
+   * knee-high bench sailed through it.
+   */
   optimiseShadows() {
     if (!this.mesh.castShadow) return { disabled: false, height: 0, saved: 0 };
     const geo = this.geometry;
     if (!geo.boundingBox) geo.computeBoundingBox();
-    const h = geo.boundingBox.max.y - geo.boundingBox.min.y;
-    // Also weigh how wide it is: a 10 cm tall but 3 m wide slab is a road
-    // marking; a 10 cm tall, 10 cm wide object is a kerb stone with a shadow.
-    const w = Math.max(
-      geo.boundingBox.max.x - geo.boundingBox.min.x,
-      geo.boundingBox.max.z - geo.boundingBox.min.z
-    );
+    const bb = geo.boundingBox;
+    const h = bb.max.y - bb.min.y;
+    const w = Math.max(bb.max.x - bb.min.x, bb.max.z - bb.min.z);
+
+    // Flat as paint: road markings, manhole covers, mats.
     const flat = h < 0.12 || (h < 0.3 && h / Math.max(0.01, w) < 0.10);
-    if (!flat) return { disabled: false, height: h, saved: 0 };
+    // Short static furniture. Vehicles and anything animated set keepShadow.
+    const stubby = !this.keepShadow && h < SHADOW_MIN_HEIGHT;
+    if (!flat && !stubby) return { disabled: false, height: h, saved: 0 };
+
     this.mesh.castShadow = false;
     const tris = (geo.index ? geo.index.count / 3
                             : (geo.attributes.position?.count || 0) / 3) * this.count;
