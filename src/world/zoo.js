@@ -997,25 +997,25 @@ function gZooPlanterAlt(m) {
 const ZOO_DEFS = {
   /* entrance ------------------------------------------------------------- */
   zooArch: {
-    g: gZooArch, tier: T.XLARGE, r: 6.20, h: 7.90, label: 'Zoo Entrance',
+    g: gZooArch, tier: T.XLARGE, r: 6.22, h: 8.50, label: 'Zoo Entrance',
     shadow: true, crumbles: true, debris: P.STUCCO_PEACH,
   },
   zooGateWall: {
-    g: gZooGateWall, tier: T.MEDIUM, r: 1.55, h: 2.30, label: 'Gateway Wall',
+    g: gZooGateWall, tier: T.MEDIUM, r: 1.64, h: 2.30, label: 'Gateway Wall',
     shadow: true, crumbles: true, debris: P.STUCCO_PEACH,
   },
   zooTurnstile: {
-    g: gZooTurnstile, tier: T.MEDIUM, r: 0.70, h: 1.12, label: 'Turnstile',
+    g: gZooTurnstile, tier: T.MEDIUM, r: 0.68, h: 1.12, label: 'Turnstile',
     debris: P.STEEL_DARK,
   },
   zooTicketBooth: {
-    g: gZooTicketBooth, tier: T.LARGE, r: 2.25, h: 3.14, label: 'Ticket Booth',
+    g: gZooTicketBooth, tier: T.LARGE, r: 2.29, h: 3.14, label: 'Ticket Booth',
     shadow: true, crumbles: true, debris: P.STUCCO_CREAM,
   },
 
   /* fencing -------------------------------------------------------------- */
   zooFenceMesh: {
-    g: gZooFenceMesh, tier: T.SMALL, r: 1.44, h: 2.36, label: 'Habitat Fence',
+    g: gZooFenceMesh, tier: T.SMALL, r: 1.46, h: 2.39, label: 'Habitat Fence',
     shadow: true, mat: 'metal', debris: 0x6f7d78,
   },
   zooFenceGlass: {
@@ -1027,61 +1027,61 @@ const ZOO_DEFS = {
     sv: 0.03, tint: [0xffffff, 0xe8dcc6, 0xd0c0a4, 0xf2e6d0], debris: P.WOOD_DARK,
   },
   zooWallStone: {
-    g: gZooWallStone, tier: T.SMALL, r: 1.34, h: 0.88, label: 'Enclosure Wall',
+    g: gZooWallStone, tier: T.SMALL, r: 1.31, h: 0.88, label: 'Enclosure Wall',
     crumbles: true, sv: 0.03, tint: [0xffffff, 0xf0e6d2, 0xdcd2bc], debris: P.PRECAST,
   },
   zooGatePen: {
-    g: gZooGatePen, tier: T.MEDIUM, r: 1.48, h: 2.32, label: 'Keeper Gate',
+    g: gZooGatePen, tier: T.MEDIUM, r: 1.50, h: 2.32, label: 'Keeper Gate',
     shadow: true, mat: 'metal', debris: P.SIGN_GREEN,
   },
 
   /* viewing -------------------------------------------------------------- */
   zooRail: {
-    g: gZooRail, tier: T.SMALL, r: 1.35, h: 1.05, label: 'Viewing Rail',
+    g: gZooRail, tier: T.SMALL, r: 1.36, h: 1.05, label: 'Viewing Rail',
     mat: 'metal', debris: 0x53605c,
   },
   zooPlatform: {
-    g: gZooPlatform, tier: T.LARGE, r: 2.60, h: 1.82, label: 'Viewing Deck',
+    g: gZooPlatform, tier: T.LARGE, r: 2.90, h: 1.82, label: 'Viewing Deck',
     shadow: true, debris: P.WOOD_DECK,
   },
   zooInfoBoard: {
-    g: gZooInfoBoard, tier: T.SMALL, r: 0.74, h: 1.26, label: 'Information Board',
+    g: gZooInfoBoard, tier: T.SMALL, r: 0.76, h: 1.25, label: 'Information Board',
     sv: 0.04, debris: P.SIGN_GREEN,
   },
   zooSignpost: {
-    g: gZooSignpost, tier: T.SMALL, r: 0.40, h: 2.86, label: 'Zoo Signpost',
+    g: gZooSignpost, tier: T.SMALL, r: 0.30, h: 2.86, label: 'Zoo Signpost',
     shadow: true, sv: 0.04, debris: P.WOOD_DARK,
   },
 
   /* amenity -------------------------------------------------------------- */
   zooFoodCart: {
-    g: gZooFoodCart, tier: T.MEDIUM, r: 1.30, h: 2.62, label: 'Refreshment Cart',
+    g: gZooFoodCart, tier: T.MEDIUM, r: 1.27, h: 2.62, label: 'Refreshment Cart',
     shadow: true, debris: P.CAR_TEAL,
   },
   zooRock: {
-    g: gZooRock, tier: T.SMALL, r: 0.86, h: 0.78, label: 'Boulder',
+    g: gZooRock, tier: T.SMALL, r: 0.91, h: 0.77, label: 'Boulder',
     sv: 0.26, crumbles: true, tint: [0xffffff, 0xe8e0cc, 0xd2ccbc, 0xf2ece0], debris: 0xa8a08e,
   },
   zooLog: {
-    g: gZooLog, tier: T.TINY, r: 1.20, h: 0.68, label: 'Fallen Log',
+    g: gZooLog, tier: T.TINY, r: 1.20, h: 0.71, label: 'Fallen Log',
     sv: 0.14, tint: [0xffffff, 0xe0cbae, 0xc2a888], debris: 0x8a6b4a,
   },
 
   /* back of house -------------------------------------------------------- */
   zooShed: {
-    g: gZooShed, tier: T.XLARGE, r: 4.30, h: 3.73, label: 'Service Shed',
+    g: gZooShed, tier: T.XLARGE, r: 4.42, h: 3.70, label: 'Service Shed',
     shadow: true, crumbles: true, debris: 0x7f8f86,
   },
   zooBayCanopy: {
-    g: gZooBayCanopy, tier: T.LARGE, r: 3.55, h: 3.60, label: 'Vehicle Bay',
+    g: gZooBayCanopy, tier: T.LARGE, r: 3.54, h: 3.78, label: 'Vehicle Bay',
     shadow: true, mat: 'metal', debris: 0x8d949c,
   },
   zooFeedCrate: {
-    g: gZooFeedCrate, tier: T.SMALL, r: 0.75, h: 0.86, label: 'Feed Crates',
+    g: gZooFeedCrate, tier: T.SMALL, r: 1.09, h: 0.86, label: 'Feed Crates',
     sv: 0.07, tint: [0xffffff, 0xe8dcc8, 0xd6c4a8], debris: P.WOOD_LIGHT,
   },
   zooHoseReel: {
-    g: gZooHoseReel, tier: T.SMALL, r: 0.42, h: 1.06, label: 'Hose Reel',
+    g: gZooHoseReel, tier: T.SMALL, r: 0.55, h: 1.04, label: 'Hose Reel',
     mat: 'metal', debris: P.SIGN_GREEN,
   },
   zooBuggy: {
@@ -1837,47 +1837,58 @@ export function buildZoo(ctx) {
     const EX = (lx, lz) => e.x + lx * c + lz * s;
     const EZ = (lx, lz) => e.z - lx * s + lz * c;
 
-    if (pl.put('zooArch', e.x, e.z, e.yaw, yPath, 1, 5.4)) tally.structures++;
-    // Flanking walls running out from both piers to the site corners.
+    /* The arch reserves 4.8 m, not its measured 6.2. Those two numbers mean
+       different things: 6.2 is the circle through the corners of its two
+       plinths, and most of that circle is the OPENING between them, which is
+       ground the walls have to be able to butt into. Reserving the honest
+       footprint refused the first flanking wall on each side and every
+       turnstile — measured, 8 of 16 walls and 3 of 5 turnstiles. 4.8 keeps the
+       gateway throat clear, which is all this claim is for. */
+    if (pl.put('zooArch', e.x, e.z, e.yaw, yPath, 1, 4.8)) tally.structures++;
+    // Flanking walls running out from both piers to the site corners. The first
+    // one overlaps its pier on purpose — a wall that stops short of the pier
+    // leaves a person-wide gap beside the gate.
     for (const side of [-1, 1]) {
       for (let k = 0; k < 5; k++) {
-        const lx = side * (7.0 + k * 2.98);
-        if (pl.put('zooGateWall', EX(lx, 0), EZ(lx, 0), e.yaw + (side < 0 ? Math.PI : 0), yGround, 1, 1.5)) {
+        const lx = side * (7.2 + k * 3.06);
+        if (pl.put('zooGateWall', EX(lx, 0), EZ(lx, 0), e.yaw + (side < 0 ? Math.PI : 0), yGround, 1, 1.4)) {
           tally.structures++;
         }
       }
     }
-    // Turnstiles in the throat of the arch, on the inside.
+    // Turnstile line, set back inside the arch: you pass UNDER the gateway and
+    // then reach the barrier, which is the order every real attraction uses.
     for (let k = -1; k <= 1; k++) {
-      if (pl.put('zooTurnstile', EX(k * 1.9, -2.4), EZ(k * 1.9, -2.4), e.yaw, yPath, 1, 0.75)) tally.structures++;
+      if (pl.put('zooTurnstile', EX(k * 2.2, -7.2), EZ(k * 2.2, -7.2), e.yaw, yPath, 1, 0.75)) tally.structures++;
     }
-    // Ticket booth to one side of the approach, facing the queue.
+    // Ticket booth to one side of the approach, angled toward the queue.
     const bs = rng.chance(0.5) ? 1 : -1;
-    if (pl.put('zooTicketBooth', EX(bs * 5.9, 4.4), EZ(bs * 5.9, 4.4), e.yaw + bs * 0.42, yPath, 1, 2.3)) {
+    if (pl.put('zooTicketBooth', EX(bs * 6.8, 5.2), EZ(bs * 6.8, 5.2), e.yaw + bs * 0.42, yPath, 1, 2.3)) {
       tally.structures++;
     }
-    if (pl.put('zooSignpost', EX(-bs * 4.6, 4.0), EZ(-bs * 4.6, 4.0), e.yaw + 0.5, yPath)) tally.amenity++;
+    if (pl.put('zooSignpost', EX(-bs * 5.2, 4.6), EZ(-bs * 5.2, 4.6), e.yaw + 0.5, yPath)) tally.amenity++;
     for (const side of [-1, 1]) {
-      if (pl.put('zooPlanter', EX(side * 3.2, 3.0), EZ(side * 3.2, 3.0), rng() * TAU, yPath)) tally.amenity++;
-      if (pl.put('zooBin', EX(side * 6.6, 1.6), EZ(side * 6.6, 1.6), rng() * TAU, yPath)) tally.amenity++;
+      if (pl.put('zooPlanter', EX(side * 2.6, 6.2), EZ(side * 2.6, 6.2), rng() * TAU, yPath)) tally.amenity++;
+      if (pl.put('zooBin', EX(side * 9.4, 2.4), EZ(side * 9.4, 2.4), rng() * TAU, yPath)) tally.amenity++;
     }
-    if (pl.put('zooFoodCart', EX(bs * 8.2, -3.6), EZ(bs * 8.2, -3.6), e.yaw + Math.PI - bs * 0.3, yPath)) {
+    if (pl.put('zooFoodCart', EX(bs * 8.6, -6.4), EZ(bs * 8.6, -6.4), e.yaw + Math.PI - bs * 0.3, yPath)) {
       tally.amenity++;
     }
 
-    // Exit: no arch, just a gate wall pair, a turnstile line and a signpost.
+    // Exit: no arch, just a gate wall run, a turnstile line and a signpost.
     const xg = plan.exit;
     const xc = Math.cos(xg.yaw), xs = Math.sin(xg.yaw);
     for (const side of [-1, 1]) {
       for (let k = 0; k < 3; k++) {
-        const lx = side * (2.6 + k * 2.98);
+        const lx = side * (3.1 + k * 3.06);
         if (pl.put('zooGateWall', xg.x + lx * xc, xg.z - lx * xs,
-          xg.yaw + (side < 0 ? Math.PI : 0), yGround, 1, 1.5)) tally.structures++;
+          xg.yaw + (side < 0 ? Math.PI : 0), yGround, 1, 1.4)) tally.structures++;
       }
-      if (pl.put('zooTurnstile', xg.x + side * 0.95 * xc - 1.8 * xs,
-        xg.z - side * 0.95 * xs - 1.8 * xc, xg.yaw, yPath, 1, 0.75)) tally.structures++;
+      if (pl.put('zooTurnstile', xg.x + side * 1.1 * xc - 3.2 * xs,
+        xg.z - side * 1.1 * xs - 3.2 * xc, xg.yaw, yPath, 1, 0.75)) tally.structures++;
     }
-    if (pl.put('zooSignpost', xg.x + 3.6 * xc, xg.z - 3.6 * xs, xg.yaw - 0.4, yPath)) tally.amenity++;
+    if (pl.put('zooSignpost', xg.x + 1.9 * xc - 5.4 * xs, xg.z - 1.9 * xs - 5.4 * xc,
+      xg.yaw - 0.4, yPath)) tally.amenity++;
   }
 
   /* --------------------------------------------------- 3. pen fencing --- */
@@ -1965,7 +1976,9 @@ export function buildZoo(ctx) {
     let rails = 0;
     const nRail = v.span > 18 ? 3 : 2;
     for (let i = 0; i < nRail; i++) {
-      const lx = (i - (nRail - 1) / 2) * 2.55;
+      // 2.98 m pitch, not 2.55: a rail section measures 1.36 m of contact, so
+      // at 2.55 every second one landed inside its neighbour's claim.
+      const lx = (i - (nRail - 1) / 2) * 2.98;
       if (pl.putAlong('zooRail', VX(lx, -1.5), VZ(lx, -1.5), c, -s, v.yawOut, yPath)) rails++;
     }
     tally.viewing += rails;
@@ -2041,7 +2054,7 @@ export function buildZoo(ctx) {
     const a = rng() * TAU;
     if (i % 2 === 0 && pl.put('zooSignpost', n.x + Math.cos(a) * (n.r + 0.7), n.z + Math.sin(a) * (n.r + 0.7),
       rng() * TAU, yPath)) tally.amenity++;
-    if (n.kind === 'hub' || (i % 3 === 1 && rng.chance(0.5))) {
+    if (n.kind === 'hub' || (i % 3 === 1 && rng.chance(0.75))) {
       const b = a + 2.1;
       if (pl.put('zooFoodCart', n.x + Math.cos(b) * (n.r + 2.0), n.z + Math.sin(b) * (n.r + 2.0),
         yawTo(-Math.cos(b), -Math.sin(b)), yPath)) tally.amenity++;
@@ -2086,32 +2099,45 @@ export function buildZoo(ctx) {
     const YX = (lx, lz) => y.x + lx * c + lz * s;
     const YZ = (lx, lz) => y.z - lx * s + lz * c;
 
-    if (pl.put('zooShed', YX(-3.4, -2.2), YZ(-3.4, -2.2), y.yaw, yGround, 1, 4.0)) tally.yard++;
-    if (pl.put('zooBayCanopy', YX(4.4, -1.4), YZ(4.4, -1.4), y.yaw, yGround, 1, 3.2)) tally.yard++;
-    if (pl.put('zooBuggy', YX(4.2, -1.2), YZ(4.2, -1.2), y.yaw + 0.12, yGround, 1, 1.4)) tally.yard++;
-    if (rng.chance(0.7) && pl.put('zooBuggy', YX(6.6, 2.6), YZ(6.6, 2.6), y.yaw - 0.5, yGround, 1, 1.4)) {
+    /* Yard local frame: +z points at the public route, so the shed and the bay
+       sit at the back and everything the keepers actually touch is laid along
+       the front. The rows below are spaced off the shed's and canopy's CIRCULAR
+       claims rather than their rectangular footprints — a circle round a 8.8 m
+       shed reaches 4 m out from a wall that is only 2.5 m deep, and a crate row
+       tucked at 1.6 m lost three of its four to it. */
+    if (pl.put('zooShed', YX(-4.4, -2.4), YZ(-4.4, -2.4), y.yaw, yGround, 1, 4.0)) tally.yard++;
+    if (pl.put('zooBayCanopy', YX(5.2, -1.6), YZ(5.2, -1.6), y.yaw, yGround, 1, 3.2)) tally.yard++;
+    /* claimR 0: the buggy is MEANT to be under the canopy. The canopy is four
+       legs and a lid — its honest 3.2 m claim is the bay, and a bay with
+       nothing parked in it is the exact reason props.js lets a parasol pass a
+       claim of its own rather than the circle its canopy sweeps. Measured: at
+       the honest claim this yard shipped zero buggies. */
+    if (pl.put('zooBuggy', YX(5.0, -1.4), YZ(5.0, -1.4), y.yaw + 0.12, yGround, 1, 0)) tally.yard++;
+    if (rng.chance(0.75) && pl.put('zooBuggy', YX(1.4, -5.2), YZ(1.4, -5.2), y.yaw - 0.5, yGround, 1, 1.2)) {
       tally.yard++;
     }
-    // Feed crates stacked against the shed wall, in a row like a delivery.
+    // Feed crates in a row like a delivery that landed this morning. 2.5 m
+    // apart, because the stack measures 1.09 m of contact and a 1.35 m pitch
+    // refused three of every four.
     for (let i = 0; i < 4; i++) {
-      if (pl.putAlong('zooFeedCrate', YX(-6.0 + i * 1.35, 1.1), YZ(-6.0 + i * 1.35, 1.1),
+      if (pl.putAlong('zooFeedCrate', YX(-7.2 + i * 2.5, 3.2), YZ(-7.2 + i * 2.5, 3.2),
         c, -s, y.yaw + (rng() - 0.5) * 0.24, yGround)) tally.yard++;
     }
     for (let i = 0; i < 2; i++) {
-      if (pl.put('zooHoseReel', YX(-1.0 + i * 1.7, 2.4), YZ(-1.0 + i * 1.7, 2.4), y.yaw + Math.PI, yGround)) {
+      if (pl.put('zooHoseReel', YX(2.6 + i * 1.8, 3.4), YZ(2.6 + i * 1.8, 3.4), y.yaw + Math.PI, yGround)) {
         tally.yard++;
       }
     }
-    if (pl.put('zooBin', YX(1.9, 3.0), YZ(1.9, 3.0), rng() * TAU, yGround)) tally.yard++;
-    if (pl.put('zooBin', YX(2.9, 3.1), YZ(2.9, 3.1), rng() * TAU, yGround)) tally.yard++;
-    // Screen the yard off the public route with a stone wall and a gate.
+    if (pl.put('zooBin', YX(6.4, 3.5), YZ(6.4, 3.5), rng() * TAU, yGround)) tally.yard++;
+    if (pl.put('zooBin', YX(7.6, 3.6), YZ(7.6, 3.6), rng() * TAU, yGround)) tally.yard++;
+    // Screen the yard off the public route with a stone wall and a keeper gate.
     for (let i = 0; i < 6; i++) {
       const lx = -7.4 + i * 2.66;
-      if (pl.put(i === 3 ? 'zooGatePen' : 'zooWallStone', YX(lx, 4.6), YZ(lx, 4.6), y.yaw, yGround, 1, 1.12)) {
+      if (pl.put(i === 3 ? 'zooGatePen' : 'zooWallStone', YX(lx, 5.6), YZ(lx, 5.6), y.yaw, yGround, 1, 1.12)) {
         if (i === 3) tally.structures++; else tally.fences++;
       }
     }
-    if (pl.put('zooSignpost', YX(7.6, 4.2), YZ(7.6, 4.2), y.yaw + 0.6, yGround)) tally.yard++;
+    if (pl.put('zooSignpost', YX(8.4, 5.0), YZ(8.4, 5.0), y.yaw + 0.6, yGround)) tally.yard++;
   }
 
   /* ---------------------------------------------------------- 8. emit --- */

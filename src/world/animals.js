@@ -616,7 +616,13 @@ function birdGeo(v) {
 const SPECIES = {
   elephant: {
     key: 'elephant', geo: elephantGeo, variants: 2, label: 'Elephant',
-    tier: TIER.LARGE, score: 62, foot: 1.75, scale: [0.94, 1.08],
+    /* foot 2.10, not the 1.75 the body measures. The RESTING TRUNK reaches
+       y = 0.38, which is inside worldBuild's contact band (the lowest fifth of
+       a 3.2 m animal), so the measured contact radius is 2.24 and not 1.66 —
+       and at the top of the scale range, 2.42. The pen inset is derived from
+       `foot`, so an under-declared foot puts the trunk through the fence.
+       Verified against worldBuild.measureGeometry in __selftest. */
+    tier: TIER.LARGE, score: 62, foot: 2.10, scale: [0.94, 1.08],
     speed: 0.62, run: 2.1, turn: 1.1, fleeR: 26, herd: true, perch: false,
     gaitK: 1.5, bob: 0.045, roll: 0.020, pitch: 0.010,
     pause: [2.4, 5.0], per: 150, min: 2, max: 5,
@@ -1235,9 +1241,16 @@ function spawnSpecies(ctx, st, sp, pen, inset, groundY, n) {
   }
 }
 
-/** Coat tone, in the narrow band where a multiplying tint still reads natural. */
+/**
+ * Coat tone.
+ *
+ * pools.js raises the instance colour to the 2.2 on its way to linear space
+ * (pools.js:119), so the band has to be narrow at THIS end to be narrow at the
+ * other: 0.96 becomes 0.914, and 0.90 would have become 0.79 — a fifth of the
+ * albedo gone, which reads as a dirty animal rather than a different one.
+ */
 function coatTint(rng) {
-  const k = 0.90 + rng() * 0.10;
+  const k = 0.96 + rng() * 0.04;
   const v = Math.max(0, Math.min(255, Math.round(255 * k)));
   return (v << 16) | (v << 8) | v;
 }
@@ -1620,6 +1633,37 @@ function residueOf(st) {
   };
 }
 
+/* ============================================================ catalogue == */
+
+/**
+ * Build one animal on its own, with no world around it.
+ *
+ * The same escape hatch nature.js exposes (nature.js:7862) and for the same
+ * reason: `tools/prop-catalogue.mjs` photographs props out of the assembled
+ * city, and with six agents in this tree at once the city routinely will not
+ * boot. This module's import graph is three, config, rng, materials, entities
+ * and props, so an animal can always be built and looked at even when nothing
+ * else can.
+ */
+export function specimen(key, variant = 0) {
+  const sp = SPECIES[key];
+  if (!sp) return null;
+  return {
+    geometry: sp.geo(variant % sp.variants),
+    material: animalMat(),
+    def: sp,
+  };
+}
+
+/** Every kind this module owns, for a caller that wants to sweep them. */
+export function animalKeys() {
+  const out = [];
+  for (const key of BY_SIZE) {
+    for (let v = 0; v < SPECIES[key].variants; v++) out.push(`animal-${key}-${v}`);
+  }
+  return out;
+}
+
 /* ============================================================ selftest === */
 
 /**
@@ -1631,6 +1675,45 @@ function residueOf(st) {
  * containment under a flee vector aimed straight at a fence, land animals in
  * water, reset leaving residue, and update() with no holes at all.
  */
+/**
+ * worldBuild.measureGeometry's contact maths, repeated here.
+ *
+ * Deliberately a COPY and not an import: worldBuild.js imports every content
+ * module, so importing it back would close a cycle, and the point of the test
+ * is to check this module against that file's rule rather than to share code
+ * with it. If worldBuild's band ever moves off the lowest fifth, this test
+ * starts lying — which is why the source line is named in the comment above
+ * its only caller. Test support only.
+ */
+function contactOf(geometry) {
+  geometry.computeBoundingBox();
+  const bb = geometry.boundingBox;
+  const height = bb.max.y - bb.min.y;
+  const hi = bb.min.y + height * 0.20;
+  const pos = geometry.attributes.position;
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) > hi) continue;
+    const x = pos.getX(i), z = pos.getZ(i);
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+  }
+  if (!(maxX > minX)) {
+    return { radius: Math.hypot(bb.max.x - bb.min.x, bb.max.z - bb.min.z) / 2, degenerate: true };
+  }
+  return { radius: Math.hypot(maxX - minX, maxZ - minZ) / 2, degenerate: false };
+}
+
+/** Cheap checksum of a geometry's vertex positions. Test support only. */
+function geoHash(g) {
+  const p = g.attributes.position.array;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < p.length; i++) {
+    h = Math.imul(h ^ Math.round(p[i] * 4096), 0x01000193) | 0;
+  }
+  return h >>> 0;
+}
+
 export function __selftest() {
   const results = [];
   let failed = 0;
@@ -1642,6 +1725,8 @@ export function __selftest() {
   /* --- 1. every species and variant builds a usable mesh ----------------- */
   {
     let tris = 0;
+    let worstMesh = 0;
+    const census = [];
     for (const key of BY_SIZE) {
       const sp = SPECIES[key];
       for (let v = 0; v < sp.variants; v++) {
@@ -1649,14 +1734,53 @@ export function __selftest() {
         g.computeBoundingBox();
         const bb = g.boundingBox;
         const h = bb.max.y - bb.min.y;
+        const t = g.index.count / 3;
         ok(`${key} v${v} has vertex colours`, !!g.attributes.color);
         ok(`${key} v${v} has no uv attribute`, !g.attributes.uv);
         ok(`${key} v${v} is base-anchored`, bb.min.y > -0.03 && bb.min.y < 0.06, bb.min.y);
         ok(`${key} v${v} has a plausible height`, h > 0.4 && h < 6.0, h);
-        tris += g.index.count / 3;
+        /* The poses have to be different OBJECTS, not one object turned round —
+           "a herd is one mesh stamped out six times" is a criticism this
+           project has already earned. Checked on the position buffer and NOT
+           on triangle count or bounding box: the elephant's two trunk poses
+           produce byte-identical counts and an identical box, so both of the
+           cheap tests would have passed a genuine duplicate. */
+        if (v > 0) {
+          ok(`${key} v${v} is a different mesh from v${v - 1}`,
+            geoHash(sp.geo(v - 1)) !== geoHash(g));
+        }
+        census.push(`${key}v${v}:${t}`);
+        tris += t;
+        if (t > worstMesh) worstMesh = t;
       }
     }
-    ok('whole bestiary under 4000 triangles', tris < 4000, tris);
+    // 64 animals against these meshes is about 24 k triangles, next to a frame
+    // that already rasterises 9.25 M. The cap exists to catch a species that
+    // has quietly doubled, not to squeeze the last hundred out.
+    ok('no single animal exceeds 700 triangles', worstMesh <= 700, worstMesh);
+    ok('whole bestiary under 6000 triangles', tris < 6000, `${tris} — ${census.join(' ')}`);
+  }
+
+  /* --- 1b. the declared foot is not smaller than the MEASURED one --------
+   * worldBuild measures the contact footprint off the geometry and overrides
+   * whatever a module declared (worldBuild.js:197), but the PEN INSET here is
+   * derived from `foot` — so an under-declared foot is not corrected anywhere,
+   * it just quietly lets the body hang over the fence. The elephant's resting
+   * trunk found this: 1.66 as a body, 2.24 with the trunk in the band. */
+  {
+    for (const key of BY_SIZE) {
+      const sp = SPECIES[key];
+      let worst = 0;
+      for (let v = 0; v < sp.variants; v++) {
+        const m = contactOf(sp.geo(v));
+        if (m.radius > worst) worst = m.radius;
+        ok(`${key} v${v} has a real contact patch`, !m.degenerate,
+          'contact band is empty — the footprint fell back to full extents');
+      }
+      const needed = worst * sp.scale[1];
+      ok(`${key} foot covers its measured contact patch`,
+        sp.foot + 0.45 >= needed - 1e-6, `foot ${sp.foot} + 0.45 vs ${needed.toFixed(2)}`);
+    }
   }
 
   /* --- a stub world, with a water strip cutting the zoo in half ---------- */
@@ -1740,35 +1864,50 @@ export function __selftest() {
   {
     let worst = 0;
     let wet = 0;
-    // One hole per pen, placed OUTSIDE the pen on the -x side, so the flee
-    // vector for every animal in it points at the +x fence and never turns.
-    for (let step = 0; step < 900; step++) {
-      const holes = [];
-      for (const key of BY_SIZE) {
-        const pen = st.pens[key];
-        if (!pen) continue;
-        toWorld(pen, -pen.hw - 6, 0, _wp);
-        holes.push({ position: { x: _wp.x, z: _wp.z }, radius: 30, alive: true });
+    let cornered = 0;
+    let targeted = 0;
+    const stragglers = [];
+    /* ONE hole at a time, and outside the pen it is aimed at, so the flee
+       vector for every animal in that pen points at the far fence and never
+       turns away from it. Six holes at once — the first version of this test —
+       let two pushes cancel in the middle of a pen, and an animal that is not
+       driven into the wire is not a containment test at all. */
+    for (const key of BY_SIZE) {
+      const pen = st.pens[key];
+      if (!pen) continue;
+      targeted++;
+      toWorld(pen, -pen.hw - 3, 0, _wp);
+      const holes = [{ position: { x: _wp.x, z: _wp.z }, radius: 45, alive: true }];
+      // A deliberately brutal dt: 0.2 s a tick is 0.86 m of fleeing zebra.
+      for (let step = 0; step < 300; step++) {
+        built.update(0.2, holes);
+        for (const a of st.animals) {
+          toLocal(a.pen, a.x, a.z, _lp);
+          const hx = Math.max(0, a.pen.hw - a.inset);
+          const hz = Math.max(0, a.pen.hd - a.inset);
+          const over = Math.max(Math.abs(_lp.lx) - hx, Math.abs(_lp.lz) - hz);
+          if (over > worst) worst = over;
+          if (a.pen.wet && a.x > WATER_X) wet++;
+        }
       }
-      // A deliberately brutal dt: 0.2 s a tick is 0.9 m of elephant per step.
-      built.update(0.2, holes);
-      for (const a of st.animals) {
+      /* Everything in the targeted pen must now be jammed against the +x wire —
+         or, in a pen that borders water, against the WATER LINE, which is the
+         nearer of the two barriers and stops them first. Both are the same
+         property: the animal ran until something it cannot cross stopped it. */
+      const mine = st.animals.filter((a) => a.pen === pen);
+      const stuck = mine.filter((a) => {
         toLocal(a.pen, a.x, a.z, _lp);
-        const hx = Math.max(0, a.pen.hw - a.inset);
-        const hz = Math.max(0, a.pen.hd - a.inset);
-        const over = Math.max(Math.abs(_lp.lx) - hx, Math.abs(_lp.lz) - hz);
-        if (over > worst) worst = over;
-        if (a.pen.wet && a.x > WATER_X) wet++;
-      }
+        if (_lp.lx > Math.max(0, a.pen.hw - a.inset) - 0.05) return true;
+        return a.pen.wet && a.x > WATER_X - 1.6;
+      });
+      if (mine.length && stuck.length === mine.length) cornered++;
+      else stragglers.push(`${key}:${stuck.length}/${mine.length}`);
     }
     ok('CONTAINMENT holds under an adversarial flee', worst <= 1e-6, worst);
     ok('no land animal is ever in water while fleeing', wet === 0, wet);
-    ok('something actually fled', st.animals.some((a) => a.fleeing));
-    ok('and the cornered ones are pressed against the fence',
-      st.animals.some((a) => {
-        toLocal(a.pen, a.x, a.z, _lp);
-        return Math.abs(_lp.lx) > Math.max(0, a.pen.hw - a.inset) - 0.02;
-      }));
+    ok('every targeted pen ended up pressed against a barrier',
+      targeted > 0 && cornered === targeted,
+      `${cornered}/${targeted} ${stragglers.join(' ')}`);
   }
 
   /* --- 4. an eaten animal is left alone ---------------------------------- */

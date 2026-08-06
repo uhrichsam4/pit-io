@@ -88,13 +88,21 @@ export const ZOO_NAME = 'Miami Metrozoo';
  * `kind` is the contract props.js and the animal module switch on — grass,
  * water, rock, aviary — so all four surfaces are represented on purpose.
  */
+/* THESE NAMES ARE A CONTRACT WITH animals.js, not decoration.
+   The first version of this table was a Miami-authentic roster — flamingo,
+   alligator, panther, capybara, macaw — while animals.js modelled the species
+   actually requested: elephant, giraffe, zebra, monkey, penguin, birds. Only
+   `giraffe` appeared in both, so the other five were matched by INDEX, and the
+   result was three elephants living in the Gator Swamp and zebras on the
+   Capybara Lawn. Nothing threw; the signs just described the wrong animals.
+   The species key must equal the key in animals.js SPECIES. */
 export const ZOO_SPECIES = [
+  { species: 'elephant', kind: 'grass', label: 'Elephant Yard' },
   { species: 'giraffe', kind: 'grass', label: 'Giraffe Paddock' },
-  { species: 'flamingo', kind: 'water', label: 'Flamingo Lagoon' },
-  { species: 'alligator', kind: 'water', label: 'Gator Swamp' },
-  { species: 'panther', kind: 'rock', label: 'Panther Ridge' },
-  { species: 'capybara', kind: 'grass', label: 'Capybara Lawn' },
-  { species: 'macaw', kind: 'aviary', label: 'Macaw Aviary' },
+  { species: 'zebra', kind: 'grass', label: 'Zebra Plain' },
+  { species: 'monkey', kind: 'rock', label: 'Primate Rocks' },
+  { species: 'penguin', kind: 'water', label: 'Penguin Cove' },
+  { species: 'bird', kind: 'aviary', label: 'Wading Bird Aviary' },
 ];
 
 const { STREET, AVENUE, BOULEVARD } = ROAD_CLASS;
