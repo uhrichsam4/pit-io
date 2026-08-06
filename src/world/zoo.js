@@ -1275,13 +1275,36 @@ function readZoo(layout) {
     if (d === undefined && numOf(h.hd) !== undefined) d = h.hd * 2;
     if (x === undefined || zz === undefined || !(w > 3) || !(d > 3)) { dropped++; continue; }
     const yaw = numOf(h.yaw, h.rot, h.rotation, h.angle) || 0;
-    const kind = String(h.kind || h.type || h.species || h.theme || h.name || '');
+    /* cityLayout carries BOTH `species` (elephant, penguin) and `kind`, and
+       `kind` is the SURFACE (grass, rock, water, aviary) rather than the
+       animal. Reading one and calling it the other is how the barrier chooser
+       ended up rolling dice for every pen — and it is the same two-modules-
+       agree-on-shape-disagree-on-contents failure that put elephants in the
+       gator swamp. Keep both, and match against the pair. */
+    const species = String(h.species || '');
+    const kind = String(h.kind || h.type || h.theme || '');
+    const label = String(h.label || h.name || '');
+    const tag = `${species} ${kind} ${label}`.toLowerCase();
     habitats.push({
-      x, z: zz, w, d, yaw, kind, index: i,
-      water: h.water === true || h.pond === true || h.wet === true || WET.test(kind),
+      x, z: zz, w, d, yaw, kind, species, label, tag, index: i,
+      water: h.water === true || h.pond === true || h.wet === true || WET.test(tag),
     });
   }
   if (!habitats.length) return null;
+
+  /* The road-free corridors the layout reserved, and the road-free cells the
+     pens sit in. These are the whole reason the paths land where they should —
+     see the note at `reserved` in planZoo. Anything unreadable is dropped
+     rather than coerced: a rectangle at the origin is worse than no rectangle. */
+  const rects = (arr) => (Array.isArray(arr) ? arr : []).map((r) => {
+    if (!r || typeof r !== 'object') return null;
+    const x = numOf(r.x, r.cx, r.centerX), zz = numOf(r.z, r.cz, r.centerZ);
+    let w = numOf(r.w, r.width), d = numOf(r.d, r.depth);
+    if (w === undefined && numOf(r.hw) !== undefined) w = r.hw * 2;
+    if (d === undefined && numOf(r.hd) !== undefined) d = r.hd * 2;
+    if (x === undefined || zz === undefined || !(w > 0.5) || !(d > 0.5)) return null;
+    return { x, z: zz, w, d };
+  }).filter(Boolean);
 
   return {
     habitats,
@@ -1290,6 +1313,8 @@ function readZoo(layout) {
     entrance: z.entrance || z.gate || z.entry || null,
     exit: z.exit || null,
     yard: z.yard || z.service || z.depot || null,
+    pathRects: rects(z.paths || z.walks || z.corridors),
+    cells: rects(z.cells),
     bounds: numOf(z.w) !== undefined && numOf(z.x) !== undefined
       ? { x: z.x, z: z.z, w: z.w, d: z.d } : null,
   };
@@ -1486,33 +1511,58 @@ function buildPathMesh(ctx, plan, yPath, group) {
   const edge = new M();
   let metres = 0;
 
+  const L = ctx.layout;
+  /* CLIPPED TO GROUND THE ZOO ACTUALLY OWNS.
+     The site spans several city blocks and the streets between them run right
+     through it. An unclipped network painted zoo paving straight across live
+     carriageway — and because the surface is a decor mesh, nothing anywhere
+     else in the build would ever have objected. So each run is walked in short
+     steps and only the steps that are on neither road nor water are emitted;
+     the path simply stops at the kerb and picks up on the far side. */
+  const clear = (x, z) => !L.isRoad(x, z) && !L.isWater(x, z);
+
   const strip = (ax, az, bx, bz, w, tone) => {
     let dx = bx - ax, dz = bz - az;
-    const L = Math.hypot(dx, dz);
-    if (L < 0.4) return;
-    metres += L;
-    dx /= L; dz /= L;
-    // Overrun each end by half a width so the joints at a node close instead of
-    // leaving a wedge of turf in the middle of every junction.
-    const ex = dx * w * 0.5, ez = dz * w * 0.5;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.4) return;
+    dx /= len; dz /= len;
     const nx = -dz * w * 0.5, nz = dx * w * 0.5;
-    const x0 = ax - ex, z0 = az - ez, x1 = bx + ex, z1 = bz + ez;
-    deck.col(tone);
-    deck.quad(
-      [x0 + nx, yPath, z0 + nz], [x1 + nx, yPath, z1 + nz],
-      [x1 - nx, yPath, z1 - nz], [x0 - nx, yPath, z0 - nz]
-    );
-    edge.col(0xd8ceb4);
-    for (const s of [-1, 1]) {
-      const ox = -dz * (w * 0.5 + 0.09) * s, oz = dx * (w * 0.5 + 0.09) * s;
-      edge.beam(x0 + ox, yPath + 0.045, z0 + oz, x1 + ox, yPath + 0.045, z1 + oz, 0.18, 0.09);
+    const step = 2.0;
+    const n = Math.max(1, Math.ceil(len / step));
+    // Half a width of overrun at each END of a kept run, so junction joints
+    // close; interior sub-steps butt exactly and must not overlap.
+    let run = null;
+    const flush = (t0, t1) => {
+      if (run === null) return;
+      const s0 = Math.max(0, t0 - w * 0.5), s1 = Math.min(len + w * 0.5, t1 + w * 0.5);
+      const x0 = ax + dx * s0, z0 = az + dz * s0, x1 = ax + dx * s1, z1 = az + dz * s1;
+      metres += s1 - s0;
+      deck.col(tone);
+      deck.quad(
+        [x0 + nx, yPath, z0 + nz], [x1 + nx, yPath, z1 + nz],
+        [x1 - nx, yPath, z1 - nz], [x0 - nx, yPath, z0 - nz]
+      );
+      edge.col(0xd8ceb4);
+      for (const s of [-1, 1]) {
+        const ox = -dz * (w * 0.5 + 0.09) * s, oz = dx * (w * 0.5 + 0.09) * s;
+        edge.beam(x0 + ox, yPath + 0.045, z0 + oz, x1 + ox, yPath + 0.045, z1 + oz, 0.18, 0.09);
+      }
+      run = null;
+    };
+    let start = 0;
+    for (let i = 0; i < n; i++) {
+      const t0 = (len * i) / n, t1 = (len * (i + 1)) / n;
+      const ok = clear(ax + dx * (t0 + t1) * 0.5, az + dz * (t0 + t1) * 0.5);
+      if (ok) { if (run === null) { run = true; start = t0; } } else { flush(start, t0); }
     }
+    flush(start, len);
   };
 
   for (const s of plan.segments) strip(s.ax, s.az, s.bx, s.bz, s.w, s.tone);
   // A paved apron at each junction: without it the overrun quads cross at an
   // angle and leave a visible X of double-drawn paving.
   for (const n of plan.nodes) {
+    if (!clear(n.x, n.z)) continue;
     deck.col(0xcdc0a2);
     deck.disc(n.x, yPath + 0.002, n.z, n.r, 10, n.r * 0.7);
   }
@@ -1663,7 +1713,12 @@ function planZoo(ctx, zoo, rng) {
       d: numOf(zoo.entrance.d, zoo.entrance.depth) ?? 20,
     }
     : { x: best.x + best.dx * 6.5, z: best.z + best.dz * 6.5, w: 26, d: 20 };
-  let eFace = { dx: best.dx, dz: best.dz, dist: best.dist };
+  /* Seeded at Infinity, NOT at the site-edge march. Seeding it with `best`
+     meant the site edge's distance (a few metres, measured from the bbox edge
+     which is already at the kerb) always won and the plaza's own four marches
+     could never beat it — every gate on every seed came out facing whichever
+     way the site's nearest corner happened to point. */
+  let eFace = { dx: best.dx, dz: best.dz, dist: Infinity };
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const d = roadRun(eRect.x, eRect.z, dx, dz);
     if (d < eFace.dist) eFace = { dx, dz, dist: d };
@@ -1849,7 +1904,13 @@ function planZoo(ctx, zoo, rng) {
     return { x: off.x, z: off.z, r, sq: 0.72 + rng() * 0.28, hab: h };
   });
 
-  return { bounds: { x0, x1, z0, z1, cx, cz }, entrance, exit, hub, yard, views, nodes, segments, ponds };
+  return {
+    bounds: { x0, x1, z0, z1, cx, cz },
+    entrance, exit, views, nodes, segments, ponds,
+    hub: hub || (snap(cx, cz) || { x: cx, z: cz }),
+    yard: yardOut,
+    reserved: reserved.length,
+  };
 }
 
 /* ==================================================== entry point ======= */
@@ -1916,11 +1977,15 @@ export function buildZoo(ctx) {
        turnstile — measured, 8 of 16 walls and 3 of 5 turnstiles. 4.8 keeps the
        gateway throat clear, which is all this claim is for. */
     if (pl.put('zooArch', e.x, e.z, e.yaw, yPath, 1, 4.8)) tally.structures++;
-    // Flanking walls running out from both piers to the site corners. The first
-    // one overlaps its pier on purpose — a wall that stops short of the pier
-    // leaves a person-wide gap beside the gate.
+    /* Flanking walls running out from both piers. The first one overlaps its
+       pier on purpose — a wall that stops short of the pier leaves a
+       person-wide gap beside the gate. The run is clamped to the frontage the
+       layout gave the plaza: on the real city the entrance is a 29 x 21 cell,
+       and a wall run that assumed open ground marched 19 m out into the street
+       where every section was refused. */
+    const wallRun = Math.max(1, Math.min(5, Math.floor(((e.span || 14) - 7.2) / 3.06) + 1));
     for (const side of [-1, 1]) {
-      for (let k = 0; k < 5; k++) {
+      for (let k = 0; k < wallRun; k++) {
         const lx = side * (7.2 + k * 3.06);
         if (pl.put('zooGateWall', EX(lx, 0), EZ(lx, 0), e.yaw + (side < 0 ? Math.PI : 0), yGround, 1, 1.4)) {
           tally.structures++;
@@ -1966,18 +2031,32 @@ export function buildZoo(ctx) {
   const STYLES = ['zooFenceMesh', 'zooFenceGlass', 'zooFenceTimber', 'zooWallStone'];
   for (const h of habs) {
     const hr = makeRNG(((ctx.layout.seed | 0) ^ (0x21a0 + h.index * 7919)) >>> 0);
-    /* A pen's barrier says what lives in it: mesh for anything that climbs,
-       glass where the animal is worth pressing your face against, timber for
-       grazers, a low wall for a walk-through. The layout's own `kind` string
-       gets the first say; failing that the pen's size decides, because a 40 m
-       paddock behind glass is a greenhouse. */
-    const k = h.kind.toLowerCase();
+    /* A PEN'S BARRIER SAYS WHAT LIVES IN IT. Species first, because that is the
+       real constraint — an elephant on grass still needs steel, and a low wall
+       round one would be read as a mistake by anybody who has been to a zoo.
+       Only when the species says nothing does the SURFACE decide, and only
+       when that says nothing too is it a dice roll. */
+    const k = h.tag;
     let style;
-    if (/glass|reptile|primate|ape|monkey|aquar|insect|nocturn/.test(k)) style = 'zooFenceGlass';
-    else if (/graz|deer|goat|farm|paddock|pony|horse|sheep|llama/.test(k)) style = 'zooFenceTimber';
-    else if (/bird|walk|garden|butterfly|lemur|petting/.test(k)) style = 'zooWallStone';
-    else if (/big|cat|lion|tiger|bear|wolf|raptor|aviary/.test(k)) style = 'zooFenceMesh';
-    else style = hr.weighted([['zooFenceMesh', 5], ['zooFenceGlass', 3], ['zooFenceTimber', 4], ['zooWallStone', 2]]);
+    if (/monkey|penguin|reptile|primate|ape|chimp|seal|otter|aquar|insect|nocturn|glass/.test(k)) {
+      style = 'zooFenceGlass';
+    } else if (/elephant|rhino|hippo|lion|tiger|panther|leopard|bear|wolf|croc|gator|buffalo|raptor/.test(k)) {
+      style = 'zooFenceMesh';
+    } else if (/aviary|bird|macaw|parrot/.test(k)) {
+      style = 'zooFenceMesh';
+    } else if (/walk|butterfly|lemur|petting|garden/.test(k)) {
+      style = 'zooWallStone';
+    } else if (/zebra|giraffe|antelope|capybara|deer|goat|pony|horse|sheep|llama|graz|paddock|farm/.test(k)) {
+      style = 'zooFenceTimber';
+    } else if (/water|pond|lagoon/.test(k)) {
+      style = 'zooFenceGlass';
+    } else if (/rock|stone/.test(k)) {
+      style = 'zooFenceMesh';
+    } else if (/grass|lawn|savann|meadow/.test(k)) {
+      style = 'zooFenceTimber';
+    } else {
+      style = hr.weighted([['zooFenceMesh', 5], ['zooFenceGlass', 3], ['zooFenceTimber', 4], ['zooWallStone', 2]]);
+    }
     h.style = style;
 
     const view = plan.views.find((v) => v.hab === h);
@@ -2093,45 +2172,51 @@ export function buildZoo(ctx) {
     if (len < 8) continue;
     dx /= len; dz /= len;
     const nx = -dz, nz = dx;
+    /* Furniture stands just INSIDE the paved edge, not beyond it. Beyond it is
+       not a verge: the corridors are the gaps BETWEEN pens, so the first metre
+       outside a 4 m walk is the pen fence, and every lamp offered that ground
+       was refused as occupied. Measured on the real layout, the outside offset
+       cost half the amenities on the site. */
+    const inset = (extra) => Math.max(0.85, seg.w * 0.5 - extra);
     // Lamps alternate sides every 15 m, which is a street-lighting rhythm and
     // the reason the loop reads as a promenade at night.
     const nLamp = Math.max(1, Math.floor(len / 15));
     for (let i = 0; i < nLamp; i++) {
       const t = (len * (i + 0.5)) / nLamp;
       const side = i % 2 ? 1 : -1;
-      const off = seg.w * 0.5 + 0.95;
+      const off = inset(0.55);
       if (pl.putAlong('zooLamp', seg.ax + dx * t + nx * off * side, seg.az + dz * t + nz * off * side,
         dx, dz, 0, yPath)) tally.amenity++;
     }
-    const nSeat = Math.floor(len / 24);
+    const nSeat = Math.floor(len / 22);
     for (let i = 0; i < nSeat; i++) {
       const t = (len * (i + 0.7)) / Math.max(1, nSeat);
       const side = rng.chance(0.5) ? 1 : -1;
-      const off = seg.w * 0.5 + 1.15;
+      const off = inset(0.70);
       const x = seg.ax + dx * t + nx * off * side, z = seg.az + dz * t + nz * off * side;
       // A bench faces the path it stands beside, never the hedge behind it.
       if (pl.putAlong('zooBench', x, z, dx, dz, yawTo(-nx * side, -nz * side), yPath)) tally.amenity++;
-      if (rng.chance(0.7) && pl.putAlong('zooBin', x + nx * side * 1.5 + dx * 1.4,
-        z + nz * side * 1.5 + dz * 1.4, dx, dz, rng() * TAU, yPath)) tally.amenity++;
+      if (rng.chance(0.7) && pl.putAlong('zooBin', x + dx * 2.0, z + dz * 2.0,
+        dx, dz, rng() * TAU, yPath)) tally.amenity++;
     }
     const nPlant = Math.floor(len / 19);
     for (let i = 0; i < nPlant; i++) {
       const t = (len * (i + 0.25)) / Math.max(1, nPlant);
       const side = i % 2 ? -1 : 1;
-      const off = seg.w * 0.5 + 0.85;
+      const off = inset(0.60);
       if (pl.putAlong('zooPlanter', seg.ax + dx * t + nx * off * side, seg.az + dz * t + nz * off * side,
         dx, dz, rng() * TAU, yPath)) tally.amenity++;
     }
   }
   // A signpost at every junction that has more than a couple of ways out, and a
   // cart at the two busiest.
-  const junctions = plan.nodes.filter((n) => n.kind === 'hub' || n.kind === 'view');
+  const junctions = plan.nodes.filter((n) => n.kind === 'hub' || n.kind === 'view' || n.kind === 'corridor');
   for (let i = 0; i < junctions.length; i++) {
     const n = junctions[i];
     const a = rng() * TAU;
     if (i % 2 === 0 && pl.put('zooSignpost', n.x + Math.cos(a) * (n.r + 0.7), n.z + Math.sin(a) * (n.r + 0.7),
       rng() * TAU, yPath)) tally.amenity++;
-    if (n.kind === 'hub' || (i % 3 === 1 && rng.chance(0.75))) {
+    if (n.kind === 'hub' || (i % 4 === 1 && rng.chance(0.7))) {
       const b = a + 2.1;
       if (pl.put('zooFoodCart', n.x + Math.cos(b) * (n.r + 2.0), n.z + Math.sin(b) * (n.r + 2.0),
         yawTo(-Math.cos(b), -Math.sin(b)), yPath)) tally.amenity++;
@@ -2243,7 +2328,10 @@ export function buildZoo(ctx) {
     hub: plan.hub,
     yard: plan.yard,
     habitats: habs.map((h) => ({
-      x: h.x, z: h.z, w: h.w, d: h.d, yaw: h.yaw, kind: h.kind,
+      x: h.x, z: h.z, w: h.w, d: h.d, yaw: h.yaw,
+      // `kind` is the SURFACE and `species` is the animal — both are passed
+      // through untouched so the animal pass never has to guess which is which.
+      kind: h.kind, species: h.species, label: h.label,
       water: !!h.water, style: h.style,
     })),
     ponds: plan.ponds.map((p) => ({ x: p.x, z: p.z, r: p.r, sq: p.sq, y: yGround - 0.10 })),

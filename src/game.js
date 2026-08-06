@@ -25,6 +25,7 @@ import { getMode } from './gameplay/modes.js';
 import { activeMap } from './gameplay/maps.js';
 import { applySnow } from './world/snow.js';
 import { setBiome as setNatureBiome } from './world/nature.js';
+import { setPropBiome } from './world/props.js';
 import { buildWorld } from './world/worldBuild.js';
 import { buildBayfront } from './world/bayfront.js';
 import { HUD, uiState } from './ui/hud.js';
@@ -188,6 +189,10 @@ export class Game {
     // BEFORE buildWorld: nature.js swaps species at plant time, and planting
     // happens during the build. Setting it afterwards would be a no-op.
     setNatureBiome(this.map.biome);
+    /* Props need the biome too. nature.js swaps SPECIES; props.js swaps PROPS,
+       and a potted palm is the latter — 346 of them stood in the snow because
+       only half the world was told what season it is. */
+    setPropBiome(this.map.biome);
     const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer, worldSeed);
     this.layout = layout;
     // Hand the authoritative geometry to the two systems that place holes on

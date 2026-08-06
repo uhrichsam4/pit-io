@@ -5864,6 +5864,28 @@ const GROUND_CEIL = 0.30;
  * twice over: it stops the float, and it keeps bins and bike racks out of the
  * wheelchair crossing, which is where a city puts nothing at all.
  */
+/* ------------------------------------------------------------- biome --- */
+/**
+ * Winter substitutions for props that are unmistakably tropical.
+ *
+ * nature.js already swaps SPECIES at the plant() funnel, and that pass is
+ * measured working — 640 spruce and 970 bare trees on the snow map. But a
+ * potted palm is a PROP, not a species: it never touches plant(), so the winter
+ * pass could not reach it and 346 of them were left standing in the snow. The
+ * count was invisible because "palms: 0" was only ever checked against the
+ * nature module's own output.
+ *
+ * Same lesson as the roads and the vegetation: find the single funnel every
+ * instance passes through and swap there. For props that funnel is put().
+ */
+const WINTER_PROPS = {
+  pottedPalm: 'pottedFicus',
+  palmSapling: 'pottedFicus',
+};
+
+let PROP_BIOME = 'tropical';
+export function setPropBiome(b) { PROP_BIOME = b || 'tropical'; }
+
 const GROUND_MIN = 0.115;
 
 const _box = new THREE.Box3();
@@ -6142,6 +6164,9 @@ class Placer {
    * @returns {boolean} placed
    */
   put(key, x, z, rot = 0, scale = 1, hex = null, claimR = -1, onRoad = false) {
+    /* Biome substitution FIRST, so the variant family, the footprint and the
+       measured physics all belong to the prop that actually gets placed. */
+    if (PROP_BIOME === 'snow' && WINTER_PROPS[key]) key = WINTER_PROPS[key];
     const fam = VARIANTS[key];
     if (fam) key = fam[Math.floor(this.rng() * fam.length)];
     const d = DEFS[key];
