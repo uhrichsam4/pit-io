@@ -130,3 +130,37 @@ value.
 - Settings persist to `localStorage`; subtitles toggle independently of voice
   volume, because captions are the primary dialogue channel when no voice pack
   is present
+
+---
+
+## 6. Known issue — subtitle nodes disappear (cosmetic)
+
+**Severity: low.** Voice audio is unaffected and verified working. This is only
+the on-screen text.
+
+**Symptom.** `hud.showCaption()` called directly renders a caption and it stays
+(measured: 1 node in the DOM). But captions produced by the normal
+`voice.say()` path are gone within ~200 ms — measured 0 nodes, in a harness
+where the deadline was still 9 seconds away.
+
+**Ruled out by measurement, not by reasoning:**
+
+- `clearCaptions()` is never called — a wrapped spy recorded zero calls
+- the expiry timer was not at fault — the shared-array-plus-interval design was
+  replaced with per-row `setTimeout`s and the behaviour did not change
+- the deadline arithmetic was correct — instrumented `until` vs `now` showed
+  the row had 9,000 ms remaining when it vanished
+- subtitles are enabled (`subtitles: true`, no `no-subtitles` class)
+- `showCaption` does not throw (`probeThrew: null`)
+- reparenting the container from `document.body` into the HUD root, in case the
+  shell was clearing body during a screen swap, changed nothing
+- no page errors, no console errors
+
+**What that leaves.** Something outside `hud.js` removes the nodes, or the
+harness observes a detached subtree at the moment it counts. The next step is a
+`MutationObserver` on the caption container recording `removedNodes` with a
+stack — that is definitive and was not run only because the night ran out.
+
+**Workaround: none needed.** Dialogue is audible; the text just does not
+persist. Anyone relying on subtitles for accessibility is affected, which is why
+this is written down rather than left to be rediscovered.

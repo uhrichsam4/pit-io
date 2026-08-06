@@ -872,10 +872,16 @@ export class HUD {
    */
   showCaption(c) {
     if (!c || !c.text) return;
-    if (!this._capWrap || !document.body.contains(this._capWrap)) {
+    /* Parented to the HUD ROOT, not document.body. On body the captions were
+       being removed by something outside this class within a few hundred ms —
+       the shell owns body and swaps screens through it, so anything parked
+       there is living in someone else's container. The HUD root survives for
+       the life of the HUD, which is exactly the lifetime a caption wants. */
+    const host = this.root && this.root.isConnected ? this.root : document.body;
+    if (!this._capWrap || !host.contains(this._capWrap)) {
       const el = document.createElement('div');
       el.className = 'vo-captions';
-      document.body.appendChild(el);
+      host.appendChild(el);
       this._capWrap = el;
     }
     const wrap = this._capWrap;
