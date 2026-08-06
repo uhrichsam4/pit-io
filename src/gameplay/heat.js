@@ -353,19 +353,28 @@ export const VOICE_CUE_LIST = Object.freeze(Object.values(VOICE_CUES));
 /**
  * SFX method names this system will call on the audio singleton IF they exist.
  * Every one is feature-detected at the call site, because at the time of
- * writing NONE of these exist in src/core/audio.js — it has swallow/chomp/
+ * writing NONE of these existed in src/core/audio.js — it had swallow/chomp/
  * crumble/levelUp/devourPlayer/death/countdownBeep/rankChange/ui/matchStart/
  * matchEnd and nothing siren-shaped. Guessing a name here would fail silently
  * and the whole system would ship mute, so each optional call has a verified
  * fallback listed beside it.
+ *
+ * SINCE THEN audio.js grew most of them, and this table went stale — which is
+ * the same silent failure with the polarity reversed. `ARRIVE` named
+ * 'responseArrive', which has never existed; it fell through to a generic UI
+ * click, while `dispatchChirp` — a purpose-built radio squelch at
+ * core/audio.js:3135, listed in SOUND_METHODS, and named in eventGlue.js's own
+ * verified-contract header — sat with ZERO call sites in the entire repo.
+ * Measured by tools/heat-probe.mjs: 97 dispatches in one match, 0 chirps.
+ * Every name below is checked against SOUND_METHODS (core/audio.js:3549).
  */
 const SFX = {
-  HEAT_UP: 'heatUp',            // fallback: rankChange(+1)
-  HEAT_DOWN: 'heatDown',        // fallback: rankChange(-1)
-  ARRIVE: 'responseArrive',     // fallback: ui('click')
-  WARN: 'containmentWarn',      // fallback: countdownBeep(false)
-  PULSE: 'containmentPulse',    // fallback: ui('back')
-  PENALTY: 'scorePenalty',      // fallback: ui('back')
+  HEAT_UP: 'heatUp',            // exists (audio.js:3155), takes (tier 1..3)
+  HEAT_DOWN: 'heatDown',        // exists (audio.js:3180)
+  ARRIVE: 'dispatchChirp',      // exists (audio.js:3135), takes (x, z)
+  WARN: 'containmentWarn',      // DOES NOT EXIST — fallback: countdownBeep(false)
+  PULSE: 'containmentPulse',    // exists (audio.js:3197), takes (x, z)
+  PENALTY: 'scorePenalty',      // exists (audio.js:3290), no arguments
 };
 
 /* Palette. Foam is deliberately a friendly pool-cleaner cyan and the warning a
@@ -839,13 +848,51 @@ export class HeatSystem {
     s.lastTierT = now;
     s.misses = 0;
     if (want < 3) s.announcedBigger = false;
+    /* TIER 0 ENDS THE ENCOUNTER, and it has to say so.
+     *
+     * `engaged` is what arms the stand-down timer in _checkLeaveZone, and it
+     * was only ever cleared by the stand-down itself. A hole that instead
+     * cooled all the way out of the response — which is the ordinary way a
+     * chase ends — kept the flag set for the rest of the match, and the next
+     * time it heated up the away timer was already armed against a response
+     * that had not been sent. Measured in a live match (tools/heat-probe.mjs):
+     * after cooling from tier 3 to tier 0 the player still read
+     * `engaged: true`, and the FIRST thing that happened on re-escalation was
+     * a `cityresp.stand_down` cue and the "OUT OF THE ZONE — the response has
+     * lost you" feed line, followed by DISENGAGE_HOLD (8 s) of suppressed
+     * dispatch. The player was told they had shaken off a response that had
+     * never turned up, and then had to wait out a penalty for it.
+     *
+     * Safe by construction: _pickFocus skips any hole below tier 1, so nothing
+     * reads `engaged` or `awayT` for a tier-0 hole. This only stops them being
+     * carried across. */
+    if (want === 0) { s.engaged = false; s.awayT = 0; }
     this._announce(hole, want, up, now);
   }
 
+  /**
+   * THE STING IS THE PLAYER'S, AND IT CARRIES THE TIER.
+   *
+   * Both halves were wrong and both were silent about it.
+   *
+   * `audio.heatUp(tier)` is written to sound different at 1, 2 and 3 — the
+   * comment on it says "so the tier is audible without reading the HUD"
+   * (audio.js:3153) — and it is NON-POSITIONAL: it plays flat in the middle of
+   * the mix and ducks everything else by up to 41% (audio.js:3200). This method
+   * runs for EVERY hole, so a full-volume, mix-ducking escalation sting was
+   * being played for bots the player cannot see. Measured over one 90 s
+   * engagement: 26 tier changes, 21 of them a bot's; 78 heatUp calls in total,
+   * 73 of which passed no tier at all and therefore played the tier-1 variant.
+   * The effects and the kill-feed line below have always been player-gated;
+   * the audio simply was not.
+   */
   _announce(hole, tier, up, now) {
     const player = hole.isPlayer === true;
     if (up) {
-      this._sfx(SFX.HEAT_UP, () => this.audio && this.audio.rankChange && this.audio.rankChange(1));
+      if (player) {
+        this._sfx(SFX.HEAT_UP,
+          () => this.audio && this.audio.rankChange && this.audio.rankChange(1), tier);
+      }
       if (tier === 1) {
         /* Two flavours of "the city has noticed". A player who got here by
          * eating vehicles and civic fixtures (importance >= 1.6) gets the
@@ -860,7 +907,10 @@ export class HeatSystem {
         this._cue(hole, VOICE_CUES.ARRIVE_RESPONSE);
       }
     } else {
-      this._sfx(SFX.HEAT_DOWN, () => this.audio && this.audio.rankChange && this.audio.rankChange(-1));
+      if (player) {
+        this._sfx(SFX.HEAT_DOWN,
+          () => this.audio && this.audio.rankChange && this.audio.rankChange(-1));
+      }
       if (tier === 0) this._cue(hole, VOICE_CUES.ALL_CLEAR);
     }
 
@@ -979,7 +1029,7 @@ export class HeatSystem {
         // From here on the player is "in an encounter", which is what arms the
         // stand-down timer in _checkLeaveZone.
         this._st(hole).engaged = true;
-        this._sfx(SFX.ARRIVE, () => this.audio && this.audio.ui && this.audio.ui('click'));
+        this._sfx(SFX.ARRIVE, () => this.audio && this.audio.ui && this.audio.ui('click'), u.x, u.z);
         if (kind === 'barrier') this._cue(hole, VOICE_CUES.WARN_PLAZA);
       }
       return;
@@ -1565,7 +1615,9 @@ export class HeatSystem {
     const gapOK = now - s.lastHitT >= HEAT.HIT_GAP;
 
     const fx = this.effects;
-    this._sfx(SFX.PULSE, () => this.audio && this.audio.ui && this.audio.ui('back'));
+    // At the MARKER, not at the unit: the foam lands on the circle the player
+    // was told to get out of, and that is where it should be heard from.
+    this._sfx(SFX.PULSE, () => this.audio && this.audio.ui && this.audio.ui('back'), m.x, m.z);
 
     if (inside && gapOK) {
       s.lastHitT = now;
@@ -1699,7 +1751,15 @@ export class HeatSystem {
         fx.popup(_v, `+${u.spec.score} ${u.spec.label}`, COL.WARN, true);
       }
     }
-    this._sfx(SFX.HEAT_UP, () => this.audio && this.audio.crumble && this.audio.crumble(2));
+    /* Player-gated and tier-carrying, for the reason spelled out on _announce:
+       heatUp is non-positional and ducks the whole mix, and bots devour far
+       more response vehicles than the player does — 39 against 8 in a measured
+       match, every one of them previously a full-volume sting for something
+       happening off screen. */
+    if (hole.isPlayer) {
+      this._sfx(SFX.HEAT_UP, () => this.audio && this.audio.crumble && this.audio.crumble(2),
+        this.tierOf(hole));
+    }
     this._cue(hole, VOICE_CUES.LOST_VEHICLE, u.x, u.z);
     if (this.hud && this.hud.pushFeed && hole.isPlayer) {
       this.hud.pushFeed(`<b>${u.spec.label}</b> swallowed. That will not calm them down.`,
@@ -1755,10 +1815,19 @@ export class HeatSystem {
    * Call an optional audio method by name, falling back to a verified one.
    * Never guesses: if `name` is absent the fallback runs, and the fallback only
    * ever touches methods that exist today in src/core/audio.js.
+   *
+   * TWO POSITIONAL ARGUMENTS, not a rest parameter: this runs on every pulse
+   * and every dispatch, and the house rule in this file is that nothing on a
+   * hot path allocates. They are what the audio API actually wants — `(x, z)`
+   * for the positional sounds, `(tier)` for heatUp. Passing none used to be the
+   * bug rather than the default: heatUp() with no tier always played its
+   * tier-1 variant (73 of 78 calls in a measured match), and
+   * containmentPulse() with no coordinates played the foam splat flat in the
+   * middle of the mix instead of where the marker landed.
    */
-  _sfx(name, fallback) {
+  _sfx(name, fallback, a1, a2) {
     const a = this.audio;
-    if (a && typeof a[name] === 'function') { a[name](); return; }
+    if (a && typeof a[name] === 'function') { a[name](a1, a2); return; }
     if (fallback) { try { fallback(); } catch { /* audio must never break a tick */ } }
   }
 

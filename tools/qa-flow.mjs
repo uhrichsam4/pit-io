@@ -149,10 +149,21 @@ const play = await pg.evaluate(async () => {
      fault, not the game's. stepSimulation is the same function the render loop
      calls, so this is real gameplay at a deterministic rate. */
   if (g.match.phase !== 'playing' && g.match.setPhase) g.match.setPhase('playing');
-  for (let i = 0; i < 900; i++) {
-    p.desiredDir.set(Math.cos(i * 0.02), Math.sin(i * 0.013));
-    g.stepSimulation(1 / 60);
-  }
+  /* STEER THROUGH input.update(), not desiredDir.
+     stepSimulation does `player.desiredDir.copy(this.input.update())` at
+     game.js:1585 BEFORE hole.update runs, so anything written to desiredDir
+     just ahead of the step is overwritten and discarded. This check therefore
+     used to measure a completely stationary hole and still pass — the score it
+     saw came from props toppling in on their own near the spawn. Replacing
+     input.update is the same contract the real Input class honours: return a
+     world-space direction each frame. */
+  const realInput = g.input.update.bind(g.input);
+  let step = 0;
+  g.input.update = () => ({ x: Math.cos(step * 0.02), y: Math.sin(step * 0.013),
+                            copy(v) { return v; } });
+  // desiredDir is a THREE.Vector2; copy() reads .x/.y off the argument.
+  for (step = 0; step < 900; step++) g.stepSimulation(1 / 60);
+  g.input.update = realInput;
   const cov = a && a.coverage ? a.coverage() : null;
   return {
     scoreGained: p.score - s0, radius: +p.radius.toFixed(2),

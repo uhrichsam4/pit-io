@@ -25,6 +25,14 @@
  */
 const SHADOW_MIN_HEIGHT = 1.8;
 
+/**
+ * Metres of slack added to a pool's fitted bounding sphere before that sphere
+ * is allowed to cull anything. This covers float slop in the fit itself only —
+ * instances that MOVE away from where they were authored are handled by
+ * _growBounds(), which is called from every path that writes a live transform.
+ */
+const CULL_SLOP = 1.0;
+
 
 import * as THREE from 'three';
 
@@ -64,7 +72,22 @@ export class InstancedProp {
     this.keepShadow = !!opts.keepShadow;
     this.mesh.receiveShadow = opts.receiveShadow ?? true;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    /**
+     * Off until finalize() arms it. An InstancedMesh's bounding sphere is
+     * meaningless while instances are still being added, and three caches the
+     * first sphere it is handed forever — so a pool that is never finalised
+     * keeps today's behaviour of drawing unconditionally.
+     */
     this.mesh.frustumCulled = false;
+    /** Set by _armCulling(); gates every bounds-maintenance path below. */
+    this._culled = false;
+    /**
+     * Radius of ONE instance at its largest authored scale, metres. The pad
+     * used when a live transform is written outside the fitted sphere: the
+     * sphere holds instance ORIGINS, and an origin on the boundary still has
+     * this much geometry hanging off it.
+     */
+    this._instRadius = 0;
 
     this.useColor = !!opts.color;
     if (this.useColor) {
@@ -135,6 +158,10 @@ export class InstancedProp {
     this.slotRot[i] = new THREE.Quaternion().copy(_q);
     this.slotScale[i] = new THREE.Vector3().copy(sv);
     this._dirtyAll = true;
+    // Normally a no-op: everything is added before finalize() arms culling.
+    // A pool that is topped up afterwards would otherwise be culled against a
+    // sphere that predates its newest instances.
+    if (this._culled) this._growBounds(position);
     return i;
   }
 
@@ -147,6 +174,21 @@ export class InstancedProp {
     _m4.compose(position, quaternion, scale);
     this.mesh.setMatrixAt(slot, _m4);
     this._touch(slot);
+    /*
+     * This is the ONLY way a live instance leaves the sphere finalize() fitted:
+     * a car drives, an animal walks, a prop tips into a hole. Grow the sphere
+     * to cover it, or the pool gets culled while one of its instances is on
+     * screen — an object that pops out of existence, which is the exact failure
+     * frustum culling on a moving pool is famous for.
+     *
+     * A zero scale is the "parked off-world" convention (vehicles.js writes
+     * (0, -9999, 0) at scale 0 to retire a headlight decal); dragging the
+     * sphere down there would make it useless, and the instance is invisible
+     * anyway.
+     */
+    if (this._culled && scale && (scale.x !== 0 || scale.y !== 0 || scale.z !== 0)) {
+      this._growBounds(position);
+    }
   }
 
   /** Collapse a slot to nothing. Used when a prop has fallen out of the world. */
@@ -167,7 +209,69 @@ export class InstancedProp {
   reseat(slot, position, quaternion) {
     this.slotPos[slot].copy(position);
     if (quaternion) this.slotRot[slot].copy(quaternion);
+    if (this._culled) this._growBounds(position);
     this.restore(slot);
+  }
+
+  /**
+   * Widen the culling sphere so it contains `p` plus one instance's worth of
+   * geometry. Monotonic on purpose — it only ever grows, never shrinks. A
+   * sphere that is too big costs a draw call that would have been skipped; a
+   * sphere that is too small deletes an object the player can see, and the
+   * second failure is not worth a single frame of the first.
+   *
+   * One distanceTo per moved instance per frame. The traffic updater writes
+   * ~1,500 transforms a frame and the whole simulation costs 2.1 ms, so this
+   * is noise — and it is on the simulation side of a render-bound frame.
+   */
+  _growBounds(p) {
+    const bs = this.mesh.boundingSphere;
+    if (!bs) return;
+    if (bs.radius < 0) { bs.center.copy(p); bs.radius = this._instRadius; return; }
+    const need = bs.center.distanceTo(p) + this._instRadius;
+    if (need > bs.radius) bs.radius = need;
+  }
+
+  /**
+   * Turn on frustum culling for this pool, once its bounding sphere is real.
+   *
+   * WHY THIS IS WORTH DOING WHEN A POOL SPANS THE WHOLE MAP. It is not, for
+   * the ~250 pools that do — the sphere covers the city and the test always
+   * passes. It is worth doing for two other cases, both measured:
+   *
+   *   - the ~90 pools that are LOCAL (the zoo, the boats, the film shoot, the
+   *     one-off landmarks). At the gameplay camera that is 86 draw calls a
+   *     frame, counting both the beauty pass and the shadow pass, which three
+   *     tests against the shadow ortho — a 120-280 m box, far tighter than the
+   *     view frustum;
+   *   - the SPAWN ISLAND. It lives at x = 4000, four kilometres off the city
+   *     grid, and game.js shows it without hiding Miami. Every city pool was
+   *     being submitted in full while the player sat in the lobby looking at a
+   *     park: measured at 718 draws / 8.56 M triangles for a city that is not
+   *     within 3 km of the frame. With this on it is 125 draws / 1.75 M.
+   *
+   * The sphere is fitted from the authored transforms and then only ever grows
+   * (see _growBounds), so it can be conservative but never wrong.
+   */
+  _armCulling() {
+    if (this.count <= 0) return;
+    const bs = this.mesh.boundingSphere;
+    if (!bs || !Number.isFinite(bs.radius) || bs.radius < 0) return;
+
+    const geo = this.geometry;
+    if (!geo.boundingSphere) geo.computeBoundingSphere();
+    let maxScale = 1;
+    for (let i = 0; i < this.count; i++) {
+      const s = this.slotScale[i];
+      if (!s) continue;
+      const m = Math.max(s.x, s.y, s.z);
+      if (m > maxScale) maxScale = m;
+    }
+    this._instRadius = (geo.boundingSphere ? geo.boundingSphere.radius : 0) * maxScale;
+
+    bs.radius += CULL_SLOP;
+    this._culled = true;
+    this.mesh.frustumCulled = true;
   }
 
   flush() {
@@ -275,6 +379,8 @@ export class InstancedProp {
     this.mesh.instanceMatrix.needsUpdate = true;
     if (this.useColor) this.mesh.instanceColor.needsUpdate = true;
     this.mesh.computeBoundingSphere();
+    // Every instance is placed by now, so the sphere finally means something.
+    this._armCulling();
     this._dirtyAll = false;
     this._dirtySlots.clear();
     return this.mesh;
@@ -311,9 +417,11 @@ export class PropLibrary {
     let instances = 0;
     let shadowSaved = 0;
     let shadowPools = 0;
+    let culledPools = 0;
     for (const p of this.pools.values()) {
       p.finalize();
       instances += p.count;
+      if (p._culled) culledPools++;
       const o = p.optimiseShadows();
       if (o.disabled) { shadowSaved += o.saved; shadowPools++; }
     }
@@ -321,10 +429,28 @@ export class PropLibrary {
       pools: this.pools.size, instances,
       shadowPoolsDisabled: shadowPools,
       shadowTrisSaved: Math.round(shadowSaved),
+      culledPools,
     };
   }
 
   flushAll() {
     for (const p of this.pools.values()) p.flush();
+    /*
+     * props.js drives its shared night-glow uniform from `onBeforeRender` on
+     * the pool meshes, and says so in a comment that names the reason: "the
+     * pools are frustumCulled = false, so it is guaranteed every frame".
+     * Arming culling breaks that promise — a culled mesh is never drawn and
+     * never fires the hook. props.js publishes `scene.userData.propsUpdate`
+     * for exactly this, documented as the same idempotent setter and safe to
+     * call as well as the render hook, so call it. game.js runs flushAll()
+     * once per simulation tick.
+     *
+     * Belt and braces: the hook still fires from whichever pool draws first,
+     * so in practice this only matters on a frame where no prop pool is on
+     * screen at all — and on such a frame nothing that reads the uniform is
+     * being drawn either.
+     */
+    const sync = this.scene && this.scene.userData.propsUpdate;
+    if (typeof sync === 'function') sync();
   }
 }

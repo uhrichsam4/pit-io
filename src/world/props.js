@@ -672,6 +672,26 @@ function band(m, x, z, y, r, h, segs = 8, taper = 0) {
 }
 
 /**
+ * Flat rectangular ledge with a hole in it — a planter coping, the returned
+ * lip of a steel trough, the rim of a pot. Four quads, all facing up.
+ *
+ * The planter family had two ways of finishing its top and both photographed
+ * badly from the only camera this game has. `capTop: false` leaves the opening
+ * empty, so from 40 degrees above you look past the near wall at a soil plate
+ * that does not reach the rim and, through the gap, at nothing — which is why
+ * `planterSquare` shot as an empty crate. `capTop: true` welds a solid plate
+ * across the whole mouth, which is why `planterModern` shot as a dark lid.
+ * A planter is neither: it is a ledge with a hole and soil sitting up in it,
+ * and eight triangles is the entire cost of saying so.
+ */
+function copingTop(m, y, ox, oz, ix, iz) {
+  m.quad([-ox, y, oz], [ox, y, oz], [ox, y, iz], [-ox, y, iz]);
+  m.quad([-ox, y, -iz], [ox, y, -iz], [ox, y, -oz], [-ox, y, -oz]);
+  m.quad([-ox, y, iz], [-ix, y, iz], [-ix, y, -iz], [-ox, y, -iz]);
+  m.quad([ix, y, iz], [ox, y, iz], [ox, y, -iz], [ix, y, -iz]);
+}
+
+/**
  * Overlapping-lobe foliage mass.
  *
  * The whole planter family shipped one 5-segment cone per pot, and a cone with
@@ -842,25 +862,38 @@ function gCone(m) {
 }
 
 /**
- * Bollard. Cast base flange, tapered shaft, reflective band, domed cap.
+ * Bollard. Cast base flange, near-parallel shaft, banded collar, oversailing
+ * domed cap.
  *
- * 631 of these — the most placed object in the city — and the first pass was a
- * bare tapered stick with a flat cut on top and no value separation against
- * bone paving at all. Four rings at eight segments buys the three things every
- * bollard has: a splayed foot that gives it a real contact edge, the band, and
- * a cap. The band is authored WHITE against a mid-grey shaft so the ratio
- * survives whatever the per-instance tint multiplies through it.
+ * 607 of these — the most placed object in the city — and photographed alone
+ * against a kerb the previous profile read as a grey traffic cone: it ran
+ * 0.091 -> 0.040 over its top 18 cm, which is a point, and a point is the one
+ * thing a cast bollard is not. Two things fixed that and both are silhouette,
+ * because from a 40-degree camera the outline and the top disc are the whole
+ * object:
+ *
+ *   · THE CAP OVERSAILS. It flares to 0.116 against a 0.096 shaft, so there is
+ *     a shadow line under it and the post has a head instead of a tip.
+ *   · THE TOP IS A DISC, not an apex — 7 cm across, with its own lighter tone,
+ *     which is precisely what the overhead camera sees of 607 objects.
+ *
+ * A proud bead under the reflective band puts the band in relief rather than
+ * painting a stripe on a taper. 70 -> 102 triangles.
  */
 function gBollard(m) {
   m.tube(0, 0, [
-    [0, 0.212], [0.052, 0.150], [0.70, 0.093], [0.78, 0.091], [0.96, 0.040],
+    [0, 0.212], [0.050, 0.152], [0.640, 0.096],
+    [0.680, 0.112], [0.815, 0.108], [0.870, 0.116], [0.955, 0.072],
   ], 8, {
-    capTop: true,
+    capTop: false,
     // Body authored at roughly half the band's value. A multiplicative instance
     // hex cannot create contrast, only preserve a ratio — so the ratio has to
     // be in the geometry, or the reflective band vanishes under every tint.
-    cols: [0x8a908e, 0xb4bab8, 0xffffff, 0xa4aaa8],
+    cols: [0x6f7674, 0x8a908e, 0xb4bab8, 0xffffff, 0xc6ccc8, 0x9aa2a0],
   });
+  // Separate disc rather than `capTop`, so the one face the high camera always
+  // sees can carry a value of its own instead of inheriting the dome wall's.
+  m.col(0xc6ccc8).disc(0, 0.955, 0, 0.072, 8);
 }
 
 /**
@@ -873,11 +906,26 @@ function gBollard(m) {
  * stands on, which the art direction demands and the first pass ignored.
  */
 function gBollardStone(m) {
+  /* Photographed alone on a verge this was a featureless tan slab, and the
+     numbers say why: the corner cut was 3.2 cm on a 40 cm block (8%, invisible
+     past three metres) and every course change was under 2.5 cm, so nothing on
+     it could catch a shadow. Same seven-course idea, but at sizes that survive
+     the camera:
+       · 5-6 cm corner cuts, so the octagon is legible in PLAN — which from
+         above is the only thing there is to be legible.
+       · the shaft steps IN 6 cm off the plinth and the cap steps OUT 6 cm off
+         the shaft. Two hard shadow lines on a masonry post is the whole
+         difference between a carved bollard and an extruded box.
+       · a weathered top chamfer down to 0.285, leaving a real cap face.
+     Footprint is deliberately unchanged at 0.40 across the plinth: the placer
+     reserves the MEASURED contact box, so widening it would thin out every
+     kerb run in the city. 70 -> 102 triangles. */
   m.oct(0, 0, [
-    [0, 0.40, 0.40, 0.032], [0.05, 0.335, 0.335, 0.028],
-    [0.62, 0.325, 0.325, 0.027], [0.80, 0.30, 0.30, 0.024],
-    [0.88, 0.235, 0.235, 0.020],
-  ], { cols: [0xc4bcac, 0xf6f2e8, 0xece6d8, 0xf2eee4] });
+    [0, 0.40, 0.40, 0.05], [0.085, 0.395, 0.395, 0.05],
+    [0.13, 0.335, 0.335, 0.055], [0.65, 0.318, 0.318, 0.055],
+    [0.70, 0.375, 0.375, 0.06], [0.80, 0.368, 0.368, 0.06],
+    [0.88, 0.285, 0.285, 0.05],
+  ], { cols: [0xc4bcac, 0xd8d0be, 0xf6f2e8, 0xfaf6ee, 0xece6d8, 0xf2eee4] });
 }
 
 /**
@@ -1031,10 +1079,21 @@ function gBinMuni(m) {
   for (let k = 0; k < 3; k++) {
     const a = (k / 3) * TAU + 0.5;
     m.tubeBetween(Math.cos(a) * 0.27, 0.72, Math.sin(a) * 0.27,
-      Math.cos(a) * 0.27, 0.77, Math.sin(a) * 0.27, 0.032, 3);
+      Math.cos(a) * 0.27, 0.74, Math.sin(a) * 0.27, 0.032, 3);
   }
-  m.col(0x7b827c).disc(0, 0.77, 0, 0.40, 6, 0.26, false);
-  m.tube(0, 0, [[0.77, 0.40], [0.90, 0.365], [1.00, 0.20]], 6, { rot: 0.26, capTop: true });
+  /* THE LID, which is 100% of what this object presents to a camera 40 degrees
+     above it — and which was a flat hexagonal plate with a chamfer.
+       · a DOWNTURNED LIP: the rim flares out to 0.412 and hangs 4 cm BELOW the
+         crown line, so the lid casts a shadow band onto the body instead of
+         sitting on it like a coaster.
+       · a real APERTURE: a raised collar with a dark throat dropped inside it,
+         so from above the bin reads as a bin (a bright ring around a hole) and
+         not as a green hexagon. */
+  m.col(0x7b827c).disc(0, 0.735, 0, 0.395, 6, 0.26, false);
+  m.tube(0, 0, [
+    [0.735, 0.398], [0.775, 0.412], [0.90, 0.370], [0.955, 0.245], [0.985, 0.228],
+  ], 6, { rot: 0.26, capTop: false, cols: [0x6c736e, 0x8a918a, 0x7b827c, 0x6c736e] });
+  m.col(0x15181a).disc(0, 0.945, 0, 0.218, 6, 0.26);
   // Push flap on the street face, plus a small embossed city crest.
   m.col(0x1d2124).prism(0, 0.312, [[0.30, 0.30, 0.03], [0.54, 0.30, 0.03]]);
   m.col(0xd8dcd6).prism(0, 0.322, [[0.20, 0.14, 0.014], [0.28, 0.14, 0.014]]);
@@ -1844,15 +1903,30 @@ function gPlanterSquare(m) {
     capTop: false,
     cols: [0xb4a890, 0xf2eadA, 0xe8dfcc, 0xf6efe0, 0xfaf4e6, 0xe8dfcc],
   });
-  // Score lines: two per face, on all four faces.
+  /* Score lines: ONE per face now, not two. Measured, they were 1.8 cm wide on
+     a 0.94 m face — under a pixel at the distance this prop is normally seen —
+     so the eight triangles they cost bought nothing, and they are re-spent
+     below on the top, which is the face the camera actually gets. */
   m.col(0xd8ceb8);
   for (let f = 0; f < 4; f++) {
     m.xform((f / 4) * TAU, 0, 0, 0);
-    for (const x of [-0.22, 0.22]) decal(m, x, 0.30, 0.475, 0.018, 0.44);
+    decal(m, 0, 0.30, 0.475, 0.026, 0.44);
     m.reset();
   }
-  m.col(P.MULCH).plate(0, 0.60, 0, 0.90, 0.90);
-  shrub(m, 0, 0.56, 0, 0.42, P.HEDGE_LIGHT, 5, 3);
+  // Coping ledge: a rim with a hole in it, so the mouth is a mouth.
+  m.col(0xfaf4e6);
+  copingTop(m, 0.72, 0.5275, 0.5275, 0.44, 0.44);
+  /* Soil sits UP in the opening on a chamfered bed rather than lying 12 cm
+     down it as a flat plate. That closes the void that made this read as a
+     crate, and it gives the top a bevelled edge that catches the sun. */
+  m.col(P.MULCH);
+  m.prism(0, 0, [[0.58, 0.90, 0.90], [0.70, 0.87, 0.87], [0.745, 0.73, 0.73]],
+    { cols: [0x4a3628, P.MULCH] });
+  /* Four lobes, not three, and spread tighter so they overlap: photographed,
+     three at 5 segments still read as one faceted gem, which is the exact
+     failure `bush` was written to end. The mass now sits on the soil crown at
+     0.70 instead of floating at 0.56 inside the box. */
+  shrub(m, 0, 0.70, 0, 0.42, P.HEDGE_LIGHT, 5, 4);
 }
 
 /**
@@ -1905,18 +1979,43 @@ function gPottedPalm(m) {
   m.col(P.PALM_TRUNK_DARK).tube(0.03, 0.01, [[0.90, 0.092], [0.94, 0.090]], 5);
   m.col(P.PALM_TRUNK).tube(0.05, 0.015, [[0.94, 0.084], [1.58, 0.062]], 5);
   m.col(P.PALM_FROND_DARK).tube(0.08, 0.02, [[1.56, 0.15], [1.82, 0.075]], 5, { capTop: true });
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * TAU + 0.55;
+  /* THE CROWN — which from a camera 40 degrees above IS this object, and which
+     photographed as a flat six-pointed star exactly as the note above feared.
+     The reason is in the primitive: a `beam` is a rectangular prism, so the
+     "leaflet blade" was a 0.22 x 0.026 plank, and six spines each carrying one
+     plank is a starfish however the planks are angled.
+     A leaflet is a leaf. A leaf is a QUAD — two triangles against a beam's
+     eight — so feathering is close to free, and the budget buys plan shape:
+     eight fronds, each a drooping spine with four leaflets splayed off it at
+     two stations. 96 -> 128 triangles for the whole crown, and the outline
+     goes from six spikes to a broken disc. Leaflets are wound to face UP,
+     which is the only side of them that is ever on screen. */
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * TAU + 0.55;
     const cx = Math.cos(a), cz = Math.sin(a);
-    const L = k % 2 ? 0.86 : 0.66;
+    const L = k % 2 ? 0.86 : 0.68;
+    const bx = 0.08, by = 1.80, bz = 0.02;
+    const tipY = 1.22 + (k % 3) * 0.06;
     m.col(k % 2 ? P.PALM_FROND : P.PALM_FROND_DARK);
-    // Spine, then two leaflet blades angled off it.
-    m.beam(0.08, 1.80, 0.02, 0.08 + cx * L, 1.28, 0.02 + cz * L, 0.075, 0.045, false);
+    m.beam(bx, by, bz, bx + cx * L, tipY, bz + cz * L, 0.070, 0.040, false);
     m.col(k % 2 ? P.PALM_FROND_LIGHT : P.PALM_FROND);
-    const s = k % 2 ? 1 : -1;
-    m.beam(0.08 + cx * L * 0.28, 1.66, 0.02 + cz * L * 0.28,
-      0.08 + cx * L * 0.82 - cz * s * 0.22, 1.34, 0.02 + cz * L * 0.82 + cx * s * 0.22,
-      0.22, 0.026, false);
+    for (const t of [0.34, 0.66]) {
+      const ax = bx + cx * L * t, az = bz + cz * L * t;
+      const ay = by + (tipY - by) * t;
+      const u = t + 0.30;
+      const ex = bx + cx * L * u, ez = bz + cz * L * u;
+      const ey = by + (tipY - by) * u;
+      for (const s of [-1, 1]) {
+        const A = [ax, ay, az];
+        const B = [ax - cz * s * 0.06, ay - 0.02, az + cx * s * 0.06];
+        const C = [ex - cz * s * 0.30, ey - 0.16, ez + cx * s * 0.30];
+        const D = [ex, ey, ez];
+        // Same signed-winding rule as `rake`: mirroring the blade mirrors the
+        // face, and an unflipped mirror is how you get half a crown drawn
+        // inside out and invisible from the only angle that matters.
+        if (s > 0) m.quad(A, B, C, D); else m.quad(A, D, C, B);
+      }
+    }
   }
 }
 
@@ -1932,15 +2031,37 @@ function gPottedPalm(m) {
  */
 function gCafeTable(m) {
   m.col(P.STEEL_DARK);
+  /* BASE SPREAD. The tripod stays at 0.28 — that radius is what the placer
+     reserves (`contactRadius` is measured off this mesh, so widening the feet
+     would thin out every terrace in the city) — but it now reads as a spread
+     cast base instead of three sticks: a collar where the legs gather at the
+     column, and a toe pad under each foot so the table lands on plates rather
+     than on three points. */
   for (let k = 0; k < 3; k++) {
     const a = (k / 3) * TAU + 0.4;
-    m.tubeBetween(0, 0.055, 0, Math.cos(a) * 0.28, 0.022, Math.sin(a) * 0.28, 0.045, 4, true);
+    const fx = Math.cos(a) * 0.28, fz = Math.sin(a) * 0.28;
+    m.tubeBetween(0, 0.055, 0, fx, 0.022, fz, 0.045, 4, true);
+    // Pad kept just inboard of the toe: the measured contact box is what the
+    // placer reserves, so a pad that oversails the foot silently costs the
+    // city café tables.
+    m.col(0x3b4246).disc(fx * 0.93, 0.004, fz * 0.93, 0.048, 4, a);
+    m.col(P.STEEL_DARK);
   }
   m.tube(0, 0, [[0, 0.115], [0.055, 0.105], [0.075, 0.052]], 6, { capTop: false });
-  m.tube(0, 0, [[0.075, 0.048], [0.62, 0.044]], 6);
+  m.tube(0, 0, [[0.075, 0.078], [0.105, 0.058]], 6);           // gathering collar
+  m.tube(0, 0, [[0.105, 0.048], [0.62, 0.044]], 6);
   m.tube(0, 0, [[0.62, 0.085], [0.68, 0.078]], 6);
-  m.col(0xe8e0cc).tube(0, 0, [[0.68, 0.335], [0.71, 0.352]], 10);
-  m.col(0xfaf6ec).tube(0, 0, [[0.71, 0.352], [0.755, 0.345]], 10, { capTop: true });
+  /* THE RIM. Photographed, the top was a bare 10-gon slab: two rings and a
+     cap, with nothing on the edge but a 3 cm chamfer, so from the game camera
+     it read as a disc of card balanced on a pole. A café table has a THICK
+     rolled edge and it is the one part of it the camera sees in profile —
+     under-bevel, a vertical rim band, a top chamfer turning in, and the top
+     face itself inset behind the rim rather than flush with it. */
+  m.col(0xd8d0bc).tube(0, 0, [[0.660, 0.300], [0.678, 0.330]], 10);   // apron/underside
+  m.col(0xe8e0cc).tube(0, 0, [[0.678, 0.330], [0.706, 0.356]], 10);   // under-bevel
+  m.col(0xf2ece0).tube(0, 0, [[0.706, 0.356], [0.748, 0.352]], 10);   // rim band
+  m.col(0xfaf6ec).tube(0, 0, [[0.748, 0.352], [0.760, 0.322]], 10);   // top chamfer
+  m.col(0xfdfaf2).disc(0, 0.760, 0, 0.322, 10);                       // inset top face
 }
 
 /**
@@ -1958,17 +2079,45 @@ function gCafeChair(m) {
     m.tubeBetween(sx * 0.22, 0, sz * 0.22, sx * 0.185, 0.43, sz * 0.185, 0.024, 4);
   }
   m.tubeBetween(-0.20, 0.16, 0.20, 0.20, 0.16, 0.20, 0.018, 4);
+  // Rear stretcher too: from above the frame under the seat is a rectangle,
+  // and one bar is a rectangle with a side missing.
+  m.tubeBetween(-0.20, 0.19, -0.20, 0.20, 0.19, -0.20, 0.018, 4);
+  /* THE SEAT PAN, which at 555 copies is the single most repeated horizontal
+     face on any terrace in the city and was three flat steps ending in a plate
+     flush with its own rim. It is now DISHED: the rim rises to 0.478 and the
+     pan rolls back down and inward to 0.470, so the top face sits inside a
+     raised edge and the roll catches a different light from the seat. Two
+     triangles of ring, and the terrace stops reading as a field of tiles. */
   m.col(0xf6f2e8);
-  m.prism(0, 0, [[0.42, 0.40, 0.38], [0.45, 0.44, 0.42], [0.48, 0.395, 0.375]]);
+  m.prism(0, 0, [
+    [0.42, 0.40, 0.38], [0.45, 0.445, 0.425], [0.478, 0.435, 0.415], [0.470, 0.355, 0.335],
+  ], { cols: [0xe6e0d0, 0xf6f2e8, 0xfdfaf2] });
   m.col(0xe6e0d0);
   for (const sx of [-1, 1]) {
     m.tubeBetween(sx * 0.185, 0.43, -0.185, sx * 0.165, 0.90, -0.235, 0.024, 4);
   }
+  /* Back: two slats and a BOWED top rail. A straight bar across the top is
+     the silhouette a folding sign has; the two-chord bow is what says chair
+     from the side, which is the angle half a terrace presents. */
   m.col(0xf2ece0);
-  for (let k = 0; k < 3; k++) {
+  for (let k = 0; k < 2; k++) {
     const t = k / 2;
     m.beam(-0.175, 0.58 + t * 0.145, -0.205 - t * 0.016,
       0.175, 0.58 + t * 0.145, -0.205 - t * 0.016, 0.075, 0.032, false);
+  }
+  const rail = [[-0.175, -0.222], [0, -0.252], [0.175, -0.222]];
+  for (let k = 0; k < 2; k++) {
+    m.beam(rail[k][0], 0.872, rail[k][1], rail[k + 1][0], 0.872, rail[k + 1][1],
+      0.085, 0.036, false);
+  }
+  /* Foot pads: four points is what made the old chair look dropped in. Sized
+     to 0.040 deliberately — they must not reach past the leg tube's own
+     0.2404 contact extent, because `contactRadius` is measured off this mesh
+     and it is what the placer reserves. At 0.062 they pushed the claim from
+     0.44 m to 0.455 and a terrace lost chairs to it. */
+  m.col(0xcfc7b4);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    m.plate(sx * 0.22, 0.006, sz * 0.22, 0.040, 0.040);
   }
 }
 
@@ -3116,11 +3265,20 @@ function gCafeTableSquare(m) {
   m.tubeBetween(0.30, 0.20, -0.30, -0.30, 0.20, 0.30, 0.018, 4);
   m.col(0x6f5a44);
   m.prism(0, 0, [[0.64, 0.66, 0.66], [0.70, 0.66, 0.66]]);          // apron
-  m.col(0x9a7048).prism(0, 0, [[0.70, 0.78, 0.78], [0.73, 0.79, 0.79]]);
-  m.col(0xfaf4e6).prism(0, 0, [[0.73, 0.79, 0.79], [0.765, 0.75, 0.75]]);
-  m.col(P.SIGN_FACE).prism(0.20, 0.18, [[0.765, 0.14, 0.10], [0.945, 0.13, 0.09]]);
-  m.col(P.STEEL_DARK).tube(-0.18, -0.16, [[0.765, 0.075], [0.79, 0.07]], 6, { capTop: true });
-  m.col(P.GLASS_MINT).tube(-0.14, 0.20, [[0.765, 0.045], [0.87, 0.05]], 5, { capTop: true });
+  /* THE TOP. Photographed from the game camera this was a bare tan quad: the
+     board went straight from a 3 cm edge chamfer to a flat plate, so the one
+     face on screen had no edge and no inset. Now the top rolls — an under-bead
+     that oversails the apron, a vertical edge band, a chamfer turning in — and
+     the surface sits BEHIND that edge with a rebated border line on it, which
+     is what makes a 0.75 m timber square read as a table and not a tile. */
+  m.col(0x9a7048).prism(0, 0, [[0.70, 0.78, 0.78], [0.728, 0.80, 0.80]]);
+  m.col(0xb08258).prism(0, 0, [[0.728, 0.80, 0.80], [0.752, 0.795, 0.795]], { capTop: false });
+  m.col(0xfaf4e6).prism(0, 0, [[0.752, 0.795, 0.795], [0.772, 0.745, 0.745]]);
+  m.col(0xe6dcc4);
+  copingTop(m, 0.7735, 0.362, 0.362, 0.318, 0.318);
+  m.col(P.SIGN_FACE).prism(0.20, 0.18, [[0.772, 0.14, 0.10], [0.952, 0.13, 0.09]]);
+  m.col(P.STEEL_DARK).tube(-0.18, -0.16, [[0.772, 0.075], [0.797, 0.07]], 6, { capTop: true });
+  m.col(P.GLASS_MINT).tube(-0.14, 0.20, [[0.772, 0.045], [0.877, 0.05]], 5, { capTop: true });
 }
 
 /**
@@ -4258,16 +4416,28 @@ function gBbqGrill(m) {
  * the silhouette is lumpy rather than a six-facet gem.
  */
 function gPottedFicus(m) {
+  /* Photographed alone this pot was a plain white cube. The relief was there
+     on paper and measured too small to survive: the reveal stepped in 2.5 cm
+     on a 0.70 m face and the rim oversailed by 6 cm at a 40-degree grazing
+     angle. Same seven courses, deeper steps — the reveal now cuts 6.5 cm and
+     the rim oversails 10 — so both throw a shadow line the camera can see.
+     Costs nothing: it is the same ring count with different numbers. */
   m.prism(0, 0, [
-    [0, 0.80, 0.80], [0.06, 0.72, 0.72], [0.52, 0.70, 0.70],
-    [0.60, 0.675, 0.675], [0.66, 0.72, 0.72], [0.74, 0.84, 0.84], [0.80, 0.82, 0.82],
-  ], { capTop: false, cols: [0xb4a890, 0xf6f2e8, 0xece6d8, 0xf2ece0, 0xfaf6ec, 0xece6d8] });
-  m.col(P.MULCH).plate(0, 0.68, 0, 0.64, 0.64);
+    [0, 0.80, 0.80], [0.07, 0.735, 0.735], [0.115, 0.695, 0.695],
+    [0.56, 0.66, 0.66], [0.63, 0.715, 0.715], [0.745, 0.86, 0.86], [0.81, 0.835, 0.835],
+  ], { capTop: false, cols: [0xb4a890, 0xd8d0be, 0xf6f2e8, 0xece6d8, 0xfaf6ec, 0xece6d8] });
+  // Rim ledge with a hole in it, and soil mounded up into the hole.
+  m.col(0xfaf6ec);
+  copingTop(m, 0.81, 0.4175, 0.4175, 0.335, 0.335);
+  m.col(P.MULCH);
+  m.prism(0, 0, [[0.70, 0.70, 0.70], [0.79, 0.675, 0.675], [0.835, 0.56, 0.56]],
+    { cols: [0x4a3628, P.MULCH] });
   m.col(P.PALM_TRUNK_DARK);
-  m.tube(0, 0, [[0.66, 0.098], [0.98, 0.086]], 5, { cols: [0x6e5436] });
+  // Trunk starts at the soil crown, not 17 cm under it.
+  m.tube(0, 0, [[0.79, 0.098], [0.98, 0.086]], 5, { cols: [0x6e5436] });
   m.tube(0.03, 0.01, [[0.98, 0.082], [1.32, 0.070]], 5);
   m.tubeBetween(0.02, 1.04, 0, 0.14, 1.12, 0.04, 0.024, 3, true);
-  m.tubeBetween(0.01, 0.88, 0, -0.10, 0.96, -0.04, 0.022, 3, true);
+  m.tubeBetween(0.01, 0.90, 0, -0.10, 0.98, -0.04, 0.022, 3, true);
   m.col(P.TREE_CANOPY_DARK);
   m.tube(0.04, 0.01, [[0.96, 0.30], [1.20, 0.40], [1.52, 0.26]], 6, { capTop: true });
   bush(m, 0.04, 1.02, 0.01, 0.44, P.TREE_CANOPY, P.TREE_CANOPY_LIGHT, 5, 3, 1.05);
@@ -4315,18 +4485,36 @@ function gPlanterModern(m) {
     [0.055, 1.28, 0.48], [0.11, 1.32, 0.52], [0.34, 1.24, 0.46],
     [0.80, 1.10, 0.40], [0.86, 1.14, 0.44],
   ], { capTop: false, cols: [0x3a4046, 0x565f5c, 0x49514f, 0x8f9694] });
-  m.col(0x9aa0a0).prism(0, 0, [[0.86, 1.16, 0.46], [0.885, 1.10, 0.40]]);
+  /* The returned lip is now a LEDGE, not a lid. `capTop` welded a solid
+     1.10 x 0.40 plate across the whole mouth, so photographed from the game
+     camera this 414-copy prop was a dark rectangle with grass stuck through
+     it — no inside, no soil, no depth. */
+  m.col(0x9aa0a0).prism(0, 0, [[0.86, 1.16, 0.46], [0.885, 1.10, 0.40]], { capTop: false });
+  copingTop(m, 0.885, 0.55, 0.20, 0.45, 0.12);
   m.col(0x2c3234);
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) decal(m, sx * 0.60, 0.48, sz * 0.232, 0.02, 0.72, sz);
   }
-  m.col(P.MULCH).plate(0, 0.82, 0, 1.04, 0.34);
+  // Soil mounded up into the opening, proud of the lip, with a bevelled edge.
+  m.col(P.MULCH);
+  m.prism(0, 0, [[0.76, 0.98, 0.32], [0.86, 0.94, 0.28], [0.90, 0.80, 0.17]],
+    { cols: [0x4a3628, P.MULCH] });
+  /* Grass blades were single flat beams: 0.17 m wide and 0.02 thick, which
+     from directly above is a line. Each clump now carries two leaflet quads
+     splayed off the blade — four triangles a clump — so the planting has a
+     PLAN shape, which is the only shape the overhead camera can see of it. */
   const blades = [P.GRASS_DRY, P.GRASS_LIGHT, P.GRASS];
   for (let k = 0; k < 6; k++) {
     m.col(blades[k % 3]);
     const x = -0.44 + k * 0.176;
     const lean = (k % 2 ? 1 : -1) * (0.14 + (k % 3) * 0.06);
-    m.beam(x, 0.78, 0, x + lean, 1.34 + (k % 3) * 0.12, lean * 0.5, 0.17, 0.02, false);
+    const ty = 1.34 + (k % 3) * 0.12;
+    m.beam(x, 0.78, 0, x + lean, ty, lean * 0.5, 0.17, 0.02, false);
+    for (const s of [-1, 1]) {
+      m.quad([x, 0.80, 0], [x + s * 0.05, 0.84, s * 0.02],
+        [x + lean * 0.7 + s * 0.16, ty - 0.24, lean * 0.35 + s * 0.20],
+        [x + lean * 0.6 + s * 0.09, ty - 0.30, lean * 0.30 + s * 0.17]);
+    }
   }
   m.col(0xc9bb7a);
   for (let k = 0; k < 3; k++) {

@@ -535,16 +535,16 @@ export class EventGlue {
     /* setHeat dedupes internally on tier and on whole percent, but it is still
        a call and a couple of property reads per frame; gate it here too. */
     if (tier === this._hudHeatTier && Math.abs(value - (this._hudHeatVal || 0)) <= 0.005) return;
-    /* The tier CHANGE is what deserves a sound, not the meter creeping.
-       heatUp/heatDown had no call sites at all, so escalation was silent and
-       the only warning was a bar the player is not looking at. `-1` is the
-       initial value, so the first real tier is announced but the constructor's
-       own -1 -> 0 settle is not. */
-    const prev = this._hudHeatTier;
-    if (tier !== prev && prev >= 0) {
-      if (tier > prev) audio.heatUp(tier);
-      else audio.heatDown();
-    }
+    /* NO AUDIO HERE. This used to play audio.heatUp(tier)/heatDown() on the
+       tier change, under a comment claiming "heatUp/heatDown had no call sites
+       at all" — which was not true: heat.js has always driven them through its
+       own SFX table (heat.js:372, SFX.HEAT_UP = 'heatUp'), and _sfx calls the
+       method whenever it exists. So every player escalation played the sting
+       TWICE on the same frame, once from each file.
+       Measured by tools/heat-probe.mjs before the fix: 78 heatUp calls across
+       a 90 s engagement, 6 of them doubled onto a single frame. heat.js is now
+       the single owner — it is the module that knows the tier, the direction
+       and which hole it happened to — and this surface does the HUD only. */
     this._hudHeatTier = tier;
     this._hudHeatVal = value;
     hud.setHeat({ tier, value });
