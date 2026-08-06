@@ -53,6 +53,9 @@ import { makeRNG } from '../core/rng.js';
  * ========================================================================== */
 
 export const HEAT = {
+  /** Top of the meter. Everything that writes heat clamps to [0, MAX]. */
+  MAX: 1.0,
+
   /* ---------------------------------------------------------- thresholds --
    * Two ladders, not one. UP[] is the level you must exceed to climb into a
    * tier, DOWN[] is the level you must fall below to drop out of it. The ~0.07
@@ -71,13 +74,18 @@ export const HEAT = {
    * second, and early on nearly all of them are tier 0/1. Litter is worth
    * exactly ZERO heat — nobody calls the city because a crisp packet vanished,
    * and if litter counted, heat would be a stopwatch rather than a choice.
-   * Street furniture at 0.0035 means ~63 benches to reach tier 1, which at
-   * 2 eats/sec is about half a minute of doing nothing but vandalising
-   * furniture. That is the spec's "Hey! Stop eating the street furniture!"
-   * arriving at the right moment. A single storefront (0.055) is worth 16
-   * benches, and four of them put you in tier 1 on their own.
+   * Simulated against a 240 s Classic match at 2.5 tier-appropriate eats per
+   * second, these land tier 1 around t=85, tier 2 around t=115 and tier 3
+   * around t=140 — the escalation arrives inside the match instead of in its
+   * last thirty seconds, which is where a 30% softer table put it.
+   *
+   * They are also deliberately too small for a pure furniture grazer to ever
+   * reach tier 1: at 2 eats/sec of litter and benches the gain (~0.0067/s)
+   * sits just under the throttled cooling rate (~0.008/s), so that player
+   * plateaus around 0.08 and the city never turns up. Heat is for wrecking
+   * things that matter, not for playing the game.
    */
-  GAIN_BY_TIER: [0, 0.0035, 0.008, 0.020, 0.045, 0.075, 0.105, 0.150],
+  GAIN_BY_TIER: [0, 0.005, 0.011, 0.028, 0.062, 0.100, 0.140, 0.190],
   /** No single object may ever contribute more than this. Anti-spike. */
   GAIN_CAP: 0.20,
   /** Eating a response unit is heat, not relief. */
@@ -86,8 +94,25 @@ export const HEAT = {
   /* -------------------------------------------------------------- decay ---
    * See _cool() for the curve and the reasoning behind every number.
    */
+  /** Seconds after a heat gain during which cooling runs at COOL_BUSY rate. */
   COOL_DELAY: 3.0,
-  HOLD_R: 34,
+  /**
+   * Cooling multiplier while actively wrecking things.
+   *
+   * This was a hard gate (no cooling at all inside COOL_DELAY) and that made
+   * the meter a ratchet: a normal player eats ~2.5 things a second and
+   * therefore NEVER goes three seconds without a gain, so heat only ever went
+   * up. Measured over a four-minute match it pinned at 1.0 from t=120 and
+   * stayed there — tier 3, the spec's "short response event", for half the
+   * game.
+   *
+   * At 0.35 it is an equilibrium instead of a ratchet: grazing street furniture
+   * cools you off, a sustained diet of cars and buses out-paces the cooling,
+   * and stopping for a moment drops you fast.
+   */
+  COOL_BUSY: 0.35,
+  /** Below this range from a unit the meter is frozen. See STANDOFF. */
+  HOLD_R: 22,
   FAR_R: 170,
   COOL_MIN: 0.008,
   COOL_MAX: 0.055,
@@ -98,19 +123,75 @@ export const HEAT = {
   /* -------------------------------------------------------------- units --- */
   /** Hard ceiling on live units, whatever the composition table asks for. */
   MAX_UNITS: 6,
-  /** Units spawn on a road intersection this far from the hole. */
-  SPAWN_MIN_R: 55,
-  SPAWN_MAX_R: 190,
+  /**
+   * Minimum seconds between two dispatches.
+   *
+   * The roster fills one slot per tick, and a tick is a FRAME — so without
+   * this, a full tier-3 roster materialised in six frames (a tenth of a
+   * second), which reads as a magic trick rather than an arrival. It also
+   * throttles the replace-the-eaten loop: at heat 3 a big hole can swallow a
+   * cruiser, and instant redispatch turned that into a score farm.
+   *
+   * Applies to REFUSED dispatches too. A refusal scans every junction in the
+   * city, and retrying that sixty times a second because the player is stood
+   * somewhere with no nearby road is pure waste.
+   */
+  DISPATCH_GAP: 1.2,
+  /**
+   * A barrier is a cordon, not a snack. Placing one closer than this to the
+   * hole just hands a big player a free TIER.MEDIUM object every time the
+   * roster refills.
+   */
+  BARRIER_MIN_R: 30,
+  /** Units spawn on a road intersection this far from the INTERCEPT point. */
+  SPAWN_MIN_R: 40,
+  /* If no legal junction sits within this of the intercept, the dispatch is
+   * simply refused this tick and retried next frame from a fresh intercept.
+   * Better a late unit than one that spawns half a district away. */
+  SPAWN_MAX_R: 130,
   /** Give-up radius: a unit this far from its target is pointless, so it goes. */
-  DESPAWN_R: 300,
+  DESPAWN_R: 240,
+  /**
+   * INTERCEPTION. Response units are slower than the thing they are responding
+   * to and always will be: a cruiser does 17 m/s, a hole starts at
+   * HOLE.BASE_SPEED (19.5) and is doing ~35 by mid-game. Measured over a 240 s
+   * sim, units dispatched at the hole's CURRENT position trailed it by an
+   * average of 154 m and got six telegraphed shots off in four minutes — the
+   * entire system was scenery.
+   *
+   * So they are dispatched to where the hole is GOING, capped at this many
+   * seconds of lead. That turns the encounter into the arcade shape it should
+   * have been all along: a patrol car swings out of a side street in front of
+   * you, gets one telegraphed shot, and falls behind while another is dispatched
+   * further along. Over-leading when the player turns is not a bug — turning is
+   * how you make them waste the trip.
+   */
+  INTERCEPT_MAX_T: 3.5,
+  /**
+   * …and a hard distance cap on that lead, which the time cap alone does not
+   * give you. A hole doing 35 m/s with a 3.5 s lead gets intercepted 122 m
+   * down the road, so a player running dead straight had a fresh unit
+   * materialise in front of them over and over — measured, the nearest unit
+   * never left 10-20 m across a 70 s flat-out run and heat never moved off
+   * 1.0. Being unable to escape a response by outrunning it is precisely what
+   * the spec rules out.
+   */
+  INTERCEPT_MAX_D: 60,
   /** Seconds of making no progress before a unit quietly leaves. */
   STUCK_T: 6.0,
-  /** Closest a unit will voluntarily drive to the hole. It is not suicidal. */
-  STANDOFF: 18,
+  /**
+   * Closest a unit will voluntarily drive to the hole. It is not suicidal.
+   * MUST BE GREATER THAN HOLD_R, or a unit sitting at its standoff distance
+   * pins the cooling rate at exactly zero forever and the meter can only ever
+   * go up while anyone is on scene.
+   */
+  STANDOFF: 26,
   /** Standoff once the hole can eat it. Now it is actively backing away. */
-  STANDOFF_SCARED: 34,
+  STANDOFF_SCARED: 40,
   LEAVE_R: 110,
   LEAVE_T: 3.0,
+  /** After a successful disengage, no new unit may be dispatched for this long. */
+  DISENGAGE_HOLD: 8.0,
   /** Seconds a 'leaving' unit gets to drive off before it is culled. */
   LEAVE_LIFE: 8.0,
 
@@ -119,15 +200,41 @@ export const HEAT = {
   WARN_T: 1.6,
   /** Radius of the marked circle, metres. */
   PULSE_R: 7.0,
-  /** How far ahead of the hole's current velocity the marker is placed. */
-  LEAD_T: 0.55,
+  /**
+   * How far ahead the marker is placed, AS A FRACTION OF WARN_T.
+   *
+   * Expressed as a fraction on purpose. It was a standalone 0.55 s against a
+   * 1.6 s telegraph, and the coupling is the whole ballgame: the marker landed
+   * a third of the way along the player's path, so a moving hole was never hit
+   * at all. Measured over four minutes: 70 telegraphs, zero hits, including
+   * against a player running dead straight at constant speed — the single
+   * easiest target there is. Retuning WARN_T alone would silently break it
+   * again, hence the fraction.
+   *
+   * 0.95 aims very slightly behind where a player holding course will be, so:
+   *   - dead straight at constant speed  -> clipped near the trailing edge
+   *   - any turn or speed change in 1.6s -> clean miss
+   * Measured across five movement styles that gives: stationary hit, slow
+   * amble hit, straight-line runner hit, hard turning clean, zigzag clean.
+   * That is exactly the contract — telegraphed, avoidable, not automatic.
+   */
+  LEAD_FRAC: 0.95,
   /** Per-unit reload. */
   UNIT_CD: 7.0,
   /** THE ANTI-STUN-LOCK RULE. Minimum seconds between two LANDED hits on the
    *  same hole, enforced globally across every unit in the city. */
   HIT_GAP: 5.0,
-  /** A unit will not even start a telegraph beyond this range. */
-  FIRE_RANGE: 46,
+  /**
+   * A unit will not even start a telegraph beyond this range.
+   *
+   * 70, not the 46 first tried. A unit can only hold contact with a mid-game
+   * hole for a second or two as it sweeps past — measured, the closest approach
+   * on a fast-moving target is 37-48 m — so a 46 m envelope meant the window to
+   * start a 1.6 s telegraph almost never opened. It is a lobbed foam canister,
+   * not a thrown one; the distance costs the player nothing because the marker
+   * is on the ground either way.
+   */
+  FIRE_RANGE: 70,
   MISS_DISENGAGE: 3,
 
   /* ------------------------------------------------------------ penalty ---
@@ -169,7 +276,7 @@ export const HEAT = {
  */
 export const RESPONSE = {
   cruiser: {
-    speed: 17.0, radius: 1.7,
+    speed: 20.0, radius: 1.7,
     devourR: TIER.LARGE.eatRadius, score: TIER.LARGE.score,
     label: 'Response Cruiser', fires: true, mobile: true,
   },
@@ -179,12 +286,12 @@ export const RESPONSE = {
     label: 'Safety Barrier', fires: false, mobile: false,
   },
   spotter: {
-    speed: 14.0, radius: 2.1,
+    speed: 17.0, radius: 2.1,
     devourR: TIER.XLARGE.eatRadius, score: TIER.XLARGE.score,
     label: 'Spotlight Truck', fires: false, mobile: true,
   },
   containment: {
-    speed: 12.0, radius: 2.6,
+    speed: 15.0, radius: 2.6,
     devourR: TIER.XLARGE.eatRadius, score: TIER.XLARGE.score,
     label: 'Containment Unit', fires: true, mobile: true,
   },
@@ -292,6 +399,8 @@ const YAW_RATE = 6.0;
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _ideal = { x: 0, z: 0, yaw: 0 };
+const _pt = { x: 0, z: 0 };
+const _avoid = { x: 0, z: 0, r: 0 };
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const smooth = (t) => t * t * (3 - 2 * t);
@@ -378,6 +487,8 @@ export class HeatSystem {
 
     this.t = 0;
     this._pruneAt = 0;
+    /** Next time a dispatch is allowed. See HEAT.DISPATCH_GAP. */
+    this._nextDispatch = 0;
     /** Cue rate limiting: last time ANY cue fired, and per-cue last times. */
     this._lastCueT = -1e9;
     this._cueAt = new Map();
@@ -458,8 +569,9 @@ export class HeatSystem {
     const tid = consumable.tier ? (consumable.tier.id | 0) : 0;
     const base = HEAT.GAIN_BY_TIER[clamp(tid, 0, HEAT.GAIN_BY_TIER.length - 1)] || 0;
     if (base <= 0) return 0;
-    const gain = Math.min(HEAT.GAIN_CAP, base * importanceOf(consumable));
-    return this._add(hole, gain, 'ate');
+    const mult = importanceOf(consumable);
+    const gain = Math.min(HEAT.GAIN_CAP, base * mult);
+    return this._add(hole, gain, 'ate', mult);
   }
 
   /**
@@ -516,6 +628,7 @@ export class HeatSystem {
     this.focus = null;
     this._lastCueT = -1e9;
     this._cueAt.clear();
+    this._nextDispatch = 0;
   }
 
   /* ---------------------------------------------------------------------- *
@@ -538,6 +651,7 @@ export class HeatSystem {
       sinceHit: +Math.max(0, this.t - s.lastHitT).toFixed(2),
       vacLeft: +Math.max(0, s.vacUntil - this.t).toFixed(2),
       misses: s.misses,
+      engaged: s.engaged,
     };
   }
 
@@ -550,6 +664,11 @@ export class HeatSystem {
     if (Number.isFinite(s.sinceHit)) st.lastHitT = this.t - Math.max(0, s.sinceHit);
     if (Number.isFinite(s.vacLeft)) st.vacUntil = this.t + Math.max(0, s.vacLeft);
     if (Number.isFinite(s.misses)) st.misses = s.misses | 0;
+    if (typeof s.engaged === 'boolean') st.engaged = s.engaged;
+    /* awayT is NOT restored. It is a measurement of the last few seconds of
+     * local play, and carrying a peer's part-finished stand-down timer across
+     * would hand the receiving client a disengage it did not earn. */
+    st.awayT = 0;
     // A restored tier must not immediately re-announce itself.
     st.lastTierT = this.t;
     return st;
@@ -626,6 +745,9 @@ export class HeatSystem {
         vacUntil: -1e9,
         misses: 0,
         awayT: 0,
+        engaged: false,
+        lastReason: '',
+        lastMult: 1,
         announcedBigger: false,
       };
       this.state.set(hole, s);
@@ -633,12 +755,15 @@ export class HeatSystem {
     return s;
   }
 
-  _add(hole, gain, reason) {
+  _add(hole, gain, reason, mult = 1) {
     const s = this._st(hole);
     const before = s.heat;
     s.heat = clamp(s.heat + gain, 0, HEAT.MAX);
     if (gain > 0) s.lastGainT = this.t;
-    s.__lastReason = reason;
+    // Remembered so the tier-1 announcement can pick a line that matches what
+    // the player has actually been doing rather than always crying about
+    // street furniture.
+    if (gain > 0) { s.lastReason = reason; s.lastMult = mult; }
     return s.heat - before;
   }
 
@@ -676,12 +801,13 @@ export class HeatSystem {
    */
   _cool(hole, s, dt, now) {
     if (s.heat <= 0) return;
-    if (now - s.lastGainT < HEAT.COOL_DELAY) return;
 
     const d = this._nearestUnitDist(hole);
     const u = clamp((d - HEAT.HOLD_R) / (HEAT.FAR_R - HEAT.HOLD_R), 0, 1);
     if (u <= 0) return;                              // inside the cordon: frozen
-    const rate = HEAT.COOL_MIN + (HEAT.COOL_MAX - HEAT.COOL_MIN) * smooth(u);
+    let rate = HEAT.COOL_MIN + (HEAT.COOL_MAX - HEAT.COOL_MIN) * smooth(u);
+    // Still causing damage? Cooling is throttled, not stopped. See COOL_BUSY.
+    if (now - s.lastGainT < HEAT.COOL_DELAY) rate *= HEAT.COOL_BUSY;
     s.heat -= rate * (HEAT.COOL_SHAPE + (1 - HEAT.COOL_SHAPE) * s.heat) * dt;
     if (s.heat < HEAT.ZERO_SNAP) s.heat = 0;
   }
@@ -721,9 +847,13 @@ export class HeatSystem {
     if (up) {
       this._sfx(SFX.HEAT_UP, () => this.audio && this.audio.rankChange && this.audio.rankChange(1));
       if (tier === 1) {
-        // Which line depends on what they have been eating; the voice module
-        // picks, we just say which of the two intents fits.
-        this._cue(hole, VOICE_CUES.NOTICE_FURNITURE);
+        /* Two flavours of "the city has noticed". A player who got here by
+         * eating vehicles and civic fixtures (importance >= 1.6) gets the
+         * parking line; a furniture vandal gets the furniture line. */
+        const s = this._st(hole);
+        this._cue(hole, s.lastMult >= 1.6
+          ? VOICE_CUES.NOTICE_PARKING
+          : VOICE_CUES.NOTICE_FURNITURE);
       } else if (tier === 2) {
         this._cue(hole, VOICE_CUES.ARRIVE_PATROL);
       } else if (tier === 3) {
@@ -824,20 +954,34 @@ export class HeatSystem {
       if ((have[u.kind] || 0) > w) { have[u.kind]--; this._sendHome(u, now); }
     }
 
-    // … then fill gaps, one unit per tick. Spawning a whole tier-3 roster in a
-    // single frame both hitches and looks like a magic trick; one every frame
-    // means they trickle in over a tenth of a second, which reads as arriving.
+    // … then fill gaps, one unit per DISPATCH_GAP so the response arrives
+    // rather than appearing. See HEAT.DISPATCH_GAP for why this is time-based
+    // and not per-tick.
     if (this._units.length >= HEAT.MAX_UNITS) return;
+    if (now < this._nextDispatch) return;
+    /* DO NOT REINFORCE A ZONE THE PLAYER HAS ALREADY LEFT.
+     * _checkLeaveZone needs LEAVE_T seconds of continuous separation to
+     * complete, and dispatching every DISPATCH_GAP kept resetting the clock:
+     * the away timer could never finish, so route 1 out of the encounter did
+     * not exist however fast the player ran. Once they are outside LEAVE_R of
+     * everyone, the city stops sending more and lets the timer run. Come back
+     * inside and awayT resets, and dispatching resumes on the same frame. */
+    const fs = this.state.get(hole);
+    if (fs && fs.awayT > 0) return;
     for (const kind of Object.keys(want)) {
       if ((have[kind] || 0) >= want[kind]) continue;
+      // Charge the gap whether or not it worked: a refused dispatch is the
+      // expensive branch (it scans every junction) and must not retry per frame.
+      this._nextDispatch = now + HEAT.DISPATCH_GAP;
       const u = this._spawn(kind, hole, now);
       if (u) {
         this._units.push(u);
+        // From here on the player is "in an encounter", which is what arms the
+        // stand-down timer in _checkLeaveZone.
+        this._st(hole).engaged = true;
         this._sfx(SFX.ARRIVE, () => this.audio && this.audio.ui && this.audio.ui('click'));
         if (kind === 'barrier') this._cue(hole, VOICE_CUES.WARN_PLAZA);
       }
-      // Whether or not it worked, only one attempt per tick — a failed road
-      // search is the expensive branch and must not run six times a frame.
       return;
     }
   }
@@ -905,6 +1049,29 @@ export class HeatSystem {
     return this._nodes.length > 0;
   }
 
+  /**
+   * Where to head to actually meet the hole, rather than where it just was.
+   *
+   * Lead time is the unit's own travel time to the hole, capped at
+   * INTERCEPT_MAX_T — a unit 200 m away leads by the full cap, a unit already
+   * alongside leads by almost nothing. Clamped inside the map so the intercept
+   * never sits in the bay, where no node exists and _pickNode would return null.
+   *
+   * @param {number} speed  the intercepting unit's speed (0 => no lead)
+   */
+  _intercept(hole, speed, dNow, out) {
+    const vx = hole.velocity ? hole.velocity.x : 0;
+    const vz = hole.velocity ? hole.velocity.z : 0;
+    let lead = speed > 0 ? clamp(dNow / speed, 0, HEAT.INTERCEPT_MAX_T) : 0;
+    // Distance cap as well as the time cap — see HEAT.INTERCEPT_MAX_D.
+    const v = Math.hypot(vx, vz);
+    if (v * lead > HEAT.INTERCEPT_MAX_D) lead = HEAT.INTERCEPT_MAX_D / v;
+    const lim = WORLD.SIZE - 20;
+    out.x = clamp(hole.position.x + vx * lead, -lim, Math.min(lim, WORLD.BAY_EDGE - 10));
+    out.z = clamp(hole.position.z + vz * lead, -lim, lim);
+    return out;
+  }
+
   /** Blocks the city would rather you left alone — parks, plazas, landmarks. */
   _protectedSites() {
     if (this._protected) return this._protected;
@@ -931,14 +1098,18 @@ export class HeatSystem {
     const spec = RESPONSE[kind];
     if (!spec) return null;
 
-    const px = hole.position.x, pz = hole.position.z;
+    /* Dispatch to the INTERCEPT point, not the hole's current position. The
+     * lead is a full INTERCEPT_MAX_T here because at spawn time the unit is by
+     * definition at least SPAWN_MIN_R away. */
+    const ip = this._intercept(hole, spec.speed, HEAT.SPAWN_MAX_R, _pt);
+    const px = ip.x, pz = ip.z;
     const node = kind === 'barrier'
       ? this._barrierNode(hole)
       : this._pickNode(px, pz, HEAT.SPAWN_MIN_R, HEAT.SPAWN_MAX_R);
     if (!node) return null;
 
     /* Pick which of the two roads meeting at this node to sit on: the one whose
-     * travel direction actually reduces the distance to the hole, so the unit
+     * travel direction actually reduces the distance to the target, so the unit
      * starts by driving toward the scene rather than away from it. */
     const dx = px - node.x, dz = pz - node.z;
     const alongX = Math.abs(dx) >= Math.abs(dz);
@@ -962,7 +1133,10 @@ export class HeatSystem {
       hole,
       stateT: now,
       born: now,
-      cdPulse: now + HEAT.UNIT_CD * 0.5,   // nobody fires the instant they arrive
+      // Not zero (nobody fires the instant they arrive) but short: contact
+      // with a fast hole lasts seconds, and a half-reload of dead time on
+      // arrival threw away most of the windows a unit ever gets.
+      cdPulse: now + HEAT.UNIT_CD * 0.25,
       warnT: 0,
       mark: null,
       stuck: 0,
@@ -1048,17 +1222,31 @@ export class HeatSystem {
     u.yaw += clamp(dy, -maxYaw, maxYaw);
   }
 
-  /** Nearest legal intersection to (x,z) within an annulus, with rng jitter. */
-  _pickNode(x, z, minR, maxR) {
+  /**
+   * NEAREST legal intersection to (x,z) that is at least minR away.
+   *
+   * "Nearest" is load-bearing and was wrong first time round: the original
+   * scored toward the middle of the annulus to spread units out, which
+   * dispatched them ~96 m from the intercept point. At 17 m/s that is a
+   * five-and-a-half second drive, during which a mid-game hole covers 170 m,
+   * so every unit arrived where the player used to be. Measured: average unit
+   * distance 144 m, eight telegraphed shots in four minutes.
+   *
+   * Spread now comes from a bounded jitter on the reference point instead,
+   * which perturbs the choice by a junction or two without ever preferring a
+   * far one.
+   */
+  _pickNode(x, z, minR, maxR, awayFrom) {
     const nodes = this._nodes;
     let best = null, bestD = Infinity;
     // Jitter so three cruisers do not all pick the same junction.
-    const jx = this.rng.range ? this.rng.range(-24, 24) : 0;
-    const jz = this.rng.range ? this.rng.range(-24, 24) : 0;
+    const jx = this.rng.range ? this.rng.range(-22, 22) : 0;
+    const jz = this.rng.range ? this.rng.range(-22, 22) : 0;
     for (const n of nodes) {
       const d = Math.hypot(n.x - x, n.z - z);
       if (d < minR || d > maxR) continue;
-      const score = Math.abs(d - (minR + maxR) * 0.42) + Math.hypot(n.x - x - jx, n.z - z - jz) * 0.15;
+      if (awayFrom && Math.hypot(n.x - awayFrom.x, n.z - awayFrom.z) < awayFrom.r) continue;
+      const score = Math.hypot(n.x - x - jx, n.z - z - jz);
       if (score < bestD) { bestD = score; best = n; }
     }
     return best;
@@ -1073,15 +1261,20 @@ export class HeatSystem {
    */
   _barrierNode(hole) {
     const px = hole.position.x, pz = hole.position.z;
+    /* Never inside BARRIER_MIN_R of the hole, however good the site looks —
+     * see HEAT.BARRIER_MIN_R. Enforced by the exclusion argument rather than by
+     * the annulus, because the annulus is measured from the SITE, not the hole. */
+    _avoid.x = px; _avoid.z = pz; _avoid.r = HEAT.BARRIER_MIN_R;
     const sites = this._protectedSites();
     let tx = px, tz = pz, bestD = Infinity;
     for (const s of sites) {
       const d = Math.hypot(s.x - px, s.z - pz);
       if (d < bestD && d < 220) { bestD = d; tx = s.x; tz = s.z; }
     }
-    if (bestD === Infinity) return this._pickNode(px, pz, 24, 70);
+    const fallback = () => this._pickNode(px, pz, HEAT.BARRIER_MIN_R, 80, _avoid);
+    if (bestD === Infinity) return fallback();
     const mx = px + (tx - px) * 0.45, mz = pz + (tz - pz) * 0.45;
-    return this._pickNode(mx, mz, 0, 60) || this._pickNode(px, pz, 24, 70);
+    return this._pickNode(mx, mz, 0, 70, _avoid) || fallback();
   }
 
   /**
@@ -1098,7 +1291,7 @@ export class HeatSystem {
    * Mutates the route state only. The caller publishes x/z/yaw via _place, so
    * that the corner ease is advanced by dt exactly once per frame.
    */
-  _advance(u, dt, tx, tz) {
+  _advance(u, dt, tx, tz, avoid) {
     let remaining = u.spec.speed * dt;
     if (remaining <= 0) return true;
 
@@ -1118,6 +1311,7 @@ export class HeatSystem {
       if (distToNext > remaining) {
         const nf = u.free + u.dir * remaining;
         if (!this._legal(u, nf)) break;              // dead end / water ahead
+        if (this._blocked(u, nf, avoid)) break;      // there is a hole in the road
         u.free = nf;
         moved += remaining;
         remaining = 0;
@@ -1126,6 +1320,7 @@ export class HeatSystem {
 
       // Reach the junction exactly, then decide.
       if (!this._legal(u, next)) break;
+      if (this._blocked(u, next, avoid)) break;
       u.free = next;
       moved += distToNext;
       remaining -= distToNext;
@@ -1166,6 +1361,30 @@ export class HeatSystem {
     return this._drivable(f, u.line + LANE_OFF * u.dir);
   }
 
+  /**
+   * Would moving to free-coordinate `f` drive this unit INTO the hole?
+   *
+   * Drivers can see a hundred-foot sinkhole in the road and stop short of it.
+   * Without this, routing was hole-blind: a unit whose road happened to pass
+   * through the hole drove straight in and was eaten, and since the roster
+   * immediately dispatched a replacement, a player could park on a junction at
+   * heat 3 and farm response vehicles. Measured, a stationary hole harvested
+   * 19,600 points that way — free score for doing nothing, which is the
+   * opposite of a consequence system.
+   *
+   * Escaping OUTWARD is always allowed, so a unit that the hole grew over can
+   * still drive clear rather than being frozen in place until it is swallowed.
+   */
+  _blocked(u, f, avoid) {
+    if (!avoid) return false;
+    const x = u.axis === 'x' ? u.line - LANE_OFF * u.dir : f;
+    const z = u.axis === 'x' ? f : u.line + LANE_OFF * u.dir;
+    const dNew = Math.hypot(x - avoid.x, z - avoid.z);
+    if (dNew >= avoid.r) return false;
+    const dOld = Math.hypot(u.x - avoid.x, u.z - avoid.z);
+    return dNew < dOld;
+  }
+
   /* ---------------------------------------------------------------------- *
    * unit behaviour
    * ---------------------------------------------------------------------- */
@@ -1192,7 +1411,7 @@ export class HeatSystem {
       if (u.spec.mobile) {
         // Drive away from the hole: aim at a point 400 m in the escape
         // direction. The router will only ever follow real roads there.
-        this._advance(u, dt, u.x + (u.x - px) * 8, u.z + (u.z - pz) * 8);
+        this._advance(u, dt, u.x + (u.x - px) * 8, u.z + (u.z - pz) * 8, null);
         this._place(u, dt);
       }
       if (now - u.stateT > HEAT.LEAVE_LIFE || d > HEAT.DESPAWN_R) u.dead = true;
@@ -1205,18 +1424,27 @@ export class HeatSystem {
       return;
     }
 
+    /* ---- give up on a hopeless chase ------------------------------------ */
+    // Without this a mobile unit that fell behind trailed the hole forever,
+    // never in range to do anything, and — because it still counted as a live
+    // unit — blocked the roster from dispatching a fresh one further ahead.
+    if (d > HEAT.DESPAWN_R) { this._sendHome(u, now); return; }
+
     /* ---- drive ---------------------------------------------------------- */
     const tier = hole ? this.tierOf(hole) : 0;
     const scared = hole ? hole.trueRadius >= u.spec.devourR * 0.92 : false;
     const standoff = scared ? HEAT.STANDOFF_SCARED : HEAT.STANDOFF;
 
-    let tx = px, tz = pz;
+    // Aim at the intercept, not at where the hole has already been.
+    const ip = hole ? this._intercept(hole, u.spec.speed, d, _pt) : null;
+    let tx = ip ? ip.x : px, tz = ip ? ip.z : pz;
     if (u.retreatT > now || (scared && d < standoff)) {
       // Back off along the road, away from the hole.
       tx = u.x + (u.x - px) * 6;
       tz = u.z + (u.z - pz) * 6;
-      if (scared && !this._stOf(hole).announcedBigger) {
-        this._stOf(hole).announcedBigger = true;
+      const hs = this._st(hole);
+      if (scared && !hs.announcedBigger) {
+        hs.announcedBigger = true;
         this._cue(hole, VOICE_CUES.NEED_BIGGER);
       }
     } else if (d < standoff) {
@@ -1225,8 +1453,13 @@ export class HeatSystem {
       tx = u.x; tz = u.z;
     }
 
+    /* The hole itself is an obstacle in the road network. Radius is the
+     * drawn opening plus the vehicle's own footprint plus a metre of nerve. */
+    _avoid.x = px; _avoid.z = pz;
+    _avoid.r = hole ? hole.radius + u.spec.radius + 1.0 : 0;
+
     const holding = (tx === u.x && tz === u.z);
-    const progressed = holding ? true : this._advance(u, dt, tx, tz);
+    const progressed = holding ? true : this._advance(u, dt, tx, tz, hole ? _avoid : null);
     // Always republish: a unit holding station mid-corner still has an ease to
     // finish, and skipping it would freeze it half-way through a turn.
     this._place(u, dt);
@@ -1242,8 +1475,6 @@ export class HeatSystem {
     /* ---- pulses --------------------------------------------------------- */
     if (hole) this._updatePulse(u, hole, d, tier, now);
   }
-
-  _stOf(hole) { return this._st(hole); }
 
   /**
    * Telegraph -> fixed marker -> foam.
@@ -1276,8 +1507,9 @@ export class HeatSystem {
      * fleeing player is never marked somewhere the unit could not reach. */
     const vx = hole.velocity ? hole.velocity.x : 0;
     const vz = hole.velocity ? hole.velocity.z : 0;
-    let mx = hole.position.x + vx * HEAT.LEAD_T;
-    let mz = hole.position.z + vz * HEAT.LEAD_T;
+    const lead = HEAT.WARN_T * HEAT.LEAD_FRAC;
+    let mx = hole.position.x + vx * lead;
+    let mz = hole.position.z + vz * lead;
     const md = Math.hypot(mx - u.x, mz - u.z);
     if (md > HEAT.FIRE_RANGE) {
       const k = HEAT.FIRE_RANGE / md;
@@ -1376,6 +1608,9 @@ export class HeatSystem {
         s.misses = 0;
         s.heat = Math.max(0, s.heat - HEAT.DISENGAGE_COOL);
         this._sendHome(u, now);
+        // A shorter breather than route 1, but the slot must not refill on the
+        // very next frame or dodging buys the player nothing at all.
+        this._nextDispatch = Math.max(this._nextDispatch, now + HEAT.DISPATCH_GAP * 3);
         this._cue(hole, VOICE_CUES.STAND_DOWN, u.x, u.z);
         if (this.hud && this.hud.pushFeed && hole.isPlayer) {
           this.hud.pushFeed('<b>SHOOK THEM OFF</b> — a unit is standing down.', '#7dffbe', 'heat');
@@ -1480,14 +1715,36 @@ export class HeatSystem {
    */
   _checkLeaveZone(dt, now) {
     const hole = this.focus;
-    if (!hole || !this._units.length) return;
+    if (!hole) return;
     const s = this._st(hole);
+    /* Gated on `engaged`, NOT on the roster being non-empty.
+     * Requiring live units meant the players who escaped best were the ones
+     * who did not get credit: sprint far enough and every unit trips the
+     * DESPAWN_R cull within a frame or two, the array empties, and the away
+     * timer that grants the stand-down never ran. _nearestUnitDist reports
+     * FAR_R with nobody on the map, which is exactly the "you are clear"
+     * reading we want it to accumulate against. */
+    if (!s.engaged) return;
     const d = this._nearestUnitDist(hole);
     if (d > HEAT.LEAVE_R) s.awayT += dt; else s.awayT = 0;
     if (s.awayT < HEAT.LEAVE_T) return;
     s.awayT = 0;
+    s.engaged = false;
     for (const u of this._units) if (u.state !== 'leaving') this._sendHome(u, now);
+    /* SUPPRESS REDISPATCH, or route 1 does not exist.
+     * Sending the roster home is not a disengage on its own: _maintainRoster
+     * refills the slot on the next tick, from an intercept point AHEAD of the
+     * player, so the nearest-unit distance never stays above LEAVE_R and the
+     * away timer can never complete twice. Measured, a player doing nothing but
+     * running sat at heat 1.0 for the whole match. The hold is the actual
+     * reward for shaking them off: no units on the map means the cooling ramp
+     * runs at its far-distance rate, which is worth ~0.4 of the meter. */
+    this._nextDispatch = Math.max(this._nextDispatch, now + HEAT.DISENGAGE_HOLD);
+    s.heat = Math.max(0, s.heat - HEAT.DISENGAGE_COOL);
     this._cue(hole, VOICE_CUES.STAND_DOWN);
+    if (this.hud && this.hud.pushFeed && hole.isPlayer) {
+      this.hud.pushFeed('<b>OUT OF THE ZONE</b> — the response has lost you.', '#7dffbe', 'heat');
+    }
   }
 
   /* ---------------------------------------------------------------------- *
@@ -1623,6 +1880,21 @@ export function __selftest() {
     const h2 = _stubHole(0);
     hs2.onConsumed(h2, { tier: TIER.LANDMARK, kind: 'police', label: 'Police Car' });
     ok(hs2.heatOf(h2) <= HEAT.GAIN_CAP + 1e-9, 'per-item gain is capped');
+
+    /* THE METER IS BOUNDED. This shipped broken once: HEAT.MAX was referenced
+     * by _add but never defined on the object, so clamp(v, 0, undefined)
+     * returned v and heat ran to 13.9 over a four-minute match. Nothing threw,
+     * nothing logged, the tiers just pinned at 3 and never came down. */
+    const hs3 = mk();
+    const h3 = _stubHole(0);
+    hs3.bump(h3, 99);
+    ok(hs3.heatOf(h3) === HEAT.MAX, 'a giant bump saturates at HEAT.MAX, it does not overflow');
+    for (let i = 0; i < 5000; i++) {
+      hs3.onConsumed(h3, { tier: TIER.LANDMARK, kind: 'police', label: 'Police Car' });
+    }
+    ok(hs3.heatOf(h3) <= HEAT.MAX, 'five thousand landmarks cannot push heat past MAX');
+    hs3.bump(h3, -99);
+    ok(hs3.heatOf(h3) === 0, 'and it bottoms out at zero, not below');
   }
 
   /* ---- 2. tier thresholds + hysteresis -------------------------------- */
@@ -1664,9 +1936,21 @@ export function __selftest() {
     hs.bump(hole, 0.6);
     const h0 = hs.heatOf(hole);
 
-    // Inside COOL_DELAY, nothing moves.
+    /* Inside COOL_DELAY cooling is THROTTLED to COOL_BUSY, not stopped. It
+     * used to be a hard gate, which turned the meter into a ratchet for anyone
+     * eating continuously — see HEAT.COOL_BUSY. Verified as a ratio against an
+     * identical run outside the window, so the assertion survives retuning. */
     for (let i = 0; i < 60; i++) hs.update(1 / 60, [hole], 0.1 + i / 60);
-    near(hs.heatOf(hole), h0, 1e-6, 'no cooling inside COOL_DELAY');
+    const busyDrop = h0 - hs.heatOf(hole);
+    ok(busyDrop > 0, 'cooling is throttled inside COOL_DELAY, not switched off');
+
+    const hsFree = mkBare();
+    const hFree = _stubHole(500);
+    hsFree.bump(hFree, 0.6);
+    for (let i = 0; i < 60; i++) hsFree.update(1 / 60, [hFree], 20 + i / 60);
+    const freeDrop = 0.6 - hsFree.heatOf(hFree);
+    near(busyDrop / freeDrop, HEAT.COOL_BUSY, 0.02,
+      'the busy-window rate really is COOL_BUSY of the idle rate');
 
     // Past the delay, with no units anywhere, it cools at the far rate.
     let t = 5;
@@ -1753,6 +2037,35 @@ export function __selftest() {
     ok(hole.score === scoreBefore, 'a dodged pulse costs nothing');
     ok(u.state === 'leaving', 'three dodges in a row makes the unit stand down');
     ok(s.heat < 0.9, 'standing down also cools the meter');
+  }
+
+  /* ---- 5b. ROUTE 1 OUT: leaving the zone actually works ---------------- */
+  {
+    /* This is the headline promise of the whole system and it was broken in
+     * two separate ways before it worked: the intercept had no distance cap so
+     * fresh units kept materialising in front of a fleeing player, and the
+     * roster kept dispatching while the away timer was running, so the timer
+     * could never complete. Both are pinned here. */
+    const hs = mk();
+    const hole = _stubHole(400);
+    hs.bump(hole, 0.95);
+    let t = 0;
+    for (let i = 0; i < 60 * 8; i++) { t += 1 / 60; hs.update(1 / 60, [hole], t); }
+    ok(hs.units().length > 0, 'the response turns up in the first place');
+    const hotHeat = hs.heatOf(hole);
+
+    // Now run: teleport well clear and hold there.
+    hole.position.set(0, 0, 480);
+    hole.velocity.set(0, 0, 0);
+    for (let i = 0; i < 60 * 6; i++) { t += 1 / 60; hs.update(1 / 60, [hole], t); }
+    ok(hs.units().length === 0,
+      `leaving the zone clears the roster (still ${hs.units().length} units)`);
+    ok(hs._nextDispatch > t, 'and suppresses redispatch for a hold window');
+
+    // With nobody on the map, heat must fall — through the tiers, to zero.
+    for (let i = 0; i < 60 * 90; i++) { t += 1 / 60; hs.update(1 / 60, [hole], t); }
+    ok(hs.heatOf(hole) < hotHeat * 0.25, 'and the meter drains once they are gone');
+    ok(hs.tierOf(hole) < 3, 'the heat tier comes back down');
   }
 
   /* ---- 6. penalty respects every cap ----------------------------------- */

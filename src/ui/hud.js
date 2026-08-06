@@ -8,6 +8,12 @@
  *   new HUD(root, camera) · hud.root
  *   setTimer(s) · setLeaderboard(holes, me) · setSize(hole)
  *   pushFeed(html, color) · syncPopups(effects, camera) · drawMinimap(h, me, layout)
+ *   showCaption(c) · clearCaptions()
+ *   setPowerups(list) · showPowerupBanner({name, seconds, id, kind})
+ *   setHeat({tier, value})
+ *   setEventBanner({name, seconds, id}) · clearEventBanner() · setEventMarker({x,z,r})
+ *   setSubtitles(on) · openAudioSettings() / closeAudioSettings()
+ *   Every one of the new setters is a no-op when handed null or nothing.
  *
  * PERFORMANCE POSTURE
  *   Every one of those methods runs at frame rate. The rule followed here is:
@@ -17,14 +23,145 @@
  */
 
 import * as THREE from 'three';
-import { TIER_LIST, MATCH, HOLE } from '../config.js';
+import { TIER_LIST, MATCH, HOLE, WORLD } from '../config.js';
 import { Minimap } from './minimap.js';
+import { audio } from '../core/audio.js';
+// The HUD's own sheet. index.html links every OTHER css/*.css by hand but not
+// this one, so without this import .ob-warn, the captions and everything added
+// below render completely unstyled. Same pattern the screen modules use.
+import './css/hud.css';
 
 /** Tier accent ramp — mirrors --t0..--t7 in styles.css. */
 const TIER_COLORS = [
   '#d7dde6', '#9fe4ff', '#37e6d5', '#4dff9e',
   '#ffc93c', '#ff9430', '#ff3d8b', '#c58cff',
 ];
+
+/* ===========================================================================
+ * POWER-UPS / HEAT / EVENTS — presentation-only tables
+ *
+ * Deliberately NOT imported from gameplay/powerups.js or gameplay/heat.js.
+ * setPowerups() is handed everything it needs (PowerupSystem.activeFor()
+ * already returns id/name/icon/css/description/remaining/duration/frac), so
+ * the HUD stays a pure sink: it can be driven by a test harness, by the
+ * network, or by nothing at all without dragging two gameplay modules into the
+ * UI bundle. These are FALLBACKS for a caller that passes only an id, and the
+ * values are copied from the definitions they mirror.
+ * ======================================================================== */
+
+/** Mirrors POWERUPS in src/gameplay/powerups.js (icon/css/name/shape). */
+const POWERUP_FALLBACK = {
+  vacuum: { name: 'VACUUM BOOST', icon: '◎', css: '#37e6d5', shape: 'ring',
+    description: 'Suction reaches past the rim. Loose props slide in.' },
+  turbo: { name: 'TURBO DRAIN', icon: '»', css: '#ffc93c', shape: 'cone',
+    description: 'Faster, and turns like it means it.' },
+  mass: { name: 'MASS SURGE', icon: '◈', css: '#ff3d8b', shape: 'octa',
+    description: 'Briefly wider. Score and growth are untouched.' },
+};
+
+/** Mirrors POWERUP_ORDER in src/gameplay/powerups.js. Row order must be STABLE
+ *  — a rail that reshuffles when one boost expires is a rail nobody can read. */
+const POWERUP_RANK = { vacuum: 0, turbo: 1, mass: 2 };
+
+/**
+ * Heat tiers 0..3, matching the ladder in src/gameplay/heat.js (HEAT.UP).
+ *
+ * ACCESSIBILITY (spec §6): every tier carries a NUMBER, a WORD and a distinct
+ * GLYPH, so the meter is fully readable with the colour thrown away. `hint` is
+ * the plain-English "how do I cool down" line the spec asks for; the wording
+ * matches the feed line heat.js already pushes, so the two never contradict.
+ */
+const HEAT_TIERS = [
+  { label: 'CLEAR', glyph: '○', hint: 'The city has lost interest.' },
+  { label: 'NOTICED', glyph: '◔', hint: 'Stop eating city property and it cools off.' },
+  { label: 'PATROLS', glyph: '◑', hint: 'Drive away from patrol cars to cool down.' },
+  { label: 'RESPONSE', glyph: '●', hint: 'Leave the response zone — distance cools you fastest.' },
+];
+
+/** Circumference of the r=15.5 countdown ring in the 36x36 viewBox below. */
+const RING_LEN = 2 * Math.PI * 15.5;
+
+/**
+ * localStorage key for the in-match audio mixer.
+ *
+ * Namespaced the same way every other persisted key in this project is
+ * ('miami-devour:map', 'miami-devour:mode', 'miami-devour:profile:v1') so a
+ * reader can tell at a glance which app owns it, and versioned so a shape
+ * change is a new key rather than a crash on an old blob.
+ */
+const AUDIO_PREFS_KEY = 'miami-devour:audio:v1';
+
+/**
+ * Starting mix. `music` and `sfx` are the same numbers profile.js ships as its
+ * defaults, so opening this panel on a fresh install does not silently move the
+ * mix the meta Settings screen would have shown.
+ */
+const AUDIO_DEFAULTS = {
+  master: 1, music: 0.6, sfx: 0.9, voice: 1,
+  muted: false, voicesMuted: false, subtitles: true,
+};
+
+/** The four sliders, in mixing order (widest bus first). */
+const AUDIO_SLIDERS = [
+  { key: 'master', icon: '🔊', name: 'Master' },
+  { key: 'music', icon: '🎵', name: 'Music' },
+  { key: 'sfx', icon: '💥', name: 'Effects' },
+  { key: 'voice', icon: '🗣️', name: 'Voices' },
+];
+
+/**
+ * The three switches. Each carries its own ON/OFF WORD rather than relying on
+ * the knob's position or colour — spec §6, and the reason `onWord` is not just
+ * "ON" for the two mutes: "Mute all: ON" is genuinely ambiguous.
+ */
+const AUDIO_TOGGLES = [
+  { key: 'muted', icon: '🔇', name: 'Mute all', onWord: 'MUTED', offWord: 'AUDIBLE' },
+  { key: 'voicesMuted', icon: '🤫', name: 'Mute voices', onWord: 'MUTED', offWord: 'AUDIBLE' },
+  { key: 'subtitles', icon: '💬', name: 'Subtitles', onWord: 'ON', offWord: 'OFF' },
+];
+
+/**
+ * Reduced motion, from the OS query OR the in-app toggle (settings.js stamps
+ * `.reduced-motion` on <html>). Everything the CSS animates is also gated in
+ * @media (prefers-reduced-motion: reduce); this is for the things only JS can
+ * decide, i.e. the pulsing marker painted into the minimap canvas.
+ */
+let _prefersReduce = false;
+try {
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    _prefersReduce = !!mq.matches;
+    const onMq = (e) => { _prefersReduce = !!e.matches; };
+    if (mq.addEventListener) mq.addEventListener('change', onMq);
+    else if (mq.addListener) mq.addListener(onMq);
+  }
+} catch { /* no matchMedia: animate, which is the pre-existing behaviour */ }
+
+function reduceMotion() {
+  if (_prefersReduce) return true;
+  return typeof document !== 'undefined'
+    && document.documentElement.classList.contains('reduced-motion');
+}
+
+/**
+ * The meta-layer profile, if the meta layer is in this build.
+ *
+ * WHY LAZY, AND WHY AT ALL: profile.data.settings already owns `music` and
+ * `sfx` for the meta Settings screen. Two persisted copies of one slider is how
+ * a player's mix silently reverts, so the panel below mirrors those two values
+ * back into the profile. It is a *dynamic* import so hud.js keeps working —
+ * and keeps persisting, in its own key — in a build with no meta layer.
+ * The promise never rejects, so a queued write is never lost.
+ */
+let _profileP = null;
+function withProfile(fn) {
+  if (typeof document === 'undefined') return;
+  if (!_profileP) _profileP = import('../meta/profile.js').catch(() => null);
+  _profileP.then((m) => {
+    if (!m || !m.profile || !m.profile.data || !m.profile.data.settings) return;
+    try { fn(m.profile); } catch { /* a broken profile must not break the mixer */ }
+  });
+}
 
 /**
  * Cross-screen UI state. The results screen wants a fact only the live HUD ever
@@ -118,6 +255,52 @@ export class HUD {
       <div id="hud-stick"><i class="ring"></i><i class="knob"></i></div>
     `;
 
+    /* ------------------------------------------------------------------ *
+     * POWER-UPS / HEAT / EVENTS / AUDIO — appended, never merged into the
+     * template above. Keeping them in their own insert means the original
+     * markup can be edited by whoever owns it without a three-way conflict.
+     *
+     * The status rail sits on the RIGHT, directly above the minimap. The
+     * bottom-left column looks emptier but is not: #hud-tierup parks itself at
+     * `left: 1.05em; bottom: 9.4em` for 2.4 s on every tier unlock, and a
+     * power-up rail there would be covered exactly when a player is most
+     * likely to be reading it.
+     * ------------------------------------------------------------------ */
+    layer.insertAdjacentHTML('beforeend', `
+      <div id="hud-event" role="status" aria-live="polite" aria-atomic="true">
+        <span class="ev-ic" aria-hidden="true"></span>
+        <span class="ev-tx"><b class="ev-nm"></b><span class="ev-sub"></span></span>
+        <span class="ev-cd"><b class="ev-n">0</b><span class="ev-u">s</span></span>
+        <i class="ev-bar"><b></b></i>
+      </div>
+
+      <div id="hud-status">
+        <div id="hud-pow" role="group" aria-label="Active power-ups"></div>
+        <div id="hud-heat" data-tier="0">
+          <div class="ht-hd">
+            <span class="ht-ic" aria-hidden="true">○</span>
+            <b class="ht-k">HEAT 0</b>
+            <span class="ht-v">CLEAR</span>
+          </div>
+          <div class="ht-seg" role="img" aria-label="Heat tier 0 of 3">
+            <i></i><i></i><i></i>
+          </div>
+          <div class="ht-hint">The city has lost interest.</div>
+        </div>
+        <button id="hud-audio-btn" class="hud-tap" type="button"
+                aria-expanded="false" aria-controls="hud-audio"
+                aria-label="Audio settings" title="Audio settings">
+          <span class="ab-ic" aria-hidden="true">&#128266;</span>
+          <span class="ab-lbl">AUDIO</span>
+        </button>
+      </div>
+
+      <div id="hud-powbanner" role="status" aria-live="polite"></div>
+
+      <div id="hud-audio" class="hud-tap" role="dialog" aria-modal="false"
+           aria-label="Audio settings" hidden></div>
+    `);
+
     const $ = (s) => layer.querySelector(s);
     this.timerEl = $('#hud-timer');
     this.timerVal = $('#hud-timer .val');
@@ -147,6 +330,30 @@ export class HUD {
     this.popupEl = $('#hud-popups');
     this.stickEl = $('#hud-stick');
     this.mapCanvas = $('#hud-map canvas');
+
+    /* --- power-ups / heat / events / audio ------------------------------ */
+    this.evtEl = $('#hud-event');
+    this.evtIc = $('#hud-event .ev-ic');
+    this.evtNm = $('#hud-event .ev-nm');
+    this.evtSub = $('#hud-event .ev-sub');
+    this.evtNum = $('#hud-event .ev-n');
+    this.evtBar = $('#hud-event .ev-bar > b');
+    this.statusEl = $('#hud-status');
+    this.powEl = $('#hud-pow');
+    this.heatEl = $('#hud-heat');
+    this.heatIc = $('#hud-heat .ht-ic');
+    this.heatKey = $('#hud-heat .ht-k');
+    this.heatVal = $('#hud-heat .ht-v');
+    this.heatSeg = $('#hud-heat .ht-seg');
+    this.heatSegs = [...this.heatSeg.children];
+    this.heatHint = $('#hud-heat .ht-hint');
+    this.powBanner = $('#hud-powbanner');
+    this.audioBtn = $('#hud-audio-btn');
+    this.audioPanel = $('#hud-audio');
+
+    /** Same 2d context minimap.js draws through — the event marker is painted
+     *  INTO the existing map, never onto a second canvas. */
+    this.mapCtx = this.mapCanvas.getContext('2d');
 
     // One pip per size tier; the whole progression is legible at a glance.
     this.pipsEl.innerHTML = TIER_LIST
@@ -181,6 +388,44 @@ export class HUD {
      *  screenshot harness can hold the feed open while it composites. */
     this.feedTTL = 7.5;
 
+    /* --- power-up rail --------------------------------------------------
+     * Rows are POOLED by id. Rebuilding three <div>s a frame is cheap in
+     * isolation and ruinous next to the leaderboard's FLIP, which measures
+     * offsetTop on every row it owns — a sibling that keeps re-inserting nodes
+     * forces those reads to be synchronous layouts. */
+    /** @type {Map<string, object>} id -> row record */
+    this._pu = new Map();
+    this._puEndAt = new Map();      // id -> _now of the last "ended" card
+    this._puCards = [];
+
+    /* --- heat ----------------------------------------------------------- */
+    this._heatTier = -1;
+    this._heatPct = -1;
+    this._heatHideAt = 0;           // tier 0 lingers briefly, then the block goes
+    this._heatOn = false;
+
+    /* --- city event ------------------------------------------------------ */
+    this._evtId = null;
+    this._evtLeft = 0;
+    this._evtSpan = 0;
+    this._evtShownSecs = -1;
+    /** @type {{x:number,z:number,r:number}|null} drawn into the minimap. */
+    this._evtMarker = null;
+
+    /* --- audio mixer ------------------------------------------------------ */
+    /**
+     * The VoiceSystem, if the integrator hands it over (`hud.voice = game.voice`).
+     * Optional: setSubtitles() falls back to window.__GAME__.voice and, failing
+     * that, to hiding the captions in CSS. Declared here so the property always
+     * exists rather than being conjured by an assignment somewhere else.
+     * @type {{setSubtitles?:Function}|null}
+     */
+    this.voice = null;
+    this._audioPrefs = this._loadAudioPrefs();
+    this._audioOpen = false;
+    this._audioRows = null;
+    this._hudShown = null;          // tri-state: null = "not decided yet"
+
     // gameplay/match.js resolves its escalation lines through this global
     // before falling back to DEV — claiming it is what makes clock milestones
     // and lead changes reach the feed in a build with no dev harness.
@@ -191,6 +436,13 @@ export class HUD {
     if (window.visualViewport) window.visualViewport.addEventListener('resize', this._resize);
     this._resize();
     this._installTouchStick();
+    this._installAudioSettings();
+    this._watchVisibility();
+    // Restore the saved mix. Runs LAST in the constructor: _installAudioSettings
+    // has to have built the rows first or there is nothing to write the values
+    // into, and applying before the DOM exists was one of the three TDZ-shaped
+    // bugs this file has already shipped.
+    this._applyAudioPrefs();
   }
 
   /* ====================================================================== */
@@ -258,6 +510,11 @@ export class HUD {
     if (elapsed > 2.5 && elapsed < 30) {
       this.toast('gate', '<span class="ic">!</span>Swallow only what <b>fits</b> &mdash; start on litter and cones', 7.5);
     }
+
+    // Power-up and event countdowns ride the clock this method already
+    // measures, so they keep ticking whether the game pushes them every frame
+    // or only when something changes. See _tickOverlays().
+    this._tickOverlays();
   }
 
   _resetMatchState() {
@@ -273,6 +530,13 @@ export class HUD {
     this._dead = false;
     this.deadEl.classList.remove('on');
     for (const item of this._feedItems.slice()) this._dropFeed(item);
+    // Nothing from the previous round may survive into this one: a stale
+    // "VACUUM BOOST 12s" or a storm banner counting down over a fresh match is
+    // the exact class of bug §7 of the spec calls "unreset world state".
+    this._retireAllPowerups(false);
+    this.setHeat(null);
+    this.clearEventBanner();
+    this.setEventMarker(null);
     uiState.reset();
   }
 
@@ -728,6 +992,801 @@ export class HUD {
 
   drawMinimap(holes, me, layout) {
     this.minimap.draw(holes, me, layout, this._dt);
+    // The event zone goes ON TOP of the map minimap.js just finished painting,
+    // in the same canvas and the same transform. Drawing it inside Minimap
+    // would mean owning a file another pass is editing; drawing it in a second
+    // canvas would mean two minimaps that can disagree about where north is.
+    if (this._evtMarker) this._drawEventMarker(this._evtMarker);
+  }
+
+  /* ====================================================================== */
+  /* POWER-UPS                                                              */
+  /* ====================================================================== */
+
+  /**
+   * The active-power-up rail.
+   *
+   * @param {Array<{id:string,name?:string,icon?:string,css?:string,color?:string,
+   *   description?:string,remaining:number,duration?:number,frac?:number}>} [list]
+   *   PowerupSystem.activeFor(hole) returns exactly this shape. Pass null or
+   *   omit it and nothing happens; pass [] and everything retires with its end
+   *   notification.
+   *
+   * ACCESSIBILITY (spec §6): every row carries the power-up's NAME in text, a
+   * distinct ICON GLYPH, a distinct BORDER STYLE (solid / dashed / dotted) and
+   * the remaining whole seconds as a number — so the rail is unambiguous with
+   * the colour discarded entirely. The ring is decoration on top of that, not
+   * the message.
+   */
+  setPowerups(list) {
+    const arr = Array.isArray(list) ? list : null;
+    if (!arr) return;                       // "no-op when given nothing"
+
+    const seen = new Set();
+    for (const p of arr) {
+      if (!p) continue;
+      const id = String(p.id || p.key || '');
+      if (!id) continue;
+      seen.add(id);
+      const row = this._puRow(id, p);
+      row.remaining = Math.max(0, Number(p.remaining) || 0);
+      // `frac` is authoritative when the caller supplies it (stacking can push
+      // remaining past the nominal duration, and then remaining/duration > 1).
+      const dur = Number(p.duration) || row.duration || row.remaining || 1;
+      row.duration = dur;
+      row.frac = Number.isFinite(p.frac) ? Math.max(0, Math.min(1, p.frac))
+        : Math.max(0, Math.min(1, row.remaining / Math.max(0.001, dur)));
+      this._renderPuRow(row);
+    }
+
+    for (const id of [...this._pu.keys()]) {
+      if (!seen.has(id)) this._retirePowerup(id, true);
+    }
+    this._syncStatusVisibility();
+  }
+
+  /** Pool lookup + first-time build for one rail row. */
+  _puRow(id, p) {
+    let row = this._pu.get(id);
+    if (row) {
+      // A repeat pickup can arrive with richer data than the first one did.
+      if (p && p.name) row.name = String(p.name);
+      return row;
+    }
+    const fb = POWERUP_FALLBACK[id] || {};
+    const el = document.createElement('div');
+    el.className = 'pu-row';
+    el.dataset.pu = id;
+    el.dataset.shape = String((p && p.shape) || fb.shape || 'ring');
+    el.innerHTML =
+      '<span class="pu-ic" aria-hidden="true"></span>' +
+      '<span class="pu-tx"><b class="pu-nm"></b><span class="pu-ds"></span></span>' +
+      '<span class="pu-ring">' +
+        `<svg viewBox="0 0 36 36" aria-hidden="true" focusable="false">` +
+          '<circle class="pu-trk" cx="18" cy="18" r="15.5"></circle>' +
+          `<circle class="pu-arc" cx="18" cy="18" r="15.5"` +
+            ` stroke-dasharray="${RING_LEN.toFixed(2)}" stroke-dashoffset="0"></circle>` +
+        '</svg>' +
+        '<b class="pu-sec">0</b>' +
+      '</span>';
+
+    row = {
+      id, el,
+      ic: el.querySelector('.pu-ic'),
+      nm: el.querySelector('.pu-nm'),
+      ds: el.querySelector('.pu-ds'),
+      arc: el.querySelector('.pu-arc'),
+      sec: el.querySelector('.pu-sec'),
+      name: String((p && p.name) || fb.name || id.toUpperCase()),
+      icon: String((p && p.icon) || fb.icon || '★'),
+      css: String((p && (p.css || p.color)) || fb.css || '#ffffff'),
+      description: String((p && p.description) || fb.description || ''),
+      remaining: 0, duration: 1, frac: 1,
+      shownSec: -1, shownPct: -1,
+    };
+    row.el.style.setProperty('--pc', row.css);
+    row.ic.textContent = row.icon;
+    row.nm.textContent = row.name;
+    row.ds.textContent = row.description;
+    // The visible name is the label; the description is the accessible detail,
+    // because at this size it can only ever be one clipped line on a phone.
+    row.el.setAttribute('aria-label', `${row.name}. ${row.description}`);
+
+    this._pu.set(id, row);
+    this._reorderPowerups();
+    return row;
+  }
+
+  /**
+   * Stable order, always. POWERUP_RANK first, then id, so the rail never
+   * reshuffles because one boost happened to be picked up before another.
+   */
+  _reorderPowerups() {
+    const rows = [...this._pu.values()].sort((a, b) => {
+      const ra = POWERUP_RANK[a.id] ?? 99;
+      const rb = POWERUP_RANK[b.id] ?? 99;
+      return ra - rb || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    });
+    for (const r of rows) this.powEl.appendChild(r.el);
+  }
+
+  /** Write only what a human could see change — this runs at frame rate. */
+  _renderPuRow(row) {
+    const secs = Math.ceil(row.remaining - 0.001);
+    if (secs !== row.shownSec) {
+      row.shownSec = secs;
+      row.sec.textContent = String(Math.max(0, secs));
+      // Under four seconds the row starts flashing. The `low` class also
+      // switches the border to a doubled rule, so the warning survives with no
+      // colour and no animation (see the reduced-motion block in hud.css).
+      row.el.classList.toggle('low', secs <= 4);
+    }
+    const pct = Math.round(row.frac * 100);
+    if (pct !== row.shownPct) {
+      row.shownPct = pct;
+      row.arc.style.strokeDashoffset = (RING_LEN * (1 - row.frac)).toFixed(2);
+    }
+  }
+
+  /** Drop one row and, unless we are wiping the match, say so. */
+  _retirePowerup(id, announce) {
+    const row = this._pu.get(id);
+    if (!row) return;
+    this._pu.delete(id);
+    row.el.classList.add('out');
+    setTimeout(() => row.el.remove(), 340);
+    if (announce) {
+      const last = this._puEndAt.get(id) || -99;
+      // Dedupe: the game may push its own end notification AND stop listing the
+      // power-up in the same frame. One card, not two.
+      if (this._now - last > 1.5) {
+        this._puEndAt.set(id, this._now);
+        this.showPowerupBanner({
+          id, kind: 'end', name: row.name, icon: row.icon, color: row.css,
+        });
+      }
+    }
+    this._syncStatusVisibility();
+  }
+
+  _retireAllPowerups(announce) {
+    for (const id of [...this._pu.keys()]) this._retirePowerup(id, announce);
+  }
+
+  /**
+   * The pickup card — `VACUUM BOOST — 30s` — and its end notification.
+   *
+   * @param {{name:string, seconds?:number, id?:string, icon?:string,
+   *   color?:string, description?:string, kind?:'get'|'end'}} [info]
+   *
+   * The two states are told apart by a kicker word, an arrow glyph and a border
+   * style, not by hue: `GOT IT ▲` on a solid edge versus `ENDED ▼` on a dashed
+   * one. The end card fades out; the pickup card pops in and holds.
+   */
+  showPowerupBanner(info) {
+    if (!info) return;
+    const id = String(info.id || '');
+    const fb = POWERUP_FALLBACK[id] || {};
+    const end = info.kind === 'end';
+    const name = String(info.name || fb.name || id.toUpperCase() || 'POWER-UP');
+    const secs = Math.max(0, Math.round(Number(info.seconds) || 0));
+    const desc = String(info.description || fb.description || '');
+
+    const card = document.createElement('div');
+    card.className = 'pb-card';
+    card.dataset.kind = end ? 'end' : 'get';
+    card.style.setProperty('--pc', String(info.color || info.css || fb.css || '#ffffff'));
+    const sub = end
+      ? 'Boost expired'
+      : (secs ? `${secs}s${desc ? ' &middot; ' : ''}` : '') + escapeHtml(desc);
+    card.innerHTML =
+      `<span class="pb-ic" aria-hidden="true">${escapeHtml(String(info.icon || fb.icon || '★'))}</span>` +
+      '<span class="pb-tx">' +
+        `<span class="pb-k">${end ? 'ENDED &#9660;' : 'POWER-UP &#9650;'}</span>` +
+        `<b class="pb-nm">${escapeHtml(name)}</b>` +
+        `<span class="pb-sub">${sub}</span>` +
+      '</span>';
+
+    this.powBanner.appendChild(card);
+    void card.offsetWidth;                  // reflow, so the entry animation runs
+    card.classList.add('on');
+    const rec = { card, timer: 0 };
+    this._puCards.push(rec);
+    rec.timer = setTimeout(() => this._dropPuCard(rec), end ? 2200 : 2800);
+    while (this._puCards.length > 2) this._dropPuCard(this._puCards[0]);
+  }
+
+  _dropPuCard(rec) {
+    const i = this._puCards.indexOf(rec);
+    if (i < 0) return;
+    this._puCards.splice(i, 1);
+    clearTimeout(rec.timer);
+    rec.card.classList.remove('on');
+    rec.card.classList.add('out');
+    setTimeout(() => rec.card.remove(), 420);
+  }
+
+  /**
+   * Countdowns that must keep moving between pushes from the game.
+   *
+   * Called once per frame from setTimer(). Power-up rows and the event banner
+   * both self-tick here and are simply overwritten whenever the authoritative
+   * value arrives, so the HUD reads correctly whether the game pushes state
+   * every frame or only when it changes.
+   */
+  _tickOverlays() {
+    const dt = this._dt;
+
+    if (this._pu.size) {
+      for (const [id, row] of [...this._pu]) {
+        row.remaining = Math.max(0, row.remaining - dt);
+        row.frac = Math.max(0, Math.min(1, row.remaining / Math.max(0.001, row.duration)));
+        if (row.remaining <= 0) { this._retirePowerup(id, true); continue; }
+        this._renderPuRow(row);
+      }
+    }
+
+    if (this._evtId && this._evtLeft > 0) {
+      this._evtLeft = Math.max(0, this._evtLeft - dt);
+      const s = Math.ceil(this._evtLeft - 0.001);
+      if (s !== this._evtShownSecs) {
+        this._evtShownSecs = s;
+        this.evtNum.textContent = String(Math.max(0, s));
+        this.evtEl.classList.toggle('soon', s <= 5);
+      }
+      if (this._evtSpan > 0) {
+        this.evtBar.style.transform =
+          `scaleX(${(this._evtLeft / this._evtSpan).toFixed(3)})`;
+      }
+    }
+
+    if (this._heatOn && this._heatTier === 0 && this._heatHideAt
+        && this._now > this._heatHideAt) {
+      this._heatOn = false;
+      this.heatEl.classList.remove('on');
+      this._syncStatusVisibility();
+    }
+  }
+
+  /* ====================================================================== */
+  /* HEAT                                                                   */
+  /* ====================================================================== */
+
+  /**
+   * The police-response meter.
+   *
+   * @param {{tier?:number, value?:number}} [state] tier 0..3 (HeatSystem
+   *   .tierOf), value 0..1 (HeatSystem.heatOf). Null hides the meter.
+   *
+   * ACCESSIBILITY (spec §6): the tier is printed as a NUMBER and a WORD, the
+   * three segments are filled/hollow (a shape difference, readable in
+   * greyscale) and the hint line says in plain English how to cool down. No
+   * part of the read depends on the colour of the bar.
+   */
+  setHeat(state) {
+    if (!state) {
+      if (this._heatOn) {
+        this._heatOn = false;
+        this.heatEl.classList.remove('on');
+        this._syncStatusVisibility();
+      }
+      this._heatTier = -1;
+      this._heatPct = -1;
+      return;
+    }
+
+    const tier = Math.max(0, Math.min(3, Math.round(Number(state.tier) || 0)));
+    const value = Math.max(0, Math.min(1, Number(state.value) || 0));
+
+    // Tier 0 with an empty meter is "nothing is happening", and a permanent
+    // HEAT 0 chip is just clutter. It lingers for three seconds after a
+    // cool-down so the player sees the all-clear, then goes.
+    const wanted = tier > 0 || value > 0.02;
+    if (wanted) this._heatHideAt = 0;
+    else if (this._heatOn && !this._heatHideAt) this._heatHideAt = this._now + 3;
+    if (wanted && !this._heatOn) {
+      this._heatOn = true;
+      this.heatEl.classList.add('on');
+      this._syncStatusVisibility();
+    }
+
+    if (tier !== this._heatTier) {
+      const prev = this._heatTier;
+      this._heatTier = tier;
+      const t = HEAT_TIERS[tier];
+      this.heatEl.dataset.tier = String(tier);
+      this.heatIc.textContent = t.glyph;
+      this.heatKey.textContent = `HEAT ${tier}`;
+      this.heatVal.textContent = t.label;
+      this.heatHint.textContent = t.hint;
+      this.heatSeg.setAttribute('aria-label', `Heat tier ${tier} of 3. ${t.hint}`);
+      for (let i = 0; i < this.heatSegs.length; i++) {
+        this.heatSegs[i].className = i < tier ? 'lit' : '';
+      }
+      if (prev >= 0 && tier > prev) restart(this.heatEl, 'bump');
+    }
+
+    const pct = Math.round(value * 100);
+    if (pct !== this._heatPct) {
+      this._heatPct = pct;
+      this.heatEl.style.setProperty('--hv', `${pct}%`);
+    }
+  }
+
+  /* ====================================================================== */
+  /* CITY EVENTS                                                            */
+  /* ====================================================================== */
+
+  /**
+   * The compact top-of-screen event banner.
+   *
+   * @param {{name?:string, seconds?:number, id?:string, icon?:string,
+   *   color?:string, message?:string, short?:string, sub?:string,
+   *   kind?:string}} [info]
+   *
+   * Tolerates the full payload EventManager pushes through `onBanner`
+   * (kind/id/name/short/icon/color/message/sub/seconds/countdownTo) as well as
+   * the three fields the integration contract promises. `kind: 'clear'` and a
+   * missing name both mean "take it down".
+   */
+  setEventBanner(info) {
+    if (!info) return;                      // "no-op when given nothing"
+    if (info.kind === 'clear') { this.clearEventBanner(); return; }
+
+    const name = String(info.message || info.name || info.short || '').trim();
+    if (!name) { this.clearEventBanner(); return; }
+
+    const secs = Math.max(0, Number(info.seconds) || 0);
+    this._evtId = String(info.id || name);
+    this._evtLeft = secs;
+    this._evtSpan = secs;
+    this._evtShownSecs = -1;
+
+    this.evtEl.dataset.kind = String(info.kind || 'alert');
+    this.evtEl.style.setProperty('--ec', String(info.color || '#5fd8ff'));
+    this.evtIc.textContent = String(info.icon || '⚠');
+    this.evtNm.textContent = name;
+    this.evtSub.textContent = String(info.sub || '');
+    this.evtSub.hidden = !info.sub;
+    this.evtNum.textContent = String(Math.ceil(secs));
+    this.evtEl.classList.toggle('nocount', secs <= 0);
+    this.evtEl.classList.remove('soon');
+    this.evtBar.style.transform = 'scaleX(1)';
+    // 'end' banners are announcements with no countdown; they clear themselves
+    // rather than sitting on screen for the rest of the match.
+    clearTimeout(this._evtHideT);
+    if (secs <= 0) this._evtHideT = setTimeout(() => this.clearEventBanner(), 3400);
+    restart(this.evtEl, 'on');
+    // The frenzy banner lives at top:6.5em and would sit underneath this one.
+    this.root.classList.add('has-evt');
+  }
+
+  /** Take the banner down. Safe to call when there is none. */
+  clearEventBanner() {
+    clearTimeout(this._evtHideT);
+    this._evtId = null;
+    this._evtLeft = 0;
+    this._evtSpan = 0;
+    this._evtShownSecs = -1;
+    this.evtEl.classList.remove('on', 'soon');
+    this.root.classList.remove('has-evt');
+  }
+
+  /**
+   * The event's zone on the minimap.
+   *
+   * @param {{x:number, z:number, r:number, label?:string, color?:string,
+   *   points?:Array<{x:number,z:number,r:number}>}} [m] null removes it.
+   *
+   * Stored only — the paint happens in drawMinimap(), inside the existing
+   * minimap canvas, because that is where the map's transform lives.
+   */
+  setEventMarker(m) {
+    if (!m || !Number.isFinite(m.x) || !Number.isFinite(m.z)) {
+      this._evtMarker = null;
+      return;
+    }
+    this._evtMarker = m;
+  }
+
+  /**
+   * Paint the event zone into the minimap.
+   *
+   * The transform is the one Minimap.draw() uses, re-derived from the same two
+   * facts (canvas.width and WORLD.SIZE) rather than assumed: a marker drawn in
+   * a different projection than the holes is worse than no marker at all.
+   *
+   * SHAPE, NOT COLOUR: the zone is a DASHED ring. minimap.js already draws
+   * solid rings (the leader), soft pulsing discs (the player) and rotated
+   * squares (landmarks), so dashes are the one outline nothing else uses.
+   */
+  _drawEventMarker(m) {
+    const c = this.mapCtx;
+    const S = this.mapCanvas.width;
+    if (!c || !S) return;
+
+    const P = S / (WORLD.SIZE * 2);
+    const k = S / 336;                      // minimap.js authors at 336 px
+    const x = (m.x + WORLD.SIZE) * P;
+    const y = (m.z + WORLD.SIZE) * P;
+    const r = Math.max(7 * k, (Number(m.r) || 60) * P);
+    const col = String(m.color || '#5fd8ff');
+    const pulse = reduceMotion() ? 0.55 : 0.5 + 0.5 * Math.sin(this._now * 2.1);
+
+    c.save();
+
+    c.globalAlpha = 0.10 + pulse * 0.07;
+    c.beginPath();
+    c.arc(x, y, r, 0, Math.PI * 2);
+    c.fillStyle = col;
+    c.fill();
+
+    c.globalAlpha = 0.95;
+    c.setLineDash([5 * k, 4 * k]);
+    c.lineWidth = 2 * k;
+    c.strokeStyle = col;
+    c.beginPath();
+    c.arc(x, y, r, 0, Math.PI * 2);
+    c.stroke();
+    c.setLineDash([]);
+
+    // Debris clusters: where the loot actually is, rather than one vague blob.
+    for (const p of (m.points || [])) {
+      if (!p || !Number.isFinite(p.x)) continue;
+      const px = (p.x + WORLD.SIZE) * P;
+      const py = (p.z + WORLD.SIZE) * P;
+      const pr = Math.max(2 * k, (Number(p.r) || 12) * P);
+      c.beginPath();
+      c.arc(px, py, pr, 0, Math.PI * 2);
+      c.fillStyle = 'rgba(6,10,18,0.6)';
+      c.fill();
+      c.lineWidth = 1.4 * k;
+      c.strokeStyle = col;
+      c.stroke();
+    }
+
+    // The word, so the ring is not the only thing carrying the meaning.
+    const label = String(m.label || m.id || 'EVENT').toUpperCase();
+    const fs = Math.max(8, Math.round(9.5 * k));
+    c.font = `900 ${fs}px ${'system-ui, -apple-system, "Segoe UI", sans-serif'}`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    const ty = Math.max(fs, Math.min(S - fs * 0.7, y - r - fs * 0.85));
+    const tx = Math.max(fs * 2, Math.min(S - fs * 2, x));
+    c.globalAlpha = 1;
+    c.lineWidth = Math.max(2, 3 * k);
+    c.lineJoin = 'round';
+    c.strokeStyle = 'rgba(4,8,14,0.92)';
+    c.strokeText(label, tx, ty);
+    c.fillStyle = '#ffffff';
+    c.fillText(label, tx, ty);
+
+    c.restore();
+  }
+
+  /**
+   * Show only the blocks that have something to say.
+   *
+   * The CONTAINER is never hidden — it also holds the audio button, which has
+   * to stay reachable all match. Only the rail and the heat chip toggle.
+   */
+  _syncStatusVisibility() {
+    this.powEl.classList.toggle('on', this._pu.size > 0);
+  }
+
+  /* ====================================================================== */
+  /* AUDIO SETTINGS                                                         */
+  /* ====================================================================== */
+
+  /**
+   * Build the in-match mixer.
+   *
+   * WHY IT IS HERE AND NOT ONLY IN THE SETTINGS SCREEN: a player who cannot
+   * hear a voice line over the music has to leave the match to fix it today.
+   * The sliders write to the SAME audio singleton the settings screen uses
+   * (setVolume / setMusicVolume / setSfxVolume / setVoiceVolume — all verified
+   * against src/core/audio.js, none of them guessed) and mirror music/sfx back
+   * into profile.data.settings so the two surfaces cannot disagree.
+   */
+  _installAudioSettings() {
+    const slider = (r, v) => {
+      const pct = Math.round(v * 100);
+      return `
+        <div class="au-row" data-row="${r.key}">
+          <label class="au-lbl" for="au-${r.key}">
+            <span class="au-ic" aria-hidden="true">${r.icon}</span>
+            <span class="au-nm">${r.name}</span>
+            <output class="au-out" data-out="${r.key}">${pct}</output>
+          </label>
+          <input class="au-sl" id="au-${r.key}" type="range" min="0" max="100" step="1"
+                 value="${pct}" style="--v:${pct}%" data-slider="${r.key}"
+                 aria-label="${r.name} volume" />
+        </div>`;
+    };
+    const toggle = (t, on) => `
+        <button class="au-tg" type="button" role="switch" data-toggle="${t.key}"
+                aria-checked="${on ? 'true' : 'false'}">
+          <span class="au-ic" aria-hidden="true">${t.icon}</span>
+          <span class="au-nm">${t.name}</span>
+          <span class="au-state" data-state="${t.key}">${on ? t.onWord : t.offWord}</span>
+          <span class="sw" aria-hidden="true"><i></i></span>
+        </button>`;
+
+    const p = this._audioPrefs;
+    this.audioPanel.innerHTML =
+      '<div class="au-hd"><b>Audio</b>' +
+      '<button class="au-x" type="button" aria-label="Close audio settings">&#10005;</button></div>' +
+      AUDIO_SLIDERS.map((r) => slider(r, p[r.key])).join('') +
+      '<div class="au-tgs">' + AUDIO_TOGGLES.map((t) => toggle(t, !!p[t.key])).join('') + '</div>' +
+      '<p class="au-note">Saved on this device.</p>';
+
+    this._audioRows = true;
+
+    /* --- sliders: apply under the thumb, persist on a short debounce ----- */
+    this.audioPanel.addEventListener('input', (e) => {
+      const sl = e.target.closest && e.target.closest('[data-slider]');
+      if (!sl) return;
+      const key = sl.dataset.slider;
+      const pct = Math.max(0, Math.min(100, Number(sl.value) || 0));
+      sl.style.setProperty('--v', `${pct}%`);
+      const out = this.audioPanel.querySelector(`[data-out="${key}"]`);
+      if (out) out.textContent = String(pct);
+      this._audioPrefs[key] = pct / 100;
+      this._pushAudio(key);
+      this._saveAudioPrefsSoon();
+    });
+
+    // One blip when the thumb is released, never during the drag — otherwise
+    // dragging the SFX slider is a machine-gun of click sounds.
+    this.audioPanel.addEventListener('change', (e) => {
+      const sl = e.target.closest && e.target.closest('[data-slider="sfx"], [data-slider="master"]');
+      if (sl) { try { audio.ui('click'); } catch { /* dead context */ } }
+    });
+
+    this.audioPanel.addEventListener('click', (e) => {
+      if (!e.target || !e.target.closest) return;
+      if (e.target.closest('.au-x')) { this.closeAudioSettings(); return; }
+      const tg = e.target.closest('[data-toggle]');
+      if (!tg) return;
+      const key = tg.dataset.toggle;
+      const on = tg.getAttribute('aria-checked') !== 'true';
+      tg.setAttribute('aria-checked', on ? 'true' : 'false');
+      const def = AUDIO_TOGGLES.find((t) => t.key === key);
+      const st = tg.querySelector(`[data-state="${key}"]`);
+      if (st && def) st.textContent = on ? def.onWord : def.offWord;
+      this._audioPrefs[key] = on;
+      this._pushAudio(key);
+      this._saveAudioPrefsSoon();
+      try { audio.ui('click'); } catch { /* dead context */ }
+    });
+
+    this.audioBtn.addEventListener('click', () => this.toggleAudioSettings());
+
+    /* --- dismissal ------------------------------------------------------- *
+     * Capture phase so a tap anywhere else closes the panel, but NOTHING is
+     * stopped or consumed: game.js owns Escape (it opens the pause menu) and
+     * gameplay/input.js owns pointerdown on the canvas. Interfering with
+     * either would be a gameplay regression shipped from a settings panel. */
+    this._onDocDown = (e) => {
+      if (!this._audioOpen) return;
+      const t = e.target;
+      if (t && t.closest && t.closest('#hud-audio, #hud-audio-btn')) return;
+      this.closeAudioSettings();
+    };
+    this._onDocKey = (e) => {
+      if (e.key === 'Escape' && this._audioOpen) this.closeAudioSettings();
+    };
+    window.addEventListener('pointerdown', this._onDocDown, true);
+    window.addEventListener('keydown', this._onDocKey);
+  }
+
+  openAudioSettings() {
+    if (this._audioOpen) return;
+    this._audioOpen = true;
+    this.audioPanel.hidden = false;
+    void this.audioPanel.offsetWidth;
+    this.audioPanel.classList.add('on');
+    this.audioBtn.setAttribute('aria-expanded', 'true');
+    // The meta Settings screen may have moved music/sfx since this panel was
+    // last opened. It is the other owner of those two values, so adopt them.
+    withProfile((pr) => {
+      const s = pr.data.settings;
+      let changed = false;
+      for (const k of ['music', 'sfx']) {
+        const v = Number(s[k]);
+        if (Number.isFinite(v) && Math.abs(v - this._audioPrefs[k]) > 0.001) {
+          this._audioPrefs[k] = Math.max(0, Math.min(1, v));
+          changed = true;
+        }
+      }
+      if (changed) { this._pushAudio('music'); this._pushAudio('sfx'); this._syncAudioUI(); }
+    });
+    try { audio.ui('menuOpen'); } catch { /* dead context */ }
+  }
+
+  closeAudioSettings() {
+    if (!this._audioOpen) return;
+    this._audioOpen = false;
+    this.audioPanel.classList.remove('on');
+    this.audioBtn.setAttribute('aria-expanded', 'false');
+    clearTimeout(this._audioHideT);
+    // `hidden` only after the fade, or the panel vanishes instead of leaving.
+    this._audioHideT = setTimeout(() => {
+      if (!this._audioOpen) this.audioPanel.hidden = true;
+    }, 220);
+    try { audio.ui('menuClose'); } catch { /* dead context */ }
+  }
+
+  toggleAudioSettings() {
+    if (this._audioOpen) this.closeAudioSettings();
+    else this.openAudioSettings();
+  }
+
+  /** Push ONE preference at whatever owns it. Names verified in audio.js. */
+  _pushAudio(key) {
+    const p = this._audioPrefs;
+    try {
+      if (key === 'master' || key === 'muted') {
+        // Order matters: setVolume() is a no-op on the master gain while muted,
+        // and setMuted() is what restores the player's level afterwards.
+        audio.setVolume(p.master);
+        audio.setMuted(p.muted);
+      } else if (key === 'music') audio.setMusicVolume(p.music);
+      else if (key === 'sfx') audio.setSfxVolume(p.sfx);
+      else if (key === 'voice' || key === 'voicesMuted') {
+        audio.setVoiceVolume(p.voice);
+        audio.setVoicesMuted(p.voicesMuted);
+      }
+    } catch { /* a closed AudioContext must never break the UI */ }
+    if (key === 'subtitles') this.setSubtitles(p.subtitles);
+  }
+
+  /**
+   * Subtitles on/off.
+   *
+   * Two independent switches, because either one alone leaves a hole: the
+   * VoiceSystem stops GENERATING captions (so nothing is queued in the first
+   * place), and a class on <html> hides `.vo-captions` outright — which covers
+   * anything already on screen and any caller that reaches showCaption()
+   * directly. showCaption() itself is deliberately not touched.
+   */
+  setSubtitles(on) {
+    const v = !!on;
+    this._audioPrefs.subtitles = v;
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('no-subtitles', !v);
+    }
+    const vs = this.voice
+      || (typeof globalThis !== 'undefined' && globalThis.__GAME__ && globalThis.__GAME__.voice)
+      || null;
+    if (vs && typeof vs.setSubtitles === 'function') {
+      try { vs.setSubtitles(v); } catch { /* voice pack absent */ }
+    }
+    if (!v) this.clearCaptions();
+    return v;
+  }
+
+  /** Current mixer state, as stored. Handy for the results screen and tests. */
+  audioPrefs() { return { ...this._audioPrefs }; }
+
+  _loadAudioPrefs() {
+    const out = { ...AUDIO_DEFAULTS };
+    let raw = null;
+    try { raw = localStorage.getItem(AUDIO_PREFS_KEY); }
+    catch { return out; }                   // private mode: defaults, no crash
+
+    if (!raw) {
+      // Never opened before. profile.data.settings may already hold this
+      // player's music/sfx from the meta Settings screen — adopt rather than
+      // snapping their mix back to the factory numbers.
+      withProfile((pr) => {
+        const s = pr.data.settings;
+        let changed = false;
+        for (const k of ['music', 'sfx']) {
+          const v = Number(s[k]);
+          if (Number.isFinite(v)) { this._audioPrefs[k] = Math.max(0, Math.min(1, v)); changed = true; }
+        }
+        if (changed) this._applyAudioPrefs();
+      });
+      return out;
+    }
+
+    try {
+      const saved = JSON.parse(raw);
+      if (saved && typeof saved === 'object') {
+        for (const k of Object.keys(AUDIO_DEFAULTS)) {
+          const d = AUDIO_DEFAULTS[k];
+          const v = saved[k];
+          if (typeof d === 'boolean') { if (typeof v === 'boolean') out[k] = v; }
+          else if (Number.isFinite(Number(v))) out[k] = Math.max(0, Math.min(1, Number(v)));
+        }
+      }
+    } catch { /* corrupt blob: defaults, and the next write repairs it */ }
+    return out;
+  }
+
+  _saveAudioPrefsSoon() {
+    clearTimeout(this._audioSaveT);
+    // Debounced: dragging a slider fires `input` on every pixel, and a
+    // localStorage write plus a profile save per pixel is a stutter you can
+    // feel on a phone.
+    this._audioSaveT = setTimeout(() => this._saveAudioPrefs(), 350);
+  }
+
+  _saveAudioPrefs() {
+    const p = this._audioPrefs;
+    try { localStorage.setItem(AUDIO_PREFS_KEY, JSON.stringify(p)); }
+    catch { /* private mode or quota: the session still works */ }
+    withProfile((pr) => {
+      const s = pr.data.settings;
+      if (s.music === p.music && s.sfx === p.sfx) return;
+      s.music = p.music;
+      s.sfx = p.sfx;
+      pr.save();
+    });
+  }
+
+  /** Push every stored preference at its owner and redraw the controls. */
+  _applyAudioPrefs() {
+    for (const k of ['master', 'music', 'sfx', 'voice', 'subtitles']) this._pushAudio(k);
+    this._pushAudio('voicesMuted');
+    this.setSubtitles(this._audioPrefs.subtitles);
+    this._syncAudioUI();
+  }
+
+  /** Write the stored values back into the controls. */
+  _syncAudioUI() {
+    if (!this._audioRows || !this.audioPanel) return;
+    const p = this._audioPrefs;
+    for (const r of AUDIO_SLIDERS) {
+      const sl = this.audioPanel.querySelector(`[data-slider="${r.key}"]`);
+      const out = this.audioPanel.querySelector(`[data-out="${r.key}"]`);
+      const pct = Math.round((p[r.key] ?? 0) * 100);
+      if (sl) { sl.value = String(pct); sl.style.setProperty('--v', `${pct}%`); }
+      if (out) out.textContent = String(pct);
+    }
+    for (const t of AUDIO_TOGGLES) {
+      const tg = this.audioPanel.querySelector(`[data-toggle="${t.key}"]`);
+      const st = this.audioPanel.querySelector(`[data-state="${t.key}"]`);
+      const on = !!p[t.key];
+      if (tg) tg.setAttribute('aria-checked', on ? 'true' : 'false');
+      if (st) st.textContent = on ? t.onWord : t.offWord;
+    }
+  }
+
+  /**
+   * Keep the one interactive control in this layer honest about whether the
+   * HUD is actually on screen.
+   *
+   * game.js drives HUD visibility by writing `hud.root.style.opacity`, and an
+   * element at opacity 0 STILL RECEIVES POINTER EVENTS — an invisible audio
+   * button floating over the results screen is a real bug, not a theoretical
+   * one. Polled at 4 Hz rather than observed, because game.js rewrites that
+   * property on every single frame and a MutationObserver would fire 60 times
+   * a second to tell us nothing changed.
+   */
+  _watchVisibility() {
+    const check = () => {
+      const shown = this.root.style.opacity !== '0';
+      if (shown === this._hudShown) return;
+      this._hudShown = shown;
+      this.root.classList.toggle('hud-off', !shown);
+      if (!shown) this.closeAudioSettings();
+    };
+    check();
+    this._visTimer = setInterval(check, 250);
+  }
+
+  /** Release timers and listeners. Nothing calls this today; a second HUD would. */
+  dispose() {
+    clearInterval(this._visTimer);
+    clearTimeout(this._audioSaveT);
+    clearTimeout(this._audioHideT);
+    clearTimeout(this._evtHideT);
+    this.clearCaptions();
+    window.removeEventListener('pointerdown', this._onDocDown, true);
+    window.removeEventListener('keydown', this._onDocKey);
+    window.removeEventListener('resize', this._resize);
   }
 
   /* ====================================================================== */
@@ -746,6 +1805,11 @@ export class HUD {
 
     const down = (e) => {
       if (e.pointerType !== 'touch' || id !== null) return;
+      // The audio button and its panel are the only pointer-events:auto things
+      // in this layer. gameplay/input.js binds pointerdown on the CANVAS so it
+      // never sees these taps, but this listener is on window and would draw a
+      // phantom stick under the player's thumb while they drag a slider.
+      if (e.target && e.target.closest && e.target.closest('.hud-tap')) return;
       id = e.pointerId; ox = e.clientX; oy = e.clientY;
       ring.style.left = knob.style.left = `${ox}px`;
       ring.style.top = knob.style.top = `${oy}px`;

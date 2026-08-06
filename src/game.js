@@ -12,6 +12,7 @@ import { updateHoleUniforms } from './render/groundShader.js';
 import { OcclusionSystem } from './render/occlusion.js';
 import { audio } from './core/audio.js';
 import { VoiceSystem } from './audio/voice.js';
+import { install as installPowerups } from './gameplay/powerupGlue.js';
 import { TIER_LIST } from './config.js';
 import { EntityRegistry, STATE } from './gameplay/entities.js';
 import { Hole } from './gameplay/hole.js';
@@ -365,6 +366,11 @@ export class Game {
       onCaption: (c) => { if (this.hud && this.hud.showCaption) this.hud.showCaption(c); },
       onCaptionClear: () => { if (this.hud && this.hud.clearCaptions) this.hud.clearCaptions(); },
     });
+
+    /* Power-ups. install() wraps the consume step and sets consume.reachHook,
+       so it must run after this.consume exists. It is idempotent — a second
+       call replaces the first rather than stacking two wrappers. */
+    this.powerups = installPowerups(this);
 
     const armAudio = () => {
       audio.unlock();

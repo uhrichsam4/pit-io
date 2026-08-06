@@ -648,7 +648,13 @@ export class VoiceSystem {
       const json = await res.json();
       if (gen !== this._gen) return false;    // stopAll() happened mid-fetch
 
-      const table = (json && (json.assets || json.lines || json.voices)) || json;
+      /* `entries` accepted too: the first generated manifest used that key and
+         the loader silently registered ZERO assets — it fell through to the
+         top-level object, found no `.url` on `generated` or `entries`, and
+         reported a perfectly successful load of an empty pack. The game sat in
+         captions-only mode with 111 playable files on disk. Accept the obvious
+         synonyms rather than make the manifest guess. */
+      const table = (json && (json.assets || json.entries || json.lines || json.voices)) || json;
       if (!table || typeof table !== 'object') throw new Error('shape');
 
       const base = typeof URL === 'function' ? manifestUrl : null;

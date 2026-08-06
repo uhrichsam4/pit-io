@@ -227,6 +227,53 @@ export class ConsumeSystem {
     this.respawns = [];
     this._now = 0;
     this._query = [];
+    /** Monotonic tick counter. Only used to tell "moved this frame" apart from
+     *  "moved some frame ago" without storing a timestamp per prop. */
+    this._frame = 0;
+
+    /* ---------------------------------------------------------------------
+     * OPTIONAL EXTERNAL SUCTION (Vacuum Boost lives here, and nothing else).
+     *
+     * Both default to null, which is the whole point: with no hook installed
+     * this file behaves EXACTLY as it did before, so a power-up module that
+     * fails to load costs nothing. gameplay/powerupGlue.js is what fills them
+     * in; gameplay/powerups.js supplies the pure functions behind them.
+     *
+     * Neither hook may consume, score or hide anything. They return NUMBERS.
+     * The prop is then moved by this file's own integrator and swallowed by the
+     * ordinary _touchObject -> _updateSupport -> _capture path, which is the
+     * only path that calls hole.addScore. That is deliberate: a power-up that
+     * awarded score directly, or hid a prop, or spawned a copy, produces the
+     * two worst bugs in the review rubric.
+     * ------------------------------------------------------------------- */
+
+    /**
+     * Multiplier on the per-hole SEARCH radius.
+     * @type {?(hole:object)=>number}   returns 1 when nothing is boosting.
+     *
+     * Widening the search on its own changes NOTHING about what may be eaten —
+     * every candidate still has to lose real ground in _touchObject. It only
+     * produces candidates for the pull below.
+     */
+    this.reachHook = null;
+
+    /**
+     * Inward acceleration, m/s², for a candidate the support test did not take.
+     * @type {?(hole:object, c:object, dist:number, baseR:number)=>number}
+     */
+    this.pullHook = null;
+
+    /**
+     * Per-hole cap on how many props one frame's pull may move. 0 = no cap.
+     * Not a correctness guard (capture stays geometric) but a readability one:
+     * two dozen props sliding at once is already more motion than the eye can
+     * follow, and it bounds the per-frame rehash cost.
+     */
+    this.pullLimit = 0;
+
+    /** Props currently being dragged by the pull hook but NOT yet destabilised. */
+    this.pulled = new Set();
+
     /** Eat-size multiplier, dropped during the end-of-match frenzy. */
     this.eatScale = 1.0;
     /** Set true in networked matches: the server owns kills and scores. */
@@ -290,10 +337,15 @@ export class ConsumeSystem {
   /** @param {number} dt @param {import('./hole.js').Hole[]} holes @param {number} t */
   update(dt, holes, t) {
     this._now += dt;
+    this._frame++;
     for (const hole of holes) {
       if (!hole.alive) continue;
       this._processHole(hole, dt, t);
     }
+    // BEFORE _updateSupport: a prop the pull just handed over is already in
+    // `attracted`, and the settle pass must see that and let go of it rather
+    // than fight the topple integrator for the same transform.
+    this._settlePulled(dt);
     this._updateSupport(dt, t);
     this._updateFalling(dt, t);
     this._updateRespawns(holes);
@@ -319,6 +371,7 @@ export class ConsumeSystem {
         hole: null,
         stuck: 0,                 // seconds spent destabilised without resolving
         commit: 0,                // anti-lodge shove, 0..1
+        pullFrame: -1,            // last tick an external suction hook moved it
       };
     }
     return d;
@@ -339,14 +392,41 @@ export class ConsumeSystem {
   _processHole(hole, dt, t) {
     // Reach far enough to catch anything the opening overlaps at all, even a
     // building many times its size — that object still loses ground.
-    const R = Math.max(hole.radius * HOLE.INFLUENCE_F, hole.radius + 14);
+    const baseR = Math.max(hole.radius * HOLE.INFLUENCE_F, hole.radius + 14);
+    // Vacuum Boost widens the SEARCH and nothing else. `|| 1` because a hook
+    // that returns 0/NaN must degrade to the unboosted reach rather than
+    // collapse the query to a point — this codebase fails silently, and a
+    // query radius of zero would read as "the city stopped being edible".
+    const R = this.reachHook ? baseR * (this.reachHook(hole) || 1) : baseR;
     const list = this.registry.query(hole.position.x, hole.position.z, R, this._query);
 
-    for (let i = 0; i < list.length; i++) this._touchObject(hole, list[i]);
+    if (!this.pullHook || !(R > baseR)) {
+      // Untouched fast path: no suction installed, or none active on this hole.
+      for (let i = 0; i < list.length; i++) this._touchObject(hole, list[i]);
+    } else {
+      let budget = this.pullLimit > 0 ? this.pullLimit : list.length;
+      for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        this._touchObject(hole, c);
+        // ONE integrator per prop, ever. `attracted` is the authority on who
+        // owns a prop's transform: if _touchObject just claimed it — or if
+        // another hole already had it — the support loop moves it and the pull
+        // must keep its hands off, or the two damping terms compound and heavy
+        // props crawl.
+        if (budget > 0 && !this.attracted.has(c) && this._vacuumPull(hole, c, dt, baseR)) {
+          budget--;
+        }
+      }
+    }
 
     // Objects wider than the query reach are found by centre distance alone, so
     // a hole under the corner of a 33 m car park lands outside every cell the
     // query walked. There are ~160 of them; test them exactly.
+    //
+    // Deliberately NOT offered to the pull: everything on this list has a
+    // footprint over 14 m, which is a tower, a pontoon or a superblock. They
+    // are excluded by the hook's own size gate anyway, and a building does not
+    // slide — see the contract in _updateSupport.
     const large = this.registry.large;
     for (let i = 0; i < large.length; i++) {
       const c = large[i];
@@ -354,6 +434,134 @@ export class ConsumeSystem {
       const dz = hole.position.z - c.position.z;
       if (dx * dx + dz * dz <= R * R) continue;      // the query already had it
       this._touchObject(hole, c);
+    }
+  }
+
+  /**
+   * VACUUM BOOST'S ACTUAL PULL — a real acceleration on a real prop.
+   *
+   * The prop physically travels: velocity, drag, an offset from its authored
+   * resting place, a rehash so the spatial index follows it, and a pose write.
+   * Nothing here consumes it. It arrives at the opening still standing, loses
+   * its ground in the ordinary _touchObject test, topples through
+   * _updateSupport and is swallowed by _capture — the one function that calls
+   * hole.addScore. No score is granted here, no prop is hidden here, and no
+   * copy of anything is ever created.
+   *
+   * WHY IT SETS WOBBLE
+   * The three external updaters that own a moving body's matrix — cars, boats
+   * (world/vehicles.js) and pedestrians (world/pedestrians.js) — all yield the
+   * transform the moment `state >= 1` and all take it back at IDLE. Without
+   * that handshake the traffic updater would rewrite the car's matrix from its
+   * lane every frame and the suction would show up as a jitter rather than as
+   * motion. _settlePulled owns the trip back to IDLE.
+   *
+   * @returns {boolean} true if this prop was actually moved this frame
+   */
+  _vacuumPull(hole, c, dt, baseR) {
+    if (!(dt > 0)) return false;
+    if (c.state === STATE.FALLING || c.state === STATE.GONE) return false;
+    // One suction per prop per tick. Two boosted holes reaching the same bench
+    // would otherwise add their accelerations together and fire it across the
+    // street, which is neither of their power-ups doing what it says.
+    if (c._dyn && c._dyn.pullFrame === this._frame) return false;
+
+    const dx = hole.position.x - c.position.x;
+    const dz = hole.position.z - c.position.z;
+    const d = Math.hypot(dx, dz);
+    // Normalising a zero vector is how a prop that has slid to the exact centre
+    // starts spinning on the spot.
+    if (d < 1e-3) return false;
+
+    const a = this.pullHook(hole, c, d, baseR);
+    if (!(a > 0)) return false;
+
+    // A BUILDING DOES NOT SLIDE. Not a little, not with heavy damping — the
+    // same contract _updateSupport states in capitals. A suction that dragged a
+    // storefront across its own plot would be a new way to break it.
+    const profile = c._profile ?? (c._profile = profileFor(c));
+    if (profile === FALL.SINK) return false;
+
+    const dyn = this._dyn(c);
+    const inv = 1 / d;
+    dyn.vx += dx * inv * a * dt;
+    dyn.vz += dz * inv * a * dt;
+    // The SAME damping law the attracted loop uses for its own slide, so a prop
+    // crossing from the suction into the support path does not visibly change
+    // how it moves at the handover. powerups.pullDrag() mirrors this
+    // expression; if one is ever retuned, retune both.
+    const grip = Math.exp(-(3.2 + 6.0 / Math.max(1, c.radius * 2)) * dt);
+    dyn.vx *= grip; dyn.vz *= grip;
+
+    const stepX = dyn.vx * dt, stepZ = dyn.vz * dt;
+    dyn.ox += stepX; dyn.oz += stepZ;
+    if (profile === FALL.ROLL) {
+      dyn.roll += Math.hypot(stepX, stepZ) / Math.max(0.25, c.height * 0.22);
+    }
+
+    this._restPos(c, _rest);
+    c.position.x = _rest.x + dyn.ox;
+    c.position.z = _rest.z + dyn.oz;
+    // Without the rehash the spatial index keeps the prop in the cell it came
+    // from, and the very query that is dragging it stops finding it.
+    this.registry.rehash(c);
+    // tilt is still 0 here, so this composes to "standing, translated" — the
+    // prop slides in upright and only starts to go over when it loses ground.
+    this._composePivotPose(c, dyn);
+    this._writePose(c);
+
+    if (c.state === STATE.IDLE) c.state = STATE.WOBBLE;
+    dyn.pullFrame = this._frame;
+    this.pulled.add(c);
+    return true;
+  }
+
+  /**
+   * Let go of props the suction is no longer holding.
+   *
+   * Three things have to happen or the pull leaves litter behind:
+   *   1. the residual velocity has to be bled off — _updateSupport reads
+   *      dyn.vx/vz, so a prop dropped by an expiring Vacuum Boost would
+   *      otherwise get a free running start the next time a hole came near it;
+   *   2. the prop has to be handed back to IDLE, or the traffic and crowd
+   *      updaters keep it held forever and a car dies in a live lane;
+   *   3. the set has to empty, or it grows for the whole match.
+   *
+   * It keeps whatever ground it covered. It slid there; that is where it is.
+   */
+  _settlePulled(dt) {
+    if (this.pulled.size === 0) return;
+    for (const c of this.pulled) {
+      const dyn = c._dyn;
+      // Still under suction this tick: _vacuumPull owns it.
+      if (dyn && dyn.pullFrame === this._frame) continue;
+
+      // Handed over, eaten, or reset. Whoever owns it now also owns its state.
+      if (!dyn || c.state === STATE.FALLING || c.state === STATE.GONE ||
+          this.attracted.has(c)) {
+        this.pulled.delete(c);
+        continue;
+      }
+
+      const grip = Math.exp(-(3.2 + 6.0 / Math.max(1, c.radius * 2)) * dt);
+      dyn.vx *= grip; dyn.vz *= grip;
+      const stepX = dyn.vx * dt, stepZ = dyn.vz * dt;
+      dyn.ox += stepX; dyn.oz += stepZ;
+
+      this._restPos(c, _rest);
+      c.position.x = _rest.x + dyn.ox;
+      c.position.z = _rest.z + dyn.oz;
+      this.registry.rehash(c);
+      this._composePivotPose(c, dyn);
+      this._writePose(c);
+
+      // Coasted to a stop: hand the body back. 5 cm/s is below the threshold at
+      // which the eye reads motion at this camera distance.
+      if (Math.hypot(dyn.vx, dyn.vz) < 0.05) {
+        dyn.vx = 0; dyn.vz = 0;
+        if (c.state === STATE.WOBBLE && !dyn.hole) c.state = STATE.IDLE;
+        this.pulled.delete(c);
+      }
     }
   }
 
@@ -1096,6 +1304,11 @@ export class ConsumeSystem {
     // after we have put it back.
     this.falling.length = 0;
     this.attracted.clear();
+    // Props the suction hook was dragging are in-flight interactions too. The
+    // loop below puts every one of them back at its authored spot, so leaving
+    // them in this set would have _settlePulled writing a pose over a prop the
+    // reset had already restored.
+    this.pulled.clear();
     this.respawns.length = 0;
     this._now = 0;
     this.eatScale = 1.0;
