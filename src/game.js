@@ -21,6 +21,7 @@ import { Match, PHASE } from './gameplay/match.js';
 import { getMode } from './gameplay/modes.js';
 import { activeMap } from './gameplay/maps.js';
 import { applySnow } from './world/snow.js';
+import { setBiome as setNatureBiome } from './world/nature.js';
 import { buildWorld } from './world/worldBuild.js';
 import { buildBayfront } from './world/bayfront.js';
 import { HUD, uiState } from './ui/hud.js';
@@ -178,6 +179,9 @@ export class Game {
     }
 
     this.worldSeed = worldSeed;
+    // BEFORE buildWorld: nature.js swaps species at plant time, and planting
+    // happens during the build. Setting it afterwards would be a no-op.
+    setNatureBiome(this.map.biome);
     const { layout, ctx } = buildWorld(eng.scene, this.registry, eng.renderer, worldSeed);
     this.layout = layout;
     // Hand the authoritative geometry to the two systems that place holes on

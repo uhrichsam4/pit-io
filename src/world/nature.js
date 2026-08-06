@@ -5256,6 +5256,11 @@ function bushVariant(b, r) {
  * them to leaf vertices only, so bark and stone are untouched.
  */
 const TINT_SETS = {
+  /* Winter. Bare branches are grey-brown and vary a lot tree to tree; snow-laden
+     evergreens are dark and cold with pale frosted tips. Both are multipliers
+     over the authored colour, same as every other family. */
+  winter: [0xffffff, 0xe8e2d8, 0xd8cfc2, 0xf0eae0, 0xcfc6b8, 0xe2dbcf, 0xdad2c6, 0xeee8de],
+  evergreen: [0xffffff, 0xd8e6e2, 0xc6d8d4, 0xe4efe9, 0xbccecb, 0xd0e0dc, 0xc2d4d0, 0xdcE9E4],
   palm: [0xffffff, 0xf4fbe4, 0xe0f1ea, 0xfff5dc, 0xe8f7cc, 0xdaeadd, 0xfaf0da, 0xecf8d4],
   canopy: [0xffffff, 0xeff8de, 0xdcedE2, 0xfdf3d6, 0xe4f4c9, 0xd3e5d4, 0xf6efd6, 0xe2f2dd],
   shrub: [0xffffff, 0xedf8d5, 0xd5ebd0, 0xfaf4d3, 0xe0f2c3, 0xcce2cb, 0xf2ecce, 0xd9efd6],
@@ -5278,6 +5283,33 @@ const TINT_SETS = {
 };
 
 const SPECIES = {
+  /**
+   * WINTER SPECIES. Built from the same treeVariant as everything else — a
+   * leafless tree is a normal tree whose canopy cells are bark-coloured and
+   * thin, and a spruce is a normal tree with a narrow crown. Authoring them as
+   * species rather than as a special case means they inherit placement,
+   * instancing, contact measurement, debris and consumption for free.
+   */
+  bareTree: {
+    label: 'Bare Tree', tier: TIER.LARGE, h: 9.5, rad: 1.7, cap: 1400, clear: 3.0, sep: 1.7,
+    debris: 0x6b5a48, variants: 3, tints: 'winter', rBase: 0.52, contactMax: 1.9,
+    make: treeVariant,
+    base: {
+      seed: 41, h: 9.5, trunkF: 0.52, rBot: 0.52, rTop: 0.30, bark: 'barkOak',
+      lean: 0.04, limbs: 5, crownF: 0.40, canopyF: 0.34,
+      cell: 'canopyA', cells: ['canopyA'],
+    },
+  },
+  spruce: {
+    label: 'Snow Spruce', tier: TIER.LARGE, h: 11.5, rad: 1.5, cap: 1400, clear: 2.6, sep: 1.5,
+    debris: 0x2f4a3e, variants: 3, tints: 'evergreen', rBase: 0.46, contactMax: 1.7,
+    make: treeVariant,
+    base: {
+      seed: 57, h: 11.5, trunkF: 0.22, rBot: 0.46, rTop: 0.20, bark: 'barkOak',
+      lean: 0.012, limbs: 3, crownF: 0.62, canopyF: 0.70,
+      cell: 'canopyA', cells: ['canopyA', 'canopyOlive'],
+    },
+  },
   royalA: {
     label: 'Royal Palm', tier: TIER.LARGE, h: 13.5, rad: 1.7, cap: 1300, clear: 2.8, sep: 1.5,
     debris: PALETTE.PALM_FROND, variants: 8, tints: 'palm', rBase: 0.55, contactMax: 1.9,
@@ -6213,7 +6245,40 @@ const rej = { water: 0, road: 0, building: 0, spacing: 0, occupied: 0 };
  * Place one instanced species. Returns the Consumable, or null if the ground
  * was already claimed by a building or another plant.
  */
+/**
+ * Biome. Set before buildWorld; remaps species at the single planting funnel.
+ *
+ * plant() is the ONE place every tree, palm, shrub and flower in the city goes
+ * through, so swapping the species here reaches all of them without touching a
+ * single placement rule. Nothing else in this module needs to know a biome
+ * exists, and Miami is untouched because the map is the only thing that sets it.
+ */
+let BIOME = 'tropical';
+export function setBiome(b) { BIOME = b || 'tropical'; }
+
+/** Tropical species -> their winter stand-ins. */
+const WINTER_SWAP = {
+  royalA: 'spruce', royalB: 'bareTree', queenPalm: 'spruce',
+  coconutA: 'bareTree', coconutB: 'spruce', sabal: 'spruce',
+  washingtonia: 'bareTree', bismarck: 'spruce', fanShort: 'shrub',
+  arecaClump: 'spruce', traveller: 'spruce', sago: 'shrub',
+  banyan: 'bareTree', liveOak: 'bareTree', mahogany: 'bareTree',
+  tabebuia: 'bareTree', poinciana: 'bareTree', jacaranda: 'bareTree',
+  seagrapeT: 'spruce', mangrove: 'bareTree',
+  // Flowers and bright tropicals have no winter equivalent — they simply are
+  // not there in February. Dropping them is more honest than recolouring them.
+  hibiscus: null, bougain: null, croton: null,
+  flowerPink: null, flowerYellow: null, agave: null,
+};
+
 function plant(ctx, key, x, z, rot, scale, opts = {}) {
+  if (BIOME === 'snow') {
+    if (Object.prototype.hasOwnProperty.call(WINTER_SWAP, key)) {
+      const swap = WINTER_SWAP[key];
+      if (!swap) return null;
+      key = swap;
+    }
+  }
   const def = SPECIES[key];
 
   /* Invariants first, cheapest test first. These hold for FORCED placements
