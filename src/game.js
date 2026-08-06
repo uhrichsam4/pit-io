@@ -393,6 +393,20 @@ export class Game {
        AFTER that callback is assigned or it would wrap undefined. */
     this.events = installEvents(this);
 
+    /* Fetch the voice manifest IMMEDIATELY, not on the first gesture.
+       It used to load inside armAudio, which fires once and deletes its own
+       listeners — so if that single fetch lost a race with anything, the
+       manifest stayed empty forever, mode stayed 'captions', and every line
+       rendered as text with no voice. That is precisely the reported symptom:
+       subtitles appear, nobody speaks. Measured in that state: assets 0,
+       played 0, captions 1, with the whole output chain verified healthy
+       (voiceBus 0.62, not muted, master 0.85) — nothing was broken except that
+       there was no audio to play.
+       A JSON fetch needs no AudioContext, and attachContext() promotes the mode
+       to 'audio' the moment one exists, so doing it here is strictly earlier
+       and strictly safer. */
+    this.voice.load('audio/voice/manifest.json');
+
     const armAudio = () => {
       audio.unlock();
       audio.startMusic();
@@ -400,7 +414,6 @@ export class Game {
       // and ducking controls reach it too — a second independent output would
       // ignore every one of them.
       if (audio.ctx) this.voice.attachContext(audio.ctx, audio.voiceBus || null);
-      this.voice.load('audio/voice/manifest.json');
       window.removeEventListener('pointerdown', armAudio);
       window.removeEventListener('keydown', armAudio);
     };

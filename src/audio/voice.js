@@ -639,6 +639,10 @@ export class VoiceSystem {
     if (this._durations) this._durations.clear();
 
     if (!manifestUrl || typeof fetch !== 'function') return false;
+    // Remembered so say() can retry. A pack that failed once — a slow first
+    // paint, a fetch racing the service worker — must not condemn the whole
+    // session to captions with 111 playable files sitting on disk.
+    this._manifestUrl = manifestUrl;
     try {
       const res = await fetch(manifestUrl, { cache: 'force-cache' });
       // A dev server answers a missing file with a 200 + index.html. Checking
@@ -855,7 +859,26 @@ export class VoiceSystem {
    *   module can produce a 4th simultaneous voice.
    * @returns {object|null} the handle, or null if suppressed.
    */
+  /**
+   * One retry of the manifest, on demand.
+   *
+   * Called from say() when we are still in captions mode but a URL is known.
+   * Guarded by a flag AND by "is a load already in flight", so a busy scene
+   * cannot turn a miss into a request storm.
+   */
+  _retryPack() {
+    if (this.mode === 'audio' || this._packRetried || this._packLoading) return;
+    if (!this._manifestUrl) return;
+    this._packRetried = true;
+    this._packLoading = true;
+    Promise.resolve(this.load(this._manifestUrl))
+      .catch(() => {})
+      .then(() => { this._packLoading = false; });
+  }
+
   say(category, opts = {}) {
+    // Cheap, once, and only while it would change anything.
+    if (this.mode !== 'audio') this._retryPack();
     const T = this.T;
     const cat = String(category || '');
     const list = this.lines.get(cat);
