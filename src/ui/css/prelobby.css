@@ -111,3 +111,21 @@
   [data-screen="prelobby"] .sticky-actions { flex-wrap: wrap; }
   [data-screen="prelobby"] .sticky-actions .btn { flex: 1 1 100%; }
 }
+
+/* --- launch state -------------------------------------------------------- */
+
+[data-screen="prelobby"] .pl-launch { text-align: center; }
+
+[data-screen="prelobby"] .pl-count {
+  display: flex; align-items: baseline; justify-content: center; gap: 0.35em;
+  margin-bottom: 0.5em;
+}
+[data-screen="prelobby"] .pl-count b { font-size: 2em; font-weight: 800; }
+[data-screen="prelobby"] .pl-count span { font-size: 0.85em; color: var(--dim); }
+
+[data-screen="prelobby"] .pl-clock {
+  margin-top: 0.5em; font-size: 0.85em; color: var(--dim);
+}
+[data-screen="prelobby"] .pl-clock b {
+  color: var(--sun); font-variant-numeric: tabular-nums; font-size: 1.15em;
+}

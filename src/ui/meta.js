@@ -35,6 +35,7 @@ const SCREENS = [
     deps: (d) => ({
       net: () => d.liveNet(), code: () => d.roomCode(),
       onName: d.onName, onLeave: d.onLeaveRoom,
+      lobbyInfo: d.lobbyInfo, onStartNow: d.onStartNow,
     }),
   },
   {
@@ -159,7 +160,8 @@ export async function installMeta(game, uiRoot) {
     progression,
     audio,
     /** Start an offline match in `modeId`. The only dep the lobby truly needs. */
-    onPlay: (modeId) => game.startMatch(modeId),
+    /** Play always goes through the waiting room now — see Game#queueMatch. */
+    onPlay: (modeId) => game.queueMatch(modeId),
     /** Join a room. game.js owns what that means — see Game#joinRoom. */
     onJoin: (info) => game.joinRoom(info || {}),
     onQuality: (id, level) => game.applyQuality(level),
@@ -171,6 +173,16 @@ export async function installMeta(game, uiRoot) {
     onName: (n) => { try { profile.data.name = n; profile.save(); } catch { /* ignore */ } },
     onLeaveRoom: () => { location.href = location.origin + location.pathname; },
     onLobbyFromPause: () => game.returnToLobby(),
+    /** Waiting-room state for the pre-lobby: count, target, seconds left. */
+    lobbyInfo: () => ({
+      left: game.net
+        ? (game.net.lobby ? game.net.lobby.waitLeft : null)
+        : (game.lobbyLeft == null ? null : Math.ceil(game.lobbyLeft)),
+      count: game.net ? (game.net.lobby ? game.net.lobby.players.length : 1) : 1,
+      target: game.net && game.net.lobby ? (game.net.lobby.target || 15) : 15,
+      online: !!game.net,
+    }),
+    onStartNow: () => game.startNow(),
     snapshot: () => (game.pauseSnapshot ? game.pauseSnapshot() : null),
     /**
      * settings.js draws its own FPS readout over the viewport; the game has

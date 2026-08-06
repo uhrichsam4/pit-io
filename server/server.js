@@ -32,6 +32,10 @@ const {
 } = await import('../src/net/protocol.js');
 
 const MATCH_DURATION = 150;
+/** Fill the waiting room to this many players and it launches early. */
+const LOBBY_TARGET = 15;
+/** ...and nobody waits longer than this for it, however quiet the world is. */
+const LOBBY_MAX_WAIT = 30;
 const INTERMISSION = 10;
 const PVP_RATIO = 1.18;
 const PVP_REWARD = 0.62;
@@ -57,7 +61,8 @@ class Room {
      * The host presses start when everyone is in.
      */
     this.phase = 'lobby';
-    this.timeLeft = MATCH_DURATION;
+    /** Counts DOWN in the waiting room, then becomes the match clock. */
+    this.timeLeft = LOBBY_MAX_WAIT;
     /** Whoever may press start. Moves on if they leave, so no lobby strands. */
     this.hostId = null;
     this.pendingConsumed = [];
@@ -120,11 +125,23 @@ class Room {
     this.broadcastLobby();
   }
 
+  /** The single way a match begins — host button and lobby timer both land here. */
+  beginMatch() {
+    if (this.phase === 'playing') return;
+    this.phase = 'playing';
+    this.timeLeft = MATCH_DURATION;
+    for (const c of this.clients.values()) { c.score = 0; c.r = 1.15; c.alive = true; }
+    this.broadcast(S2C.MATCH, { phase: 'playing', timeLeft: this.timeLeft, seed: this.seed });
+    this.broadcastLobby();
+  }
+
   /** The waiting-room roster. Pushed on every change, never polled. */
   lobbyState() {
     return {
       phase: this.phase,
       hostId: this.hostId,
+      target: LOBBY_TARGET,
+      waitLeft: this.phase === 'lobby' ? Math.max(0, Math.ceil(this.timeLeft)) : 0,
       players: [...this.clients.values()].map((c) => ({
         id: c.id, name: c.name, color: c.color, armed: !!c.armed, loaded: !!c.ready,
       })),
@@ -227,11 +244,7 @@ class Room {
         // the check is here rather than trusting the button to be hidden.
         if (client.id !== this.hostId) break;
         if (this.phase !== 'lobby') break;
-        this.phase = 'playing';
-        this.timeLeft = MATCH_DURATION;
-        for (const c of this.clients.values()) { c.score = 0; c.r = 1.15; c.alive = true; }
-        this.broadcast(S2C.MATCH, { phase: 'playing', timeLeft: this.timeLeft, seed: this.seed });
-        this.broadcastLobby();
+        this.beginMatch();
         break;
       }
       case C2S.PING:
@@ -275,8 +288,19 @@ class Room {
     for (const c of this.clients.values()) if (c.ready) { anyReady = true; break; }
 
     if (this.phase === 'lobby') {
-      // A waiting room has no clock. Snapshots still go out below so the
-      // roster stays live while people load.
+      /**
+       * The waiting room fills, then launches. Two ways out: enough players
+       * turn up, or the timer runs out — nobody sits in a lobby indefinitely
+       * because the world happened to be quiet.
+       *
+       * The clock only runs once somebody has actually finished loading. A
+       * client spends its whole load inside a synchronous world build, and
+       * starting the countdown against a room where everyone is still building
+       * the city drops them into a match they never saw begin.
+       */
+      if (anyReady) this.timeLeft -= dt;
+      const n = this.clients.size;
+      if (n >= LOBBY_TARGET || this.timeLeft <= 0) this.beginMatch();
     } else if (!anyReady) {
       // nothing to time yet
     } else if (this.phase === 'playing') {
@@ -290,7 +314,7 @@ class Room {
       this.timeLeft -= dt;
       if (this.timeLeft <= 0) {
         this.phase = 'lobby';
-        this.timeLeft = MATCH_DURATION;
+        this.timeLeft = LOBBY_MAX_WAIT;
         for (const c of this.clients.values()) c.armed = false;
         // The seed is fixed for the life of the room. Clients build the city
         // once, synchronously, at page load — they cannot adopt a new seed

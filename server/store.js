@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Roster cap. server.js imports this so the REST `max` and the WS refusal agree. */
-export const MAX_PLAYERS = 12;
+export const MAX_PLAYERS = 16;
 
 /** A reserved-but-never-joined lobby is garbage after this long. Ten minutes is
  *  long enough to text a friend a code and short enough that the browser does

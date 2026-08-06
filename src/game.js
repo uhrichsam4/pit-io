@@ -70,6 +70,15 @@ const RING_R0 = Math.hypot(WORLD.SIZE + RING_CX, WORLD.SIZE) + 20;
 const RING_CLOSED_AT = 0.88;
 
 /**
+ * How long the waiting room holds before it launches anyway. Mirrors
+ * LOBBY_MAX_WAIT in server/server.js — the offline lobby has to feel the same
+ * as the online one.
+ */
+const LOBBY_WAIT = 30;
+/** ...and how many players would make it start early, if there were any. */
+const LOBBY_TARGET = 15;
+
+/**
  * Score that puts a hole at exactly `r`. The inverse of Hole.radiusFor, which
  * is the documented way to set a size without hardcoding one — see the note on
  * HOLE.GROWTH_K in config.js. Modes set a starting DIAMETER-ish radius, and
@@ -1018,6 +1027,45 @@ export class Game {
   /* ------------------------------------------------------------ island --- */
 
   /**
+   * Every match now begins in the waiting room, not straight into the city.
+   *
+   * Online the server owns the rule — fifteen players or thirty seconds,
+   * whichever comes first — and this client just waits to be told. Offline
+   * there is no server and never will be fifteen players, so the same thirty
+   * seconds runs locally against the AI backfill. One entry point either way,
+   * so solo and multiplayer cannot drift into behaving differently.
+   */
+  queueMatch(modeId) {
+    this.mode = getMode(modeId || (this.mode && this.mode.id));
+    this._joinMode = this.mode.id;
+    this.enterIsland();
+    if (this.meta) {
+      this.meta.show();
+      this.meta.reset('prelobby', { code: this.netCfg && this.netCfg.enabled ? this.netCfg.room : null });
+    }
+    // Offline: run the lobby clock here. Online the server sends MATCH.
+    this.lobbyLeft = this.net ? null : LOBBY_WAIT;
+  }
+
+  /** Countdown for the offline waiting room. Returns seconds left, or null. */
+  _tickLobby(dt) {
+    if (this.lobbyLeft == null) return;
+    this.lobbyLeft -= dt;
+    if (this.lobbyLeft <= 0) {
+      this.lobbyLeft = null;
+      this.startMatch(this._joinMode);
+    }
+  }
+
+  /** Skip the wait. The lobby's own button, and the host's, both land here. */
+  startNow() {
+    if (this.net) { if (this.net.startMatch) this.net.startMatch(); return; }
+    this.lobbyLeft = null;
+    this.startMatch(this._joinMode);
+  }
+
+
+  /**
    * Drop the player onto the spawn island to wait in.
    *
    * Reuses the machinery that already exists rather than adding a lobby mode:
@@ -1054,6 +1102,7 @@ export class Game {
 
   leaveIsland() {
     if (!this.island) return;
+    this.lobbyLeft = null;
     this.onIsland = false;
     this.island.hide();
   }
@@ -1204,6 +1253,7 @@ export class Game {
     // match clock is not started, there are no bots and nothing is edible, so
     // this is deliberately NOT the match path — it is just movement.
     if (this.onIsland) {
+      this._tickLobby(dt);
       if (this.player && this.player.alive) {
         this.player.desiredDir.copy(this.input.update());
       }
