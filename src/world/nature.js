@@ -6232,14 +6232,18 @@ function factoryFor(key, variant) {
   return _factories[fk];
 }
 
-const stats = { trees: 0, palms: 0, bushes: 0, features: 0, beds: 0, instances: 0, capped: 0 };
+const stats = {
+  trees: 0, palms: 0, bushes: 0, features: 0, beds: 0, instances: 0, capped: 0,
+  /** Hero features moved off, and dropped for, a reserved clearing. */
+  featMoved: 0, featDropped: 0,
+};
 /**
  * Why sites were refused. Reported every boot, because the failure mode of a
  * placement rule is silence: a bad `sep` or an over-wide footprint just thins
  * the city out and nothing says so. If `building` or `spacing` runs away, the
  * planting has gone somewhere it should not have been asked to go.
  */
-const rej = { water: 0, road: 0, building: 0, spacing: 0, occupied: 0 };
+const rej = { water: 0, road: 0, building: 0, spacing: 0, occupied: 0, clearing: 0 };
 
 /**
  * Place one instanced species. Returns the Consumable, or null if the ground
@@ -6295,11 +6299,69 @@ function inClearing(x, z) {
   return false;
 }
 
+/**
+ * THE FUNNEL EVERY *SURFACE* HAS TO PASS, and for years did not.
+ *
+ * `plant()` refuses a clearing; `B.add()` does not, and a merged ground quad
+ * never goes near `plant()`. Measured on the shipped seed before this existed:
+ * 20,934 m² of nature.js ground lay inside reserved clearings, including a
+ * children's sandpit and its poured-rubber safety mat inside a zoo pen, a
+ * decorative pond disc on the zoo entrance plaza, 1,554 m² of painted sports
+ * court laid on top of the basketball courts props.js reserves, plaza aprons
+ * and amphitheatre terraces inside animal enclosures, and 2,315 m² of park
+ * footpath running straight through pens and courts. Turf is the one thing
+ * that is fine there — grass inside a paddock is grass — so lawn is left
+ * alone and everything with a HARD surface or a HEIGHT is tested here.
+ *
+ * A feature is a rectangle or a disc, not a point, so the rim is tested too:
+ * a 16 m sandpit whose centre happens to miss a pen still lies in it.
+ */
+function clearingFree(x, z, r) {
+  if (!CLEARINGS.length) return true;
+  if (inClearing(x, z)) return false;
+  if (r <= 0) return true;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * 6.283;
+    if (inClearing(x + Math.cos(a) * r, z + Math.sin(a) * r)) return false;
+  }
+  return true;
+}
+
+/**
+ * Could any clearing possibly touch this rectangle? Cheap early-out, and it has
+ * to be TIGHT: every caller falls back to emitting its surface in short
+ * sections when this says yes, and a loose circumradius turned a whole park's
+ * kerb line into thirty boxes because a court sat somewhere else on the block.
+ */
+function clearingsNear(x0, z0, x1, z1) {
+  for (let i = 0; i < CLEARINGS.length; i++) {
+    const c = CLEARINGS[i];
+    const ca = Math.abs(Math.cos(c.yaw)), sa = Math.abs(Math.sin(c.yaw));
+    const ex = c.hw * ca + c.hd * sa;
+    const ez = c.hw * sa + c.hd * ca;
+    if (c.x + ex < x0 || c.x - ex > x1 || c.z + ez < z0 || c.z - ez > z1) continue;
+    return true;
+  }
+  return false;
+}
+
 function plant(ctx, key, x, z, rot, scale, opts = {}) {
   if (BIOME === 'snow') {
     if (Object.prototype.hasOwnProperty.call(WINTER_SWAP, key)) {
       const swap = WINTER_SWAP[key];
       if (!swap) return null;
+      /* A SHORELINE PLANT IS ONLY ALLOWED IN WATER BECAUSE OF WHAT IT IS.
+         `opts.shoreline` bypasses the water test below, which is right for a
+         mangrove — they grow standing in the shallows. WINTER_SWAP then turns
+         mangrove into bareTree, and the exemption travelled with the position
+         instead of with the species: 115 leafless inland trees left standing
+         in the bay on the snow map, soles 40 cm under the surface.
+
+         Exactly the shape of the 346 potted palms — a swap keyed on species,
+         applied somewhere the species mattered for a reason the swap could not
+         see. A species that only earned its spot by being a mangrove does not
+         inherit that spot when it stops being one. */
+      if (opts.shoreline && ctx.layout.isWater(x, z)) { rej.water++; return null; }
       key = swap;
     }
   }
@@ -6316,7 +6378,7 @@ function plant(ctx, key, x, z, rot, scale, opts = {}) {
      nature and a court built into an already-planted park loses its hoops and
      half its fence to trees that were there first. Checked at the funnel every
      plant passes through, so no caller can miss it. */
-  if (inClearing(x, z)) { rej.clearing = (rej.clearing || 0) + 1; return null; }
+  if (inClearing(x, z)) { rej.clearing++; return null; }
   const sep = opts.sep ?? def.sep;
   if (sep > 0 && !sepFree(x, z, sep)) { rej.spacing++; return null; }
 
@@ -6421,6 +6483,76 @@ function plantOut(ctx, key, x, z, nx, nz, rot, scale, opts, steps = 3, step = 0.
 /** Circular tree pit / mulch ring under a street tree. Grounds it visually. */
 function treePit(B, x, z, r, y) {
   B.add('mulch', disc(r, 8, x, y, z, null));
+}
+
+/**
+ * A park walk, STOPPING at anything the layout reserved.
+ *
+ * Same shape as the clip zoo.js already runs on its own path network, and for
+ * the same reason it gives: a surface is the one thing in this file that
+ * nothing downstream will ever object to, so an unclipped ribbon paved a park
+ * footpath straight across a zoo pen and a reserved basketball court and no
+ * check anywhere noticed.
+ *
+ * When nothing is reserved anywhere near the run this hands the whole polyline
+ * to `ribbon()` untouched — subdividing changes the mitre at a corner very
+ * slightly, and there is no reason to change the look of the ~60 parks that do
+ * not have a clearing in them.
+ */
+function pathRibbon(B, pts, w, y, tiles) {
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  for (const p of pts) {
+    if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
+    if (p.z < z0) z0 = p.z; if (p.z > z1) z1 = p.z;
+  }
+  if (!clearingsNear(x0 - w, z0 - w, x1 + w, z1 + w)) {
+    B.add('path', ribbon(pts, w, y, tiles));
+    return;
+  }
+  let run = [];
+  const flush = () => {
+    if (run.length >= 2) B.add('path', ribbon(run, w, y, tiles));
+    run = [];
+  };
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const n = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 2));
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = (k + 1) / n, tm = (t0 + t1) / 2;
+      // Half a width of margin: a walk that stops exactly on the pen line still
+      // has its outer edge inside it.
+      if (!clearingFree(a.x + dx * tm, a.z + dz * tm, w * 0.5)) { flush(); continue; }
+      if (!run.length) run.push({ x: a.x + dx * t0, z: a.z + dz * t0 });
+      run.push({ x: a.x + dx * t1, z: a.z + dz * t1 });
+    }
+  }
+  flush();
+}
+
+/**
+ * A long low bar — a park's kerb line, its 42 cm frontage wall — that STOPS at
+ * reserved ground instead of running through it.
+ *
+ * Emitted as ONE box when nothing is reserved anywhere near it, so the geometry
+ * of every park in the city without a clearing in it is unchanged; split into
+ * ~2.4 m sections only where it has to be.
+ */
+function clippedBar(B, key, alongX, cx, cz, len, h, thick, y, tiles) {
+  const mk = (l, x, z) => B.add(key, alongX ? box(l, h, thick, x, y, z, tiles)
+    : box(thick, h, l, x, y, z, tiles));
+  const hw = alongX ? len / 2 : thick / 2;
+  const hd = alongX ? thick / 2 : len / 2;
+  if (!clearingsNear(cx - hw, cz - hd, cx + hw, cz + hd)) { mk(len, cx, cz); return; }
+  const n = Math.max(1, Math.round(len / 2.4));
+  const sl = len / n;
+  for (let k = 0; k < n; k++) {
+    const t = -len / 2 + sl * (k + 0.5);
+    const x = alongX ? cx + t : cx;
+    const z = alongX ? cz : cz + t;
+    if (!clearingFree(x, z, Math.max(sl, thick) * 0.5)) continue;
+    mk(sl, x, z);
+  }
 }
 
 /* -------------------------------------------------------------- medians --- */
@@ -6754,10 +6886,10 @@ function parkBlock(ctx, B, b, rng) {
 
   lawn(B, x0, z0, x1, z1, y, b.w >= b.d, 4.2);
   // A kerb line where the turf meets the paving — contact, not a floating edge.
-  B.add('kerb', box(hw * 2 + 0.36, 0.20, 0.18, b.x, y + 0.10, z0, 1));
-  B.add('kerb', box(hw * 2 + 0.36, 0.20, 0.18, b.x, y + 0.10, z1, 1));
-  B.add('kerb', box(0.18, 0.20, hd * 2, x0, y + 0.10, b.z, 1));
-  B.add('kerb', box(0.18, 0.20, hd * 2, x1, y + 0.10, b.z, 1));
+  clippedBar(B, 'kerb', true, b.x, z0, hw * 2 + 0.36, 0.20, 0.18, y + 0.10, 1);
+  clippedBar(B, 'kerb', true, b.x, z1, hw * 2 + 0.36, 0.20, 0.18, y + 0.10, 1);
+  clippedBar(B, 'kerb', false, x0, b.z, hd * 2, 0.20, 0.18, y + 0.10, 1);
+  clippedBar(B, 'kerb', false, x1, b.z, hd * 2, 0.20, 0.18, y + 0.10, 1);
 
   /* --- path loop -------------------------------------------------------- */
   const pin = Math.min(4.5, Math.min(hw, hd) * 0.42);
@@ -6774,12 +6906,12 @@ function parkBlock(ctx, B, b, rng) {
     // as a spreadsheet.
     const bow = Math.min(2.2, Math.min(hw, hd) * 0.14);
     loop.bow = bow;
-    B.add('path', ribbon([
+    pathRibbon(B, [
       { x: px0, z: pz0 }, { x: (px0 + px1) / 2, z: pz0 - bow }, { x: px1, z: pz0 },
       { x: px1 + bow, z: (pz0 + pz1) / 2 }, { x: px1, z: pz1 },
       { x: (px0 + px1) / 2, z: pz1 + bow }, { x: px0, z: pz1 },
       { x: px0 - bow, z: (pz0 + pz1) / 2 }, { x: px0, z: pz0 },
-    ], pw, py, 3));
+    ], pw, py, 3);
     // A spur out to the street on the frontage side.
     const fr = b.frontageStreets[0];
     if (fr) {
@@ -6788,7 +6920,7 @@ function parkBlock(ctx, B, b, rng) {
         : s === 'w' ? { x: px0, z: b.z } : { x: px1, z: b.z };
       const c = s === 'n' ? { x: b.x, z: z0 } : s === 's' ? { x: b.x, z: z1 }
         : s === 'w' ? { x: x0, z: b.z } : { x: x1, z: b.z };
-      B.add('path', ribbon([a, c], pw, py, 3));
+      pathRibbon(B, [a, c], pw, py, 3);
     }
     /* Lamps stand OUTSIDE the walking surface — on the grass, half a metre
        clear of the path edge. On it, a 4 m post is an obstacle in the middle of
@@ -6809,7 +6941,7 @@ function parkBlock(ctx, B, b, rng) {
       }
     }
   } else {
-    B.add('path', ribbon([{ x: x0, z: b.z }, { x: x1, z: b.z }], pw, py, 3));
+    pathRibbon(B, [{ x: x0, z: b.z }, { x: x1, z: b.z }], pw, py, 3);
     const n = Math.max(1, Math.round((hw * 2) / 14));
     for (let i = 0; i <= n; i++) {
       lampSites.push([x0 + (hw * 2) * (i / n), b.z + pw * 0.5 + 0.75]);
@@ -6830,6 +6962,12 @@ function parkBlock(ctx, B, b, rng) {
       else if (fr.side === 's') { hx = b.x + t; hz = z1 - 0.9; rot = 0; }
       else if (fr.side === 'w') { hx = x0 + 0.9; hz = b.z + t; rot = Math.PI / 2; }
       else { hx = x1 - 0.9; hz = b.z + t; rot = Math.PI / 2; }
+      /* A hedge unit is 3.4 m of solid mass, and `plant()` only tests the
+         point it stands on — which let the frontage run interlock with the
+         zoo's pen fencing where a pen edge came up to the block frontage
+         (measured: 8 hedge/fence pairs deep enough for the overlap audit to
+         count them). Test the mass, not the point. */
+      if (!clearingFree(hx, hz, 1.1)) continue;
       // Sit ON the turf, never on top of the wall. The wall is a 0.42 m plinth
       // 55 cm in FRONT of this line, so lifting the hedge to meet its coping
       // left a 34 cm gap of daylight under every hedge unit on a walled park —
@@ -6840,13 +6978,12 @@ function parkBlock(ctx, B, b, rng) {
     }
     if (walled) {
       const wy = ctx.Y_WALK;
-      if (horiz) {
-        B.add('stone', box(len + 1.2, 0.42, 0.5, b.x, wy + 0.21,
-          fr.side === 'n' ? z0 + 0.35 : z1 - 0.35, 1.5));
-      } else {
-        B.add('stone', box(0.5, 0.42, len + 1.2,
-          fr.side === 'w' ? x0 + 0.35 : x1 - 0.35, wy + 0.21, b.z, 1.5));
-      }
+      // A 42 cm wall is a solid object, not paint. Measured before it was
+      // clipped: 397 m2 of it stood inside zoo pens, across zoo path corridors
+      // and over the reserved basketball courts.
+      const wx = horiz ? b.x : (fr.side === 'w' ? x0 + 0.35 : x1 - 0.35);
+      const wz = horiz ? (fr.side === 'n' ? z0 + 0.35 : z1 - 0.35) : b.z;
+      clippedBar(B, 'stone', horiz, wx, wz, len + 1.2, 0.42, 0.5, wy + 0.21, 1.5);
     }
   }
 
@@ -6991,6 +7128,11 @@ function parkBlock(ctx, B, b, rng) {
       ok = !inKeep(bx, bz) && !inKeep(bx - bw / 2, bz - bd / 2)
         && !inKeep(bx + bw / 2, bz - bd / 2) && !inKeep(bx - bw / 2, bz + bd / 2)
         && !inKeep(bx + bw / 2, bz + bd / 2)
+        // A raised bed is 22 cm of kerb and 11 cm of soil: a merged surface
+        // with real height, so it needs the clearing test `plant()` gets and
+        // `B.add()` does not. Measured: 310 m2 of mulch inside zoo pens, the
+        // service yard and reserved courts before this line existed.
+        && clearingFree(bx, bz, Math.hypot(bw, bd) * 0.5)
         && !ctx.layout.isWater(bx, bz) && !inBuilding(bx, bz);
     }
     if (!ok) continue;
@@ -7163,15 +7305,40 @@ const DECK = 0.07;
  */
 function parkFeature(ctx, B, b, rng, y) {
   const small = Math.min(b.w, b.d);
-  const cx = b.x + (rng() - 0.5) * b.w * 0.16;
-  const cz = b.z + (rng() - 0.5) * b.d * 0.16;
+  let cx = b.x + (rng() - 0.5) * b.w * 0.16;
+  let cz = b.z + (rng() - 0.5) * b.d * 0.16;
   const roll = rng();
   /** @type {{x:number,z:number,r:number}[]} */
   const keep = [];
 
+  /**
+   * Put the hero feature somewhere nothing has reserved, or do not build it.
+   *
+   * A hero feature is almost entirely MERGED SURFACE — a sandpit, a painted
+   * court, a plaza apron, a pond disc, a flight of stone terraces — and none of
+   * that goes anywhere near `plant()`, so until this test existed the zoo
+   * blocks (which cityLayout re-zones to PARK) got a playground inside a lion
+   * pen and the reserved basketball courts got a second painted court laid on
+   * top of them.
+   *
+   * Draws NO rng when the nominal centre is already clear, so every park in the
+   * city without a clearing in it is built exactly as it was.
+   */
+  const site = (r) => {
+    if (clearingFree(cx, cz, r)) return true;
+    for (let t = 0; t < 12; t++) {
+      const px = b.x + (rng() - 0.5) * Math.max(0, b.w - r * 2) * 0.92;
+      const pz = b.z + (rng() - 0.5) * Math.max(0, b.d - r * 2) * 0.92;
+      if (clearingFree(px, pz, r)) { cx = px; cz = pz; stats.featMoved++; return true; }
+    }
+    stats.featDropped++;
+    return false;
+  };
+
   if (small > 30 && b.area > 1500 && roll < 0.30) {
     /* Pond with a fountain in it. */
     const pr = Math.max(4.5, Math.min(11, small * 0.26));
+    if (!site(pr + 1.2)) return keep;
     B.add('pond', disc(pr, 22, cx, y + 0.04, cz, null));
     B.add('kerb', ringWall(pr, pr + 0.5, 0.34, y, 22, 'stoneTex', cx, cz));
     ctx.occupy(cx, cz, pr + 1);
@@ -7188,6 +7355,7 @@ function parkFeature(ctx, B, b, rng, y) {
     const kind = rng.chance(0.55) ? 'hard' : 'clay';
     const rot = b.w >= b.d ? 0 : Math.PI / 2;
     const cw = Math.min(26, b.w * 0.66), cd = Math.min(15, b.d * 0.66);
+    if (!site(Math.hypot(cw, cd) * 0.5)) return keep;
     court(B, cx, cz, Math.max(cw, cd), Math.min(cw, cd), y + 0.055, kind, rot);
     ctx.occupy(cx, cz, Math.max(cw, cd) * 0.5);
     keep.push({ x: cx, z: cz, r: Math.max(cw, cd) * 0.5 + 0.8 });
@@ -7210,6 +7378,7 @@ function parkFeature(ctx, B, b, rng, y) {
        has under the fall zone, and the thing that stops the frame reading as
        furniture standing loose in a sandpit. */
     const pw = Math.min(16, b.w * 0.5), pd = Math.min(12, b.d * 0.5);
+    if (!site(Math.hypot(pw + 0.4, pd + 0.4) * 0.5)) return keep;
     B.add('sandPit', tile(pw, pd, cx, cz, y + 0.055, 5));
     B.add('safetyMat', tile(Math.min(pw - 0.6, 11.5), Math.min(pd - 0.6, 7.5),
       cx + 0.2, cz, y + 0.062, 4));
@@ -7224,6 +7393,9 @@ function parkFeature(ctx, B, b, rng, y) {
     stats.features++;
   } else if (small > 34 && roll < 0.74) {
     /* Bandshell facing an arc of amphitheatre steps. */
+    // 14 m: the shell itself claims 9.5 and the widest terrace reaches 12.2
+    // out from the centre, so this is the whole assembly, not just the stage.
+    if (!site(14)) return keep;
     plant(ctx, 'bandshell', cx, cz - b.d * 0.24, 0, 0.9 + rng() * 0.2, { clear: 0 });
     let deepest = 0;
     for (let i = 0; i < 4; i++) {
@@ -7242,6 +7414,7 @@ function parkFeature(ctx, B, b, rng, y) {
   } else if (roll < 0.88) {
     /* A small fountain on a paved apron, ringed with planters and a pergola. */
     const aw = Math.min(16, b.w * 0.52), ad = Math.min(16, b.d * 0.52);
+    if (!site(Math.hypot(aw, ad) * 0.5)) return keep;
     B.add('plazaBase', tile(aw, ad, cx, cz, y + 0.055, 6));
     B.add('plazaAccent', tile(aw, 1.6, cx, cz - ad / 2 + 0.8, y + 0.07, 2));
     B.add('plazaAccent', tile(aw, 1.6, cx, cz + ad / 2 - 0.8, y + 0.07, 2));
@@ -7260,6 +7433,7 @@ function parkFeature(ctx, B, b, rng, y) {
     stats.features++;
   } else {
     /* Public art on a plinth, ringed with paving. */
+    if (!site(6.4)) return keep;
     B.add('plazaInlay', disc(5.2, 16, cx, y + 0.055, cz, null));
     B.add('plazaAccent', disc(6.0, 16, cx, y + 0.05, cz, null));
     keep.push({ x: cx, z: cz, r: 6.4 });
@@ -7517,6 +7691,9 @@ function placeSculpture(ctx, x, z, rng, force = false, dy = 0) {
   // Same invariants as plant(): public art is not exempt from the bay or a
   // building, and `force` only ever overrules the occupancy grid.
   if (ctx.layout.isWater(x, z) || ctx.layout.isRoad(x, z) || inBuilding(x, z)) return null;
+  // ...and neither is it exempt from a reserved clearing. Every other caller of
+  // this function passes `force`, which only ever overrules the occupancy grid.
+  if (inClearing(x, z)) return null;
   if (!sepFree(x, z, 1.9)) return null;
   if (!force && !ctx.isFree(x, z, 2.6)) return null;
   ctx.occupy(x, z, 2.6);
@@ -7914,7 +8091,9 @@ export function buildNature(ctx) {
 
   stats.trees = 0; stats.palms = 0; stats.bushes = 0;
   stats.features = 0; stats.beds = 0; stats.instances = 0; stats.capped = 0;
+  stats.featMoved = 0; stats.featDropped = 0;
   rej.water = 0; rej.road = 0; rej.building = 0; rej.spacing = 0; rej.occupied = 0;
+  rej.clearing = 0;
   badContact.length = 0;
 
   // Before any planting: the shader reads nightFactor and the hole from these
@@ -7964,7 +8143,9 @@ export function buildNature(ctx) {
     + `(${Math.round(merged.tris / 1000)}k static tris) | `
     + `${nFoot} building footprints avoided | refused `
     + `${rej.building} in-building, ${rej.spacing} too close, ${rej.occupied} occupied, `
-    + `${rej.water} in water, ${rej.road} on road`
+    + `${rej.water} in water, ${rej.road} on road, ${rej.clearing} in a reserved clearing`
+    + ` | ${stats.featMoved} hero features moved off reserved ground, `
+    + `${stats.featDropped} dropped`
     + (stats.capped ? ` | WARNING ${stats.capped} plantings dropped, a pool is FULL` : '')
   );
   // Silence here is the point: it means every species still puts nothing but

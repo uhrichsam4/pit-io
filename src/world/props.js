@@ -5910,6 +5910,66 @@ const MAT_OF = {
   manholeCover: 'metal', manholeSquare: 'metal', drainGrate: 'metal', cellarHatch: 'metal',
 };
 
+/**
+ * EVERY PROP GEOMETRY IS BASE-ANCHORED. THIS IS WHERE THAT IS MADE TRUE.
+ *
+ * `put()` gives an instance exactly one Y — the sampled ground — so the mesh's
+ * own lowest vertex has to be at y = 0 or the prop does not stand on anything.
+ * A geometry whose minimum Y is ABOVE zero hangs in the air by that amount, on
+ * every instance of that kind, forever. gStringArch's header already states the
+ * rule ("a cable hanging in mid-air has no ground contact... the placement
+ * audit counts every one of them as a floating prop"); nothing enforced it.
+ *
+ * An audit of the built city found five kinds off the floor, all of them the
+ * same authoring slip rather than a decision:
+ *
+ *    bagDuffel     +60.0 mm  the bag's lathe profile simply starts at y=0.06,
+ *                            so it floats with its uncapped underside showing
+ *    aboardPoster  +15.8 mm
+ *    dumpster      +13.4 mm  a 6-gon castor of radius 0.10 on an axle at 0.10:
+ *                            the flat of the hexagon is only 0.0866 out, so the
+ *                            wheel never reaches the ground it is drawn on
+ *    hotdogStand    +5.0 mm  same faceting, 7-gon wheels
+ *    stockTrolley   +3.7 mm  same faceting, 5-gon castors
+ *
+ * Seating the merged geometry is the fix the geometry itself wants, and it is
+ * self-correcting: it recomputes from the real mesh on every build, so an
+ * author who later fixes gBagDuffel by hand gets minY 0 and this does nothing.
+ * A hard-coded per-kind offset table would silently lift that fixed bag 6 cm.
+ *
+ * It can only ever move a prop DOWN onto the ground, never up, so the mitred
+ * end of a splayed leg — a café table's toe pads sit at y=0.004 while the
+ * rounded end of its leg tube reaches 23 mm below, and a picnic table's canted
+ * 9 cm legs reach 33 mm below — is deliberately left alone. That geometry is
+ * under the pavement, which is where the bottom of a buried leg belongs;
+ * lifting it to graze the surface would float the foot instead.
+ *
+ * CAP. Above this a prop is not mis-anchored, it is meant to be up there (a
+ * basket on a lamp bracket is the case `put`'s claimR doc describes), and
+ * dropping it to the kerb would be the louder bug. Say so instead of guessing.
+ */
+const SEAT_MAX = 0.12;
+
+/** Kinds this actually moved, and by how much — reported at the end of the pass. */
+const _seated = [];
+
+function seatToGround(geo, key) {
+  geo.computeBoundingBox();
+  const lift = geo.boundingBox.min.y;
+  if (!(lift > 1e-4)) return;
+  if (lift > SEAT_MAX) {
+    console.warn(
+      `[props] ${key} is authored ${(lift * 100).toFixed(1)} cm off the ground, ` +
+      `past the ${(SEAT_MAX * 100).toFixed(0)} cm seating cap — left where it is. ` +
+      'If it is meant to stand on the ground, anchor its geometry at y=0.'
+    );
+    return;
+  }
+  geo.translate(0, -lift, 0);
+  geo.computeBoundingBox();
+  _seated.push(`${key} ${(lift * 1000).toFixed(1)}mm`);
+}
+
 const _geoCache = new Map();
 function geometryFor(key) {
   let geo = _geoCache.get(key);
@@ -5917,6 +5977,10 @@ function geometryFor(key) {
     const m = new M();
     DEFS[key].g(m);
     geo = m.geometry();
+    // Before the cache, so contactBox() and worldBuild both measure the seated
+    // mesh. A pure translation, so neither the contact radius nor the height
+    // it reports changes — only where the thing sits relative to its origin.
+    seatToGround(geo, key);
     _geoCache.set(key, geo);
   }
   return geo;
@@ -6234,8 +6298,47 @@ class Placer {
         hw: b.court.hw + 0.8, hd: b.court.hd + 0.8,
       });
     }
+    /* THE ZOO. cityLayout reserves the district and flags its blocks `b.zoo`;
+       nature.js keeps the pens, paths, entrance plaza and service yard clear at
+       its own funnel. This module knew nothing about any of it, and because the
+       zoo re-zones its blocks to PARK so buildings.js leaves them alone, every
+       park and plaza pass here treated the zoo as ordinary city ground.
+
+       Measured on the built city, that put 380 pieces of street furniture
+       inside the zoo: 187 in the animal habitats — an outdoor bar, a DJ booth,
+       a speaker stack, four parasols and fifteen picnic tables standing in the
+       pens — 160 along the paths, 19 in the entrance plaza and 14 in the yard.
+       The path ones were also the map's single biggest source of buried props:
+       zoo.js runs AFTER this module and lays `zoo-path` about 70 mm proud of
+       the ground the placer sampled, so 152 bollards, meters, bins and bus stop
+       flags ended up seven centimetres under a surface that did not exist yet.
+       Nothing here can see that surface — it is built two modules later — so
+       the fix is to not build on ground the zoo is going to pave.
+
+       Nothing is lost by standing back: zoo.js furnishes its own district, and
+       it does it by BORROWING these very pools (`gZooBenchAlt` borrows
+       `benchSlat`, `gZooBinAlt` borrows `binMesh`, `gZooLampAlt` borrows
+       `lampPark`), at the height it actually built. A city parking meter in the
+       flamingo pen was never the intent; a zoo bench on the zoo path is.
+
+       Margins match nature.js's exactly, so both modules reserve the same
+       shapes. All zoo rectangles are axis-aligned — cityLayout picks the site
+       off the road-free span grid — hence yaw 0. */
+    const zoo = ctx.layout.zoo;
+    if (zoo) {
+      const keep = (r, pad) => {
+        if (!r) return;
+        this.clearings.push({ x: r.x, z: r.z, yaw: 0, hw: r.w / 2 + pad, hd: r.d / 2 + pad });
+      };
+      for (const h of zoo.habitats || []) keep(h, 0.8);
+      for (const p of zoo.paths || []) keep(p, 0.3);
+      keep(zoo.entrance, 1.0);
+      keep(zoo.yard, 1.0);
+    }
     this.inCourt = false;      // true only while the court builds itself
-    this.rejected = { water: 0, bridge: 0, scenery: 0, occupied: 0, road: 0, void: 0 };
+    this.rejected = {
+      water: 0, bridge: 0, scenery: 0, occupied: 0, road: 0, void: 0, clearing: 0,
+    };
     /* Named counters for the COMPOSED layouts. A terrace or an entrance is
        either there or it is not, and when it is not there is nothing in the
        frame to notice — unlike a missing bin, which is invisible. The first
@@ -6490,7 +6593,16 @@ class Placer {
       `${((this.items.length / this.tried) * 100).toFixed(0)}% of ${this.tried} attempts placed ` +
       `| refused: ${rj.occupied} occupied, ${rj.scenery} into scenery, ` +
       `${rj.bridge} on a bridge, ${rj.water} in water, ` +
-      `${rj.road} on the carriageway or a crossing ramp, ${rj.void} over nothing`
+      `${rj.road} on the carriageway or a crossing ramp, ${rj.void} over nothing, ` +
+      `${rj.clearing} into a reserved clearing (court or zoo)`
+    );
+    /* Both of these are silent by construction — a prop that is 13 mm off the
+       floor and a prop that never got placed inside an animal pen look exactly
+       like a working build. Print the numbers or nobody will ever know. */
+    console.info(
+      _seated.length
+        ? `[props] seated ${_seated.length} floating geometries: ${_seated.join(', ')}`
+        : '[props] no floating geometries — every prop mesh is anchored at y=0'
     );
     console.info(
       `[props] composed: ${ty.terrace} terraces ` +
@@ -7879,6 +7991,14 @@ function courtScene(pl, b, r) {
   surf.receiveShadow = true;
   surf.castShadow = false;
   pl.ctx.addMesh(surf, { group: 'props', decor: true });
+  /* The court is NEW GROUND, and it is the only ground this module lays itself.
+     `Ground` is built once in the Placer's constructor, so without this the
+     sampler still reports the lawn underneath and every piece the court then
+     stands on its own surface — hoops, ball baskets, the kit bags courtside —
+     is planted up to 8 cm below the tarmac it is supposed to be sitting on.
+     Registering the mesh is the same measure-don't-predict rule the sampler
+     exists for; it just has to happen the moment the surface appears. */
+  pl.ground._add(surf);
 
   /* --- hoops. Backboard is authored facing +z, so +PI/2 turns it to +x. --- */
   const before = { ...pl.rejected };
@@ -7910,7 +8030,14 @@ function courtScene(pl, b, r) {
     for (const sz of [-1, 1]) {
       // Inside the fence line, in the corner run-off. Outside it they were
       // off the block entirely on the smaller parks.
-      const fx = sx * (hw - 0.9), fz = sz * (hd - 0.9);
+      /* Set IN from the fence, not beside it. At hw-0.9 the mast stood 0.9 m
+         from a fence line whose panels claim 0.3 and whose posts are 0.055
+         thick — geometrically legal, visually a floodlight growing out of the
+         chain-link. The audit found it 33 times in 43 courts, the single most
+         systematic overlap on the map. Earlier I had them OUTSIDE the fence,
+         which put them off the block on smaller parks; 2.1 m inside clears the
+         mesh and still reads as a corner mast. */
+      const fx = sx * (hw - 2.1), fz = sz * (hd - 2.1);
       pl.put('courtFlood', X(fx, fz), Z(fx, fz), 0, 1, null, 0.24);
     }
   }
