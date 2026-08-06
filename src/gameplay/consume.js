@@ -600,15 +600,30 @@ export class ConsumeSystem {
        things that never actually move. carTip/carSlide/clatter/creak all
        existed in the engine with ZERO call sites; this is where three of them
        belong. Positional, so you hear which side of you it happened on. */
-    if (c.state !== STATE.WOBBLE) {
-      const k = (c.kind || '');
-      const x = c.position.x, z = c.position.z;
-      if (/car|sedan|suv|taxi|van|truck|bus|pickup|hatch|sport|convert|police|ambul/i.test(k)) {
-        audio.carTip(x, z);
-      } else if (c.crumbles || (c.tier && c.tier.id >= 5)) {
-        audio.creak(x, z, Math.min(1, c.radius / 14));
-      } else if (c.tier && c.tier.id <= 1) {
-        audio.clatter(Math.min(1, Math.max(0.15, c.radius / 2)), x, z);
+    /* THROTTLED, and the throttle is the whole point.
+       Wiring this to every destabilisation was a mistake: a growing hole tips
+       dozens of props per frame, and audio._slot() only issues a voice every
+       26 ms inside a 300 ms window. Hundreds of requests a second against a
+       38-a-second budget saturates the allocator, every later request is
+       FOLDED rather than played, and the casualties are the sounds that
+       matter — swallows, growth, dialogue. Sirens survived only because loops
+       bypass _slot entirely, which is exactly the symptom that was reported:
+       "the only sounds I hear are the cops".
+
+       So: at most a few topples a second, and only for things worth hearing.
+       Litter clatter is dropped entirely — it is the highest-volume event in
+       the game and the least worth a voice. */
+    if (c.state !== STATE.WOBBLE && hole.isPlayer) {
+      const now = this._now || 0;
+      if (now - (this._lastTopple || -9) > 0.28) {
+        const k = (c.kind || '');
+        const big = c.crumbles || (c.tier && c.tier.id >= 5);
+        const veh = /car|sedan|suv|taxi|van|truck|bus|pickup|hatch|sport|convert|police|ambul/i.test(k);
+        if (veh || big) {
+          this._lastTopple = now;
+          if (veh) audio.carTip(c.position.x, c.position.z);
+          else audio.creak(c.position.x, c.position.z, Math.min(1, c.radius / 14));
+        }
       }
     }
     c.state = STATE.WOBBLE;

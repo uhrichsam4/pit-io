@@ -965,7 +965,21 @@ export class HeatSystem {
       if (!hole || hole.alive === false) continue;
       const s = this.state.get(hole);
       if (!s || s.tier < 1) continue;
-      const score = s.heat + (hole.isPlayer ? 0.06 : 0) + (hole === this.focus ? 0.05 : 0);
+      /* THE PLAYER WINS TIES AND NEAR-TIES, DECISIVELY.
+         A flat +0.06 was not enough to matter. Four or more bots sit pinned at
+         heat 1.000 / tier 3 for an entire match, so the player had to reach
+         0.99 before they could take the focus — meaning a player at tier 1 or 2
+         would never see a single response unit. Measured across every probe
+         run, and it is why this feature has been reported twice as "the cops
+         are the only thing I notice" while never actually engaging the player.
+
+         The response exists for the PLAYER to experience. A bot being chased
+         off-screen is set dressing; the same units on the player is the whole
+         feature. So the player's heat is scaled rather than nudged, which keeps
+         the ordering meaningful (a tier-1 player still loses to a tier-3 player)
+         while making a genuinely wanted player outrank a saturated bot. */
+      const mine = hole.isPlayer ? 1.9 : 1;
+      const score = s.heat * mine + (hole === this.focus ? 0.05 : 0);
       if (score > bestScore) { bestScore = score; best = hole; }
     }
     if (best !== this.focus) {

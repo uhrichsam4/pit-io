@@ -666,3 +666,26 @@ html.no-subtitles .vo-captions { display: none; }
   .vo-cap { transition: opacity .12s linear; transform: none; }
   .vo-cap.on { transform: none; }
 }
+
+/* Sound-test panel (Shift+A). Utilitarian on purpose: it is a diagnostic the
+   owner drives with their ears, not a shipped surface. */
+#sfx-test {
+  position: fixed; right: 12px; top: 12px; z-index: 9999;
+  width: min(320px, 46vw); max-height: 86vh; overflow-y: auto;
+  background: rgba(10, 12, 18, .95); border: 1px solid #39404a; border-radius: 6px;
+  padding: 10px 12px 12px; color: #e8ecf2;
+  font: 12px/1.4 ui-monospace, Menlo, monospace;
+}
+#sfx-test h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: .04em;
+  display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+#sfx-test #sfx-x { background: #3a2029; border-color: #6b3040; }
+#sfx-rows { display: flex; flex-direction: column; gap: 3px; }
+#sfx-test button {
+  font: inherit; text-align: left; cursor: pointer;
+  background: #1d2430; color: #dfe6ee; border: 1px solid #39404a;
+  border-radius: 3px; padding: 5px 8px;
+}
+#sfx-test button:hover { background: #27303e; }
+#sfx-test button:focus-visible { outline: 2px solid #7fd4ff; outline-offset: 1px; }
+#sfx-test button[data-hit]::after { content: ' ✓' attr(data-hit); color: #6fd0a8; }
+#sfx-test button.bad { background: #3a1c22; border-color: #7a3040; color: #ffc3ce; }
