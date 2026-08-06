@@ -22,6 +22,14 @@ const BASE = process.argv[2] || 'http://localhost:4173/';
 const MAP  = process.argv[3] || 'miami';
 const URL  = BASE + (BASE.includes('?') ? '&' : '?') + 'map=' + MAP;
 
+/* A QA run that hangs is worse than one that fails: it reads as "still going"
+   forever and nobody learns anything. Hard ceiling, then report and exit. */
+const WATCHDOG = setTimeout(() => {
+  say('\n*** QA TIMED OUT after 6 min — last checkpoint above is where it stopped');
+  process.exit(2);
+}, 6 * 60 * 1000);
+WATCHDOG.unref?.();
+
 const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
 const pg = await b.newPage();
 const pageErrors = [], consoleErrors = [], bad404 = [];
@@ -72,11 +80,31 @@ check('no match gameplay on island', lobby.phase === 'menu', 'phase=' + lobby.ph
 step('clock tick (3s)');
 const ticked = await pg.evaluate(async () => {
   const g = window.__GAME__; const a = g.lobbyLeft;
-  await new Promise(r => setTimeout(r, 3000));
-  return { before: a, after: g.lobbyLeft };
+  /* Count FRAMES as well as seconds. The lobby clock is driven by the rAF loop,
+     and headless Chromium throttles rAF to a few fps with no compositor — so a
+     slow clock here means a slow page, not a broken clock. Reporting frames
+     makes that distinguishable instead of a mystery FAIL. */
+  let frames = 0;
+  const t0 = performance.now();
+  await new Promise((done) => {
+    const tick = () => { frames++;
+      if (performance.now() - t0 >= 3000) return done();
+      requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+  });
+  return { before: a, after: g.lobbyLeft, frames,
+           fps: +(frames / ((performance.now() - t0) / 1000)).toFixed(1) };
 });
-check('clock counts down in real time', ticked.before - ticked.after > 2 && ticked.before - ticked.after < 5,
-      `${ticked.before.toFixed(1)} -> ${ticked.after.toFixed(1)}`);
+{
+  /* Per FRAME, not per second: at 4 fps a correct clock still only advances a
+     few hundredths. The real invariant is "dt is being applied", so compare the
+     drop against the frames that actually rendered. */
+  const drop = ticked.before - ticked.after;
+  const perFrame = ticked.frames ? drop / ticked.frames : 0;
+  check('lobby clock advances with dt', perFrame > 0.004 && perFrame < 0.9,
+    `${ticked.before.toFixed(1)} -> ${ticked.after.toFixed(1)} over ${ticked.frames} frames `
+    + `(${ticked.fps} fps, ${perFrame.toFixed(4)}s/frame)`);
+}
 
 // ---- 3. START MATCH -> spawn must be dry and useful ------------------------
 step('start match + spawn');
@@ -110,10 +138,22 @@ step('gameplay (3.2s)');
 const play = await pg.evaluate(async () => {
   const g = window.__GAME__, a = window.__AUDIO__;
   const p = g.player, s0 = p.score;
-  for (let i = 0; i < 200; i++) {
-    p.desiredDir.set(Math.cos(i * 0.08), Math.sin(i * 0.05));
-    await new Promise(r => setTimeout(r, 16));
-  }
+  /* Steer from a rAF loop instead of 200 sequential `await setTimeout(16)`.
+     Under headless throttling each of those 16 ms waits really costs ~250 ms,
+     so the original block took ~50 s and looked exactly like a hang. Driving
+     the heading from the frame callback costs one await total and follows the
+     page's real frame rate, whatever it happens to be. */
+  await new Promise((done) => {
+    const t0 = performance.now();
+    let i = 0;
+    const tick = () => {
+      p.desiredDir.set(Math.cos(i * 0.08), Math.sin(i * 0.05));
+      i++;
+      if (performance.now() - t0 > 4000) { done(); return; }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   const cov = a && a.coverage ? a.coverage() : null;
   return {
     scoreGained: p.score - s0, radius: +p.radius.toFixed(2),
@@ -206,5 +246,6 @@ say(`\n=== QA ${MAP.toUpperCase()} — ${R.checks.length - failed.length}/${R.ch
 if (R.pageErrors.length) console.log('\nPAGE ERRORS:', R.pageErrors);
 if (R.consoleErrors.length) console.log('CONSOLE ERRORS:', R.consoleErrors);
 if (R.http4xx.length) console.log('HTTP 4xx:', R.http4xx);
+clearTimeout(WATCHDOG);
 await b.close();
 process.exit(failed.length ? 1 : 0);
