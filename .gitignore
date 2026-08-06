@@ -21,6 +21,10 @@ shots/
 **/api*key*.txt
 **/*api-keys*
 secrets/
-# Generated voice audio is large and rebuildable from the line library.
-public/audio/voice/
+# NOTE: public/audio/voice/ is deliberately NOT ignored. It looked like a build
+# artefact — generated, large, rebuildable — so it was ignored at first. But
+# Render builds from git and `vite build` only copies public/ into dist/, so
+# ignoring the source meant the deployed game would have shipped completely
+# silent while working perfectly on this machine. It is 3.6 MB of committed
+# asset; regenerating it needs an API key the deploy does not have.
 samples/

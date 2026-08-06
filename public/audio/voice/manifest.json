@@ -1,0 +1,782 @@
+{
+ "generated": 111,
+ "entries": {
+  "notice-mina-sinkhole": {
+   "url": "audio/voice/notice-mina-sinkhole.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 29301,
+   "sig": "33697a96017d"
+  },
+  "notice-mina-street-thing": {
+   "url": "audio/voice/notice-mina-street-thing.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 30973,
+   "sig": "1a44676ce3b9"
+  },
+  "notice-orla-not-this-morning": {
+   "url": "audio/voice/notice-orla-not-this-morning.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 27211,
+   "sig": "f1eb4438fc8b"
+  },
+  "notice-dax-eating-patio": {
+   "url": "audio/voice/notice-dax-eating-patio.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 29301,
+   "sig": "6cf2d1d9a14d"
+  },
+  "notice-tavo-new-pothole": {
+   "url": "audio/voice/notice-tavo-new-pothole.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 33898,
+   "sig": "e54e4531ddf8"
+  },
+  "notice-marla-movement-plaza": {
+   "url": "audio/voice/notice-marla-movement-plaza.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 30137,
+   "sig": "d4d3f61e5d34"
+  },
+  "notice-ike-that-is-a-hole": {
+   "url": "audio/voice/notice-ike-that-is-a-hole.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 24703,
+   "sig": "fab99739520b"
+  },
+  "notice-odetta-how-unusual": {
+   "url": "audio/voice/notice-odetta-how-unusual.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 24703,
+   "sig": "b6c35ae8c949"
+  },
+  "notice-zee-look-at-the-ground": {
+   "url": "audio/voice/notice-zee-look-at-the-ground.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 22613,
+   "sig": "9b399dcde6ad"
+  },
+  "notice-jun-seeing-this-sidewalk": {
+   "url": "audio/voice/notice-jun-seeing-this-sidewalk.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 33062,
+   "sig": "deefe17300ab"
+  },
+  "notice-tavo-what-the-heck": {
+   "url": "audio/voice/notice-tavo-what-the-heck.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 33898,
+   "sig": "c9382bcbc496"
+  },
+  "flee-mina-nope": {
+   "url": "audio/voice/flee-mina-nope.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 20524,
+   "sig": "53a0750501d0"
+  },
+  "flee-orla-off-the-sidewalk": {
+   "url": "audio/voice/flee-orla-off-the-sidewalk.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 31391,
+   "sig": "7f191849297a"
+  },
+  "flee-dax-out-the-back": {
+   "url": "audio/voice/flee-dax-out-the-back.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 23449,
+   "sig": "12b863f27e1e"
+  },
+  "flee-jun-running-and-filming": {
+   "url": "audio/voice/flee-jun-running-and-filming.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 37660,
+   "sig": "9bdb24461777"
+  },
+  "flee-tavo-reversing": {
+   "url": "audio/voice/flee-tavo-reversing.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 34316,
+   "sig": "19d0a1093436"
+  },
+  "flee-zee-go-go-go": {
+   "url": "audio/voice/flee-zee-go-go-go.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 17598,
+   "sig": "40270566d70e"
+  },
+  "flee-marla-clear-the-plaza": {
+   "url": "audio/voice/flee-marla-clear-the-plaza.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 28465,
+   "sig": "257530c8611b"
+  },
+  "flee-odetta-walk-briskly": {
+   "url": "audio/voice/flee-odetta-walk-briskly.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 30973,
+   "sig": "ba87000b94ab"
+  },
+  "flee-ike-leaving-now": {
+   "url": "audio/voice/flee-ike-leaving-now.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 31391,
+   "sig": "619d091fc907"
+  },
+  "near-miss-mina-way-too-close": {
+   "url": "audio/voice/near-miss-mina-way-too-close.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 25539,
+   "sig": "df79612d12f1"
+  },
+  "near-miss-zee-got-my-shoe": {
+   "url": "audio/voice/near-miss-zee-got-my-shoe.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 24285,
+   "sig": "23cfc24d41bd"
+  },
+  "near-miss-dax-one-more-step": {
+   "url": "audio/voice/near-miss-dax-one-more-step.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 21777,
+   "sig": "2ee7377a737d"
+  },
+  "near-miss-tavo-you-missed": {
+   "url": "audio/voice/near-miss-tavo-you-missed.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 29301,
+   "sig": "061499c9de6a"
+  },
+  "near-miss-orla-my-actual-heart": {
+   "url": "audio/voice/near-miss-orla-my-actual-heart.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 32226,
+   "sig": "275b98b324a7"
+  },
+  "near-miss-jun-that-was-the-clip": {
+   "url": "audio/voice/near-miss-jun-that-was-the-clip.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 26375,
+   "sig": "6f5577d68530"
+  },
+  "near-miss-odetta-nearly-the-bench": {
+   "url": "audio/voice/near-miss-odetta-nearly-the-bench.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 33062,
+   "sig": "fc7184bf02e0"
+  },
+  "near-miss-marla-backing-off": {
+   "url": "audio/voice/near-miss-marla-backing-off.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 27629,
+   "sig": "7d13b5c43890"
+  },
+  "prop-eaten-orla-my-table": {
+   "url": "audio/voice/prop-eaten-orla-my-table.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 28465,
+   "sig": "09dcdbf654c6"
+  },
+  "prop-eaten-dax-whole-patio": {
+   "url": "audio/voice/prop-eaten-dax-whole-patio.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 21777,
+   "sig": "105d3ed8e4c8"
+  },
+  "prop-eaten-dax-espresso-machine": {
+   "url": "audio/voice/prop-eaten-dax-espresso-machine.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 35152,
+   "sig": "133b06c27dbb"
+  },
+  "prop-eaten-ike-city-property": {
+   "url": "audio/voice/prop-eaten-ike-city-property.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 29301,
+   "sig": "b31b1f702492"
+  },
+  "prop-eaten-odetta-sitting-there": {
+   "url": "audio/voice/prop-eaten-odetta-sitting-there.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 35988,
+   "sig": "453f0691c72a"
+  },
+  "prop-eaten-marla-barrier-and-sign": {
+   "url": "audio/voice/prop-eaten-marla-barrier-and-sign.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 39750,
+   "sig": "70e1cebe934a"
+  },
+  "prop-eaten-tavo-parking-meter": {
+   "url": "audio/voice/prop-eaten-tavo-parking-meter.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 35152,
+   "sig": "23d8f8f3e6fd"
+  },
+  "prop-eaten-mina-whole-palm-tree": {
+   "url": "audio/voice/prop-eaten-mina-whole-palm-tree.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 47691,
+   "sig": "408a36ee488d"
+  },
+  "prop-eaten-zee-bike-rack": {
+   "url": "audio/voice/prop-eaten-zee-bike-rack.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 18852,
+   "sig": "642c0f526cc9"
+  },
+  "car-danger-tavo-move-the-car": {
+   "url": "audio/voice/car-danger-tavo-move-the-car.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 35988,
+   "sig": "c37ae1613584"
+  },
+  "car-danger-orla-that-is-my-car": {
+   "url": "audio/voice/car-danger-orla-that-is-my-car.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 34316,
+   "sig": "6deff5edad2f"
+  },
+  "car-danger-marla-van-off-plaza": {
+   "url": "audio/voice/car-danger-marla-van-off-plaza.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 27629,
+   "sig": "f2e4d258de1c"
+  },
+  "car-danger-dax-truck-sliding": {
+   "url": "audio/voice/car-danger-dax-truck-sliding.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 24703,
+   "sig": "5e4801935a20"
+  },
+  "car-danger-ike-nobody-park-here": {
+   "url": "audio/voice/car-danger-ike-nobody-park-here.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 27629,
+   "sig": "e8c9e6a55b4a"
+  },
+  "car-danger-mina-taxi-tilting": {
+   "url": "audio/voice/car-danger-mina-taxi-tilting.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 23449,
+   "sig": "d8848ee04ce9"
+  },
+  "car-danger-jun-get-the-angle": {
+   "url": "audio/voice/car-danger-jun-get-the-angle.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 34316,
+   "sig": "0889fa049e1e"
+  },
+  "car-danger-tavo-not-the-taxi": {
+   "url": "audio/voice/car-danger-tavo-not-the-taxi.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 51035,
+   "sig": "0e0562889140"
+  },
+  "creator-jun-not-going-to-believe": {
+   "url": "audio/voice/creator-jun-not-going-to-believe.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 30973,
+   "sig": "775db076976c"
+  },
+  "creator-jun-new-upload": {
+   "url": "audio/voice/creator-jun-new-upload.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 38078,
+   "sig": "72802732388c"
+  },
+  "creator-jun-like-subscribe-evacuate": {
+   "url": "audio/voice/creator-jun-like-subscribe-evacuate.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 27629,
+   "sig": "8220533c3e0d"
+  },
+  "creator-jun-getting-closer": {
+   "url": "audio/voice/creator-jun-getting-closer.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 23449,
+   "sig": "63147724ae6c"
+  },
+  "creator-jun-somebody-clip-that": {
+   "url": "audio/voice/creator-jun-somebody-clip-that.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 38914,
+   "sig": "c8a35592d6f8"
+  },
+  "creator-mina-please-be-filming": {
+   "url": "audio/voice/creator-mina-please-be-filming.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 38914,
+   "sig": "5a127b557034"
+  },
+  "creator-zee-put-me-in-the-video": {
+   "url": "audio/voice/creator-zee-put-me-in-the-video.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 18016,
+   "sig": "806a1878ff05"
+  },
+  "police-warning-marla-street-furniture": {
+   "url": "audio/voice/police-warning-marla-street-furniture.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 41004,
+   "sig": "bb6295171fbb"
+  },
+  "police-warning-ike-not-a-parking-space": {
+   "url": "audio/voice/police-warning-ike-not-a-parking-space.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 29301,
+   "sig": "43ae8d9d8fd7"
+  },
+  "police-warning-vale-move-away-plaza": {
+   "url": "audio/voice/police-warning-vale-move-away-plaza.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 31391,
+   "sig": "8c84ea723ef2"
+  },
+  "police-warning-vale-bigger-containment": {
+   "url": "audio/voice/police-warning-vale-bigger-containment.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 30137,
+   "sig": "3cbf356af634"
+  },
+  "police-warning-marla-keep-back": {
+   "url": "audio/voice/police-warning-marla-keep-back.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 26375,
+   "sig": "43454821c514"
+  },
+  "police-warning-vale-headed-downtown": {
+   "url": "audio/voice/police-warning-vale-headed-downtown.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 34316,
+   "sig": "96ac2174617d"
+  },
+  "police-warning-marla-brand-new-patrol-car": {
+   "url": "audio/voice/police-warning-marla-brand-new-patrol-car.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 34316,
+   "sig": "a28b2aad8c03"
+  },
+  "police-warning-ike-step-away-crosswalk": {
+   "url": "audio/voice/police-warning-ike-step-away-crosswalk.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 39750,
+   "sig": "3345a869e55f"
+  },
+  "police-warning-vale-hold-perimeter": {
+   "url": "audio/voice/police-warning-vale-hold-perimeter.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 29301,
+   "sig": "14935fcc98ea"
+  },
+  "court-zee-going-under": {
+   "url": "audio/voice/court-zee-going-under.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 22613,
+   "sig": "809a10b519d9"
+  },
+  "court-zee-game-point": {
+   "url": "audio/voice/court-zee-game-point.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 20942,
+   "sig": "2a45ff0a285e"
+  },
+  "court-zee-my-ball": {
+   "url": "audio/voice/court-zee-my-ball.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 30973,
+   "sig": "d17578855c68"
+  },
+  "court-odetta-children-lost-court": {
+   "url": "audio/voice/court-odetta-children-lost-court.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 33062,
+   "sig": "9733030fbfdf"
+  },
+  "court-mina-hoop-tipped-over": {
+   "url": "audio/voice/court-mina-hoop-tipped-over.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 24285,
+   "sig": "25b3d5253c02"
+  },
+  "court-marla-everyone-off-court": {
+   "url": "audio/voice/court-marla-everyone-off-court.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 37660,
+   "sig": "d9a07fde5767"
+  },
+  "zoo-marla-safe-route": {
+   "url": "audio/voice/zoo-marla-safe-route.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 29301,
+   "sig": "a776f15ba5cf"
+  },
+  "zoo-odetta-open-the-far-gate": {
+   "url": "audio/voice/zoo-odetta-open-the-far-gate.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 34316,
+   "sig": "0385bcf565c3"
+  },
+  "zoo-ike-fence-down-at-habitat": {
+   "url": "audio/voice/zoo-ike-fence-down-at-habitat.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 33898,
+   "sig": "325c5a6e4133"
+  },
+  "zoo-mina-flamingos-are-calm": {
+   "url": "audio/voice/zoo-mina-flamingos-are-calm.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 31391,
+   "sig": "73598c03fcb1"
+  },
+  "zoo-orla-count-the-animals": {
+   "url": "audio/voice/zoo-orla-count-the-animals.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 35152,
+   "sig": "54b132fcfb00"
+  },
+  "zoo-odetta-pelicans-flew-off": {
+   "url": "audio/voice/zoo-odetta-pelicans-flew-off.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 35988,
+   "sig": "dac9f59528bc"
+  },
+  "storm-start-ike-off-the-bay": {
+   "url": "audio/voice/storm-start-ike-off-the-bay.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 29301,
+   "sig": "caadda427f7f"
+  },
+  "storm-start-orla-looks-mean": {
+   "url": "audio/voice/storm-start-orla-looks-mean.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 33062,
+   "sig": "b17b3a2f8be6"
+  },
+  "storm-start-dax-umbrellas-in": {
+   "url": "audio/voice/storm-start-dax-umbrellas-in.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 24285,
+   "sig": "68589c8366f8"
+  },
+  "storm-start-vale-low-visibility": {
+   "url": "audio/voice/storm-start-vale-low-visibility.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 39750,
+   "sig": "9c01c0c8ab0a"
+  },
+  "storm-start-mina-raining-sideways": {
+   "url": "audio/voice/storm-start-mina-raining-sideways.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 37660,
+   "sig": "ced5bec5700b"
+  },
+  "storm-start-tavo-rain-plus-sinkhole": {
+   "url": "audio/voice/storm-start-tavo-rain-plus-sinkhole.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 47273,
+   "sig": "b7ae2d356b84"
+  },
+  "storm-end-ike-worst-of-it-gone": {
+   "url": "audio/voice/storm-end-ike-worst-of-it-gone.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 25539,
+   "sig": "94ef537b17cb"
+  },
+  "storm-end-odetta-little-sunshine": {
+   "url": "audio/voice/storm-end-odetta-little-sunshine.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 36824,
+   "sig": "f5d5f85b8976"
+  },
+  "storm-end-dax-everything-soaked": {
+   "url": "audio/voice/storm-end-dax-everything-soaked.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 25539,
+   "sig": "0b0a9157442f"
+  },
+  "storm-end-mina-lot-of-water": {
+   "url": "audio/voice/storm-end-mina-lot-of-water.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 32226,
+   "sig": "05943566729f"
+  },
+  "heat-up-vale-level-rising": {
+   "url": "audio/voice/heat-up-vale-level-rising.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 35152,
+   "sig": "1a7b81516408"
+  },
+  "heat-up-marla-bring-the-barriers": {
+   "url": "audio/voice/heat-up-marla-bring-the-barriers.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 35988,
+   "sig": "8d1f4e3c4777"
+  },
+  "heat-up-ike-big-trucks": {
+   "url": "audio/voice/heat-up-ike-big-trucks.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 30137,
+   "sig": "8bd189a907b8"
+  },
+  "heat-up-vale-units-inbound": {
+   "url": "audio/voice/heat-up-vale-units-inbound.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 36824,
+   "sig": "72a993c2bebf"
+  },
+  "heat-up-tavo-now-you-are-in-trouble": {
+   "url": "audio/voice/heat-up-tavo-now-you-are-in-trouble.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 32226,
+   "sig": "a3d325b55c16"
+  },
+  "heat-up-orla-lights-and-sirens": {
+   "url": "audio/voice/heat-up-orla-lights-and-sirens.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 38078,
+   "sig": "6c4be9fa1db8"
+  },
+  "heat-down-vale-standing-down": {
+   "url": "audio/voice/heat-down-vale-standing-down.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 40586,
+   "sig": "47362646d6f3"
+  },
+  "heat-down-marla-all-quiet": {
+   "url": "audio/voice/heat-down-marla-all-quiet.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 33898,
+   "sig": "43a7e47f004e"
+  },
+  "heat-down-ike-calmed-down-fast": {
+   "url": "audio/voice/heat-down-ike-calmed-down-fast.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 36824,
+   "sig": "e4793ef019d1"
+  },
+  "heat-down-tavo-gave-up-already": {
+   "url": "audio/voice/heat-down-tavo-gave-up-already.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 23449,
+   "sig": "2d94c16dcefa"
+  },
+  "powerup-jun-look-at-that-pull": {
+   "url": "audio/voice/powerup-jun-look-at-that-pull.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 36824,
+   "sig": "f39a1d29f916"
+  },
+  "powerup-mina-everything-sliding": {
+   "url": "audio/voice/powerup-mina-everything-sliding.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 25539,
+   "sig": "ab1d89b20256"
+  },
+  "powerup-dax-hold-on-to-something": {
+   "url": "audio/voice/powerup-dax-hold-on-to-something.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 20942,
+   "sig": "1b40ecca883b"
+  },
+  "powerup-marla-pulling-harder": {
+   "url": "audio/voice/powerup-marla-pulling-harder.mp3",
+   "cast": "marla-quist",
+   "voice": "Matilda",
+   "bytes": 34316,
+   "sig": "51a804692f96"
+  },
+  "match-start-mina-show-me-something": {
+   "url": "audio/voice/match-start-mina-show-me-something.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 30137,
+   "sig": "4a6d3ac52d5b"
+  },
+  "match-start-tavo-watch-the-road": {
+   "url": "audio/voice/match-start-tavo-watch-the-road.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 38078,
+   "sig": "07afaa366fd5"
+  },
+  "match-start-jun-say-hello-downtown": {
+   "url": "audio/voice/match-start-jun-say-hello-downtown.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 35152,
+   "sig": "984e3ca2f71d"
+  },
+  "match-start-vale-quiet-morning": {
+   "url": "audio/voice/match-start-vale-quiet-morning.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 41004,
+   "sig": "68aa7b55715c"
+  },
+  "match-start-zee-first-basket": {
+   "url": "audio/voice/match-start-zee-first-basket.mp3",
+   "cast": "zee-mabry",
+   "voice": "Eric",
+   "bytes": 28465,
+   "sig": "5e15ae086aa2"
+  },
+  "match-start-odetta-same-bench": {
+   "url": "audio/voice/match-start-odetta-same-bench.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 34316,
+   "sig": "c390078d6664"
+  },
+  "match-end-ike-somebody-has-paperwork": {
+   "url": "audio/voice/match-end-ike-somebody-has-paperwork.mp3",
+   "cast": "ike-dorsett",
+   "voice": "Daniel",
+   "bytes": 45601,
+   "sig": "fd5689db4e67"
+  },
+  "match-end-orla-is-it-over": {
+   "url": "audio/voice/match-end-orla-is-it-over.mp3",
+   "cast": "orla-fenn",
+   "voice": "Alice",
+   "bytes": 34316,
+   "sig": "1455a1ed3af4"
+  },
+  "match-end-mina-best-holiday": {
+   "url": "audio/voice/match-end-mina-best-holiday.mp3",
+   "cast": "mina-sol",
+   "voice": "Jessica",
+   "bytes": 27629,
+   "sig": "81c396bd0a0f"
+  },
+  "match-end-jun-the-whole-video": {
+   "url": "audio/voice/match-end-jun-the-whole-video.mp3",
+   "cast": "jun-marrow",
+   "voice": "Will",
+   "bytes": 41839,
+   "sig": "3e86428688a9"
+  },
+  "match-end-vale-incident-closed": {
+   "url": "audio/voice/match-end-vale-incident-closed.mp3",
+   "cast": "dispatch-vale",
+   "voice": "Brian",
+   "bytes": 41839,
+   "sig": "9b13b0a648d4"
+  },
+  "match-end-odetta-new-bench": {
+   "url": "audio/voice/match-end-odetta-new-bench.mp3",
+   "cast": "odetta-frame",
+   "voice": "Lily",
+   "bytes": 24703,
+   "sig": "b7f9097041a7"
+  },
+  "match-end-tavo-need-a-ride": {
+   "url": "audio/voice/match-end-tavo-need-a-ride.mp3",
+   "cast": "tavo-reyes",
+   "voice": "Bill",
+   "bytes": 30137,
+   "sig": "cf2b357721f8"
+  },
+  "match-end-dax-we-are-closed": {
+   "url": "audio/voice/match-end-dax-we-are-closed.mp3",
+   "cast": "dax-perrone",
+   "voice": "Chris",
+   "bytes": 21777,
+   "sig": "45cefade2088"
+  }
+ }
+}
