@@ -1136,8 +1136,23 @@ export class VoiceSystem {
       src = ctx.createBufferSource();
       src.buffer = buf;
       g = ctx.createGain();
-      const dist = place ? place.gain : 1;
-      g.gain.value = clamp(this._volume * (cast ? cast.gain : 1) * dist, 0, 1.5);
+      /* THE SILENT-VOICE BUG. `cast` is the character record from
+         voicelines.js, and it is always truthy — so this took `cast.gain`,
+         which that file has never defined (id, displayName, role, blurb,
+         voiceDirection, color, cooldown, and no gain). The product was
+         0.9 * undefined * dist = NaN, and a GainNode assigned NaN outputs
+         SILENCE while everything downstream looks perfect: the buffer decodes,
+         the source starts, `played` increments, nothing throws. Every
+         instrument I had said the line was playing.
+
+         Guarded on the VALUE being a finite number rather than on the object
+         existing, and the final result is re-checked, because one undefined
+         anywhere in a product poisons the whole thing. */
+      const dist = (place && Number.isFinite(place.gain)) ? place.gain : 1;
+      const castGain = (cast && Number.isFinite(cast.gain)) ? cast.gain : 1;
+      let lvl = clamp(this._volume * castGain * dist, 0, 1.5);
+      if (!Number.isFinite(lvl)) lvl = this._volume;
+      g.gain.value = lvl;
 
       if (ctx.createStereoPanner) {
         // StereoPannerNode is equal-power by definition and costs one node;
