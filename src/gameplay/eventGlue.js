@@ -241,6 +241,11 @@ export class EventGlue {
   constructor(game) {
     this.game = game;
     this.scene = game.engine ? game.engine.scene : null;
+    /* FIRST, before anything else in here: _seed() reads it and the two systems
+       below are constructed with a seed. `undefined | 0` is 0 so the old
+       ordering was not a crash, but it was a field being read before it was
+       written, which in this file's history is how three TDZ bugs started. */
+    this._matchIndex = 0;
 
     /* --- HUD channels. Assign these; this file imports no UI module. -------
      * Set either one and it OWNS presentation for that channel — the fallback
@@ -310,8 +315,6 @@ export class EventGlue {
     this._unitViews = new Map();
     /** kind -> [view], recycled. Bounded by HEAT.MAX_UNITS in practice. */
     this._viewPool = new Map();
-    /** Rounds played since install; part of the offline RNG seed. */
-    this._matchIndex = 0;
     /** Consecutive update() throws. Three and the glue disarms for good. */
     this._crashes = 0;
     /** unit id -> siren loop handle */
