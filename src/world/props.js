@@ -5272,16 +5272,28 @@ const DEFS = {
   },
 
   /* signage -------------------------------------------------------------- */
-  signStop: { g: gSignStop, tier: T.SMALL, r: 0.24, h: 2.70, label: 'Stop Sign', debris: P.HYDRANT_RED },
-  signNoEntry: { g: gSignNoEntry, tier: T.SMALL, r: 0.22, h: 2.60, label: 'No Entry Sign', debris: P.HYDRANT_RED },
-  signOneWay: { g: gSignOneWay, tier: T.SMALL, r: 0.28, h: 2.50, label: 'One Way Sign', debris: P.SIGN_DARK },
-  signParking: { g: gSignParking, tier: T.SMALL, r: 0.22, h: 2.60, label: 'Parking Sign', debris: P.SIGN_BLUE },
-  signStreet: { g: gSignStreet, tier: T.SMALL, r: 0.34, h: 2.90, label: 'Street Sign', debris: P.SIGN_GREEN },
+  signStop: { g: gSignStop, tier: T.SMALL, r: 0.24, h: 2.70, label: 'Stop Sign', debris: P.HYDRANT_RED,
+   sv: 0.02,
+  },
+  signNoEntry: { g: gSignNoEntry, tier: T.SMALL, r: 0.22, h: 2.60, label: 'No Entry Sign', debris: P.HYDRANT_RED,
+   sv: 0.02,
+  },
+  signOneWay: { g: gSignOneWay, tier: T.SMALL, r: 0.28, h: 2.50, label: 'One Way Sign', debris: P.SIGN_DARK,
+   sv: 0.02,
+  },
+  signParking: { g: gSignParking, tier: T.SMALL, r: 0.22, h: 2.60, label: 'Parking Sign', debris: P.SIGN_BLUE,
+   sv: 0.025,
+  },
+  signStreet: { g: gSignStreet, tier: T.SMALL, r: 0.34, h: 2.90, label: 'Street Sign', debris: P.SIGN_GREEN,
+   sv: 0.03, tint: [0x2f6f4a, 0x2b6350, 0x357a52],
+  },
   sandwichBoard: {
     g: gSandwichBoard, tier: T.SMALL, r: 0.46, h: 0.99, label: 'Sandwich Board', sv: 0.06,
     tint: [0xffffff, 0xf0e6d4, 0xdcd6c8, 0xfaf2e0], debris: P.SIGN_DARK,
   },
-  valetStand: { g: gValetStand, tier: T.SMALL, r: 0.40, h: 1.46, label: 'Valet Stand', debris: P.SIGN_DARK },
+  valetStand: { g: gValetStand, tier: T.SMALL, r: 0.40, h: 1.46, label: 'Valet Stand', debris: P.SIGN_DARK,
+   sv: 0.04, tint: [0x3a3f4a, 0x4a3f38, 0x2f3a42],
+  },
   stanchion: {
     g: gStanchion, tier: T.SMALL, r: 0.19, h: 1.02, label: 'Rope Post',
     tint: [0xffffff, 0xffe0a0, 0xdfe4e2, 0xffffff], debris: P.CHROME,
@@ -5298,8 +5310,12 @@ const DEFS = {
     g: gUtilityBox, tier: T.SMALL, r: 0.50, h: 1.32, label: 'Utility Cabinet',
     tint: [P.ALUMINIUM, 0x6f7a63, 0xc9c2b2, 0x7e8480], debris: P.ALUMINIUM,
   },
-  atmKiosk: { g: gAtmKiosk, tier: T.MEDIUM, r: 0.60, h: 2.22, label: 'ATM Kiosk', shadow: true, debris: 0xf0ece2 },
-  phoneKiosk: { g: gPhoneKiosk, tier: T.MEDIUM, r: 0.38, h: 2.40, label: 'Charging Kiosk', debris: P.STEEL_DARK },
+  atmKiosk: { g: gAtmKiosk, tier: T.MEDIUM, r: 0.60, h: 2.22, label: 'ATM Kiosk', shadow: true, debris: 0xf0ece2,
+   sv: 0.03, tint: [0x36474f, 0x414f57, 0x2e3d45],
+  },
+  phoneKiosk: { g: gPhoneKiosk, tier: T.MEDIUM, r: 0.38, h: 2.40, label: 'Charging Kiosk', debris: P.STEEL_DARK,
+   sv: 0.03, tint: [0x3d4650, 0x4a5058, 0x333c46],
+  },
   fountain: {
     g: gDrinkFountain, tier: T.SMALL, r: 0.32, h: 1.22, label: 'Drinking Fountain',
     tint: [0xffffff, 0xd8f0f0, 0xffd8c8], debris: P.PRECAST,
@@ -5307,6 +5323,8 @@ const DEFS = {
   dogStation: {
     g: gDogStation, tier: T.SMALL, r: 0.24, h: 1.82, label: 'Dog Waste Station',
     debris: P.BIN_GREEN,
+  
+   sv: 0.04, tint: [0x2f6f4a, 0x3a6b52, 0x27604a],
   },
 
   /* planting -------------------------------------------------------------- */
@@ -5364,15 +5382,23 @@ const DEFS = {
     g: gHostStand, tier: T.SMALL, r: 0.35, h: 1.38, label: 'Host Stand',
     tint: [0xffffff, 0xe8cba4, 0xf6f2ea], debris: P.WOOD_DARK,
   },
-  pastryCase: { g: gPastryCase, tier: T.MEDIUM, r: 0.65, h: 1.50, label: 'Pastry Case', shadow: true, debris: P.GLASS_SKY },
-  serviceStation: { g: gServiceStation, tier: T.SMALL, r: 0.54, h: 1.12, label: 'Service Station', debris: P.WOOD_DARK },
-  terraceRail: { g: gTerraceRail, tier: T.SMALL, r: 0.99, h: 1.06, label: 'Terrace Screen', debris: P.ALUMINIUM },
+  pastryCase: { g: gPastryCase, tier: T.MEDIUM, r: 0.65, h: 1.50, label: 'Pastry Case', shadow: true, debris: P.GLASS_SKY,
+   sv: 0.03, tint: [0xd8cfc0, 0xe2dbd0, 0xcbc2b4],
+  },
+  serviceStation: { g: gServiceStation, tier: T.SMALL, r: 0.54, h: 1.12, label: 'Service Station', debris: P.WOOD_DARK,
+   sv: 0.03, tint: [0x8a8f96, 0x969ba2, 0x7e848b],
+  },
+  terraceRail: { g: gTerraceRail, tier: T.SMALL, r: 0.99, h: 1.06, label: 'Terrace Screen', debris: P.ALUMINIUM,
+   sv: 0.03, tint: [0x40474e, 0x554b3f, 0x38424a],
+  },
   terraceHedge: {
     g: gTerraceHedge, tier: T.SMALL, r: 1.08, h: 1.00, label: 'Terrace Hedge', shadow: true,
     sv: 0.05, tint: [0xffffff, 0xe4e8b8, 0xc8ece0], debris: P.HEDGE,
   },
   /* No `sv` for the same reason as the rope: it packs on a boundary line. */
-  plantScreen: { g: gPlantScreen, tier: T.MEDIUM, r: 0.99, h: 2.02, label: 'Planted Screen', shadow: true, debris: P.HEDGE },
+  plantScreen: { g: gPlantScreen, tier: T.MEDIUM, r: 0.99, h: 2.02, label: 'Planted Screen', shadow: true, debris: P.HEDGE,
+   sv: 0.05, tint: [0x4a5c3e, 0x556647, 0x415336],
+  },
   /* No `sv` on the rope: it packs end to end on the boundary line, and a 5%
      length change there opens a visible gap between every pair. */
   terraceRope: {
@@ -5397,8 +5423,12 @@ const DEFS = {
   },
 
   /* nightlife + hotel ------------------------------------------------------ */
-  porteCochere: { g: gPorteCochere, tier: T.LARGE, r: 3.35, h: 4.45, label: 'Entrance Canopy', shadow: true, crumbles: true, debris: P.CONCRETE },
-  carpetRunner: { g: gCarpetRunner, tier: T.MEDIUM, r: 1.58, h: 0.98, label: 'Red Carpet', shadow: true, debris: 0xb4243c },
+  porteCochere: { g: gPorteCochere, tier: T.LARGE, r: 3.35, h: 4.45, label: 'Entrance Canopy', shadow: true, crumbles: true, debris: P.CONCRETE,
+   sv: 0.02,
+  },
+  carpetRunner: { g: gCarpetRunner, tier: T.MEDIUM, r: 1.58, h: 0.98, label: 'Red Carpet', shadow: true, debris: 0xb4243c,
+   sv: 0.04, tint: [0x7a2436, 0x6b2f3f, 0x8a2c34, 0x5c3340],
+  },
   velvetRope: {
     g: gVelvetRope, tier: T.SMALL, r: 1.13, h: 1.08, label: 'Rope Line',
     tint: [0xffffff, 0xffe0a8, 0x9aa8cc, 0xd8d8d8], debris: P.CHROME,
@@ -5407,7 +5437,9 @@ const DEFS = {
     g: gBouncerPodium, tier: T.SMALL, r: 0.42, h: 1.16, label: 'Door Podium',
     tint: [0xffffff, 0xd8dce4, 0xffc0b8], debris: P.SIGN_DARK,
   },
-  keyBoard: { g: gKeyBoard, tier: T.SMALL, r: 0.33, h: 1.62, label: 'Valet Key Board', debris: P.ALUMINIUM },
+  keyBoard: { g: gKeyBoard, tier: T.SMALL, r: 0.33, h: 1.62, label: 'Valet Key Board', debris: P.ALUMINIUM,
+   sv: 0.04, tint: [0x6b5a48, 0x7a6a52, 0x5c4d3e],
+  },
   cigBin: { g: gCigBin, tier: T.TINY, r: 0.28, h: 1.02, label: 'Ash Bin', sv: 0.05, debris: P.STEEL_DARK },
   lightboxSign: {
     g: gLightboxSign, tier: T.MEDIUM, r: 0.36, h: 3.44, label: 'Neon Sign', shadow: true,
@@ -5417,7 +5449,9 @@ const DEFS = {
        is no longer one pink swatch repeated 129 times. */
     tint: [0xffffff, 0x8affe8, 0xffe07a, 0xc79aff, 0xffffff], debris: P.NEON_PINK,
   },
-  outdoorBar: { g: gOutdoorBar, tier: T.MEDIUM, r: 1.35, h: 1.70, label: 'Outdoor Bar', shadow: true, debris: P.TEAK },
+  outdoorBar: { g: gOutdoorBar, tier: T.MEDIUM, r: 1.35, h: 1.70, label: 'Outdoor Bar', shadow: true, debris: P.TEAK,
+   sv: 0.04, tint: [0x6b4a33, 0x59422f, 0x7a563a, 0x4a3f3a],
+  },
   djBooth: { g: gDjBooth, tier: T.MEDIUM, r: 1.00, h: 1.20, label: 'DJ Booth', shadow: true, sv: 0.04, debris: P.NEON_PURPLE },
   speakerStack: { g: gSpeakerStack, tier: T.SMALL, r: 0.44, h: 1.42, label: 'Speaker Stack', sv: 0.05, debris: P.SIGN_DARK },
   luggageCart: { g: gLuggageCart, tier: T.MEDIUM, r: 0.73, h: 1.50, label: 'Bell Cart', shadow: true, sv: 0.04, debris: P.CHROME },
@@ -5449,9 +5483,13 @@ const DEFS = {
     g: gBusBench, tier: T.SMALL, r: 0.98, h: 1.16, label: 'Advertising Bench', shadow: true,
     sv: 0.04, tint: [0xffffff, 0xffd8e0, 0xd8f0ff, 0xfff0c8], debris: P.TEAK,
   },
-  payStation: { g: gPayStation, tier: T.SMALL, r: 0.33, h: 1.75, label: 'Pay Station', debris: P.PARKING_METER },
+  payStation: { g: gPayStation, tier: T.SMALL, r: 0.33, h: 1.75, label: 'Pay Station', debris: P.PARKING_METER,
+   sv: 0.03, tint: [0x40484f, 0x4c545b, 0x363d44],
+  },
   wayfindTotem: { g: gWayfindTotem, tier: T.MEDIUM, r: 0.37, h: 2.82, label: 'Wayfinding Pylon', shadow: true, sv: 0.05, debris: P.SIGN_DARK },
-  newsKiosk: { g: gNewsKiosk, tier: T.MEDIUM, r: 1.27, h: 2.34, label: 'Newsstand', shadow: true, debris: P.NEWSSTAND },
+  newsKiosk: { g: gNewsKiosk, tier: T.MEDIUM, r: 1.27, h: 2.34, label: 'Newsstand', shadow: true, debris: P.NEWSSTAND,
+   sv: 0.04, tint: [0x4a4038, 0x3f4a44, 0x54463a],
+  },
   meshFence: {
     g: gMeshFence, tier: T.SMALL, r: 1.03, h: 1.97, label: 'Site Fence',
     tint: [0xffffff, 0xe4ece4, 0xd0dcd0], debris: P.STEEL,
@@ -5464,7 +5502,9 @@ const DEFS = {
     g: gBinTwin, tier: T.SMALL, r: 0.64, h: 1.02, label: 'Recycling Point', sv: 0.04,
     tint: [0xffffff, 0xe8ece8, 0xf0e8d8], debris: P.BIN_GREEN,
   },
-  busStopFlag: { g: gBusStopFlag, tier: T.SMALL, r: 0.12, h: 2.78, label: 'Bus Stop', debris: P.SIGN_BLUE },
+  busStopFlag: { g: gBusStopFlag, tier: T.SMALL, r: 0.12, h: 2.78, label: 'Bus Stop', debris: P.SIGN_BLUE,
+   sv: 0.03,
+  },
   /* Ironwork. TINY on purpose: a cover is the very first thing a fresh hole
      should be able to take, and it is 8 cm tall — anything else would mean a
      manhole surviving a hole that has already swallowed the pavement it is in. */
@@ -5495,19 +5535,33 @@ const DEFS = {
   /* recreation -------------------------------------------------------------- */
   hoopStreet: {
     g: gHoopStreet, tier: T.LARGE, r: 0.48, h: 3.55, label: 'Basketball Hoop',
-    shadow: true, debris: 0x39404a,
+    /* Poles weather. A court that has been there ten years and one installed
+       last spring are not the same grey, and two hoops at opposite ends of the
+       same court are rarely the same age either. */
+    shadow: true, sv: 0.03, tint: [0x39404a, 0x4a5058, 0x2f353d, 0x555c64],
+    debris: 0x39404a,
   },
   courtFlood: {
     g: gCourtFlood, tier: T.LARGE, r: 0.32, h: 6.7, label: 'Court Floodlight',
-    shadow: true, debris: 0x4a515a,
+    shadow: true, sv: 0.04, tint: [0x4a515a, 0x3d444c, 0x585f68], debris: 0x4a515a,
   },
   fenceChain: {
     g: gFenceChain, tier: T.SMALL, r: 0.16, h: 3.0, label: 'Court Fence',
-    shadow: true, debris: 0x8d949c,
+    /* THE WORST OFFENDER in the whole table: 216 of these are placed and every
+       single one was byte-identical, which is exactly the "stamped copy" look
+       this project has been criticised for. Galvanised mesh oxidises unevenly
+       and panels get replaced piecemeal, so a run of fence is never one colour.
+       sv is small on purpose — panels are manufactured to a size, so they vary
+       in tone far more than in dimension. */
+    shadow: true, sv: 0.015,
+    tint: [0x8d949c, 0x9aa1a8, 0x7f868e, 0xa4aab0, 0x88908a],
+    debris: 0x8d949c,
   },
   ballBasket: {
     g: gBallBasket, tier: T.TINY, r: 0.13, h: 0.25, label: 'Basketball',
-    shadow: false, debris: 0xd2662c,
+    /* Scuffed, sun-faded, and occasionally somebody's newer one. */
+    shadow: false, sv: 0.05,
+    tint: [0xd2662c, 0xc25a26, 0xdd7638, 0xb9713f, 0xe08a3a], debris: 0xd2662c,
   },
   bagBackpack: {
     g: gBagBackpack, tier: T.TINY, r: 0.17, h: 0.48, label: 'Backpack',
@@ -5524,7 +5578,7 @@ const DEFS = {
   },
   outreachSign: {
     g: gOutreachSign, tier: T.SMALL, r: 0.38, h: 1.45, label: 'Outreach Point',
-    shadow: true, debris: 0x1f6f5c,
+    shadow: true, sv: 0.02, tint: [0x1f6f5c, 0x246b68, 0x1b7350], debris: 0x1f6f5c,
   },
   /* park ------------------------------------------------------------------- */
   benchTeak: {
@@ -5533,9 +5587,15 @@ const DEFS = {
        new one are never the same colour, and all 235 were one flat TEAK. */
     tint: [P.TEAK, 0xd8a86c, 0xa89a86, 0xc08a52], debris: P.TEAK,
   },
-  chessTable: { g: gChessTable, tier: T.SMALL, r: 1.10, h: 0.74, label: 'Chess Table', shadow: true, crumbles: true, debris: P.PRECAST },
+  chessTable: {
+    g: gChessTable, tier: T.SMALL, r: 1.10, h: 0.74, label: 'Chess Table',
+    shadow: true, crumbles: true, sv: 0.03,
+    tint: [P.PRECAST, 0xd8d2c4, 0xc4bfb2, 0xe0dbcf], debris: P.PRECAST,
+  },
   bbqGrill: {
     g: gBbqGrill, tier: T.SMALL, r: 0.44, h: 1.32, label: 'Park Grill', debris: P.SIGN_DARK,
+  
+   sv: 0.04, tint: [0x3a3f44, 0x464b50, 0x2f3438],
   },
   umbrella: {
     g: gUmbrella, tier: T.MEDIUM, r: 1.30, h: 2.56, label: 'Patio Umbrella', shadow: true,
@@ -5590,11 +5650,21 @@ const DEFS = {
   },
 
   /* transit + vending ----------------------------------------------------- */
-  busShelter: { g: gBusShelter, tier: T.LARGE, r: 2.30, h: 2.62, label: 'Bus Shelter', shadow: true, debris: P.ALUMINIUM },
-  foodCart: { g: gFoodCart, tier: T.MEDIUM, r: 1.20, h: 2.56, label: 'Food Cart', shadow: true, debris: P.FABRIC_SUN },
-  hotdogStand: { g: gHotdogStand, tier: T.MEDIUM, r: 0.85, h: 2.40, label: 'Hot-Dog Stand', shadow: true, debris: P.FABRIC_CORAL },
-  displayRack: { g: gDisplayRack, tier: T.MEDIUM, r: 0.70, h: 1.55, label: 'Display Rack', shadow: true, debris: P.FABRIC_CORAL },
-  produceCrate: { g: gProduceCrate, tier: T.SMALL, r: 0.40, h: 0.52, label: 'Produce Crate', debris: P.WOOD_LIGHT },
+  busShelter: { g: gBusShelter, tier: T.LARGE, r: 2.30, h: 2.62, label: 'Bus Shelter', shadow: true, debris: P.ALUMINIUM,
+   sv: 0.03, tint: [0x40474e, 0x4a5158, 0x373e45],
+  },
+  foodCart: { g: gFoodCart, tier: T.MEDIUM, r: 1.20, h: 2.56, label: 'Food Cart', shadow: true, debris: P.FABRIC_SUN,
+   sv: 0.05, tint: [0xc4453f, 0x3f7ac4, 0xd8a03a, 0x3fa06b, 0xe0e0d8],
+  },
+  hotdogStand: { g: gHotdogStand, tier: T.MEDIUM, r: 0.85, h: 2.40, label: 'Hot-Dog Stand', shadow: true, debris: P.FABRIC_CORAL,
+   sv: 0.05, tint: [0xc4453f, 0xd8a03a, 0xe0e0d8, 0x3f7ac4],
+  },
+  displayRack: { g: gDisplayRack, tier: T.MEDIUM, r: 0.70, h: 1.55, label: 'Display Rack', shadow: true, debris: P.FABRIC_CORAL,
+   sv: 0.05, tint: [0x8a8f96, 0x6b5a48, 0x4a5058],
+  },
+  produceCrate: { g: gProduceCrate, tier: T.SMALL, r: 0.40, h: 0.52, label: 'Produce Crate', debris: P.WOOD_LIGHT,
+   sv: 0.07, tint: [0xa8784a, 0x94693f, 0xbb8a58, 0x7f6a52],
+  },
 
   /* construction ---------------------------------------------------------- */
   jersey: {
