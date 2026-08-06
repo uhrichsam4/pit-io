@@ -156,10 +156,30 @@ where the deadline was still 9 seconds away.
   shell was clearing body during a screen swap, changed nothing
 - no page errors, no console errors
 
-**What that leaves.** Something outside `hud.js` removes the nodes, or the
-harness observes a detached subtree at the moment it counts. The next step is a
-`MutationObserver` on the caption container recording `removedNodes` with a
-stack — that is definitive and was not run only because the night ran out.
+**The MutationObserver has now been run**, and it rules out the external
+theory. Watching both the caption container and its parent during a real
+`voice.say()`:
+
+```
+removals: [ { target: DIV.vo-captions, removed: DIV.vo-cap },
+            { target: DIV.vo-captions, removed: DIV.vo-cap } ]
+wrapStillAttached: true    wrapChildren: 0    domAtStart: 1 -> domAtEnd: 0
+```
+
+Both removals happen INSIDE `.vo-captions`, and the container itself is never
+detached. So nothing outside hud.js is doing this — the caption code is removing
+its own rows. That contradicts the timings, because the probe row was created
+with `ttl: 20` (a 20-second deadline) and was gone inside 600 ms.
+
+The observer cannot name the culprit: its callback runs asynchronously, so
+`new Error().stack` inside it captures the microtask, not the mutator — which is
+why the `stack` field came back empty.
+
+**What is left to try.** Only three lines in `hud.js` can remove a `.vo-cap`:
+the per-row fade timeout, the nested removal timeout inside it, and the
+`childElementCount >= 3` eviction. Instrument all three with a distinguishing
+tag rather than a stack, and one run will say which. That is a ten-minute job
+for whoever picks this up; it is documented here rather than guessed at.
 
 **Workaround: none needed.** Dialogue is audible; the text just does not
 persist. Anyone relying on subtitles for accessibility is affected, which is why
