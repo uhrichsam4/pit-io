@@ -315,11 +315,35 @@ export class Game {
       if (!this.voice || !hole || !hole.isPlayer || !c) return;
       const kind = c.kind || '';
       let cat = null;
-      if (/car|sedan|suv|taxi|van|truck|bus|pickup|scooter|motor/i.test(kind)) cat = 'carDanger';
-      else if (/hoop|ballBasket|fenceChain|courtFlood/i.test(kind)) cat = 'court';
-      else if (c.tier && c.tier.id >= 3) cat = 'propEaten';
-      else if (Math.random() < 0.05) cat = 'notice';
-      if (cat) this.voice.say(cat, { x: c.position.x, z: c.position.z });
+      const opts = { x: c.position.x, z: c.position.z };
+
+      /* SWALLOWING A PERSON IS THE LOUDEST THING THAT CAN HAPPEN, and it used
+         to be the quietest. A pedestrian is tier 0 or 1, so it fell past every
+         branch below to a 5% "notice" — eating somebody was LESS likely to make
+         a sound than eating a bin, the exact inverse of what the moment
+         deserves. It now always screams, at a priority that outranks ambient
+         chatter and with `force` so the 0.42 s global start gap cannot swallow
+         the one line the player most expects to hear. */
+      if (PERSON_RX.test(kind)) {
+        cat = 'flee';
+        opts.priority = 90;
+        opts.force = true;
+      } else if (/car|sedan|suv|taxi|van|truck|bus|pickup|scooter|motor/i.test(kind)) {
+        cat = 'carDanger';
+        opts.priority = 40;
+      } else if (/hoop|ballBasket|fenceChain|courtFlood/i.test(kind)) {
+        cat = 'court';
+      } else if (c.tier && c.tier.id >= 5) {
+        // A storefront or a tower going down should never be silent because a
+        // bench happened to speak half a second earlier.
+        cat = 'propEaten';
+        opts.priority = 60;
+      } else if (c.tier && c.tier.id >= 3) {
+        cat = 'propEaten';
+      } else if (Math.random() < 0.05) {
+        cat = 'notice';
+      }
+      if (cat) this.voice.say(cat, opts);
     };
 
     /**
