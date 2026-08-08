@@ -187,7 +187,17 @@ class Room {
     switch (msg.t) {
       case C2S.STATE: {
         const d = msg.d || {};
-        client.ready = true;
+        /* Tell the room when someone finishes loading.
+           `ready` was set here and never broadcast, so every peer's roster kept
+           showing "Loading…" for the whole wait — the word sat over the invite
+           code in the lobby until some unrelated event forced a rebroadcast.
+           Guarded on the TRANSITION, not on every packet: STATE arrives at
+           15 Hz per client, and rebroadcasting the roster that often would be
+           a self-inflicted flood. */
+        if (!client.ready) {
+          client.ready = true;
+          this.broadcastLobby();
+        }
         if (typeof d.x === 'number' && typeof d.z === 'number') {
           client.x = d.x; client.z = d.z;
         }

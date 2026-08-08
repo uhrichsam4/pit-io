@@ -1571,12 +1571,18 @@ export class HUD {
     this.audioPanel.innerHTML =
       '<div class="au-hd"><b>Audio</b>' +
       '<button class="au-x" type="button" aria-label="Close audio settings">&#10005;</button></div>' +
-
-    // Bubble phase, so it runs before input.js's window listener sees the key.
-    this.audioPanel.addEventListener('keydown', this._panelKeyGuard);
       AUDIO_SLIDERS.map((r) => slider(r, p[r.key])).join('') +
       '<div class="au-tgs">' + AUDIO_TOGGLES.map((t) => toggle(t, !!p[t.key])).join('') + '</div>' +
       '<p class="au-note">Saved on this device.</p>';
+
+    /* AFTER the assignment, never inside it. This listener line was previously
+       spliced into the MIDDLE of the concatenation above, on a line whose
+       predecessor ended in `+` — so innerHTML became the header plus the return
+       value of addEventListener, which stringifies to "undefined", and every
+       slider and toggle below it turned into a dead expression that built a
+       string and discarded it. The panel rendered as a bare title, the source
+       read as if it were fine, and nothing threw. */
+    this.audioPanel.addEventListener('keydown', this._panelKeyGuard);
 
     this._audioRows = true;
 

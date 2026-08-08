@@ -60,8 +60,7 @@
 [data-screen="prelobby"] button,
 [data-screen="prelobby"] input,
 [data-screen="prelobby"] .pl-gate-card,
-[data-screen="prelobby"] .pl-strip,
-[data-screen="prelobby"] .pl-chat:not(:empty) { pointer-events: auto; }
+[data-screen="prelobby"] .pl-strip { pointer-events: auto; }
 
 /* ------------------------------------------------------------------------ */
 /* THE GRID                                                                  */
@@ -86,7 +85,7 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "top    top"
-    "chat   roster"
+    "world  roster"
     "foot   foot";
   gap: 0.75em;
   padding:
@@ -98,8 +97,12 @@
 
 [data-screen="prelobby"] .pl-top { grid-area: top; }
 [data-screen="prelobby"] .pl-roster { grid-area: roster; }
-[data-screen="prelobby"] .pl-chat { grid-area: chat; }
 [data-screen="prelobby"] .pl-foot { grid-area: foot; }
+/* The `world` track has no occupant and must not get one. It is the hole in the
+   layout you see Bayfront and your own hole through, and it is where chat.js's
+   #chat-layer dock floats — that element lives beside .shell in game.uiRoot, not
+   in this grid, and finds its own edges from the data-chat-* hooks the markup
+   puts on the top bar, the roster, the hint and the action row. */
 
 /* The one surface in here. A TIGHT local backdrop under the thing that has to
    be read — never a sheet over the play area. */
@@ -505,24 +508,6 @@
 }
 
 /* ------------------------------------------------------------------------ */
-/* CHAT SLOT                                                                 */
-/*                                                                           */
-/* Reserved, empty, and free. It collapses to nothing until something is put  */
-/* in it, and when something is it lands in its OWN grid area — bottom-left,  */
-/* clear of the roster and clear of the action row.                          */
-/* ------------------------------------------------------------------------ */
-
-[data-screen="prelobby"] .pl-chat {
-  align-self: end;
-  justify-self: start;
-  min-width: 0;
-  max-width: min(30em, 100%);
-  max-height: 100%;
-  overflow: hidden;
-}
-[data-screen="prelobby"] .pl-chat:empty { display: none; }
-
-/* ------------------------------------------------------------------------ */
 /* FOOT — hint + actions                                                     */
 /* ------------------------------------------------------------------------ */
 
@@ -534,16 +519,28 @@
   flex-wrap: wrap;
 }
 
+/* A tight plate, sized to the sentence — not a band across the screen. Measured
+   over the brightest part of the render (sunlit stucco and pale water) a bare
+   text-shadow was not enough on its own. */
 [data-screen="prelobby"] .pl-hint {
-  flex: 1 1 14em;
+  flex: 0 1 auto;
+  max-width: 34em;
   min-width: 0;
   margin: 0 0 0.55em;
+  padding: 0.35em 0.75em;
+  border-radius: var(--r-pill);
+  background: rgba(6, 11, 21, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
   font-size: max(0.78em, 11px);
   line-height: 1.4;
   color: var(--txt);
-  /* Its own tight backdrop rather than a page-wide one. */
-  text-shadow: 0 1px 0.4em rgba(4, 8, 16, 0.95), 0 0 1.2em rgba(4, 8, 16, 0.9);
+  text-shadow: 0 1px 0.3em rgba(4, 8, 16, 0.8);
 }
+/* Empty on the screens where paint() has nothing to say — an empty pill is a
+   smudge on the render. */
+[data-screen="prelobby"] .pl-hint:empty { display: none; }
 
 [data-screen="prelobby"] .pl-actions {
   flex: 0 0 auto;
@@ -552,7 +549,37 @@
   align-items: center;
 }
 [data-screen="prelobby"] .pl-actions .btn { flex: 0 0 auto; }
-[data-screen="prelobby"] .pl-start { min-width: 10em; }
+
+/* THREE CONTROLS, THREE LOOKS — and stated here rather than leaning on
+   tokens.css's .btn-sun / .btn-ghost. In a built bundle src/ui/styles.css loads
+   AFTER tokens.css and re-declares `.btn` with the HUD's pink-to-gold gradient
+   at the same specificity, so `btn-sun` lost and "I'm Ready" and "Start Now"
+   rendered as the same button — two identical primaries side by side, with
+   nothing saying which one ends the wait. These selectors are (0,2,0) and win
+   outright. Never colour alone: the words differ and so does the weight. */
+[data-screen="prelobby"] .pl-start {
+  min-width: 10em;
+  background: linear-gradient(180deg, #ffe07a 0%, var(--sun) 45%, #e3a20a 100%);
+  color: #2a1c00;
+  box-shadow: 0 0.28em 0 #a97600, var(--lift-2);
+}
+[data-screen="prelobby"] .pl-ready {
+  background: linear-gradient(180deg, #6df1e4 0%, var(--aqua) 45%, #13998e 100%);
+  color: #04231f;
+  box-shadow: 0 0.28em 0 #0e7a70, var(--lift-1);
+}
+[data-screen="prelobby"] .pl-ready.btn-ghost {
+  background: var(--glass-flat);
+  color: var(--txt);
+  border: 1px solid var(--stroke-hi);
+  box-shadow: var(--lift-1);
+}
+[data-screen="prelobby"] .pl-leave {
+  background: rgba(10, 17, 31, 0.72);
+  color: var(--txt);
+  border: 1px solid var(--stroke-hi);
+  box-shadow: var(--lift-1);
+}
 
 /* styles.css puts an infinitely animating specular sweep on `.btn::after` with
    `position:absolute; inset:0` — and tokens.css leaves `.btn` unpositioned, so
@@ -656,7 +683,7 @@
     grid-template-areas:
       "top"
       "roster"
-      "chat"
+      "world"
       "foot";
     gap: 0.55em;
     padding:
@@ -719,14 +746,43 @@
   [data-screen="prelobby"] .pl-p-st > i { display: none; }
   [data-screen="prelobby"] .pl-strip-empty { padding: 0.9em; }
 
-  [data-screen="prelobby"] .pl-chat { justify-self: stretch; max-width: 100%; }
-
-  /* Thumb reach: the primary action is the widest thing on the bottom row. */
-  [data-screen="prelobby"] .pl-foot { flex-direction: column; align-items: stretch; }
-  [data-screen="prelobby"] .pl-hint { margin: 0 0 0.15em; text-align: center; }
+  /* THE BOTTOM-LEFT CORNER IS NOT OURS ON A PHONE.
+     src/ui/phone-ui.js floats #phone-rail there, and measured on a 375x812
+     device it hung 2.6 px into the top of the hint — a real collision with
+     another module's control, at the size where there is least room to be wrong.
+     `display: contents` dissolves the foot so its two children become grid items
+     in their own right: the hint moves up under the roster (which is what it is
+     talking about anyway), the action row stays pinned to the bottom edge, and
+     the band the phone rail occupies is left empty. */
+  [data-screen="prelobby"] .pl-foot { display: contents; }
+  [data-screen="prelobby"] .pl-hint {
+    grid-area: world;
+    align-self: start;
+    justify-self: stretch;
+    max-width: 100%;
+    margin: 0;
+    text-align: center;
+  }
+  [data-screen="prelobby"] .pl-actions { grid-area: foot; }
   [data-screen="prelobby"] .pl-actions { flex-wrap: wrap; }
-  [data-screen="prelobby"] .pl-actions .btn { flex: 1 1 8em; }
-  [data-screen="prelobby"] .pl-start { flex: 1 1 100%; order: -1; min-width: 0; }
+  /* styles.css's HUD `.btn` carries 1.9em of horizontal padding and wins on
+     source order in a build. On a 375 px phone that left "I'm Ready" ~70 px of
+     text box and it wrapped onto two lines. The 44 px floor is untouched. */
+  [data-screen="prelobby"] .pl-actions .btn {
+    flex: 1 1 8em;
+    padding-left: 0.6em;
+    padding-right: 0.6em;
+  }
+  /* `.pl-actions .btn` is (0,3,0) and a bare `.pl-start` is (0,2,0), so the
+     100 % basis lost to `1 1 8em` and "Start Now" shared a row with "Leave",
+     wrapping its label onto two lines. Matched specificity, and ordered LAST so
+     the primary action sits on the bottom row — closest to the thumb, which is
+     the rule the rest of this UI follows. */
+  [data-screen="prelobby"] .pl-actions .pl-start {
+    flex: 1 1 100%;
+    order: 2;
+    min-width: 0;
+  }
 }
 
 /* Landscape phone: height is the scarce resource, so the strip loses a line

@@ -54,19 +54,49 @@ const AI_NAMES = [
   'Nova', 'Riptide', 'Undertow', 'Eclipse', 'Zenith', 'Kraken', 'Tempest',
 ];
 
-/** How far a ghost may drift from its spawn point, in metres. */
-const LEASH = 12.5;
+/**
+ * WHERE THE OTHER PLAYERS STAND, AND WHY NOT ON island.spawns.
+ *
+ * island.spawns is a 62 m ring — a MATCH-START spread, sized so nobody lands on
+ * a landmark or inside somebody else. Measured on the live build, the island
+ * camera sits 55 m out and frames roughly 64 x 40 m of ground (the player's
+ * 4.2 m opening drew 83 px wide at 1280 px, so ~20 px/m). On that ring the
+ * nearest other player is 32 m away and every single one is off-screen: you
+ * land in an empty park. That is the exact opposite of "see the other users".
+ *
+ * So the plaza is a phyllotaxis spiral centred on the player's OWN spawn point:
+ * golden-angle apart, radius growing 15 -> 33 m for seven. Six of the seven are
+ * inside the opening shot, the seventh is a few seconds' walk, and the spiral
+ * guarantees the spread rather than hoping for it — computed min separation
+ * 19.05 m, which is 5.67 m of clearance left even with two neighbours swinging
+ * toward each other at full wander AND both hole radii subtracted.
+ */
+const GOLDEN_ANGLE = 2.399963229728653;
+const MEET_R0 = 15;
+const MEET_DR = 3.0;
+const MEET_PHASE = 0.6;
 
-/** Ghost wander speed target, m/s. Slower than a real hole: this is milling. */
+/**
+ * Wander amplitude, metres. The Lissajous below peaks at 1.34x this, so 3.5 is
+ * a 4.7 m swing — milling around, not migrating, and it is what keeps the
+ * 19.05 m spacing above from ever closing to a touch.
+ */
+const LEASH = 3.5;
+
+/** Wander frequencies, Hz. Coprime-ish so the path does not visibly repeat. */
 const WANDER_HZ_A = 0.21;
 const WANDER_HZ_B = 0.53;
 
-/** Nameplate fade band, metres from the camera. */
-const FADE_NEAR = 90;
-const FADE_FAR = 210;
+/**
+ * Nameplate fade band, metres from the CAMERA (not from the player). The near
+ * edge sits just past the standing camera distance so the closest plates are
+ * solid; everything across the park thins out instead of piling up.
+ */
+const FADE_NEAR = 58;
+const FADE_FAR = 165;
 
 /** Within this many metres of you, a player is "nearby" — the meet-up cue. */
-const NEAR_M = 18;
+const NEAR_M = 12;
 
 /** Never draw more than this many plates at once, nearest first. */
 const MAX_TAGS = 8;
@@ -132,6 +162,13 @@ const CSS = `
   font-weight: 600; color: #ffe07a;
 }
 #island-presence .ip-say:empty { display: none; }
+/* Your own bubble: no name, no state chip, no divider — just the words, so it
+   reads as speech rather than as a second nameplate. */
+#island-presence .ip-tag.self .ip-nm,
+#island-presence .ip-tag.self .ip-st { display: none; }
+#island-presence .ip-tag.self .ip-say {
+  padding-left: 0; margin-left: 0; border-left: 0; color: #fff;
+}
 @media (prefers-reduced-motion: reduce) {
   #island-presence .ip-tag { transition: none; }
 }
@@ -164,6 +201,9 @@ const people = new Map();
 let vw = 0;
 let vh = 0;
 
+/** Centre of the plaza for this visit to the island. See plazaAnchor(). */
+let anchor = null;
+
 /**
  * Own-property bookkeeping for the leaveIsland shadow — see install().
  * `innerLeave` is the RAW value found on the game, never a bound copy: putting
@@ -188,8 +228,11 @@ function bounds() {
 
 /**
  * Which spawn slot the local player took.
- * enterIsland() uses `spawns[(netId || 1) - 1 % len]`; mirrored here so a ghost
- * is never dealt the point the player is standing on.
+ *
+ * enterIsland() picks `spawns[(n - 1) % spawns.length]` where n is the network
+ * id, or 1 offline. Mirrored exactly. Only the fallback for plazaAnchor() —
+ * the live player position is preferred — but get it wrong and a game that has
+ * not built its player yet assembles the crowd on the far side of the park.
  */
 function playerSlot(len) {
   const n = game && game.net && game.net.id ? game.net.id : 1;
@@ -217,6 +260,88 @@ function clampToIsland(p, radius) {
   const inv = lim / (d || 1);
   p.x = b.cx + dx * inv;
   p.z = b.cz + dz * inv;
+}
+
+/** How much room a plaza of `n` people needs around its centre, in metres. */
+function plazaOuterRadius(n) {
+  return MEET_R0 + Math.max(0, n - 1) * MEET_DR + LEASH * 1.34 + HOLE.START_RADIUS;
+}
+
+/**
+ * The centre of the plaza, captured ONCE when it is first populated.
+ *
+ * WHERE. The player's ACTUAL position, not the spawn point enterIsland() meant
+ * to put them on. On the live build those are two different places — the city
+ * clamp in Hole.update() teleports the local hole to (3824, 0) whatever its
+ * spawn, 200 m from spawns[0] — and a crowd assembled around the intended spawn
+ * is a crowd the player never sees. Anchoring on the real position is also just
+ * correct: the others should be standing around you, wherever "you" turns out
+ * to be. The spawn slot is the fallback for the frame before a player exists.
+ *
+ * THEN PULLED INLAND SO THE WHOLE SPIRAL FITS. Clamping the individual standing
+ * spots instead does not work, and the failure is not subtle: with the anchor
+ * 176 m out on a 178 m island, every outward spot in the spiral is squashed
+ * onto the same boundary circle and they land on top of each other. Measured
+ * before this clamp existed: minimum separation between two holes 0.62 m,
+ * against 19.05 m by design. Moving the CENTRE instead keeps every spacing in
+ * the spiral exactly as computed, because the whole figure translates rigidly.
+ *
+ * Captured once, so the crowd does not trail the player around the park.
+ *
+ * @param {number} n how many people will stand in it
+ */
+function plazaAnchor(n) {
+  if (anchor) return anchor;
+  if (!game) return null;
+
+  let x;
+  let z;
+  if (game.player) {
+    x = game.player.position.x;
+    z = game.player.position.z;
+  } else {
+    const spawns = game.island && game.island.spawns;
+    if (!spawns || spawns.length === 0) return null;
+    const sp = spawns[playerSlot(spawns.length)];
+    x = sp.x;
+    z = sp.z;
+  }
+
+  const b = bounds();
+  if (b) {
+    const lim = Math.max(0, b.r - plazaOuterRadius(n));
+    const dx = x - b.cx;
+    const dz = z - b.cz;
+    const d = Math.hypot(dx, dz);
+    if (d > lim) {
+      const k = lim / (d || 1);
+      x = b.cx + dx * k;
+      z = b.cz + dz * k;
+    }
+  }
+
+  anchor = { x, z };
+  return anchor;
+}
+
+/**
+ * Standing spot number `i` in the plaza. See the MEET_* constants for why this
+ * is a spiral around the player rather than a point off island.spawns.
+ *
+ * The clamp is defence in depth only: plazaAnchor() has already guaranteed the
+ * whole spiral fits inside the ring, so on a 178 m island this never fires. It
+ * stays because a collapsed plaza must never be the failure mode if that
+ * radius ever changes — but note that if it DOES fire it squashes spacing, so
+ * the anchor clamp is the real containment, not this.
+ */
+function plazaSlot(i) {
+  const a = anchor;
+  if (!a) return null;
+  const r = MEET_R0 + i * MEET_DR;
+  const th = i * GOLDEN_ANGLE + MEET_PHASE;
+  const p = { x: a.x + Math.cos(th) * r, z: a.z + Math.sin(th) * r };
+  clampToIsland(p, HOLE.START_RADIUS + LEASH * 1.34);
+  return p;
 }
 
 /* ======================================================= ghost motion === */
@@ -324,22 +449,20 @@ function makeTag(rec) {
 
 /** Create the AI-filled slots. Offline only — online the room is real people. */
 function fillOffline() {
-  const spawns = game.island && game.island.spawns;
-  if (!spawns || spawns.length === 0) return;
-
   const mode = game.mode;
   const want = Math.max(0, (mode && mode.botCount != null) ? mode.botCount : MATCH.BOT_COUNT);
   // The ground cut is a fixed-size uniform array. Past MAX_HOLES a hole draws
   // its pit with no opening beneath it, which looks broken rather than busy.
   const room = Math.max(0, HOLE.MAX_HOLES - game.holes.length);
-  const n = Math.min(want, room, spawns.length - 1);
+  const n = Math.min(want, room);
+  if (n <= 0) return;
 
-  const skip = playerSlot(spawns.length);
-  let slot = 0;
+  // Size the plaza BEFORE placing anybody: the anchor has to know how much room
+  // the spiral needs, and it is memoised on first call.
+  if (!plazaAnchor(n)) return;
+
   for (let i = 0; i < n; i++) {
-    if (slot === skip) slot++;
-    const sp = spawns[slot % spawns.length];
-    slot++;
+    const sp = plazaSlot(i);
 
     const id = `ai:${i}`;
     const name = AI_NAMES[i % AI_NAMES.length];
@@ -349,7 +472,9 @@ function fillOffline() {
     const rec = {
       id, kind: 'ai', name, color, hole,
       home: { x: sp.x, z: sp.z },
-      ph: i * 2.399963229728653,           // golden angle: no two ghosts in phase
+      // Wander phase on a DIFFERENT irrational to the ring angle, or neighbours
+      // in the spiral would breathe in step and the plaza would look scripted.
+      ph: i * 1.7320508075688772,
       leash: LEASH,
       el: null, nmEl: null, stEl: null, sayEl: null,
       sayLeft: 0, measure: true, w: 0, h: 0,
@@ -382,20 +507,23 @@ function fillOffline() {
  */
 function syncPeers() {
   const net = game.net;
-  const spawns = game.island && game.island.spawns;
-  if (!net || !spawns || spawns.length === 0) return;
+  if (!net) return;
 
   const live = new Set();
   let slot = 0;
-  const skip = playerSlot(spawns.length);
 
-  for (const p of net.peers.values()) {
+  /* The placement pass is conditional; the SWEEP below is not. An early return
+     on an empty roster would strand the plates of everyone who just left —
+     _syncPeerHoles() disposes their Hole out from under us, and a plate over a
+     disposed hole is a name floating on nothing. Sized off the roster, so a
+     room that fills up spreads wider rather than packing everybody into the
+     seven-player spiral. */
+  for (const p of (net.peers.size && plazaAnchor(net.peers.size) ? net.peers.values() : [])) {
     if (!p.hole) continue;                 // no avatar yet; nothing to label
     const id = `net:${p.id}`;
     live.add(id);
 
-    if (slot === skip) slot++;
-    const sp = spawns[slot % spawns.length];
+    const sp = plazaSlot(slot);
     slot++;
 
     let rec = people.get(id);
@@ -469,6 +597,9 @@ function layoutTags(camera) {
     const hole = rec.hole;
     rec.alpha = 0;
     if (!hole || !hole.alive) continue;
+    // Your own plate exists only while you are saying something. A permanent
+    // nameplate over your own hole is one more thing between you and the park.
+    if (rec.kind === 'self' && rec.sayLeft <= 0) continue;
 
     _v.set(hole.position.x, 2.6 + hole.displayRadius * 0.9, hole.position.z);
     const dist = camera.position.distanceTo(_v);
@@ -481,7 +612,10 @@ function layoutTags(camera) {
 
     rec.sx = (_v.x * 0.5 + 0.5) * w;
     rec.sy = (-_v.y * 0.5 + 0.5) * h;
-    if (rec.sx < -160 || rec.sx > w + 160 || rec.sy < -80 || rec.sy > h + 80) continue;
+    // Only label a hole that is actually on screen. A generous margin here
+    // pins plates to the edge for players who are nowhere in shot, which is a
+    // border of floating names — the clutter this is supposed to avoid.
+    if (rec.sx < -8 || rec.sx > w + 8 || rec.sy < -8 || rec.sy > h + 8) continue;
 
     rec.alpha = dist <= FADE_NEAR ? 1 : 1 - (dist - FADE_NEAR) / (FADE_FAR - FADE_NEAR);
     order.push(rec);
@@ -502,6 +636,19 @@ function layoutTags(camera) {
     const scale = Math.max(0.72, Math.min(1.06, 62 / Math.max(1, rec.dist)));
     const bw = rec.w * scale;
     const bh = rec.h * scale;
+
+    /* Keep the whole plate on screen.
+       Measured at 375 px: a name plus a chat bubble is 142 px wide, so a player
+       standing near the edge of frame had a third of their name clipped off by
+       the layer's overflow. Nudging the plate in beats clipping it — it is
+       still unmistakably over that hole, and it is still readable, which a
+       half-name is not. Only ever a nudge: the hole itself is already known to
+       be on screen by the cull above. */
+    const padX = bw / 2 + 4;
+    const padY = bh + 4;
+    if (bw + 8 < w) rec.sx = Math.min(Math.max(rec.sx, padX), w - padX);
+    if (bh + 8 < h) rec.sy = Math.min(Math.max(rec.sy, padY), h - 4);
+
     const x0 = rec.sx - bw / 2;
     const y0 = rec.sy - bh;
 
@@ -622,7 +769,10 @@ export function update(dt) {
 
   if (game.net) {
     syncPeers();
-  } else if (people.size === 0) {
+  } else if (count() === 0) {
+    // count(), not people.size: the local player's own speech-bubble record
+    // lives in the same map, and gating on the raw size would let one early
+    // say('me') convince this that the plaza was already populated.
     fillOffline();
   }
 
@@ -666,6 +816,10 @@ export function clearAll() {
     }
   }
   people.clear();
+  // The next visit to the island gets a fresh plaza around wherever the player
+  // lands then. Leaving this set is how the crowd would end up assembling on
+  // last round's spot.
+  anchor = null;
 }
 
 /** Remove the module completely. */
@@ -690,7 +844,9 @@ export function uninstall() {
 
 /** How many other players are standing in the plaza right now. */
 export function count() {
-  return people.size;
+  let n = 0;
+  for (const rec of people.values()) if (rec.kind !== 'self') n++;
+  return n;
 }
 
 /**
@@ -706,6 +862,7 @@ export function roster() {
   const me = game && game.player;
   const out = [];
   for (const rec of people.values()) {
+    if (rec.kind === 'self') continue;     // you are not one of the other players
     const d = me && rec.hole
       ? Math.hypot(rec.hole.position.x - me.position.x, rec.hole.position.z - me.position.z)
       : Infinity;
@@ -732,18 +889,54 @@ export function roster() {
  * cannot be typed in and steers the hole while you type. See
  * HUD._installAudioSettings for the guard that works.
  *
- * @param {string|number} id a roster() id, or a raw network peer id
+ * YOURSELF COUNTS. Pass 'me' (or your own network id) and the bubble goes over
+ * your own hole. Without that, say() is nearly useless offline — the only
+ * person typing is you, and a chat where your own line appears in a list but
+ * nowhere in the world is the "wall of DOM over the game" problem again in
+ * miniature. The self plate carries no name and no state chip: it exists only
+ * while you are actually saying something.
+ *
+ * @param {string|number} id a roster() id, a raw network peer id, or 'me'
  * @param {string} text
  * @param {number} [seconds]
  * @returns {boolean} false when nobody by that id is in the plaza
  */
 export function say(id, text, seconds = SAY_SECONDS) {
   const key = String(id);
-  const rec = people.get(key) || people.get(`net:${key}`) || people.get(`ai:${key}`);
+  const rec = people.get(key)
+    || people.get(`net:${key}`)
+    || people.get(`ai:${key}`)
+    || (isLocalId(key) ? selfRecord() : null);
   if (!rec || !rec.sayEl) return false;
   // textContent, never innerHTML: names and messages come off the wire.
   rec.sayEl.textContent = String(text || '').slice(0, 90);
   rec.sayLeft = Math.max(0.5, seconds);
   rec.measure = true;
   return true;
+}
+
+/** Does this id mean the local player? */
+function isLocalId(key) {
+  if (key === 'me' || key === 'self' || key === 'you') return true;
+  return !!(game && game.net && game.net.id != null && key === String(game.net.id));
+}
+
+/** The local player's own bubble plate, built on first use. */
+function selfRecord() {
+  if (!game || !game.player || !layer) return null;
+  let rec = people.get('self');
+  if (rec) { rec.hole = game.player; return rec; }
+  rec = {
+    id: 'self', kind: 'self', name: '', color: game.player.color.getHex(),
+    hole: game.player,
+    home: { x: 0, z: 0 }, ph: 0, leash: 0,
+    el: null, nmEl: null, stEl: null, sayEl: null,
+    sayLeft: 0, measure: true, w: 0, h: 0,
+    dist: 0, sx: 0, sy: 0, alpha: 0, lastAlpha: -1,
+    state: '',
+  };
+  people.set('self', rec);
+  makeTag(rec);
+  rec.el.classList.add('self');
+  return rec;
 }

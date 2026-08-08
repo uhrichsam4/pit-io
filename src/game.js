@@ -15,6 +15,8 @@ import { VoiceSystem } from './audio/voice.js';
 import { install as installPowerups } from './gameplay/powerupGlue.js';
 import { install as installEvents } from './gameplay/eventGlue.js';
 import { install as installPhone } from './phone/phone.js';
+import { install as installPresence, update as updatePresence } from './gameplay/islandPresence.js';
+import { mount as mountChat } from './ui/chat.js';
 import { mount as mountPhone } from './ui/phone-ui.js';
 import { TIER_LIST } from './config.js';
 import { EntityRegistry, STATE } from './gameplay/entities.js';
@@ -515,6 +517,16 @@ export class Game {
        mounted separately so a headless harness can drive the call engine with
        no DOM at all. */
     this.phone = installPhone(this);
+    /* Other players on the island, and chat. Presence needs the island mesh,
+       which is built at :228, so it installs here rather than in the
+       constructor's first half. Both are best-effort: a failure to populate the
+       plaza or mount a chat box must not take the game down with it. */
+    try { this.presence = installPresence(this); }
+    catch (err) { console.error('[presence] install failed', err); }
+    if (this.uiRoot) {
+      try { this.chat = mountChat(this.uiRoot, { game: this }); }
+      catch (err) { console.error('[chat] mount failed', err); }
+    }
     if (this.phone && this.uiRoot) {
       try { this.phoneUI = mountPhone(this.uiRoot, this.phone); }
       catch (err) { console.error('[phone] UI mount failed', err); }
@@ -1695,6 +1707,8 @@ export class Game {
       if (this.net && this.player) this.net.update(this.player, t);
       this.effects.update(dt);
       if (this.voice) { this.voice.update(dt); this._voiceProx(dt); }
+      // Peers on the island. A no-op once the match starts and the plaza clears.
+      if (this.presence) updatePresence(dt);
       return;
     }
 

@@ -134,7 +134,14 @@ function plMarkup(esc2, { code = '', named = false } = {}) {
            of the island, and it is why nothing here may be centred. -->
       <div class="pl-hud" data-step="room" ${named ? '' : 'hidden'}>
 
-        <div class="pl-top">
+        <!-- data-chat-ceiling / data-chat-avoid are src/ui/chat.js's published
+             opt-in hooks (its AVOID_SEL and CEIL_SEL). The chat dock is not a
+             child of this screen — it mounts to game.uiRoot beside the shell and
+             measures itself — so the only way it can know where this HUD's edges
+             are is to be told. Tagged: the top bar and the roster cap it from
+             above, the hint and the action row push it up from below. Inert if
+             chat.js is not present. -->
+        <div class="pl-top" data-chat-ceiling>
           <!-- Online: the code you read out to a friend. Hidden solo, where
                there is no room to invite anyone to. -->
           <div class="pl-plate pl-invite" data-codebox data-pl-panel="invite" hidden>
@@ -172,7 +179,7 @@ function plMarkup(esc2, { code = '', named = false } = {}) {
         <!-- PRESENCE. A compact avatar strip: a column on a desktop, a
              horizontally scrolling row on a phone. It scrolls, it never grows —
              see .pl-strip { min-height: 0; overflow } in the sheet. -->
-        <aside class="pl-plate pl-roster" data-pl-panel="roster">
+        <aside class="pl-plate pl-roster" data-pl-panel="roster" data-chat-ceiling>
           <header class="pl-roster-h">
             <span class="pl-roster-t">In the lobby</span>
             <span class="pl-roster-c" data-count>1</span>
@@ -181,15 +188,13 @@ function plMarkup(esc2, { code = '', named = false } = {}) {
                aria-label="Players in this lobby"></div>
         </aside>
 
-        <!-- Reserved for the game chat feed. Empty costs nothing (:empty gets
-             display:none), and whatever fills it lands in its own grid area
-             instead of on top of the roster. Anything focusable dropped in here
-             should carry data-pl-keycapture — see keyGuard in mount(). -->
-        <div class="pl-chat" data-pl-chat></div>
+        <!-- Row 2, column 1 is deliberately UNOCCUPIED. That rectangle is the
+             window onto Bayfront, and it is where the chat dock floats. Nothing
+             may be placed in it. -->
 
         <div class="pl-foot">
-          <p class="pl-hint" data-hint data-pl-panel="hint"></p>
-          <div class="pl-actions" data-pl-panel="actions">
+          <p class="pl-hint" data-hint data-pl-panel="hint" data-chat-avoid></p>
+          <div class="pl-actions" data-pl-panel="actions" data-chat-avoid>
             <button class="btn btn-ghost pl-leave" data-act="leave">Leave</button>
             <button class="btn pl-ready" data-act="ready">I'm Ready</button>
             <button class="btn btn-sun pl-start" data-act="start" hidden>Start Now</button>
@@ -260,15 +265,43 @@ function plRoster(esc2, list, meId, hostId) {
  * Run it at more than one size — 1920x1080 and 375x812 are the two the layout
  * is designed against:
  *
- *   __selftest()                       // whatever the window is now
+ *   __selftest()                                  // whatever the window is now
+ *   __selftest(null, { also: ['#chat-layer'] })   // fold in a foreign overlay
+ *
+ * `data-pl-panel` is searched across the WHOLE DOCUMENT, not just this screen.
+ * Anything drawn over the pre-lobby by another module can therefore opt into
+ * this assertion by carrying the attribute, and `opts.also` covers overlays that
+ * cannot be edited. Only one screen is ever mounted, so the wide query is safe.
+ *
+ * Call it after the screen has settled: `.screen-page` animates in over 0.26 s
+ * with a translateX, and every rect is offset for the duration.
  *
  * @param {HTMLElement} [root] defaults to the mounted pre-lobby
+ * @param {{also?:string[]}} [opts] extra selectors to include in the assertion
  * @returns {{ok:boolean, viewport:{w:number,h:number}, panels:object[],
  *            overlaps:object[], offscreen:string[], smallTaps:object[]}}
  */
-function plSelftest(root) {
+function plSelftest(root, opts) {
   const host = root || document.querySelector('[data-screen="prelobby"]');
   if (!host) return { ok: false, error: 'no pre-lobby mounted', viewport: null, panels: [], overlaps: [], offscreen: [], smallTaps: [] };
+
+  /* REFUSE TO MEASURE A MOVING TARGET.
+     `.screen-page` animates in over 0.26 s — pg-fade is `transform:
+     scale(0.985)`, pg-in is a translateX. Called during it, every rect is
+     skewed: a run at 1920x1080 reported three 43.3 px buttons (44 x 0.985) and
+     panel origins 11 px off, which reads as a layout bug and is not one. A
+     caller that gets `settling: true` should wait a frame or two and ask again,
+     not treat the numbers as real. */
+  const pageEl = host.closest ? (host.closest('.screen-page') || host) : host;
+  const tf = getComputedStyle(pageEl).transform;
+  if (tf && tf !== 'none' && tf !== 'matrix(1, 0, 0, 1, 0, 0)') {
+    return {
+      ok: false, settling: true, transform: tf,
+      error: 'screen is still animating in — measure again after ~300ms',
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      panels: [], overlaps: [], offscreen: [], smallTaps: [],
+    };
+  }
 
   const vw = window.innerWidth, vh = window.innerHeight;
   /* Sub-pixel tolerance. Grid tracks land on fractional pixels at a fractional
@@ -276,8 +309,16 @@ function plSelftest(root) {
      overlap. Anything a person could SEE is far above this. */
   const EPS = 0.5;
 
+  const seen = new Set();
+  const candidates = [...document.querySelectorAll('[data-pl-panel]')];
+  for (const sel of (opts && opts.also) || []) {
+    for (const el of document.querySelectorAll(sel)) candidates.push(el);
+  }
+
   const panels = [];
-  for (const el of host.querySelectorAll('[data-pl-panel]')) {
+  for (const el of candidates) {
+    if (seen.has(el)) continue;
+    seen.add(el);
     // A hidden or collapsed region has no geometry to collide with. Checked by
     // measurement, not by reading the `hidden` attribute — the whole point is
     // to catch a case where `hidden` was overridden by the cascade.
@@ -286,7 +327,7 @@ function plSelftest(root) {
     const cs = getComputedStyle(el);
     if (cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) === 0) continue;
     panels.push({
-      name: el.getAttribute('data-pl-panel'),
+      name: el.getAttribute('data-pl-panel') || el.id || el.className || el.tagName,
       x: +r.left.toFixed(2), y: +r.top.toFixed(2),
       w: +r.width.toFixed(2), h: +r.height.toFixed(2),
       right: r.right, bottom: r.bottom,
@@ -412,8 +453,8 @@ export function registerPrelobby(shell, deps = {}) {
       function readClock(info) {
         const c = net();
         if (c && c.phase === 'lobby' && typeof c.serverTimeLeft === 'number') {
-          const live = Math.ceil(c.serverTimeLeft);
-          if (live >= 0 && live <= MAX_SANE_WAIT) return live;
+          const fromServer = Math.ceil(c.serverTimeLeft);
+          if (fromServer >= 0 && fromServer <= MAX_SANE_WAIT) return fromServer;
         }
         if (info && info.left != null) return Math.max(0, Math.ceil(info.left));
         return null;
@@ -524,11 +565,26 @@ export function registerPrelobby(shell, deps = {}) {
         paintClock();
       }
 
+      /**
+       * Is this screen actually on screen?
+       *
+       * game.js#startMatch calls meta.hide() WITHOUT navigating (game.js:892),
+       * so the pre-lobby stays mounted, `display:none`, for the whole match and
+       * its timers keep firing. Harmless at one paint a second; less so now
+       * that the clock is sampled four times a second. Cheap DOM walk, no
+       * layout — `.shell-hidden` is on the shell root above us.
+       */
+      function live() {
+        return !!(root.isConnected && !root.closest('.shell-hidden'));
+      }
+
       /** paint(), but a failure can never take the screen's controls with it. */
       function safePaint() {
+        if (!live()) return;
         try { paint(); } catch (e) { console.error('[prelobby] paint failed', e); }
       }
       function safeClock() {
+        if (!live()) return;
         try { paintClock(); } catch (e) { console.error('[prelobby] clock failed', e); }
       }
 
@@ -547,6 +603,9 @@ export function registerPrelobby(shell, deps = {}) {
          whole root would also swallow the arrows while a BUTTON has focus,
          which would stop you steering the moment you tapped "I'm Ready" — so
          the guard asks whether the target is a text entry rather than assuming.
+         `[data-pl-keycapture]` is the opt-in for anything focusable added to
+         THIS subtree later. The chat box is not covered here and does not need
+         to be: it mounts outside the shell and guards itself.
 
          Escape is let through so the pause menu still works. keyUP is never
          guarded, and must not be: a key pressed before the field was focused

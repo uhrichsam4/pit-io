@@ -1,0 +1,379 @@
+/* ===========================================================================
+   IN-GAME CHAT  —  src/ui/chat.js
+
+   Loaded by an `import './css/chat.css'` at the top of chat.js, the same way
+   hud.css is loaded by hud.js and phone.css by phone-ui.js. index.html
+   hand-links every other css/*.css but will never know about this one, so the
+   import is what makes any of it render at all.
+
+   ---------------------------------------------------------------------------
+   GEOMETRY — MEASURED, NOT GUESSED
+
+   The left column is full before this file adds anything. Measured in this
+   repo, distances from the BOTTOM of the viewport:
+
+                         375x812 (--s 0.78)     1280x800 (--s 0.853)
+     #hud-size            13 ..  100 px           14 .. 110 px
+     #phone-rail         161 ..  205 px          176 .. 220 px
+     #hud-feed        bottom edge at 778 px    bottom edge at 763 px
+     #hud-map             13 ..  155 px (bottom-RIGHT, x 220..362 / 1110..1266)
+
+   The clear gap between the size meter and the phone button is 61 px on a
+   phone and 66 px on a desktop — three lines of chat and no input box. So the
+   dock does not live in that gap: chat.js measures the top edge of the highest
+   VISIBLE left-column occupant and writes it to `--ch-floor` (213 px on a
+   phone, 228 px on a desktop, +8 px clearance already included). The dock's
+   bottom edge sits on that line whether the box is open or shut, so opening
+   the chat moves nothing — the log simply grows upward, capped by `--ch-max`
+   at the kill feed's bottom edge or 42% of the viewport, whichever is smaller.
+
+   Two consequences worth stating: the closed feed can never cover the play
+   area (it is at most four short lines in a column 19em wide), and the open
+   panel can never reach the minimap, the size meter, the phone button or the
+   kill feed, because all four of them are what the measurement is made
+   against.
+
+   `--ch-floor`, `--ch-max` and `--ch-max-closed` are ALWAYS written by
+   chat.js. The values declared below are the pre-measurement fallbacks and are
+   deliberately conservative: if the measuring tick were ever to die, the chat
+   parks above the phone rail's static line rather than over the HUD.
+
+   ---------------------------------------------------------------------------
+   SCALING AND TAP TARGETS
+
+   Everything is authored in `em` against #chat-layer's own
+   `font-size: calc(16px * var(--s, 1))` — the model styles.css sets out for the
+   HUD, declared here because this layer is mounted into #ui-root and would
+   otherwise inherit nothing. Never put a font-size on a container; em padding
+   on its descendants compounds.
+
+   --s bottoms out at 0.78 on a phone, so 1em is 12.48 px and a 2.6em control
+   would be 32 px, under the minimum. Every tap target therefore carries a PX
+   floor of 44 px (`--ch-tap`), never an em one. chat.js exports the same number
+   as TAP_PX so a test can assert against one value.
+
+   ---------------------------------------------------------------------------
+   COLOUR IS NEVER THE ONLY SIGNAL (spec §6)
+
+   Every line prints its sender's NAME; the local player's own lines are
+   labelled "(you)" in words, not by hue alone; system lines carry a glyph AND
+   the author name "system"; the character counter is a NUMBER, and its "nearly
+   full" state is the number 8 rather than a red tint. Delete every hue in this
+   file and the whole surface still reads.
+
+   ---------------------------------------------------------------------------
+   MOTION
+
+   Nothing here appears or becomes legible BY animating, for the reason
+   phone.css writes down at length: in this project's headless environment
+   neither transitions nor keyframes advance, so anything that fades in is
+   invisible in every screenshot the project takes. Open and close are the
+   `hidden` attribute plus a class. The one animation is a 0.16 s slide on an
+   arriving line, whose stalled first frame is the line already in place.
+   It is switched off under prefers-reduced-motion, and the in-app toggle is
+   covered too: settings.js injects a rule killing animations on
+   `.reduced-motion #ui-root *`, and this layer is always a descendant of
+   #ui-root.
+   ======================================================================== */
+
+#chat-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;            /* the play area stays clickable */
+  z-index: 22;                     /* over .shell (20), under .shell-toasts (40) */
+  font-size: calc(16px * var(--s, 1));
+  font-family: var(--font, system-ui), sans-serif;
+  color: var(--txt, #fbf7ef);
+
+  /* Mirrored by TAP_PX in chat.js. */
+  --ch-tap: 44px;
+
+  /* tokens.css declares --safe-* inside the `.shell` block, and this layer is
+     a SIBLING of the shell, not a descendant — so they have to be declared
+     again here or they resolve to nothing. */
+  --ch-safe-l: env(safe-area-inset-left, 0px);
+  --ch-safe-r: env(safe-area-inset-right, 0px);
+
+  /* Written by chat.js._measure(). These are the fallbacks; see the header. */
+  --ch-floor: 14em;
+  --ch-max: 34vh;
+  --ch-max-closed: 22vh;
+
+  --ch-w: min(19em, calc(100vw - 2.1em - var(--ch-safe-l) - var(--ch-safe-r)));
+  --ch-w-open: min(25em, calc(100vw - 2.1em - var(--ch-safe-l) - var(--ch-safe-r)));
+
+  --ch-plate: linear-gradient(90deg, rgba(8, 15, 27, 0.90), rgba(8, 15, 27, 0.66));
+  --ch-plate-solid: linear-gradient(170deg, rgba(24, 37, 58, 0.96), rgba(8, 14, 26, 0.97));
+  --ch-edge: rgba(255, 255, 255, 0.13);
+  --ch-edge-hi: rgba(255, 255, 255, 0.30);
+  --ch-hi: var(--aqua, #37e6d5);
+}
+
+/* setVisible(false), and the built-in "a full meta screen is up" rule. */
+#chat-layer.ch-hidden { display: none !important; }
+
+/* The open/closed swap is the `hidden` attribute, and `display: flex` below
+   would beat the UA's `[hidden] { display: none }` without this. Losing that
+   race would leave the CHAT button and the input box on screen at once. */
+#chat-layer [hidden] { display: none !important; }
+
+#chat-layer :focus-visible {
+  outline: 2px solid var(--ch-hi);
+  outline-offset: 2px;
+  border-radius: 0.35em;
+}
+
+/* ---------------------------------------------------------------------------
+   THE DOCK — bottom-anchored on the measured floor, growing upward.
+   ------------------------------------------------------------------------- */
+#chat-dock {
+  position: absolute;
+  left: max(1.05em, calc(0.6em + var(--ch-safe-l)));
+  bottom: var(--ch-floor);
+  width: var(--ch-w);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4em;
+  pointer-events: none;            /* children opt back in */
+}
+#chat-layer.ch-open #chat-dock { width: var(--ch-w-open); }
+
+/* ---------------------------------------------------------------------------
+   THE LOG
+
+   Height is AUTO with a max, never a fixed height: a two-line conversation is
+   a two-line box sitting on the floor line, and only a long one scrolls. That
+   is also what keeps the newest line at the bottom without `justify-content:
+   flex-end`, which in a scrollable flex column makes the top of the history
+   unreachable in several engines.
+   ------------------------------------------------------------------------- */
+#chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22em;
+  max-height: var(--ch-max-closed);
+  overflow: hidden;
+  pointer-events: none;            /* closed: taps go straight to the city */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+}
+#chat-layer.ch-open #chat-log {
+  max-height: var(--ch-max);
+  overflow-y: auto;
+  pointer-events: auto;            /* open: the history is scrollable back */
+  touch-action: pan-y;             /* body has touch-action: none */
+  overscroll-behavior: contain;
+  padding: 0.25em;
+  margin: -0.25em;
+  border-radius: 0.5em;
+  background: rgba(4, 8, 16, 0.30);
+}
+#chat-log::-webkit-scrollbar { width: 6px; }
+#chat-log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+}
+
+/* CLOSED: the last four lines, and nothing that has aged out. Both rules
+   together are what "a few lines" means — max-height alone would clip a line
+   in half, and the count alone would keep a stale line on screen for ever. */
+#chat-layer:not(.ch-open) #chat-log .ch-msg.faded { display: none; }
+#chat-layer:not(.ch-open) #chat-log .ch-msg:nth-last-child(n + 5) { display: none; }
+
+/* ---------------------------------------------------------------------------
+   ONE LINE
+   ------------------------------------------------------------------------- */
+.ch-msg {
+  max-width: 100%;
+  padding: 0.3em 0.6em 0.34em 0.55em;
+  border-radius: 0.42em;
+  background: var(--ch-plate);
+  border: 1px solid var(--ch-edge);
+  border-left: 0.2em solid var(--nc, #37e6d5);
+  box-shadow: 0 0.25em 0.7em rgba(2, 6, 14, 0.42);
+  font-size: 0.76em;
+  font-weight: 600;
+  line-height: 1.32;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  overflow-wrap: anywhere;         /* one long word must not widen the dock */
+  animation: chIn 0.16s var(--ease, ease-out);
+}
+.ch-nm {
+  font-weight: 900;
+  color: var(--nc, #37e6d5);
+}
+/* Whose line this is, in WORDS. The colour is decoration on top of that. */
+.ch-msg.me .ch-nm::after {
+  content: ' (you)';
+  font-weight: 700;
+  font-size: 0.86em;
+  color: var(--dim, rgba(251, 247, 239, 0.6));
+}
+.ch-sep {
+  margin: 0 0.35em 0 0.1em;
+  color: var(--dimmer, rgba(251, 247, 239, 0.34));
+}
+.ch-tx { color: rgba(255, 255, 255, 0.95); }
+
+/* System lines are the house voice: grey, glyphed, and quieter than a player. */
+.ch-msg[data-kind='system'] {
+  border-left-color: var(--dimmer, rgba(251, 247, 239, 0.34));
+  background: linear-gradient(90deg, rgba(8, 15, 27, 0.82), rgba(8, 15, 27, 0.52));
+}
+.ch-msg[data-kind='system'] .ch-nm,
+.ch-msg[data-kind='system'] .ch-tx {
+  color: var(--dim, rgba(251, 247, 239, 0.6));
+  font-weight: 700;
+}
+.ch-sys-ic { margin-right: 0.4em; color: var(--dimmer, rgba(251, 247, 239, 0.34)); }
+
+/* Aged out. Hidden entirely while the box is closed (rule above); while it is
+   open the same line is merely dimmed, so the history reads as history. */
+#chat-layer.ch-open .ch-msg.faded { opacity: 0.58; }
+
+@keyframes chIn {
+  from { opacity: 0; transform: translateX(-0.6em); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   THE CONTROL ROW — exactly one of [CHAT button] / [input box], same slot,
+   same height, so opening the chat reflows nothing.
+   ------------------------------------------------------------------------- */
+#chat-row {
+  display: flex;
+  align-items: center;
+  min-height: var(--ch-tap);
+}
+
+#chat-fab {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  min-height: var(--ch-tap);
+  min-width: var(--ch-tap);
+  padding: 0 0.85em;
+  border-radius: 0.7em;
+  border: 1px solid var(--ch-edge-hi);
+  background: var(--ch-plate-solid);
+  box-shadow: 0 0.4em 1.1em rgba(2, 6, 14, 0.5);
+  color: var(--txt, #fbf7ef);
+  font-family: inherit;
+  font-size: 0.8em;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+#chat-fab:hover { border-color: var(--ch-hi); }
+#chat-fab:active { transform: translateY(1px); }
+
+.ch-ic { width: 1.15em; height: 1.15em; flex: none; }
+
+.ch-key {
+  flex: none;
+  min-width: 1.55em;
+  padding: 0.05em 0.3em;
+  border-radius: 0.3em;
+  border: 1px solid var(--ch-edge-hi);
+  background: rgba(255, 255, 255, 0.08);
+  font-family: inherit;
+  font-size: 0.82em;
+  font-weight: 900;
+  text-align: center;
+  color: var(--dim, rgba(251, 247, 239, 0.6));
+}
+/* There is no T key on a phone. The button is the affordance there. */
+@media (pointer: coarse) { .ch-key { display: none; } }
+
+/* ---- the input box ------------------------------------------------------ */
+#chat-bar {
+  pointer-events: auto;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  min-height: var(--ch-tap);
+  padding: 0 0.25em 0 0.6em;
+  border-radius: 0.7em;
+  border: 1px solid var(--ch-edge-hi);
+  background: var(--ch-plate-solid);
+  box-shadow: 0 0.5em 1.4em rgba(2, 6, 14, 0.55);
+}
+#chat-bar:focus-within { border-color: var(--ch-hi); }
+
+.ch-say {
+  flex: none;
+  font-size: 0.7em;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  color: var(--ch-hi);
+}
+
+#chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(var(--ch-tap) - 12px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--txt, #fbf7ef);
+  font-family: inherit;
+  font-size: 0.92em;
+  font-weight: 650;
+  /* styles.css sets `user-select: none` on body, which in a text field means no
+     caret drag and no selection — the field would take text and refuse to let
+     the player fix a typo in the middle of it. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+#chat-input:focus { outline: none; }        /* the bar shows the focus instead */
+#chat-input::placeholder { color: var(--dimmer, rgba(251, 247, 239, 0.34)); }
+
+#chat-count {
+  flex: none;
+  min-width: 1.6em;
+  text-align: right;
+  font-size: 0.72em;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim, rgba(251, 247, 239, 0.6));
+}
+#chat-count.low { color: var(--sun, #ffc93c); }
+
+#chat-send {
+  flex: none;
+  width: var(--ch-tap);
+  height: var(--ch-tap);
+  min-width: var(--ch-tap);
+  min-height: var(--ch-tap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0.6em;
+  background: transparent;
+  color: var(--ch-hi);
+  cursor: pointer;
+}
+#chat-send:hover { background: rgba(255, 255, 255, 0.08); }
+#chat-send:active { transform: translateY(1px); }
+#chat-send .ch-ic { width: 1.35em; height: 1.35em; }
+
+/* ---------------------------------------------------------------------------
+   SHORT VIEWPORTS — a phone held sideways is 375 px tall and the dock's floor
+   is measured, not fixed, so the only thing to tighten here is the type.
+   ------------------------------------------------------------------------- */
+@media (max-height: 560px) {
+  #chat-layer { --ch-max: 30vh; --ch-max-closed: 26vh; }
+  .ch-msg { font-size: 0.72em; padding: 0.24em 0.5em 0.28em 0.46em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-msg { animation: none; }
+  #chat-fab:active, #chat-send:active { transform: none; }
+}
