@@ -1,22 +1,622 @@
 /* =========================================================================
- * PRE-LOBBY — the waiting room you land in after joining with a code.
- * Layout only; every component here comes from tokens.css.
+ * PRE-LOBBY — a HUD over a live island, not a page of cards.
+ *
+ * THE RULE THIS SHEET EXISTS TO ENFORCE: the middle of the screen belongs to
+ * the game. Everything here is pinned to an edge by a named grid area, so two
+ * regions cannot be drawn over one another whatever the cascade does to their
+ * `position`. src/ui/screens/prelobby.js ships __selftest(), which measures
+ * every [data-pl-panel] and asserts it.
  * ====================================================================== */
 
-[data-screen="prelobby"] .pl-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap);
+/* ------------------------------------------------------------------------ */
+/* TWO CASCADE REPAIRS. BOTH LOAD-BEARING. DO NOT REMOVE.                    */
+/* ------------------------------------------------------------------------ */
+
+/* 1. src/ui/styles.css declares a GLOBAL `.panel { position: absolute }` for
+      the in-match HUD plates. index.html cancels it with
+      `:where(.shell) .panel { position: relative }` — but that rule is in an
+      inline <style> in <head> and Vite appends the bundled stylesheet AFTER it.
+      Same specificity (0,1,0), later wins, so in a BUILT bundle the absolute
+      came back and every panel on this screen left the flow and stacked at one
+      origin. That is the three-overlapping-cards screenshot, and it did not
+      reproduce in `vite dev`. Five other screen sheets already carry this line;
+      this one did not. Nothing in the new layout uses .panel, but the class is
+      still reachable through tokens.css and this is one line. */
+[data-screen="prelobby"] .panel { position: relative; }
+
+/* 2. tokens.css sets `.btn { display: inline-flex }`. An AUTHOR rule always
+      beats the user-agent's `[hidden] { display: none }`, regardless of
+      specificity — so `startBtn.hidden = true` did nothing and "Start Now" was
+      on screen for every non-host. Every `.hidden =` in prelobby.js depends on
+      this line. */
+[data-screen="prelobby"] [hidden] { display: none !important; }
+
+/* ------------------------------------------------------------------------ */
+/* THE WORLD IS THE BACKGROUND                                               */
+/* ------------------------------------------------------------------------ */
+
+/* The shell's page-wide scrim would grey out Bayfront. Replaced with EDGE
+   bands — the same idea as .hud-scrim in styles.css — so the top bar and the
+   action row always have something to sit on while the middle of the frame,
+   where the island and your own hole are, stays completely clear.
+   `.shell-layer::before` is one element shared by every page, so it is switched
+   from here exactly as pause.css does it. */
+.shell:has([data-screen="prelobby"]) .shell-layer::before {
+  background:
+    linear-gradient(180deg, rgba(6, 11, 21, 0.62) 0%, rgba(6, 11, 21, 0.20) 7em, transparent 12em),
+    linear-gradient(0deg, rgba(6, 11, 21, 0.66) 0%, rgba(6, 11, 21, 0.22) 6em, transparent 11em);
 }
 
-/* --- name step ----------------------------------------------------------- */
+/* You are PLAYING while this is on screen, so the shell must not eat the
+   pointer. input.js binds pointer-steer and the touch joystick to the canvas,
+   and a full-viewport .shell with pointer-events:auto swallowed every one of
+   them — keyboard worked, mouse and thumb did not. Off for the plate, back on
+   for the controls only. A modal is re-armed because navigating away from a
+   confirm you cannot click is a trap. */
+.shell:has([data-screen="prelobby"]) { pointer-events: none; }
+.shell:has([data-screen="prelobby"]) .shell-modal { pointer-events: auto; }
 
-[data-screen="prelobby"] .pl-name h2 { margin-bottom: 0.2em; }
+[data-screen="prelobby"] { pointer-events: none; }
+[data-screen="prelobby"] button,
+[data-screen="prelobby"] input,
+[data-screen="prelobby"] .pl-gate-card,
+[data-screen="prelobby"] .pl-strip,
+[data-screen="prelobby"] .pl-chat:not(:empty) { pointer-events: auto; }
 
-[data-screen="prelobby"] .pl-name-row {
+/* ------------------------------------------------------------------------ */
+/* THE GRID                                                                  */
+/* ------------------------------------------------------------------------ */
+
+[data-screen="prelobby"] {
+  display: block;
+  padding: 0;
+}
+
+[data-screen="prelobby"] .pl-root {
+  position: absolute;
+  inset: 0;
+}
+
+/* Row 2 column 1 is deliberately empty. That gap IS the view of the island. */
+[data-screen="prelobby"] .pl-hud {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 18em);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "top    top"
+    "chat   roster"
+    "foot   foot";
+  gap: 0.75em;
+  padding:
+    calc(0.75em + var(--safe-t))
+    calc(0.95em + var(--safe-r))
+    calc(0.75em + var(--safe-b))
+    calc(0.95em + var(--safe-l));
+}
+
+[data-screen="prelobby"] .pl-top { grid-area: top; }
+[data-screen="prelobby"] .pl-roster { grid-area: roster; }
+[data-screen="prelobby"] .pl-chat { grid-area: chat; }
+[data-screen="prelobby"] .pl-foot { grid-area: foot; }
+
+/* The one surface in here. A TIGHT local backdrop under the thing that has to
+   be read — never a sheet over the play area. */
+[data-screen="prelobby"] .pl-plate {
+  position: relative;
+  border-radius: var(--r-md);
+  border: 1px solid var(--stroke);
+  background: linear-gradient(168deg, rgba(14, 24, 42, 0.80) 0%, rgba(6, 11, 21, 0.88) 100%);
+  box-shadow: var(--lift-2), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(7px) saturate(1.2);
+  -webkit-backdrop-filter: blur(7px) saturate(1.2);
+}
+
+/* ------------------------------------------------------------------------ */
+/* TOP BAR — invite code · countdown · fill                                  */
+/* ------------------------------------------------------------------------ */
+
+/* Named areas, not flex order: the countdown occupies its own track and stays
+   dead centre whether the invite capsule is showing, hidden, or replaced by the
+   solo card. The 1fr side tracks are what centre it. */
+[data-screen="prelobby"] .pl-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas: "invite clock fill";
+  align-items: start;
+  gap: 0.9em;
+}
+[data-screen="prelobby"] .pl-invite,
+[data-screen="prelobby"] .pl-solo { grid-area: invite; justify-self: start; }
+[data-screen="prelobby"] .pl-clockwrap { grid-area: clock; justify-self: center; }
+[data-screen="prelobby"] .pl-fill { grid-area: fill; justify-self: end; }
+
+/* ---- invite code -------------------------------------------------------- */
+
+[data-screen="prelobby"] .pl-invite,
+[data-screen="prelobby"] .pl-solo {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1em;
+  max-width: 100%;
+  padding: 0.55em 0.85em 0.65em;
+}
+
+[data-screen="prelobby"] .pl-invite-k {
+  font-size: var(--fs-micro);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* The code is read out loud to a friend, so it gets generous tracking — a
+   mistaken 0/O costs them a whole attempt. It is no longer the biggest type on
+   the screen, because the countdown is. */
+[data-screen="prelobby"] .pl-invite-v {
+  max-width: 100%;
+  font-size: 1.5em;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--aqua);
+  text-shadow: 0 0 0.6em color-mix(in srgb, var(--aqua) 40%, transparent);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+[data-screen="prelobby"] .pl-invite-btns {
+  display: flex;
+  gap: 0.4em;
+  margin-top: 0.25em;
+}
+
+/* A real 44 px target, from the shared floor in tokens.css. */
+[data-screen="prelobby"] .pl-mini {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 0.3em 0.8em;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--stroke-hi);
+  background: var(--sunk);
+  color: var(--txt);
+  font: inherit;
+  font-size: max(0.72em, 11px);
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s var(--ease);
+}
+[data-screen="prelobby"] .pl-mini:active { background: rgba(255, 255, 255, 0.16); }
+
+[data-screen="prelobby"] .pl-solo-v {
+  font-size: 1.05em;
+  font-weight: 800;
+  color: var(--sun);
+}
+[data-screen="prelobby"] .pl-solo-s {
+  max-width: 12em;
+  font-size: max(0.7em, 10px);
+  line-height: 1.35;
+  color: var(--dim);
+}
+
+/* ------------------------------------------------------------------------ */
+/* THE COUNTDOWN — the most important thing on the screen                    */
+/* ------------------------------------------------------------------------ */
+
+[data-screen="prelobby"] .pl-clockwrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05em;
+  min-width: 7.5em;
+  padding: 0.45em 1.1em 0.6em;
+  border-color: color-mix(in srgb, var(--sun) 40%, var(--stroke));
+  /* The urgent state animates the digits with a transform. Letting it spill is
+     what keeps the PLATE's box stable, which is what keeps the no-overlap
+     assertion true in both states. */
+  overflow: visible;
+}
+
+[data-screen="prelobby"] .pl-clock-k {
+  font-size: var(--fs-micro);
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+[data-screen="prelobby"] .pl-clock-n {
+  display: flex;
+  align-items: baseline;
+  gap: 0.08em;
+  line-height: 0.95;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+[data-screen="prelobby"] .pl-clock-n b {
+  font-size: 2.9em;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  color: var(--sun);
+  text-shadow: 0 0.05em 0.5em rgba(0, 0, 0, 0.7), 0 0 0.7em color-mix(in srgb, var(--sun) 40%, transparent);
+}
+[data-screen="prelobby"] .pl-clock-u {
+  font-size: 1em;
+  font-weight: 900;
+  color: var(--dim);
+}
+
+[data-screen="prelobby"] .pl-clock-track {
+  width: 100%;
+  height: 0.3em;
+  margin-top: 0.3em;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+[data-screen="prelobby"] .pl-clock-track > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--sun), var(--orange));
+  transition: width 0.35s linear;
+}
+
+/* URGENCY IS THREE SIGNALS, NOT ONE.
+   Colour (sun -> hot), SIZE (a real font-size change, so the plate's own box
+   grows downward into a row that is `auto` — it can never be pushed over a
+   neighbour), and the WORD, which prelobby.js swaps to "Final seconds". The
+   beat is a transform on the digits alone, so the measured rect never moves. */
+[data-screen="prelobby"] .pl-clockwrap.urgent {
+  border-color: color-mix(in srgb, var(--hot) 62%, var(--stroke));
+  box-shadow: var(--lift-2), 0 0 1.5em color-mix(in srgb, var(--hot) 30%, transparent),
+              inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+[data-screen="prelobby"] .pl-clockwrap.urgent .pl-clock-k { color: var(--hot); }
+[data-screen="prelobby"] .pl-clockwrap.urgent .pl-clock-n b {
+  font-size: 3.5em;
+  color: var(--hot);
+  text-shadow: 0 0.05em 0.5em rgba(0, 0, 0, 0.75), 0 0 0.9em color-mix(in srgb, var(--hot) 55%, transparent);
+  animation: pl-beat 1s var(--ease) infinite;
+}
+[data-screen="prelobby"] .pl-clockwrap.urgent .pl-clock-track > i {
+  background: linear-gradient(90deg, var(--orange), var(--hot));
+}
+/* No clock yet (solo, before queueMatch): say so rather than showing a zero. */
+[data-screen="prelobby"] .pl-clockwrap.idle .pl-clock-n b { color: var(--dimmer); }
+
+@keyframes pl-beat {
+  0%, 100% { transform: scale(1); }
+  18% { transform: scale(1.09); }
+  40% { transform: scale(1); }
+}
+
+/* ---- fill meter --------------------------------------------------------- */
+
+[data-screen="prelobby"] .pl-fill {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.12em;
+  min-width: 8em;
+  padding: 0.55em 0.85em 0.7em;
+}
+[data-screen="prelobby"] .pl-fill-k {
+  font-size: var(--fs-micro);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+[data-screen="prelobby"] .pl-fill-v {
+  display: flex;
+  align-items: baseline;
+  gap: 0.25em;
+  font-variant-numeric: tabular-nums;
+}
+[data-screen="prelobby"] .pl-fill-v b { font-size: 1.5em; font-weight: 900; }
+[data-screen="prelobby"] .pl-fill-v span { font-size: 0.8em; color: var(--dim); font-weight: 700; }
+[data-screen="prelobby"] .pl-fill-bar {
+  display: block;
+  width: 100%;
+  height: 0.3em;
+  margin-top: 0.2em;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+[data-screen="prelobby"] .pl-fill-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--aqua), var(--lime));
+  transition: width 0.4s var(--ease);
+}
+
+/* ------------------------------------------------------------------------ */
+/* PRESENCE — the avatar strip                                               */
+/* ------------------------------------------------------------------------ */
+
+/* SCROLLS, NEVER GROWS. The panel is capped by its grid row (`minmax(0,1fr)`),
+   min-height:0 lets it actually shrink inside that row, and the strip is the
+   only thing allowed to overflow. Fifteen players cannot push the action bar
+   off the bottom of a phone. */
+[data-screen="prelobby"] .pl-roster {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  align-self: start;
+  max-height: 100%;
+  overflow: hidden;
+  padding: 0;
+}
+
+[data-screen="prelobby"] .pl-roster-h {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6em;
+  padding: 0.6em 0.8em 0.5em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+[data-screen="prelobby"] .pl-roster-t {
+  font-size: var(--fs-micro);
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+[data-screen="prelobby"] .pl-roster-c {
+  flex: 0 0 auto;
+  padding: 0.15em 0.6em;
+  border-radius: var(--r-pill);
+  background: var(--sunk);
+  border: 1px solid var(--stroke);
+  font-size: max(0.72em, 11px);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-screen="prelobby"] .pl-strip {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+  padding: 0.35em;
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* body sets touch-action:none so a drag steers the hole; this list is the
+     exception, or the roster cannot be scrolled with a thumb. */
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+[data-screen="prelobby"] .pl-strip::-webkit-scrollbar { width: 0.35em; height: 0.35em; }
+[data-screen="prelobby"] .pl-strip::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22); border-radius: var(--r-pill);
+}
+
+[data-screen="prelobby"] .pl-p {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  min-height: 2.4em;
+  padding: 0.25em 0.45em;
+  border-radius: var(--r-sm);
+}
+/* The local player is marked THREE ways — a rail, a wash and the literal word
+   "You" — so it survives a greyscale screen and a colour-blind reader. */
+[data-screen="prelobby"] .pl-p.me {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hot) 22%, transparent), transparent 78%);
+  box-shadow: inset 0.18em 0 0 var(--hot);
+}
+
+/* Procedural, like every other asset in this project. */
+[data-screen="prelobby"] .pl-av {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 50%;
+  border: 0.12em solid rgba(255, 255, 255, 0.28);
+  background: linear-gradient(168deg,
+    color-mix(in srgb, var(--ac, var(--aqua)) 82%, #ffffff) 0%,
+    color-mix(in srgb, var(--ac, var(--aqua)) 60%, #071120) 100%);
+  color: #06101d;
+  font-size: 0.85em;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 0.05em 0 rgba(255, 255, 255, 0.35);
+  box-shadow: var(--lift-1), inset 0 0.08em 0 rgba(255, 255, 255, 0.4);
+}
+[data-screen="prelobby"] .pl-p.me .pl-av { border-color: var(--hot); }
+
+[data-screen="prelobby"] .pl-p-nm {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.88em;
+  font-weight: 750;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-screen="prelobby"] .pl-tag {
+  flex: 0 0 auto;
+  padding: 0.05em 0.4em;
+  border-radius: var(--r-pill);
+  border: 1px solid currentColor;
+  font-size: max(0.6em, 9px);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+[data-screen="prelobby"] .pl-tag.you { color: var(--hot); }
+[data-screen="prelobby"] .pl-tag.host { color: var(--sun); }
+
+/* Status has its OWN column and its own words. The string that used to land on
+   top of the invite code was this one. */
+[data-screen="prelobby"] .pl-p-st {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  font-size: max(0.62em, 9px);
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dimmer);
+}
+[data-screen="prelobby"] .pl-p-st > i {
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0.4em currentColor;
+}
+[data-screen="prelobby"] .pl-p-st.ready { color: var(--lime); }
+[data-screen="prelobby"] .pl-p-st.here { color: var(--aqua); }
+[data-screen="prelobby"] .pl-p-st.joining { color: var(--dimmer); }
+/* A hollow dot for "not here yet" — the shape differs, not only the colour. */
+[data-screen="prelobby"] .pl-p-st.joining > i {
+  background: transparent;
+  border: 1px solid currentColor;
+  box-shadow: none;
+}
+
+[data-screen="prelobby"] .pl-strip-empty {
+  padding: 1.1em 0.8em;
+  text-align: center;
+  font-size: 0.8em;
+  color: var(--dim);
+}
+
+/* ------------------------------------------------------------------------ */
+/* CHAT SLOT                                                                 */
+/*                                                                           */
+/* Reserved, empty, and free. It collapses to nothing until something is put  */
+/* in it, and when something is it lands in its OWN grid area — bottom-left,  */
+/* clear of the roster and clear of the action row.                          */
+/* ------------------------------------------------------------------------ */
+
+[data-screen="prelobby"] .pl-chat {
+  align-self: end;
+  justify-self: start;
+  min-width: 0;
+  max-width: min(30em, 100%);
+  max-height: 100%;
+  overflow: hidden;
+}
+[data-screen="prelobby"] .pl-chat:empty { display: none; }
+
+/* ------------------------------------------------------------------------ */
+/* FOOT — hint + actions                                                     */
+/* ------------------------------------------------------------------------ */
+
+[data-screen="prelobby"] .pl-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.9em;
+  flex-wrap: wrap;
+}
+
+[data-screen="prelobby"] .pl-hint {
+  flex: 1 1 14em;
+  min-width: 0;
+  margin: 0 0 0.55em;
+  font-size: max(0.78em, 11px);
+  line-height: 1.4;
+  color: var(--txt);
+  /* Its own tight backdrop rather than a page-wide one. */
+  text-shadow: 0 1px 0.4em rgba(4, 8, 16, 0.95), 0 0 1.2em rgba(4, 8, 16, 0.9);
+}
+
+[data-screen="prelobby"] .pl-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.55em;
+  align-items: center;
+}
+[data-screen="prelobby"] .pl-actions .btn { flex: 0 0 auto; }
+[data-screen="prelobby"] .pl-start { min-width: 10em; }
+
+/* styles.css puts an infinitely animating specular sweep on `.btn::after` with
+   `position:absolute; inset:0` — and tokens.css leaves `.btn` unpositioned, so
+   in a built bundle that sweep resolves against the nearest positioned ancestor
+   and paints a full-page gradient per button. index.html cancels it, and loses
+   the same source-order argument as the `.panel` rule above. Cancelled here for
+   this screen, where a stray full-screen layer would sit over the island. */
+[data-screen="prelobby"] .btn { position: relative; }
+[data-screen="prelobby"] .btn::after { content: none; }
+
+/* ------------------------------------------------------------------------ */
+/* NAME GATE                                                                 */
+/* ------------------------------------------------------------------------ */
+
+[data-screen="prelobby"] .pl-gate {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding:
+    calc(1em + var(--safe-t))
+    calc(1em + var(--safe-r))
+    calc(1em + var(--safe-b))
+    calc(1em + var(--safe-l));
+}
+
+[data-screen="prelobby"] .pl-gate-card {
+  position: relative;
+  width: min(24em, 100%);
+  padding: 1.3em 1.2em 1.2em;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--stroke-hi);
+  background: linear-gradient(168deg, rgba(30, 45, 72, 0.92) 0%, rgba(8, 14, 26, 0.95) 100%);
+  box-shadow: var(--lift-3), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  animation: pl-pop 0.22s var(--ease-back) both;
+}
+
+@keyframes pl-pop { from { opacity: 0; transform: scale(0.95) translateY(0.6em); } }
+
+[data-screen="prelobby"] .pl-gate-k {
+  font-size: var(--fs-micro);
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--hot);
+}
+[data-screen="prelobby"] .pl-gate-h {
+  margin: 0.15em 0 0.3em;
+  font-size: 1.5em;
+  font-weight: 900;
+}
+[data-screen="prelobby"] .pl-gate-s {
+  margin: 0 0 0.9em;
+  font-size: 0.85em;
+  line-height: 1.45;
+  color: var(--dim);
+}
+
+[data-screen="prelobby"] .pl-gate-row {
   display: flex;
   gap: 0.5em;
-  margin: 0.9em 0;
+  margin-bottom: 0.75em;
 }
 
 [data-screen="prelobby"] .pl-input {
@@ -30,6 +630,11 @@
   font: inherit;
   font-size: 1.05em;
   font-weight: 700;
+  /* body sets user-select:none for the game; a text field is the exception,
+     or the caret cannot select a single character of the name you typed. */
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: manipulation;
 }
 [data-screen="prelobby"] .pl-input::placeholder { color: var(--dimmer); font-weight: 600; }
 [data-screen="prelobby"] .pl-input:focus {
@@ -38,94 +643,138 @@
   box-shadow: 0 0 0 0.18em color-mix(in srgb, var(--aqua) 26%, transparent);
 }
 
-/* --- invite code --------------------------------------------------------- */
+[data-screen="prelobby"] .pl-dice { flex: 0 0 auto; }
 
-[data-screen="prelobby"] .pl-code { text-align: center; }
+/* ------------------------------------------------------------------------ */
+/* PHONE — 375 px is the design target                                       */
+/* ------------------------------------------------------------------------ */
 
-[data-screen="prelobby"] .pl-code-label {
-  font-size: 0.68em;
-  font-weight: 800;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--dim);
+@media (max-width: 760px) {
+  [data-screen="prelobby"] .pl-hud {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top"
+      "roster"
+      "chat"
+      "foot";
+    gap: 0.55em;
+    padding:
+      calc(0.6em + var(--safe-t))
+      calc(0.7em + var(--safe-r))
+      calc(0.6em + var(--safe-b))
+      calc(0.7em + var(--safe-l));
+  }
+
+  /* Clock on its own full-width row; the code and the fill meter share the one
+     below it. Still grid areas, so still incapable of overlapping. */
+  [data-screen="prelobby"] .pl-top {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "clock  clock"
+      "invite fill";
+    gap: 0.5em;
+  }
+  [data-screen="prelobby"] .pl-clockwrap {
+    justify-self: stretch;
+    min-width: 0;
+    padding: 0.4em 0.8em 0.55em;
+  }
+  [data-screen="prelobby"] .pl-clock-n b { font-size: 2.5em; }
+  [data-screen="prelobby"] .pl-clockwrap.urgent .pl-clock-n b { font-size: 3em; }
+
+  [data-screen="prelobby"] .pl-invite,
+  [data-screen="prelobby"] .pl-solo { justify-self: stretch; }
+  [data-screen="prelobby"] .pl-invite-v { font-size: 1.25em; }
+  [data-screen="prelobby"] .pl-fill { min-width: 7em; }
+
+  /* The roster becomes a horizontally scrolling avatar strip — the compact
+     form. It is capped in height so it can never take the island's row. */
+  [data-screen="prelobby"] .pl-roster {
+    align-self: stretch;
+    max-height: none;
+  }
+  [data-screen="prelobby"] .pl-roster-h { padding: 0.45em 0.7em 0.4em; }
+  [data-screen="prelobby"] .pl-strip {
+    flex-direction: row;
+    gap: 0.35em;
+    padding: 0.4em;
+    overflow-x: auto;
+    overflow-y: hidden;
+    touch-action: pan-x;
+  }
+  [data-screen="prelobby"] .pl-p {
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 0.15em;
+    width: 4.6em;
+    min-height: 0;
+    padding: 0.3em 0.1em;
+    text-align: center;
+  }
+  [data-screen="prelobby"] .pl-p.me { box-shadow: inset 0 0.16em 0 var(--hot); }
+  [data-screen="prelobby"] .pl-av { width: 2.2em; height: 2.2em; font-size: 0.9em; }
+  [data-screen="prelobby"] .pl-p-nm { width: 100%; font-size: 0.68em; text-align: center; }
+  [data-screen="prelobby"] .pl-tag.host { display: none; }
+  [data-screen="prelobby"] .pl-p-st > i { display: none; }
+  [data-screen="prelobby"] .pl-strip-empty { padding: 0.9em; }
+
+  [data-screen="prelobby"] .pl-chat { justify-self: stretch; max-width: 100%; }
+
+  /* Thumb reach: the primary action is the widest thing on the bottom row. */
+  [data-screen="prelobby"] .pl-foot { flex-direction: column; align-items: stretch; }
+  [data-screen="prelobby"] .pl-hint { margin: 0 0 0.15em; text-align: center; }
+  [data-screen="prelobby"] .pl-actions { flex-wrap: wrap; }
+  [data-screen="prelobby"] .pl-actions .btn { flex: 1 1 8em; }
+  [data-screen="prelobby"] .pl-start { flex: 1 1 100%; order: -1; min-width: 0; }
 }
 
-/* The code is the thing a player reads out loud to a friend, so it gets the
-   biggest type on the screen and generous tracking — a mistaken 0/O costs them
-   a whole attempt. */
-[data-screen="prelobby"] .pl-code-value {
-  margin: 0.15em 0 0.5em;
-  font-size: 2.4em;
-  font-weight: 800;
-  letter-spacing: 0.22em;
-  text-indent: 0.22em;
-  color: var(--aqua);
-  text-shadow: 0 0 0.6em color-mix(in srgb, var(--aqua) 45%, transparent);
-  font-variant-numeric: tabular-nums;
-  word-break: break-all;
+/* Landscape phone: height is the scarce resource, so the strip loses a line
+   and the clock loses its ring rather than the island losing its window. */
+@media (orientation: landscape) and (max-height: 460px) {
+  [data-screen="prelobby"] .pl-hud { gap: 0.45em; }
+  [data-screen="prelobby"] .pl-clock-n b { font-size: 2.1em; }
+  [data-screen="prelobby"] .pl-clockwrap.urgent .pl-clock-n b { font-size: 2.5em; }
+  [data-screen="prelobby"] .pl-clock-track { display: none; }
+  [data-screen="prelobby"] .pl-solo-s { display: none; }
+  [data-screen="prelobby"] .pl-hint { display: none; }
+  [data-screen="prelobby"] .pl-gate-card { padding: 0.9em; }
+  [data-screen="prelobby"] .pl-gate-s { display: none; }
 }
 
-[data-screen="prelobby"] .pl-code-actions {
-  display: flex;
-  gap: 0.5em;
-  justify-content: center;
-  flex-wrap: wrap;
-  margin-bottom: 0.5em;
-}
-[data-screen="prelobby"] .pl-code-actions .btn { flex: 1 1 8em; }
+/* ------------------------------------------------------------------------ */
+/* ACCESSIBILITY                                                             */
+/* ------------------------------------------------------------------------ */
 
-/* --- roster -------------------------------------------------------------- */
-
-[data-screen="prelobby"] .pl-roster-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gap);
-  padding: 0.8em 1em 0.5em;
-}
-[data-screen="prelobby"] .pl-roster-head h3 { margin: 0; }
-
-[data-screen="prelobby"] .pl-roster .row { padding-left: 1em; padding-right: 1em; }
-
-[data-screen="prelobby"] .pl-state {
-  flex: 0 0 auto;
-  font-size: 0.74em;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--dimmer);
-}
-[data-screen="prelobby"] .pl-state.on { color: var(--lime); }
-
-[data-screen="prelobby"] .pl-roster .chip.tiny {
-  font-size: 0.62em;
-  padding: 0.1em 0.45em;
-  vertical-align: 0.15em;
+/* tokens.css already blanket-disables animation under .shell for reduced
+   motion. Stated again here so this screen's two animations are covered even if
+   it is ever rendered outside that scope — and the urgent state keeps its
+   colour, its size and its changed word, which are the signals that matter. */
+@media (prefers-reduced-motion: reduce) {
+  [data-screen="prelobby"] .pl-gate-card,
+  [data-screen="prelobby"] .pl-clockwrap.urgent .pl-clock-n b {
+    animation: none !important;
+  }
+  [data-screen="prelobby"] .pl-clock-track > i,
+  [data-screen="prelobby"] .pl-fill-bar > i { transition: none !important; }
 }
 
-[data-screen="prelobby"] .pl-hint { text-align: center; }
-
-/* Three buttons in the thumb strip is one too many on a narrow phone; let the
-   primary keep its width and the secondary wrap under it. */
-@media (max-width: 380px) {
-  [data-screen="prelobby"] .sticky-actions { flex-wrap: wrap; }
-  [data-screen="prelobby"] .sticky-actions .btn { flex: 1 1 100%; }
+/* Focus must be visible on a screen whose controls sit over a moving city.
+   tokens.css draws the ring; this adds the plate it needs to be seen against. */
+[data-screen="prelobby"] :focus-visible {
+  outline: 2px solid var(--aqua);
+  outline-offset: 2px;
 }
+[data-screen="prelobby"] .pl-strip:focus-visible { outline-offset: -2px; }
 
-/* --- launch state -------------------------------------------------------- */
-
-[data-screen="prelobby"] .pl-launch { text-align: center; }
-
-[data-screen="prelobby"] .pl-count {
-  display: flex; align-items: baseline; justify-content: center; gap: 0.35em;
-  margin-bottom: 0.5em;
-}
-[data-screen="prelobby"] .pl-count b { font-size: 2em; font-weight: 800; }
-[data-screen="prelobby"] .pl-count span { font-size: 0.85em; color: var(--dim); }
-
-[data-screen="prelobby"] .pl-clock {
-  margin-top: 0.5em; font-size: 0.85em; color: var(--dim);
-}
-[data-screen="prelobby"] .pl-clock b {
-  color: var(--sun); font-variant-numeric: tabular-nums; font-size: 1.15em;
+/* High-contrast / forced colours: the plates stop being glass and become
+   solid, or the text sits on the raw render. */
+@media (forced-colors: active) {
+  [data-screen="prelobby"] .pl-plate,
+  [data-screen="prelobby"] .pl-gate-card {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }

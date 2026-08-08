@@ -311,6 +311,46 @@ export class Game {
        all the rate limiting — per-line and per-voice cooldowns, a hard cap of
        three concurrent lines, and a distance cutoff — so calling this on every
        swallow is safe; it drops what it cannot afford. */
+    /**
+     * WHO SPEAKS DEPENDS ON WHERE YOU ARE.
+     *
+     * Every line was previously drawn from the whole cast regardless of place,
+     * so a basketball court and a downtown plaza sounded identical — the same
+     * ten strangers in rotation. Casting to the location is what makes a place
+     * feel like a place: the court has its player, downtown has someone filming
+     * it, the zoo has staff, the promenade has a tourist.
+     *
+     * Returns null when nowhere in particular, which lets the VoiceSystem pick
+     * on weight as before — a null here is "no opinion", not a failure.
+     */
+    this._castForPlace = (c) => {
+      const kind = (c && c.kind) || '';
+      const p = this.player ? this.player.position : null;
+
+      // The subject itself is the strongest signal: a baller is a baller.
+      if (/baller|courtside/i.test(kind)) return 'zee-mabry';
+      if (/vendor|diner|waiter/i.test(kind)) return 'dax-perrone';
+      if (/resting|local/i.test(kind)) return 'orla-fenn';
+
+      if (!p) return null;
+      const zoo = this.layout && this.layout.zoo;
+      if (zoo && Math.abs(p.x - zoo.x) <= zoo.w / 2 && Math.abs(p.z - zoo.z) <= zoo.d / 2) {
+        return 'ike-dorsett';           // public works, closest thing to zoo staff
+      }
+      // Standing on a court: its own character, whoever is nearest.
+      for (const b of (this.layout ? this.layout.blocks : [])) {
+        if (!b.court) continue;
+        if (Math.abs(p.x - b.x) <= b.court.hw && Math.abs(p.z - b.z) <= b.court.hd) {
+          return 'zee-mabry';
+        }
+      }
+      // Downtown is where somebody is always filming. WORLD.RIVER_Z splits the
+      // two districts; north of it is the CBD.
+      if (p.z < WORLD.RIVER_Z) return Math.random() < 0.55 ? 'jun-marrow' : 'tavo-reyes';
+      // Brickell / south: residents and visitors.
+      return Math.random() < 0.5 ? 'mina-sol' : 'orla-fenn';
+    };
+
     this._voiceFor = (hole, c) => {
       if (!this.voice || !hole || !hole.isPlayer || !c) return;
       const kind = c.kind || '';
@@ -343,7 +383,12 @@ export class Game {
       } else if (Math.random() < 0.05) {
         cat = 'notice';
       }
-      if (cat) this.voice.say(cat, opts);
+      if (cat) {
+        // Same place-aware casting the proximity trigger uses, so the voice you
+        // hear when something is eaten matches the voices around you.
+        opts.castId = this._castForPlace(c);
+        this.voice.say(cat, opts);
+      }
     };
 
     /**
@@ -383,7 +428,10 @@ export class Game {
       // Close enough to be alarming versus merely noticed. Two registers, so a
       // crowd sounds like people at different distances rather than a chorus.
       const near = bestD2 < (reach * 0.45) ** 2;
-      this.voice.say(near ? 'flee' : 'notice', { x: best.position.x, z: best.position.z });
+      this.voice.say(near ? 'flee' : 'notice', {
+        x: best.position.x, z: best.position.z,
+        castId: this._castForPlace(best),
+      });
     };
 
     this.consume.onSwallow = (hole, c, gained, remote) => {
